@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">erssi logo proposal 01 - classic fire hash</title>
+  <desc id="desc">A simple #erssi wordmark with the hash symbol on fire.</desc>
+  <defs>
+    <linearGradient id="hash" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="0.45" stop-color="#ff7a18"/>
+      <stop offset="1" stop-color="#d62828"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff3a3"/>
+      <stop offset="0.42" stop-color="#ff9f1c"/>
+      <stop offset="1" stop-color="#c1121f"/>
+    </linearGradient>
+  </defs>
+  <rect width="920" height="240" fill="#ffffff"/>
+  <g transform="translate(52 21)">
+    <path d="M72 86c-30-35 8-57 0-84 37 30 16 59 34 82 16-21 15-44 5-67 47 38 49 80 30 111 18-10 29-28 27-51 35 36 24 92-10 118-31 24-90 24-122 0C-4 165 6 111 31 83c-3 24 10 42 25 52-4-19 2-35 16-49z" fill="url(#flame)"/>
+    <text x="0" y="188"
+          font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="178"
+          font-weight="900"
+          letter-spacing="0"
+          fill="url(#hash)">#</text>
+  </g>
+  <text x="218" y="178"
+        font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="150"
+        font-weight="800"
+        letter-spacing="0"
+        fill="#141414">erssi</text>
+</svg>

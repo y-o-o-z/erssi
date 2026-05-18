@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">erssi logo proposal 02 - dark terminal fire hash</title>
+  <desc id="desc">A dark terminal-style #erssi wordmark with a flaming hash symbol.</desc>
+  <defs>
+    <linearGradient id="hash" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe66d"/>
+      <stop offset="0.5" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#b91c1c"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-35%" width="160%" height="170%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="920" height="240" rx="22" fill="#0f1222"/>
+  <path d="M42 203h836" stroke="#29304f" stroke-width="4" stroke-linecap="round"/>
+  <g transform="translate(54 18)" filter="url(#glow)">
+    <path d="M82 86c-18-28 14-48 4-79 34 24 23 53 45 76 13-25 9-46-5-66 45 34 55 80 31 118 19-7 33-24 35-46 26 37 12 82-20 105-34 24-90 23-121-1C16 166 19 118 44 86c0 25 14 43 31 52-8-21-5-37 7-52z" fill="#f97316"/>
+    <path d="M90 112c-11-19 9-35 4-56 22 19 17 39 30 54 9-17 8-31 0-46 30 27 33 58 17 82 13-6 22-16 24-31 18 26 9 57-12 73-24 18-64 18-87 0-24-19-20-52-4-73 1 17 11 29 23 35-6-15-4-27 5-38z" fill="#ffd166"/>
+    <text x="0" y="190"
+          font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+          font-size="178"
+          font-weight="900"
+          letter-spacing="0"
+          fill="url(#hash)">#</text>
+  </g>
+  <text x="222" y="178"
+        font-family="JetBrains Mono, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="150"
+        font-weight="800"
+        letter-spacing="0"
+        fill="#c0caf5">erssi</text>
+  <rect x="768" y="188" width="76" height="13" rx="4" fill="#c0caf5"/>
+</svg>

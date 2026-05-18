@@ -56,97 +56,190 @@ typedef enum {
 	TERM_GHOSTTY,
 	TERM_WEZTERM,
 	TERM_RIO,
+	TERM_SUBTERM,
 	/* Sixel protocol */
-	TERM_XTERM,
 	TERM_FOOT,
 	TERM_CONTOUR,
 	TERM_KONSOLE,
 	TERM_MINTTY,
 	TERM_MLTERM,
-	TERM_WINDOWS_TERMINAL
+	TERM_WINDOWS_TERMINAL,
+	/* Known terminal with no native graphics protocol */
+	TERM_ALACRITTY
 } DetectedTerminal;
 
 /* Cached terminal detection result */
-static DetectedTerminal cached_terminal = TERM_UNKNOWN;
-static gboolean terminal_detected = FALSE;
+static DetectedTerminal cached_tmux_terminal = TERM_UNKNOWN;
+static gboolean tmux_terminal_detected = FALSE;
+
+static gboolean str_contains_ci(const char *str, const char *needle)
+{
+	return str != NULL && needle != NULL && strcasestr(str, needle) != NULL;
+}
+
+static DetectedTerminal match_terminal_name(const char *name)
+{
+	if (name == NULL || *name == '\0')
+		return TERM_UNKNOWN;
+
+	if (str_contains_ci(name, "iterm"))
+		return TERM_ITERM2;
+	if (str_contains_ci(name, "ghostty"))
+		return TERM_GHOSTTY;
+	if (str_contains_ci(name, "kitty"))
+		return TERM_KITTY;
+	if (str_contains_ci(name, "subterm"))
+		return TERM_SUBTERM;
+	if (str_contains_ci(name, "wezterm"))
+		return TERM_WEZTERM;
+	if (str_contains_ci(name, "rio"))
+		return TERM_RIO;
+	if (str_contains_ci(name, "foot"))
+		return TERM_FOOT;
+	if (str_contains_ci(name, "contour"))
+		return TERM_CONTOUR;
+	if (str_contains_ci(name, "konsole"))
+		return TERM_KONSOLE;
+	if (str_contains_ci(name, "mintty"))
+		return TERM_MINTTY;
+	if (str_contains_ci(name, "mlterm"))
+		return TERM_MLTERM;
+
+	return TERM_UNKNOWN;
+}
+
+static const char *terminal_name(DetectedTerminal terminal)
+{
+	switch (terminal) {
+	case TERM_ITERM2:           return "iTerm2";
+	case TERM_KITTY:            return "Kitty";
+	case TERM_GHOSTTY:          return "Ghostty";
+	case TERM_WEZTERM:          return "WezTerm";
+	case TERM_RIO:              return "Rio";
+	case TERM_SUBTERM:          return "Subterm";
+	case TERM_FOOT:             return "foot";
+	case TERM_CONTOUR:          return "Contour";
+	case TERM_KONSOLE:          return "Konsole";
+	case TERM_MINTTY:           return "mintty";
+	case TERM_MLTERM:           return "mlterm";
+	case TERM_WINDOWS_TERMINAL: return "Windows Terminal";
+	case TERM_ALACRITTY:        return "Alacritty";
+	default:                    return "unknown";
+	}
+}
+
+static gboolean terminal_to_pixel_mode(DetectedTerminal terminal,
+                                       ChafaPixelMode *pixel_mode)
+{
+	switch (terminal) {
+	case TERM_ITERM2:
+	case TERM_WEZTERM:
+		*pixel_mode = CHAFA_PIXEL_MODE_ITERM2;
+		return TRUE;
+	case TERM_KITTY:
+	case TERM_GHOSTTY:
+	case TERM_RIO:
+	case TERM_SUBTERM:
+		*pixel_mode = CHAFA_PIXEL_MODE_KITTY;
+		return TRUE;
+	case TERM_FOOT:
+	case TERM_CONTOUR:
+	case TERM_KONSOLE:
+	case TERM_MINTTY:
+	case TERM_MLTERM:
+	case TERM_WINDOWS_TERMINAL:
+		*pixel_mode = CHAFA_PIXEL_MODE_SIXELS;
+		return TRUE;
+	case TERM_ALACRITTY:
+		*pixel_mode = CHAFA_PIXEL_MODE_SYMBOLS;
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static gboolean env_is_set(const char *name)
+{
+	const char *value = g_getenv(name);
+	return value != NULL && *value != '\0';
+}
+
+static char *tmux_query_raw(const char *format)
+{
+	FILE *fp;
+	char cmd[128];
+	char buf[256];
+	char *result = NULL;
+
+	g_snprintf(cmd, sizeof(cmd), "tmux display-message -p '%s' 2>/dev/null", format);
+	fp = popen(cmd, "r");
+	if (fp == NULL)
+		return NULL;
+
+	if (fgets(buf, sizeof(buf), fp) != NULL) {
+		g_strchomp(buf);
+		if (*buf != '\0')
+			result = g_strdup(buf);
+	}
+
+	pclose(fp);
+	return result;
+}
 
 /*
  * Query terminal type via tmux's client_termname variable.
  * Uses 'tmux display-message -p' which knows the real outer terminal.
  * Returns detected terminal type or TERM_UNKNOWN on failure.
  */
-static DetectedTerminal query_terminal_type(void)
+static DetectedTerminal detect_via_tmux(void)
 {
-	FILE *fp;
-	char buf[256];
+	char *termtype, *termname;
 	DetectedTerminal result = TERM_UNKNOWN;
 
 	/* Return cached result if already detected */
-	if (terminal_detected) {
-		return cached_terminal;
+	if (tmux_terminal_detected) {
+		return cached_tmux_terminal;
 	}
 
 	image_preview_debug_print("QUERY: Querying tmux for client terminal");
 
-	/* Query tmux for client's terminal name */
-	fp = popen("tmux display-message -p '#{client_termname}' 2>/dev/null", "r");
-	if (fp == NULL) {
-		image_preview_debug_print("QUERY: Failed to run tmux command");
+	termtype = tmux_query_raw("#{client_termtype}");
+	termname = tmux_query_raw("#{client_termname}");
+
+	image_preview_debug_print("QUERY: tmux client_termtype: %s",
+	                          termtype != NULL ? termtype : "(none)");
+	image_preview_debug_print("QUERY: tmux client_termname: %s",
+	                          termname != NULL ? termname : "(none)");
+
+	result = match_terminal_name(termtype);
+	if (result != TERM_UNKNOWN) {
+		image_preview_debug_print("QUERY: Detected %s from client_termtype",
+		                          terminal_name(result));
 		goto cache_result;
 	}
 
-	if (fgets(buf, sizeof(buf), fp) != NULL) {
-		/* Remove trailing newline */
-		size_t len = strlen(buf);
-		if (len > 0 && buf[len - 1] == '\n')
-			buf[len - 1] = '\0';
-
-		image_preview_debug_print("QUERY: tmux client_termname: %s", buf);
-
-		/* Match terminal name to type */
-		if (strcasestr(buf, "iterm") != NULL) {
-			result = TERM_ITERM2;
-			image_preview_debug_print("QUERY: Detected iTerm2");
-		} else if (strcasestr(buf, "kitty") != NULL) {
-			result = TERM_KITTY;
-			image_preview_debug_print("QUERY: Detected Kitty");
-		} else if (strcasestr(buf, "ghostty") != NULL) {
-			result = TERM_GHOSTTY;
-			image_preview_debug_print("QUERY: Detected Ghostty");
-		} else if (strcasestr(buf, "wezterm") != NULL) {
-			result = TERM_WEZTERM;
-			image_preview_debug_print("QUERY: Detected WezTerm");
-		} else if (strcasestr(buf, "rio") != NULL) {
-			result = TERM_RIO;
-			image_preview_debug_print("QUERY: Detected Rio");
-		} else if (strcasestr(buf, "foot") != NULL) {
-			result = TERM_FOOT;
-			image_preview_debug_print("QUERY: Detected foot");
-		} else if (strcasestr(buf, "contour") != NULL) {
-			result = TERM_CONTOUR;
-			image_preview_debug_print("QUERY: Detected Contour");
-		} else if (strcasestr(buf, "konsole") != NULL) {
-			result = TERM_KONSOLE;
-			image_preview_debug_print("QUERY: Detected Konsole");
-		} else if (strcasestr(buf, "mintty") != NULL) {
-			result = TERM_MINTTY;
-			image_preview_debug_print("QUERY: Detected mintty");
-		} else if (strcasestr(buf, "mlterm") != NULL) {
-			result = TERM_MLTERM;
-			image_preview_debug_print("QUERY: Detected mlterm");
-		} else if (strcasestr(buf, "xterm") != NULL) {
-			result = TERM_XTERM;
-			image_preview_debug_print("QUERY: Detected xterm");
-		} else {
-			image_preview_debug_print("QUERY: Unknown terminal: %s", buf);
-		}
+	result = match_terminal_name(termname);
+	if (result != TERM_UNKNOWN) {
+		image_preview_debug_print("QUERY: Detected %s from client_termname",
+		                          terminal_name(result));
+		goto cache_result;
 	}
-	pclose(fp);
+
+	/* Alacritty under tmux reports a generic xterm termtype and an empty
+	 * termname. It has no native image protocol, so use symbol fallback. */
+	if (termtype != NULL && g_str_has_prefix(termtype, "xterm") &&
+	    (termname == NULL || *termname == '\0')) {
+		result = TERM_ALACRITTY;
+		image_preview_debug_print("QUERY: Detected Alacritty heuristic");
+	}
 
 cache_result:
 	/* Cache the result */
-	cached_terminal = result;
-	terminal_detected = TRUE;
+	cached_tmux_terminal = result;
+	tmux_terminal_detected = TRUE;
+
+	g_free(termtype);
+	g_free(termname);
 
 	return result;
 }
@@ -154,97 +247,86 @@ cache_result:
 /* Detect best pixel mode based on terminal */
 static ChafaPixelMode detect_pixel_mode(void)
 {
-	const char *env_term_program, *env_kitty_pid, *env_ghostty;
-	const char *env_term, *env_tmux, *env_wt_session;
+	const char *env_term_program, *env_lc_terminal;
+	const char *env_term, *env_tmux;
 	DetectedTerminal queried;
+	DetectedTerminal env_terminal;
+	ChafaPixelMode pixel_mode;
 
 	/* Check if we're in tmux - if so, query the real terminal */
 	env_tmux = g_getenv("TMUX");
 	if (env_tmux && *env_tmux) {
 		image_preview_debug_print("CHAFA: In tmux, querying real terminal");
-		queried = query_terminal_type();
+		queried = detect_via_tmux();
 
-		if (queried != TERM_UNKNOWN) {
-			switch (queried) {
-			/* iTerm2 protocol */
-			case TERM_ITERM2:
-				image_preview_debug_print("CHAFA: Using iTerm2 mode (queried)");
-				return CHAFA_PIXEL_MODE_ITERM2;
-			/* Kitty graphics protocol */
-			case TERM_KITTY:
-			case TERM_GHOSTTY:
-			case TERM_WEZTERM:
-			case TERM_RIO:
-				image_preview_debug_print("CHAFA: Using Kitty mode (queried)");
-				return CHAFA_PIXEL_MODE_KITTY;
-			/* Sixel protocol */
-			case TERM_FOOT:
-			case TERM_XTERM:
-			case TERM_CONTOUR:
-			case TERM_KONSOLE:
-			case TERM_MINTTY:
-			case TERM_MLTERM:
-			case TERM_WINDOWS_TERMINAL:
-				image_preview_debug_print("CHAFA: Using Sixel mode (queried)");
-				return CHAFA_PIXEL_MODE_SIXELS;
-			default:
-				break;
-			}
+		if (terminal_to_pixel_mode(queried, &pixel_mode)) {
+			image_preview_debug_print("CHAFA: Using %s mode (tmux query: %s)",
+			                          pixel_mode == CHAFA_PIXEL_MODE_ITERM2 ? "iTerm2" :
+			                          pixel_mode == CHAFA_PIXEL_MODE_KITTY ? "Kitty" :
+			                          pixel_mode == CHAFA_PIXEL_MODE_SIXELS ? "Sixel" : "Symbols",
+			                          terminal_name(queried));
+			return pixel_mode;
 		}
 		/* Query failed or unknown - fall through to env detection */
 		image_preview_debug_print("CHAFA: Query failed, falling back to env vars");
 	}
 
-	/* Fallback to environment variable detection (for non-tmux or query failure) */
+	/* Fallback to environment variable detection (for non-tmux or query failure).
+	 * This mirrors repartee's direct-terminal detection path. */
+	env_lc_terminal = g_getenv("LC_TERMINAL");
 	env_term_program = g_getenv("TERM_PROGRAM");
-	env_kitty_pid = g_getenv("KITTY_PID");
-	env_ghostty = g_getenv("GHOSTTY_RESOURCES_DIR");
 	env_term = g_getenv("TERM");
-	env_wt_session = g_getenv("WT_SESSION");
+
+	if (env_lc_terminal && *env_lc_terminal) {
+		env_terminal = match_terminal_name(env_lc_terminal);
+		if (terminal_to_pixel_mode(env_terminal, &pixel_mode)) {
+			image_preview_debug_print("CHAFA: Detected %s (env LC_TERMINAL)",
+			                          terminal_name(env_terminal));
+			return pixel_mode;
+		}
+	}
+
+	if (env_is_set("ITERM_SESSION_ID")) {
+		image_preview_debug_print("CHAFA: Detected iTerm2 (env ITERM_SESSION_ID)");
+		return CHAFA_PIXEL_MODE_ITERM2;
+	}
+
+	if (env_is_set("GHOSTTY_RESOURCES_DIR")) {
+		image_preview_debug_print("CHAFA: Detected Ghostty (env GHOSTTY_RESOURCES_DIR)");
+		return CHAFA_PIXEL_MODE_KITTY;
+	}
+
+	if (env_is_set("KITTY_PID")) {
+		image_preview_debug_print("CHAFA: Detected Kitty terminal (env KITTY_PID)");
+		return CHAFA_PIXEL_MODE_KITTY;
+	}
+
+	if (env_is_set("WEZTERM_EXECUTABLE")) {
+		image_preview_debug_print("CHAFA: Detected WezTerm (env WEZTERM_EXECUTABLE)");
+		return CHAFA_PIXEL_MODE_ITERM2;
+	}
 
 	/* Windows Terminal (doesn't respond to XTVERSION, detect via WT_SESSION) */
-	if (env_wt_session && *env_wt_session) {
+	if (env_is_set("WT_SESSION")) {
 		image_preview_debug_print("CHAFA: Detected Windows Terminal (env WT_SESSION)");
 		return CHAFA_PIXEL_MODE_SIXELS;
 	}
 
-	/* Kitty */
-	if (env_kitty_pid && *env_kitty_pid) {
-		image_preview_debug_print("CHAFA: Detected Kitty terminal (env)");
-		return CHAFA_PIXEL_MODE_KITTY;
+	if (!(env_tmux && *env_tmux) && env_term_program && *env_term_program &&
+	    g_strcmp0(env_term_program, "tmux") != 0) {
+		env_terminal = match_terminal_name(env_term_program);
+		if (terminal_to_pixel_mode(env_terminal, &pixel_mode)) {
+			image_preview_debug_print("CHAFA: Detected %s (env TERM_PROGRAM)",
+			                          terminal_name(env_terminal));
+			return pixel_mode;
+		}
 	}
 
-	/* Ghostty (uses Kitty protocol) */
-	if (env_ghostty && *env_ghostty) {
-		image_preview_debug_print("CHAFA: Detected Ghostty terminal (env)");
-		return CHAFA_PIXEL_MODE_KITTY;
-	}
-
-	/* WezTerm */
-	if (env_term_program && g_strcmp0(env_term_program, "WezTerm") == 0) {
-		image_preview_debug_print("CHAFA: Detected WezTerm terminal (env)");
-		return CHAFA_PIXEL_MODE_KITTY;
-	}
-
-	/* iTerm2 */
-	if (env_term_program && g_strcmp0(env_term_program, "iTerm.app") == 0) {
-		image_preview_debug_print("CHAFA: Detected iTerm2 terminal (env)");
-		return CHAFA_PIXEL_MODE_ITERM2;
-	}
-
-	/* mintty (Cygwin/MSYS2/WSL terminal) */
-	if (env_term_program && g_strcmp0(env_term_program, "mintty") == 0) {
-		image_preview_debug_print("CHAFA: Detected mintty terminal (env)");
-		return CHAFA_PIXEL_MODE_SIXELS;
-	}
-
-	/* xterm/foot/mlterm/contour - try sixel */
-	if (env_term && (g_str_has_prefix(env_term, "xterm") ||
-	                 g_str_has_prefix(env_term, "foot") ||
-	                 g_str_has_prefix(env_term, "mlterm") ||
-	                 g_str_has_prefix(env_term, "contour"))) {
-		image_preview_debug_print("CHAFA: Detected sixel-capable terminal (env)");
-		return CHAFA_PIXEL_MODE_SIXELS;
+	env_terminal = match_terminal_name(env_term);
+	if (terminal_to_pixel_mode(env_terminal, &pixel_mode)) {
+		image_preview_debug_print("CHAFA: Detected %s (env TERM)",
+		                          terminal_name(env_terminal));
+		return pixel_mode;
 	}
 
 	/* Fallback to symbols */

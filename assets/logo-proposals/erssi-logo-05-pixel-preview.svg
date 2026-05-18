@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">erssi logo proposal 05 - compact mono fire hash</title>
+  <desc id="desc">A compact lowercase #erssi wordmark with a simple flame above the hash.</desc>
+  <defs>
+    <linearGradient id="fire" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff5b8"/>
+      <stop offset="0.35" stop-color="#ffba08"/>
+      <stop offset="0.75" stop-color="#f48c06"/>
+      <stop offset="1" stop-color="#d00000"/>
+    </linearGradient>
+  </defs>
+  <rect width="920" height="240" fill="#f7f3ea"/>
+  <g transform="translate(58 27)">
+    <path d="M78 74c-13-26 8-42 6-70 28 23 22 45 37 66 7-18 3-36-7-55 38 28 44 64 28 95 14-8 23-21 27-40 21 34 7 76-25 99-30 22-78 22-108 0-31-23-32-65-7-94 1 21 10 37 28 47-7-19 0-35 21-48z" fill="url(#fire)"/>
+    <text x="0" y="180"
+          font-family="Avenir Next, Inter, Helvetica Neue, Arial, sans-serif"
+          font-size="166"
+          font-weight="900"
+          letter-spacing="0"
+          fill="#111111">#</text>
+  </g>
+  <text x="218" y="174"
+        font-family="Avenir Next, Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="140"
+        font-weight="800"
+        letter-spacing="0"
+        fill="#111111">erssi</text>
+  <path d="M224 196h506" stroke="#d00000" stroke-width="7" stroke-linecap="round"/>
+</svg>

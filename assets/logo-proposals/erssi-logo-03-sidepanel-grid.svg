@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">erssi logo proposal 03 - red fire hash</title>
+  <desc id="desc">A clean #erssi wordmark with a red-orange hash symbol and small flame crown.</desc>
+  <defs>
+    <linearGradient id="hot" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff1a8"/>
+      <stop offset="0.32" stop-color="#ffb703"/>
+      <stop offset="0.68" stop-color="#fb5607"/>
+      <stop offset="1" stop-color="#9d0208"/>
+    </linearGradient>
+  </defs>
+  <rect width="920" height="240" fill="#fafafa"/>
+  <g transform="translate(62 29)">
+    <path d="M35 95c-16-31 16-51 13-80 23 20 18 49 35 69 8-18 7-39-6-61 39 29 45 64 28 96 16-7 27-20 32-40 22 35 4 75-28 94-31 18-70 17-98-5-28-22-25-58-7-83 3 21 14 35 31 44-8-13-9-24 0-34z" fill="url(#hot)"/>
+    <text x="0" y="181"
+          font-family="Inter, Helvetica Neue, Arial, sans-serif"
+          font-size="170"
+          font-weight="900"
+          letter-spacing="0"
+          fill="#e63900">#</text>
+  </g>
+  <text x="214" y="174"
+        font-family="Inter, Helvetica Neue, Arial, sans-serif"
+        font-size="142"
+        font-weight="800"
+        letter-spacing="0"
+        fill="#111111">erssi</text>
+</svg>
