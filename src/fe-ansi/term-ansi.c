@@ -17,6 +17,7 @@
 #include <irssi/src/fe-ansi/mainwindows.h>
 #include <irssi/src/core/utf8.h>
 #include <irssi/src/fe-ansi/resize-debug.h>
+#include <irssi/src/fe-common/core/fe-windows.h>
 
 #include "term-ansi.h"
 
@@ -498,6 +499,14 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 		term->caps.protocol = GFX_SIXEL;
 	}
 
+	/* GNU Screen between erssi and the terminal: screen 4 drops 24-bit
+	 * color sequences and screen 5 passes them only with "truecolor on",
+	 * which cannot be detected. Use the 256-color palette there
+	 * (term_force_colors trusts the terminal again). */
+	if (term->caps.in_screen) {
+		term->caps.max_colors = 256;
+	}
+
 	/* If in tmux, we can still use graphics via passthrough */
 	if (term->caps.in_tmux && term->caps.protocol != GFX_NONE) {
 		/* Keep the detected protocol, but note we need passthrough */
@@ -508,6 +517,12 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 /* ========================================================================
  * TERM COMMON FUNCTIONS
  * ======================================================================== */
+
+/* 24-bit colors reach the screen: detected, or colors forced by the user */
+static int term_truecolor_capable(void)
+{
+	return force_colors || (ansi_term != NULL && ansi_term->caps.max_colors > 256);
+}
 
 static void read_settings(void)
 {
@@ -535,8 +550,7 @@ static void read_settings(void)
 	term_use_colors = settings_get_bool("colors") &&
 		(force_colors || term_has_colors());
 
-	term_use_colors24 = settings_get_bool("colors_ansi_24bit") &&
-		(force_colors || term_has_colors());
+	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 
 	if (term_use_colors != old_colors || term_use_colors24 != old_colors24)
 		irssi_redraw();
@@ -573,8 +587,10 @@ void term_common_init(void)
 
 	force_colors = FALSE;
 	term_use_colors = term_has_colors() && settings_get_bool("colors");
-	settings_add_bool("lookandfeel", "colors_ansi_24bit", FALSE);
-	term_use_colors24 = term_has_colors() && settings_get_bool("colors_ansi_24bit");
+	/* on: 24-bit colors where the terminal shows them, otherwise the
+	 * nearest of the 256-color palette (as irssi 1.4.5 with it off) */
+	settings_add_bool("lookandfeel", "colors_ansi_24bit", TRUE);
+	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 	read_settings();
 
 	if (g_get_charset(&dummy)) {
@@ -701,7 +717,7 @@ int term_init(void)
 	term_common_init();
 
 	term_use_colors = TRUE;
-	term_use_colors24 = (ansi_term->caps.max_colors > 256);
+	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 
 	return TRUE;
 }
@@ -1014,7 +1030,12 @@ void term_set_color2(TERM_WINDOW *window, int col, unsigned int fgcol24, unsigne
 			term->last_fg = fg;
 			if (fg >> 8) {
 				unsigned int rgb = (term->last_fg == COLOR_BLACK24) ? 0 : term->last_fg >> 8;
-				ansi_set_fg_rgb(term, (rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+				const unsigned char c[] = { rgb >> 16, rgb >> 8, rgb };
+
+				if (term_use_colors24)
+					ansi_set_fg_rgb(term, c[0], c[1], c[2]);
+				else
+					ansi_set_fg(term, color_24bit_256(c));
 			} else {
 				ansi_set_fg(term, term->last_fg);
 			}
@@ -1030,7 +1051,12 @@ void term_set_color2(TERM_WINDOW *window, int col, unsigned int fgcol24, unsigne
 			term->last_bg = bg;
 			if (bg >> 8) {
 				unsigned int rgb = (term->last_bg == COLOR_BLACK24) ? 0 : term->last_bg >> 8;
-				ansi_set_bg_rgb(term, (rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+				const unsigned char c[] = { rgb >> 16, rgb >> 8, rgb };
+
+				if (term_use_colors24)
+					ansi_set_bg_rgb(term, c[0], c[1], c[2]);
+				else
+					ansi_set_bg(term, color_24bit_256(c));
 			} else {
 				ansi_set_bg(term, term->last_bg);
 			}
