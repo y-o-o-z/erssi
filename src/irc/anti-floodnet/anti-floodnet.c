@@ -21,6 +21,7 @@
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/channels.h>
 #include <irssi/src/core/nicklist.h>
+#include <stdarg.h>
 #include <irssi/src/fe-common/core/printtext.h>
 
 /* Function prototypes for component initialization */
@@ -227,6 +228,24 @@ void block_duplicate_message(const char *text, int duration)
     }
 }
 
+/* Status notice in the active window, unless anti_floodnet_notices is OFF.
+ * The notices come from printtext(), not from the server, so /IGNORE and
+ * scripts hooking server events cannot hide them - this setting can. */
+static void floodnet_notice(const char *fmt, ...)
+{
+    va_list args;
+    char *text;
+
+    if (!settings_get_bool("anti_floodnet_notices"))
+        return;
+
+    va_start(args, fmt);
+    text = g_strdup_vprintf(fmt, args);
+    va_end(args);
+    printtext(NULL, NULL, MSGLEVEL_CRAP | MSGLEVEL_NOHILIGHT, "%s", text);
+    g_free(text);
+}
+
 /* Enter flood protection mode */
 void enter_protection_mode(void)
 {
@@ -239,8 +258,7 @@ void enter_protection_mode(void)
         floodnet->last_protection_notice = now;
         floodnet->blocked_since_notice = 0;
 
-        printtext(NULL, NULL, MSGLEVEL_CRAP | MSGLEVEL_NOHILIGHT,
-                 "*** Anti-Floodnet: PROTECTION MODE ACTIVATED - blocking flood");
+        floodnet_notice("*** Anti-Floodnet: PROTECTION MODE ACTIVATED - blocking flood");
     }
 }
 
@@ -252,9 +270,8 @@ void exit_protection_mode(void)
     if (floodnet->in_protection_mode) {
         duration = (int)(time(NULL) - floodnet->protection_started);
         
-        printtext(NULL, NULL, MSGLEVEL_CRAP | MSGLEVEL_NOHILIGHT,
-                 "*** Anti-Floodnet: Protection ended (duration: %ds, blocked: %d messages)",
-                 duration, floodnet->total_messages_blocked);
+        floodnet_notice("*** Anti-Floodnet: Protection ended (duration: %ds, blocked: %d messages)",
+                        duration, floodnet->total_messages_blocked);
 
         floodnet->in_protection_mode = FALSE;
         floodnet->blocked_since_notice = 0;
@@ -276,9 +293,8 @@ void check_protection_status(void)
     if (elapsed >= floodnet->protection_notice_interval) {
         int total_duration = (int)(now - floodnet->protection_started);
         
-        printtext(NULL, NULL, MSGLEVEL_CRAP | MSGLEVEL_NOHILIGHT,
-                 "*** Anti-Floodnet: Still active (%ds elapsed, %d blocked since last notice)",
-                 total_duration, floodnet->blocked_since_notice);
+        floodnet_notice("*** Anti-Floodnet: Still active (%ds elapsed, %d blocked since last notice)",
+                        total_duration, floodnet->blocked_since_notice);
         
         floodnet->last_protection_notice = now;
         floodnet->blocked_since_notice = 0;
@@ -446,6 +462,7 @@ void irc_anti_floodnet_init(void)
     settings_add_int("anti_floodnet", "anti_floodnet_time_window", DEFAULT_TIME_WINDOW);
     settings_add_int("anti_floodnet", "anti_floodnet_nickchange_window", DEFAULT_NICKCHANGE_WINDOW);
     settings_add_int("anti_floodnet", "anti_floodnet_notice_interval", 60);
+    settings_add_bool("anti_floodnet", "anti_floodnet_notices", TRUE);
 
     /* Read settings AFTER they are registered */
     read_settings();
