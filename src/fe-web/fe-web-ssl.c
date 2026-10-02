@@ -367,6 +367,25 @@ int fe_web_ssl_read(FE_WEB_SSL_CHANNEL *ssl_chan, char *buf, int len)
 		return 0; /* Connection closed */
 	}
 
+	/* The client went away without a TLS close_notify (killed process,
+	 * dropped network, WebSocket terminate()). That is an ordinary
+	 * disconnect, not an error worth a line in the Notices window:
+	 * OpenSSL 3 reports it as SSL_R_UNEXPECTED_EOF_WHILE_READING,
+	 * OpenSSL 1.1 as SSL_ERROR_SYSCALL with errno 0, and a reset
+	 * connection gives ECONNRESET. */
+	if (ssl_err == SSL_ERROR_SYSCALL && (errno == 0 || errno == ECONNRESET)) {
+		ERR_clear_error();
+		return 0;
+	}
+
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+	if (ssl_err == SSL_ERROR_SSL &&
+	    ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+		ERR_clear_error();
+		return 0;
+	}
+#endif
+
 	if (ssl_err == SSL_ERROR_SYSCALL) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: SSL_ERROR_SYSCALL - system call error (errno=%d: %s)",
