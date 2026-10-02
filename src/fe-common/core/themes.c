@@ -755,15 +755,14 @@ static void theme_set_format(THEME_REC *theme, MODULE_THEME_REC *rec,
 	}
 }
 
-static void theme_read_formats(THEME_REC *theme, const char *module,
-			       CONFIG_REC *config, MODULE_THEME_REC *rec)
+static void theme_read_format_section(THEME_REC *theme, const char *module,
+				      CONFIG_REC *config, CONFIG_NODE *formats,
+				      const char *section, MODULE_THEME_REC *rec)
 {
 	CONFIG_NODE *node;
 	GSList *tmp;
 
-	node = config_node_traverse(config, "formats", FALSE);
-	if (node == NULL) return;
-	node = config_node_section(config, node, module, -1);
+	node = config_node_section(config, formats, section, -1);
 	if (node == NULL) return;
 
 	for (tmp = node->value; tmp != NULL; tmp = tmp->next) {
@@ -774,6 +773,33 @@ static void theme_read_formats(THEME_REC *theme, const char *module,
 					 node->key, node->value);
 		}
 	}
+}
+
+/* Section of a theme that predates a module rename and still holds that
+ * module's formats. erssi 1.3.0 merged fe-text into fe-ansi, so every theme
+ * written for older erssi keeps its sidepanel/statusbar/lastlog formats
+ * under "fe-text" - without this they were silently ignored. */
+const char *theme_legacy_format_section(const char *module)
+{
+	if (module != NULL && g_strcmp0(module, "fe-ansi") == 0)
+		return "fe-text";
+	return NULL;
+}
+
+static void theme_read_formats(THEME_REC *theme, const char *module,
+			       CONFIG_REC *config, MODULE_THEME_REC *rec)
+{
+	CONFIG_NODE *formats;
+	const char *legacy;
+
+	formats = config_node_traverse(config, "formats", FALSE);
+	if (formats == NULL) return;
+
+	/* legacy section first, so the current one wins when both exist */
+	legacy = theme_legacy_format_section(module);
+	if (legacy != NULL)
+		theme_read_format_section(theme, module, config, formats, legacy, rec);
+	theme_read_format_section(theme, module, config, formats, module, rec);
 }
 
 static void theme_init_module(THEME_REC *theme, const char *module,
