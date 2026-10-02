@@ -13,6 +13,7 @@ to samo co terminal erssi, pod marką **erssi@tahio**.
 | `0004-erssi-journal-history-and-windows.patch` | Historia bez dziur i okna erssi bez kanału (Notices, Mentions, skaner, status sieci) z dziennika `webjournal.pl`. |
 | `0005-erssi-windows-ui.patch` | Okna erssi bez przycisków zamknij/dołącz; linie tekstu bez kolumny nicka. |
 | `0006-fe-web-close-handshake.patch` | Zamknięcie połączenia z fe-web z handshake, bez błędów SSL w erssi przy restarcie. |
+| `0007-erssi-journal-line-order.patch` | Linie wypisane w tej samej milisekundzie zostają w kolejności z erssi. |
 
 ## 0001 — Recent mentions
 
@@ -58,8 +59,12 @@ każde okno erssi do `~/.erssi/journal/` (JSONL). `server/erssiJournal.ts`:
 - katalog dziennika: `ERSSI_JOURNAL_DIR`, domyślnie `~/.erssi/journal`; bez
   dziennika Nexus działa jak dotąd.
 
+Baza Nexusa sortuje po czasie w pełnych milisekundach, więc czasy wpisów
+jednego pliku są ściśle rosnące (remis = poprzedni + 1 ms, łatka 0007) —
+inaczej np. błąd i jego dalszy ciąg zamieniały się miejscami.
+
 Testy: `test/tests/erssiJournal.ts` (kodowanie nazw jak w skrypcie,
-deduplikacja, rotacja, linia ucięta w środku znaku UTF-8).
+deduplikacja, kolejność, rotacja, linia ucięta w środku znaku UTF-8).
 
 ## 0006 — zamknięcie połączenia
 
