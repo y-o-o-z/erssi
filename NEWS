@@ -1,3 +1,35 @@
+erssi-v1.3.0 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	Fork release 1.3.0+yooz.1 of erssi 1.3.0 (changes: README.md).
+
+	+ Themes
+	  - shellter (colors of shellter.me) is the start theme: one column for
+	    nicks and events, no double-width emoji, start banner
+	  - $nickmode with nick_mode_color_*: @ op, + voice, % halfop, ~ & owner
+	    in rank colors, in messages and in the nick list
+	  - nick_hash_colors accepts 24-bit colors; a "fe-text" section in old
+	    themes is read again
+
+	+ fe-web
+	  - a command may name its target window item ("target"): /e2e, /topic,
+	    /kick typed in a web channel window work on that channel
+	  - commands for an unknown server tag are dropped, not run elsewhere
+	  - Close frames are answered (RFC 6455); a vanished TLS client is an
+	    ordinary disconnect; only fe-web settings restart the server
+	  - is_highlight computed like the terminal
+
+	+ Core / UI
+	  - WHOIS and WHOWAS in the network's status window
+	    (print_whois_rpl_in_server_window)
+	  - no g_debug with the text of every sent line (recode)
+	  - sidepanels: names cut with an ellipsis, scroll arrows outside the
+	    nick text, the Notices window keeps other windows' identity
+	  - anti_floodnet_notices
+
+	+ Scripts (installed, not autoloaded)
+	  - tk.pl (TKLINE for IRCnet operators), skaner.pl (clones and IRC
+	    operators on a channel), mentions.pl (Mentions window and log),
+	    webjournal.pl (journal of every window for a web client)
+
 erssi-v1.3.0 2026-03-24  erssi-org team <https://github.com/erssi-org>
 	Lead Developer: Jerzy (kofany) Dąbrowski <https://github.com/kofany>
 	https://erssi.org && https://erssi.dev
