@@ -25,6 +25,7 @@
 */
 
 #include "module.h"
+#include <irssi/src/fe-common/core/fe-expandos.h>
 #include <irssi/src/core/expandos.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include <irssi/src/core/settings.h>
@@ -210,31 +211,62 @@ static void free_channel_color_context(channel_color_context *ctx)
 	}
 }
 
-static gchar** parse_color_palette(const char *colors_str, int *count)
+/* Normalize one nick_hash_colors entry to the code that follows '%' in a
+ * format string, or NULL when it is not a colour. Accepted forms:
+ *   g  G  %G           - the 16 classic colours (krgybmcw / KRGYBMCW)
+ *   #f59e0b  Zf59e0b   - 24-bit foreground (written as %Zf59e0b)
+ *   %Zf59e0b
+ */
+char *nick_palette_entry_normalize(const char *entry)
 {
-	gchar **colors;
-	int valid_count;
-	
-	colors = g_strsplit(colors_str, " ", -1);
-	valid_count = 0;
-	
-	/* Count valid colors */
-	for (int i = 0; colors[i]; i++) {
-		if (strlen(colors[i]) == 1 && strchr("krgybmcwKRGYBMCW", colors[i][0])) {
-			valid_count++;
+	const char *p = entry;
+	int i;
+
+	if (p == NULL)
+		return NULL;
+	if (*p == '%')
+		p++;
+	if (strlen(p) == 1 && strchr("krgybmcwKRGYBMCW", *p) != NULL)
+		return g_strdup(p);
+	if ((*p == '#' || *p == 'Z') && strlen(p) == 7) {
+		for (i = 1; i < 7; i++) {
+			if (!g_ascii_isxdigit(p[i]))
+				return NULL;
 		}
+		return g_strdup_printf("Z%s", p + 1);
 	}
-	
-	/* If no valid colors, use default palette */
-	if (valid_count == 0) {
-		g_strfreev(colors);
-		colors = g_strsplit("g r b m c y G C", " ", -1);
+	return NULL;
+}
+
+/* Parse nick_hash_colors into a NULL-terminated array holding ONLY valid,
+ * normalized entries, so palette[index] is always a usable colour for every
+ * index < *count. (Previously the array kept invalid tokens and empty
+ * strings from double spaces while *count counted only valid ones, so a
+ * hash could land on junk.) Falls back to the default palette. */
+gchar **parse_color_palette(const char *colors_str, int *count)
+{
+	GPtrArray *valid;
+	gchar **tokens;
+	int i;
+
+	valid = g_ptr_array_new();
+	tokens = g_strsplit(colors_str != NULL ? colors_str : "", " ", -1);
+	for (i = 0; tokens[i] != NULL; i++) {
+		char *code = nick_palette_entry_normalize(tokens[i]);
+		if (code != NULL)
+			g_ptr_array_add(valid, code);
+	}
+	g_strfreev(tokens);
+
+	if (valid->len == 0) {
+		g_ptr_array_free(valid, TRUE);
 		*count = 8;
-	} else {
-		*count = valid_count;
+		return g_strsplit("g r b m c y G C", " ", -1);
 	}
-	
-	return colors;
+
+	*count = valid->len;
+	g_ptr_array_add(valid, NULL);
+	return (gchar **) g_ptr_array_free(valid, FALSE);
 }
 
 static int hash_nick_to_color_index(const char *nick, const char *channel_key, int palette_size)
