@@ -41,7 +41,7 @@ erssi 1.3.2 (20261002 1302)
 | `fe-text` section in themes | Themes written before 1.3.0 keep their sidepanel and statusbar formats. |
 | Sidepanel names cut with `…` | Long names (`#bash.org.pl`) are no longer chopped mid-word by the border; scroll arrows sit outside the nick text. |
 | Notices window keeps other windows | A script that creates its window at startup (e.g. *Mentions*) no longer loses it to the Notices window. |
-| Quiet network windows, tidy `/NAMES` | Network windows no longer start with three lines of `/WINDOW` output; the `/NAMES` table has no trailing padding, which wrapped into blank lines after a terminal resize. |
+| Quiet network windows, tidy `/NAMES` | Network windows no longer start with three lines of `/WINDOW` output, and their lines carry no server tag (the Notices window keeps tags); the `/NAMES` table has no trailing padding, which wrapped into blank lines after a terminal resize. |
 
 **Behaviour**
 
@@ -103,8 +103,10 @@ irssi.
 ```
 
 **Terminals and multiplexers.** 24-bit colors are used when the terminal
-announces them (`COLORTERM=truecolor`, kitty, Ghostty, WezTerm, iTerm2) and in
-tmux; everywhere else the 256-color palette. In **GNU Screen** (4.x and 5.x)
+announces them (`COLORTERM=truecolor` or `24bit`, kitty, Ghostty, WezTerm,
+iTerm2), everywhere else the 256-color palette. In tmux start erssi with
+`COLORTERM=truecolor` and enable RGB in tmux
+(`set -as terminal-features ',*:RGB'`). In **GNU Screen** (4.x and 5.x)
 erssi uses the 256-color palette, because screen drops 24-bit color codes
 unless screen 5 runs with `truecolor on`; then `/set term_force_colors on`
 switches erssi to 24-bit colors. Tested in GNU Screen 4.09 and 5.0.1 and in
