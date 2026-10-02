@@ -49,6 +49,7 @@ erssi 1.3.2 (20261002 1302)
 | WHOIS/WHOWAS in the network window (`print_whois_rpl_in_server_window`, on) | Replies go to the status window of the network that asked (IRCnet, IRCnet2), not into the channel you are reading. |
 | `anti_floodnet_notices` | Anti-Floodnet messages are local prints that `/ignore` cannot hide; this setting can. |
 | No `g_debug` in recode | Every sent line used to show up as `GLib default debug: recode_out: …` in Notices. |
+| 256-color fallback for 24-bit colors | erssi's new terminal backend always sent 24-bit color codes; GNU Screen and terminals without truecolor showed the theme without colors. Now, as in irssi 1.4.5, they get the nearest 256-color palette entry. |
 
 **fe-web** (WebSocket server for browser clients)
 
@@ -97,7 +98,16 @@ irssi.
 /set nick_mode_color_voice %Z79C0FF%_     # rank colors (owner, op, halfop, voice, normal)
 /set print_whois_rpl_in_server_window on  # off: WHOIS in the active window, as upstream
 /set anti_floodnet_notices off            # hide Anti-Floodnet messages
+/set colors_ansi_24bit on                 # default: 24-bit where detected, else 256 colors
 ```
+
+**Terminals and multiplexers.** 24-bit colors are used when the terminal
+announces them (`COLORTERM=truecolor`, kitty, Ghostty, WezTerm, iTerm2) and in
+tmux; everywhere else the 256-color palette. In **GNU Screen** (4.x and 5.x)
+erssi uses the 256-color palette, because screen drops 24-bit color codes
+unless screen 5 runs with `truecolor on`; then `/set term_force_colors on`
+switches erssi to 24-bit colors. Tested in GNU Screen 4.09 and 5.0.1 and in
+tmux 3.5.
 
 ## Web client
 
