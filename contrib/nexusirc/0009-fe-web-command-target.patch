@@ -1,0 +1,69 @@
+From 8b704f1b87d406748347483c861c1db752f4dfcf Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 18:16:50 +0200
+Subject: [PATCH] local: commands typed in a channel or query carry it as the
+ fe-web target
+
+fe-web ran web commands without a window item, so /e2e on (rpe2e.pl), /topic
+or /kick without a channel answered 'not in a channel'. The command message
+now names the channel/query (y-o-o-z/erssi feat(fe-web) runs it in that
+item's context; older fe-web ignores the field).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ server/feWebClient/feWebSocket.ts |  9 ++++++++-
+ server/irssiClient.ts             | 11 ++++++++++-
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/server/feWebClient/feWebSocket.ts b/server/feWebClient/feWebSocket.ts
+index 133935e7..94e83276 100644
+--- a/server/feWebClient/feWebSocket.ts
++++ b/server/feWebClient/feWebSocket.ts
+@@ -475,7 +475,7 @@ export class FeWebSocket extends EventEmitter {
+ 	 *
+ 	 * This method automatically adds "/" prefix if not present.
+ 	 */
+-	executeCommand(command: string, server?: string): void {
++	executeCommand(command: string, server?: string, target?: string): void {
+ 		// Ensure command starts with /
+ 		if (!command.startsWith("/")) {
+ 			command = "/" + command;
+@@ -496,6 +496,13 @@ export class FeWebSocket extends EventEmitter {
+ 			msg.server = server;
+ 		}
+ 
++		// Channel/query the command was typed in: erssi (y-o-o-z fork) runs it
++		// in that window item's context, like typing it in its window in the
++		// terminal; an fe-web without this ignores the field.
++		if (server && target) {
++			msg.target = target;
++		}
++
+ 		this.send(msg);
+ 	}
+ 
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index 7c5a4c79..6aafaa62 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -813,7 +813,16 @@ export class IrssiClient {
+ 				// Use translated command if available, otherwise use original
+ 				const finalCommand = translated || line.substring(1);
+ 
+-				await this.irssiConnection.executeCommand(finalCommand, network.serverTag);
++				// typed in a channel or query: run it in that window item's context
++				const commandTarget =
++					channel.type === ChanType.CHANNEL || channel.type === ChanType.QUERY
++						? channel.name
++						: undefined;
++				await this.irssiConnection.executeCommand(
++					finalCommand,
++					network.serverTag,
++					commandTarget
++				);
+ 				logger.debug(
+ 					`User ${chalk.bold(this.name)}: sent command: /${finalCommand} on ${
+ 						network.serverTag
+-- 
+2.47.3
+
