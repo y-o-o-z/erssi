@@ -18,6 +18,13 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    ordinary disconnect; only fe-web settings restart the server
 	  - is_highlight computed like the terminal
 
+	+ Terminal
+	  - 24-bit theme colors fall back to the nearest 256-color palette entry
+	    where the terminal cannot show them, as irssi 1.4.5 does: GNU Screen
+	    4 and 5, terminals without COLORTERM=truecolor. colors_ansi_24bit
+	    (now on by default) uses 24-bit colors where they are detected;
+	    term_force_colors trusts the terminal (screen 5 "truecolor on")
+
 	+ Core / UI
 	  - WHOIS and WHOWAS in the network's status window
 	    (print_whois_rpl_in_server_window)
