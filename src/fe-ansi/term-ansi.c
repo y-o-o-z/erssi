@@ -431,6 +431,17 @@ const char *ansi_graphics_protocol_name(GraphicsProtocol proto)
 	}
 }
 
+static int ansi_term_lacks_truecolor(const char *term, const char *program)
+{
+	if (term == NULL || *term == '\0' || g_strcmp0(term, "dumb") == 0 ||
+	    g_strcmp0(term, "linux") == 0 || g_strcmp0(term, "ansi") == 0 ||
+	    g_str_has_prefix(term, "vt") || g_str_has_suffix(term, "-8color") ||
+	    g_str_has_suffix(term, "-16color") || g_str_has_suffix(term, "-mono") ||
+	    g_str_has_suffix(term, "-m"))
+		return TRUE;
+	return g_strcmp0(program, "Apple_Terminal") == 0;
+}
+
 void ansi_detect_capabilities(ANSI_TERM *term)
 {
 	const char *env_term, *env_colorterm, *env_term_program;
@@ -499,10 +510,17 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 		term->caps.protocol = GFX_SIXEL;
 	}
 
-	/* GNU Screen between erssi and the terminal: screen 4 drops 24-bit
-	 * color sequences and screen 5 passes them only with "truecolor on",
-	 * which cannot be detected. Use the 256-color palette there
-	 * (term_force_colors trusts the terminal again). */
+	/* 24-bit color is assumed, as erssi always sent it: ssh does not
+	 * forward COLORTERM, so most capable terminals cannot announce it.
+	 * The 256-color palette only where something is known not to show
+	 * 24-bit color: GNU Screen anywhere in between (screen 4 drops the
+	 * codes, screen 5 passes them only with "truecolor on", which cannot
+	 * be detected), the Linux console, 8/16-color or mono terminals,
+	 * Apple Terminal without COLORTERM. term_truecolor overrides this. */
+	if (term->caps.max_colors <= 256 &&
+	    !ansi_term_lacks_truecolor(env_term, env_term_program)) {
+		term->caps.max_colors = 16777216;
+	}
 	if (term->caps.in_screen) {
 		term->caps.max_colors = 256;
 	}
@@ -518,10 +536,17 @@ void ansi_detect_capabilities(ANSI_TERM *term)
  * TERM COMMON FUNCTIONS
  * ======================================================================== */
 
-/* 24-bit colors reach the screen: detected, or colors forced by the user */
+/* 24-bit colors reach the screen: term_truecolor auto (detected), on, off */
 static int term_truecolor_capable(void)
 {
-	return force_colors || (ansi_term != NULL && ansi_term->caps.max_colors > 256);
+	switch (settings_get_choice("term_truecolor")) {
+	case 1:
+		return TRUE;
+	case 2:
+		return FALSE;
+	default:
+		return ansi_term != NULL && ansi_term->caps.max_colors > 256;
+	}
 }
 
 static void read_settings(void)
@@ -590,6 +615,7 @@ void term_common_init(void)
 	/* on: 24-bit colors where the terminal shows them, otherwise the
 	 * nearest of the 256-color palette (as irssi 1.4.5 with it off) */
 	settings_add_bool("lookandfeel", "colors_ansi_24bit", TRUE);
+	settings_add_choice("lookandfeel", "term_truecolor", 0, "auto;on;off");
 	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 	read_settings();
 
