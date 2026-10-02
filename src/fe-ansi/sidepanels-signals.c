@@ -137,36 +137,36 @@ void initialize_notices_window(void)
 	        window1->immortal ? "yes" : "no");
 }
 
-/* Helper function to create server separator window */
+/* Helper function to create server separator window.
+   Through the window API, not /WINDOW commands: each of those printed a
+   line into the new window at every connect ("Window level is now ...",
+   "Window's server set sticky", "Changed to ... server"). */
 static void create_server_separator_window(const char *server_tag)
 {
-	char *cmd;
-	
+	SERVER_REC *server;
+	WINDOW_REC *window;
+
 	if (!server_tag)
 		return;
-	
+
+	server = server_find_tag(server_tag);
+	if (server == NULL)
+		return;
+
 	sp_logf("AUTO-SEPARATOR: Creating separator window for server '%s'", server_tag);
-	
-	/* Execute commands separately - irssi needs individual commands */
-	
-	/* 1. Create new hidden window */
-	signal_emit("send command", 3, "/WINDOW NEW HIDE", NULL, NULL);
-	
-	/* 2. Set window name */
-	cmd = g_strdup_printf("/WINDOW NAME %s", server_tag);
-	sp_logf("AUTO-SEPARATOR: Executing: %s", cmd);
-	signal_emit("send command", 3, cmd, NULL, NULL);
-	g_free(cmd);
-	
-	/* 3. Set window level - ALL except client messages and notices (those go to Notices window) */
-	signal_emit("send command", 3, "/WINDOW LEVEL ALL -NOTICES -CLIENTNOTICE -CLIENTCRAP -CLIENTERROR", NULL, NULL);
-	
-	/* 4. Set server sticky */
-	cmd = g_strdup_printf("/WINDOW SERVER -sticky %s", server_tag);
-	sp_logf("AUTO-SEPARATOR: Executing: %s", cmd);
-	signal_emit("send command", 3, cmd, NULL, NULL);
-	g_free(cmd);
-	
+
+	/* the same as /WINDOW NEW HIDE */
+	signal_emit("gui window create override", 1, GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
+	window = window_create(NULL, FALSE);
+	window_change_server(window, server);
+
+	window_set_name(window, server_tag);
+	/* everything except client messages and notices (the Notices window has those) */
+	window_set_level(window, MSGLEVEL_ALL & ~(MSGLEVEL_NOTICES | MSGLEVEL_CLIENTNOTICE |
+	                                          MSGLEVEL_CLIENTCRAP | MSGLEVEL_CLIENTERROR));
+	g_free(window->servertag);
+	window->servertag = g_strdup(server->tag);
+
 	sp_logf("AUTO-SEPARATOR: Separator window creation completed for '%s'", server_tag);
 }
 
