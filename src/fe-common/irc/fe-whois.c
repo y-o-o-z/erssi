@@ -11,12 +11,46 @@
 #include <irssi/src/irc/core/irc-servers.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
+#include <irssi/src/fe-common/core/fe-windows.h>
 
-/* When enabled, prints WHOIS replies into active window while preserving
- * formatting and theming. */
+/* The status window of a network: no channel or query in it, bound to the
+ * server's tag and named like it (erssi creates one per network); otherwise
+ * any item-less window of that server. NULL when there is none. */
+static WINDOW_REC *whois_server_window(IRC_SERVER_REC *server)
+{
+	WINDOW_REC *fallback = NULL;
+	GSList *tmp;
+
+	if (server == NULL || server->tag == NULL)
+		return NULL;
+
+	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
+		WINDOW_REC *win = tmp->data;
+
+		if (win->items != NULL || win->servertag == NULL ||
+		    g_ascii_strcasecmp(win->servertag, server->tag) != 0)
+			continue;
+		if (win->name != NULL && g_ascii_strcasecmp(win->name, server->tag) == 0)
+			return win;
+		if (fallback == NULL)
+			fallback = win;
+	}
+	return fallback;
+}
+
+/* Where WHOIS/WHOWAS replies go, first match wins:
+ *   print_whois_rpl_in_server_window - the network's status window, so a
+ *     /whois typed in a channel does not clutter it,
+ *   print_whois_rpl_in_active_window - the active window,
+ *   otherwise irssi's usual choice (query with the nick, window by level). */
 #define WHOIS_PRINT(server, nick, level, formatnum, ...) \
 	do { \
-		if (settings_get_bool("print_whois_rpl_in_active_window") && active_win != NULL) \
+		WINDOW_REC *whois_window_ = \
+			settings_get_bool("print_whois_rpl_in_server_window") ? \
+			whois_server_window(server) : NULL; \
+		if (whois_window_ != NULL) \
+			printformat_window(whois_window_, level, formatnum, __VA_ARGS__); \
+		else if (settings_get_bool("print_whois_rpl_in_active_window") && active_win != NULL) \
 			printformat_window(active_win, level, formatnum, __VA_ARGS__); \
 		else \
 			printformat(server, nick, level, formatnum, __VA_ARGS__); \
@@ -359,7 +393,7 @@ static void event_whowas(IRC_SERVER_REC *server, const char *data)
 	params = event_get_params(data, 6, NULL, &nick, &user,
 				  &host, NULL, &realname);
 	recoded = recode_in(SERVER(server), realname, nick);
-	printformat(server, nick, MSGLEVEL_CRAP,
+	WHOIS_PRINT(server, nick, MSGLEVEL_CRAP,
 		    IRCTXT_WHOWAS, nick, user, host, recoded);
 	g_free(params);
 	g_free(recoded);
@@ -373,7 +407,7 @@ static void event_end_of_whowas(IRC_SERVER_REC *server, const char *data)
 
 	params = event_get_params(data, 2, NULL, &nick);
 	if (server->whowas_found) {
-		printformat(server, nick, MSGLEVEL_CRAP,
+		WHOIS_PRINT(server, nick, MSGLEVEL_CRAP,
 			    IRCTXT_END_OF_WHOWAS, nick);
 	}
 	g_free(params);
@@ -416,6 +450,7 @@ static void event_whois_default(IRC_SERVER_REC *server, const char *data)
 void fe_whois_init(void)
 {
 	settings_add_bool("lookandfeel", "whois_hide_safe_channel_id", TRUE);
+	settings_add_bool("lookandfeel", "print_whois_rpl_in_server_window", TRUE);
 	settings_add_bool("lookandfeel", "print_whois_rpl_in_active_window", TRUE);
 
 	signal_add("event 311", (SIGNAL_FUNC) event_whois);
