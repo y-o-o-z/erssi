@@ -131,31 +131,40 @@ void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json)
 
 		if (command != NULL) {
 			WI_ITEM_REC *item = NULL;
+			IRC_SERVER_REC *previous = client->server;
+			IRC_SERVER_REC *server = NULL;
 
-			/* If server is specified, use it for this command */
+			/* A command for a named server runs there or not at all: with
+			 * an unknown tag (e.g. while it reconnects) it must not fall
+			 * back to whatever network the client used last. */
 			if (server_tag != NULL) {
-				IRC_SERVER_REC *server;
 				server = IRC_SERVER(server_find_tag(server_tag));
-				if (server != NULL) {
-					/* Temporarily assign server for this command */
-					client->server = server;
+				if (server == NULL) {
+					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+					          "fe-web: server %s not connected - web command dropped",
+					          server_tag);
 				}
 			}
 
-			/* Run the command in that window item's context, as if typed
-			 * in its window in the terminal - without switching windows.
-			 * Commands such as /topic or /kick read the channel
-			 * from the active item. */
-			if (target != NULL && *target != '\0' && client->server != NULL)
-				item = window_item_find(SERVER(client->server), target);
+			if (server_tag == NULL || server != NULL) {
+				/* Assign the server for this command only */
+				if (server != NULL)
+					client->server = server;
 
-			fe_web_client_execute_command(client, command, item);
-			g_free(command);
+				/* Run the command in that window item's context, as if
+				 * typed in its window in the terminal - without switching
+				 * windows. Commands such as /topic or /kick read the
+				 * channel from the active item. window_item_find()
+				 * only looks at items of this server. */
+				if (target != NULL && *target != '\0' && client->server != NULL)
+					item = window_item_find(SERVER(client->server), target);
 
-			if (server_tag != NULL) {
-				g_free(server_tag);
+				fe_web_client_execute_command(client, command, item);
+				client->server = previous;
 			}
 		}
+		g_free(command);
+		g_free(server_tag);
 		g_free(target);
 	} else if (g_strcmp0(type, "ping") == 0) {
 		WEB_MESSAGE_REC *msg;
