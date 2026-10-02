@@ -1,0 +1,57 @@
+From 17403f0e0b9bd8b1341a21c284cfb504d25564a6 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 21:37:48 +0200
+Subject: [PATCH 17/18] local: head polish - document language, pinch zoom,
+ font preload
+
+Three things found while auditing the page from outside.
+
+The document declared lang="en" while the interface is Polish, which misleads
+hyphenation, spell checking and screen readers. It is now "pl".
+
+The viewport carried user-scalable=no, blocking pinch zoom on a phone - an
+accessibility rule broken for years and nothing here depends on it. Replaced
+with initial-scale=1.
+
+Geist and Geist Mono are self-hosted and correct (woff2, font-display: swap,
+latin/latin-ext split with unicode-range so Polish diacritics work and only the
+needed subset downloads), but nothing preloaded them, so the browser discovered
+them only after parsing brand.css and the first paint ran in a fallback face.
+The two faces used from the first frame are preloaded now.
+
+Note on the preload URLs: they deliberately carry no ?v=cacheBust. brand.css
+references the files without a query string, and a preload whose URL differs by
+even a query is a separate resource to the browser - it would download the font
+twice and log "preloaded but not used".
+---
+ client/index.html.tpl | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/client/index.html.tpl b/client/index.html.tpl
+index 8986f144..cc827114 100644
+--- a/client/index.html.tpl
++++ b/client/index.html.tpl
+@@ -1,12 +1,18 @@
+ <!doctype html>
+-<html lang="en">
++<html lang="pl">
+     <head>
+ 
+     <meta charset="utf-8">
+-    <meta name="viewport" content="width=device-width, user-scalable=no">
++    <meta name="viewport" content="width=device-width, initial-scale=1">
+ 
+     <link rel="preload" as="script" href="js/loading-error-handlers.js?v=<%- cacheBust %>">
+     <link rel="modulepreload" href="js/bundle.js?v=<%- cacheBust %>">
++    <!-- Fonty uzywane od pierwszej klatki: bez preload przegladarka odkrywa je
++         dopiero po sparsowaniu brand.css, wiec pierwszy render leci fallbackiem. -->
++    <link rel="preload" as="font" type="font/woff2" crossorigin
++          href="themes/shellter/fonts/geist-latin-400.woff2">
++    <link rel="preload" as="font" type="font/woff2" crossorigin
++          href="themes/shellter/fonts/geist-mono-latin-400-normal.woff2">
+ 
+     <link rel="stylesheet" href="themes/shellter/brand.css?v=<%- cacheBust %>">
+ 
+-- 
+2.47.3
+

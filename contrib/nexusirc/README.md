@@ -16,11 +16,14 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0014 | Sender rank (`@`, `+`) on messages, plain wording of events. |
 | 0015 | Networks that finished connecting before Nexus attached still reach the browser. |
 | 0016 | The message view follows the terminal: sender column as wide as the longest nick in the window, time without brackets, erssi lines with their source in the sender column; shellter polish (readable hover, dark inputs, sentence-case buttons, mIRC colors readable on both backgrounds). |
+| 0017 | Page head: document language, pinch zoom on phones, font preload. |
+| 0018 | The whole interface in Polish (chat, events with Polish plural forms, settings, network manager, help, menus, notifications, server feedback, dates) and one brand, erssi@tahio. |
 
-Patches 0002 and 0003 brand the web client as **erssi@tahio** (logo, icons,
-sign-in texts in Polish). To use your own brand, edit
-`client/components/Sidebar.vue`, `client/components/Windows/SignIn.vue`,
-`client/index.html.tpl` and the icons in `client/img/`.
+Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
+the interface in Polish. For your own brand or language, change the texts in
+`client/components/` (and `client/js/helpers/contextMenu.ts`,
+`client/nexusirc.webmanifest`, `client/index.html.tpl`) and the icons in
+`client/img/`; the series has no i18n layer, texts are inline.
 
 ## Install
 
