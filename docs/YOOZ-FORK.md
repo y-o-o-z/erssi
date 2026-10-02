@@ -13,7 +13,8 @@ wynikającymi z codziennego używania erssi na IRCnet. Gałąź `main` = upstrea
 | `fix(fe-web)`: `is_highlight` jak w terminalu | Web nie oznaczał „hej yooz, …” jako wzmianki bez osobnego `/hilight`; `/me` nigdy. |
 | `feat(anti-floodnet)`: `anti_floodnet_notices` | Komunikaty Anti-Floodnet (lokalne `printtext`) nie dały się ukryć `/ignore` ani skryptem. |
 | `feat(themes)`: motyw `shellter` | Ciemny motyw w barwach shellter.me, kolumna nicków, panele bez urywania nazw. |
-| `docs(contrib)`: łatka NexusIRC „Recent mentions” | Webowy panel wzmianek Nexusa był zawsze pusty dla użytkowników erssi. |
+| `fix(fe-web)`: zerwanie bez TLS close_notify = zwykłe rozłączenie | Każdy restart weba wypisywał w Notices `fe-web-ssl: ... unexpected eof while reading` i `Connection error`. |
+| `docs(contrib)`: łatki NexusIRC (`contrib/nexusirc/`) | Web erssi@tahio: wzmianki, motyw `tahio`, strona logowania, historia bez dziur i okna Notices/Mentions z `webjournal.pl`. |
 
 Testy: `meson test -C Build` (m.in. `tests/fe-common/core/test-nick-palette.c`).
 

@@ -1,0 +1,1516 @@
+From 9aef1045ecee803bc3d1a3e12df99421d8a1b24e Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 17:32:04 +0200
+Subject: [PATCH 4/6] local: erssi journal - history gaps and erssi-only
+ windows from webjournal.pl
+
+webjournal.pl (y-o-o-z/irssi_scripts) writes every erssi window to
+~/.erssi/journal. On init Nexus stores the journal entries its storage is
+missing (Nexus restarts no longer leave holes), shows the network status
+window in the lobby and adds an 'erssi' group with the windows fe-web does
+not carry (Notices, Mentions, script windows), followed live.
+
+Also: theme time column sized for Geist Mono, theme CSS in the cache-bust.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ client/components/Windows/SignIn.vue       | 173 +++++----
+ client/js/loading-error-handlers.js        |   5 +-
+ client/themes/tahio.css                    |  18 +-
+ client/themes/tahio/brand.css              |  12 +-
+ server/erssiJournal.ts                     | 424 +++++++++++++++++++++
+ server/irssiClient.ts                      | 341 ++++++++++++++++-
+ server/plugins/messageStorage/encrypted.ts |  53 +++
+ server/server.ts                           |  10 +-
+ test/tests/erssiJournal.ts                 | 194 ++++++++++
+ 9 files changed, 1123 insertions(+), 107 deletions(-)
+ create mode 100644 server/erssiJournal.ts
+ create mode 100644 test/tests/erssiJournal.ts
+
+diff --git a/client/components/Windows/SignIn.vue b/client/components/Windows/SignIn.vue
+index 69d9b057..20f1e58f 100644
+--- a/client/components/Windows/SignIn.vue
++++ b/client/components/Windows/SignIn.vue
+@@ -3,7 +3,9 @@
+ 		<div class="signin">
+ 			<div class="signin-panel">
+ 				<header class="signin-brand">
+-					<span class="tahio-wordmark">erssi<span class="tahio-wordmark-host">@tahio</span></span>
++					<span class="tahio-wordmark"
++						>erssi<span class="tahio-wordmark-host">@tahio</span></span
++					>
+ 				</header>
+ 
+ 				<main class="signin-main">
+@@ -92,85 +94,6 @@
+ 	</div>
+ </template>
+ 
+-<script lang="ts">
+-import storage from "../../js/localStorage";
+-import socket from "../../js/socket";
+-import {defineComponent, nextTick, onBeforeUnmount, onMounted, ref} from "vue";
+-import ircnetMap from "./ircnet-map.svg?raw";
+-
+-export default defineComponent({
+-	name: "SignIn",
+-	setup() {
+-		const inFlight = ref(false);
+-		const errorShown = ref(false);
+-		const passwordVisible = ref(false);
+-		const capsLock = ref(false);
+-		const passwordInput = ref<HTMLInputElement | null>(null);
+-
+-		const username = ref(storage.get("user") || "");
+-		const password = ref("");
+-
+-		const checkCapsLock = (event: KeyboardEvent) => {
+-			if (typeof event.getModifierState === "function") {
+-				capsLock.value = event.getModifierState("CapsLock");
+-			}
+-		};
+-
+-		const onAuthFailed = () => {
+-			inFlight.value = false;
+-			errorShown.value = true;
+-
+-			// Zle haslo: fokus z powrotem w polu hasla, tresc zaznaczona.
+-			void nextTick(() => {
+-				passwordInput.value?.focus();
+-				passwordInput.value?.select();
+-			});
+-		};
+-
+-		const onSubmit = (event: Event) => {
+-			event.preventDefault();
+-
+-			if (!username.value || !password.value) {
+-				return;
+-			}
+-
+-			inFlight.value = true;
+-			errorShown.value = false;
+-
+-			const values = {
+-				user: username.value,
+-				password: password.value,
+-			};
+-
+-			storage.set("user", values.user);
+-
+-			socket.emit("auth:perform", values);
+-		};
+-
+-		onMounted(() => {
+-			socket.on("auth:failed", onAuthFailed);
+-		});
+-
+-		onBeforeUnmount(() => {
+-			socket.off("auth:failed", onAuthFailed);
+-		});
+-
+-		return {
+-			inFlight,
+-			errorShown,
+-			passwordVisible,
+-			capsLock,
+-			passwordInput,
+-			username,
+-			password,
+-			ircnetMap,
+-			checkCapsLock,
+-			onSubmit,
+-		};
+-	},
+-});
+-</script>
+-
+ <style>
+ /*
+  * Strona logowania erssi@tahio. Wlasne klasy (signin-*, ircmap-*), zeby nie
+@@ -207,7 +130,12 @@ export default defineComponent({
+ 
+ #sign-in,
+ #sign-in * {
+-	font-family: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
++	font-family:
++		"Geist",
++		system-ui,
++		-apple-system,
++		"Segoe UI",
++		sans-serif;
+ }
+ 
+ #sign-in .signin {
+@@ -280,7 +208,9 @@ export default defineComponent({
+ 	background: var(--si-paper);
+ 	border: 1px solid var(--si-line);
+ 	border-radius: 6px;
+-	transition: border-color 0.15s, box-shadow 0.15s;
++	transition:
++		border-color 0.15s,
++		box-shadow 0.15s;
+ }
+ 
+ #sign-in .signin-input:focus {
+@@ -546,3 +476,82 @@ export default defineComponent({
+ 	}
+ }
+ </style>
++
++<script lang="ts">
++import storage from "../../js/localStorage";
++import socket from "../../js/socket";
++import {defineComponent, nextTick, onBeforeUnmount, onMounted, ref} from "vue";
++import ircnetMap from "./ircnet-map.svg?raw";
++
++export default defineComponent({
++	name: "SignIn",
++	setup() {
++		const inFlight = ref(false);
++		const errorShown = ref(false);
++		const passwordVisible = ref(false);
++		const capsLock = ref(false);
++		const passwordInput = ref<HTMLInputElement | null>(null);
++
++		const username = ref(storage.get("user") || "");
++		const password = ref("");
++
++		const checkCapsLock = (event: KeyboardEvent) => {
++			if (typeof event.getModifierState === "function") {
++				capsLock.value = event.getModifierState("CapsLock");
++			}
++		};
++
++		const onAuthFailed = () => {
++			inFlight.value = false;
++			errorShown.value = true;
++
++			// Zle haslo: fokus z powrotem w polu hasla, tresc zaznaczona.
++			void nextTick(() => {
++				passwordInput.value?.focus();
++				passwordInput.value?.select();
++			});
++		};
++
++		const onSubmit = (event: Event) => {
++			event.preventDefault();
++
++			if (!username.value || !password.value) {
++				return;
++			}
++
++			inFlight.value = true;
++			errorShown.value = false;
++
++			const values = {
++				user: username.value,
++				password: password.value,
++			};
++
++			storage.set("user", values.user);
++
++			socket.emit("auth:perform", values);
++		};
++
++		onMounted(() => {
++			socket.on("auth:failed", onAuthFailed);
++		});
++
++		onBeforeUnmount(() => {
++			socket.off("auth:failed", onAuthFailed);
++		});
++
++		return {
++			inFlight,
++			errorShown,
++			passwordVisible,
++			capsLock,
++			passwordInput,
++			username,
++			password,
++			ircnetMap,
++			checkCapsLock,
++			onSubmit,
++		};
++	},
++});
++</script>
+diff --git a/client/js/loading-error-handlers.js b/client/js/loading-error-handlers.js
+index 2ec4843a..c7b887b8 100644
+--- a/client/js/loading-error-handlers.js
++++ b/client/js/loading-error-handlers.js
+@@ -87,7 +87,10 @@
+ 			themeEl?.dataset.serverTheme !== userSettings.theme
+ 		) {
+ 			const query = (themeEl.getAttribute("href") || "").match(/\?.*$/);
+-			themeEl.setAttribute("href", `themes/${userSettings.theme}.css${query ? query[0] : ""}`);
++			themeEl.setAttribute(
++				"href",
++				`themes/${userSettings.theme}.css${query ? query[0] : ""}`
++			);
+ 		}
+ 
+ 		if (
+diff --git a/client/themes/tahio.css b/client/themes/tahio.css
+index d83bce81..d5181125 100644
+--- a/client/themes/tahio.css
++++ b/client/themes/tahio.css
+@@ -44,7 +44,7 @@ input,
+ button,
+ textarea,
+ select {
+-	font-family: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
++	font-family: Geist, system-ui, -apple-system, "Segoe UI", sans-serif;
+ }
+ 
+ ::selection {
+@@ -168,6 +168,22 @@ select {
+ 	font-family: "Geist Mono", ui-monospace, monospace;
+ 	font-variant-numeric: tabular-nums;
+ 	color: var(--tahio-muted);
++	white-space: nowrap;
++}
++
++/* Kolumna czasu w znakach kroju Geist Mono (bazowe szerokosci w px sa
++   dobrane pod Hack): [HH:MM], [HH:MM:SS], [HH:MM AM], [HH:MM:SS AM]. */
++#chat .time {
++	width: 7ch;
++}
++
++#chat.time-12h .time,
++#chat.time-seconds .time {
++	width: 10ch;
++}
++
++#chat.time-seconds.time-12h .time {
++	width: 13ch;
+ }
+ 
+ #chat .chat-view[data-type="channel"] .msg.highlight {
+diff --git a/client/themes/tahio/brand.css b/client/themes/tahio/brand.css
+index 0a883a22..9da197cd 100644
+--- a/client/themes/tahio/brand.css
++++ b/client/themes/tahio/brand.css
+@@ -1,7 +1,7 @@
+ /* Geist i Geist Mono (OFL, Vercel) - hostowane lokalnie, latin + latin-ext (polskie znaki). */
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 400;
+ 	font-display: swap;
+@@ -10,7 +10,7 @@
+ }
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 400;
+ 	font-display: swap;
+@@ -19,7 +19,7 @@
+ }
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 500;
+ 	font-display: swap;
+@@ -28,7 +28,7 @@
+ }
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 500;
+ 	font-display: swap;
+@@ -37,7 +37,7 @@
+ }
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 600;
+ 	font-display: swap;
+@@ -46,7 +46,7 @@
+ }
+ 
+ @font-face {
+-	font-family: "Geist";
++	font-family: Geist;
+ 	font-style: normal;
+ 	font-weight: 600;
+ 	font-display: swap;
+diff --git a/server/erssiJournal.ts b/server/erssiJournal.ts
+new file mode 100644
+index 00000000..aa5dced3
+--- /dev/null
++++ b/server/erssiJournal.ts
+@@ -0,0 +1,424 @@
++/**
++ * erssi journal - history written by webjournal.pl inside erssi.
++ *
++ * fe-web only streams events while NexusIRC is connected, so anything said
++ * while Nexus was down (restart, rebuild) never reached its storage, and
++ * windows without a channel (Notices, Mentions, script windows, the network
++ * status window) are not part of the fe-web protocol at all. webjournal.pl
++ * (https://github.com/y-o-o-z/irssi_scripts) writes every erssi window to
++ * JSON lines on disk; this module reads them back:
++ *
++ *  - backfill: journal entries of a channel/query that storage does not have
++ *    yet (matched by kind + nick + text within a few seconds),
++ *  - live tail: lines of text windows and network status windows.
++ *
++ * Layout (the encoding must match webjournal.pl encode_name()):
++ *   <tag>/<channel|nick>.jsonl, <tag>/%status.jsonl, %windows/<window>.jsonl
++ *   plus <file>.1 - the previous file after rotation.
++ */
++import fs from "fs";
++import os from "os";
++import path from "path";
++import Msg from "./models/msg.js";
++import User from "./models/user.js";
++import {MessageType} from "../shared/types/msg.js";
++
++export type JournalEntry = {
++	t: number; // unix time, seconds with a fraction
++	k: string; // msg action notice join part quit kick topic mode nick text
++	n?: string; // nick
++	h?: string; // user@host
++	x?: string; // text
++	s?: number; // 1 = own
++	hl?: number; // 1 = highlight
++	tg?: string; // kicked nick
++	nn?: string; // new nick
++	w?: string; // window name (text lines)
++};
++
++export const STATUS_FILE = "%status.jsonl";
++export const WINDOWS_DIR = "%windows";
++
++/** Entries further back than this are not backfilled. */
++export const BACKFILL_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
++/** At most this many newest entries per window are considered. */
++export const BACKFILL_MAX_ENTRIES = 2000;
++/** Live fe-web events carry the time Nexus received them, not erssi's. */
++export const DEDUP_WINDOW_MS = 5000;
++
++export function journalDir(): string {
++	return process.env.ERSSI_JOURNAL_DIR || path.join(os.homedir(), ".erssi", "journal");
++}
++
++/** Lowercase ASCII, bytes outside [a-z0-9#&+!._-] as %XX - like webjournal.pl. */
++export function encodeName(name: string): string {
++	let out = "";
++
++	for (let byte of Buffer.from(name, "utf8")) {
++		if (byte >= 0x41 && byte <= 0x5a) {
++			byte += 0x20;
++		}
++
++		const char = String.fromCharCode(byte);
++
++		if (byte < 0x80 && /[a-z0-9#&+!._-]/.test(char)) {
++			out += char;
++		} else {
++			out += "%" + byte.toString(16).toUpperCase().padStart(2, "0");
++		}
++	}
++
++	return out;
++}
++
++export function decodeName(encoded: string): string {
++	try {
++		return decodeURIComponent(encoded);
++	} catch {
++		return encoded;
++	}
++}
++
++export function targetFile(dir: string, serverTag: string, target: string): string {
++	return path.join(dir, encodeName(serverTag), `${encodeName(target)}.jsonl`);
++}
++
++export function statusFile(dir: string, serverTag: string): string {
++	return path.join(dir, encodeName(serverTag), STATUS_FILE);
++}
++
++export function windowFile(dir: string, windowName: string): string {
++	return path.join(dir, WINDOWS_DIR, `${encodeName(windowName)}.jsonl`);
++}
++
++export function parseEntry(line: string): JournalEntry | null {
++	if (!line.trim()) {
++		return null;
++	}
++
++	try {
++		const entry = JSON.parse(line);
++
++		if (typeof entry?.t !== "number" || typeof entry?.k !== "string") {
++			return null;
++		}
++
++		return entry as JournalEntry;
++	} catch {
++		return null;
++	}
++}
++
++/** Entries of a journal file (rotated part first), oldest first. */
++export async function readEntries(file: string): Promise<JournalEntry[]> {
++	const entries: JournalEntry[] = [];
++
++	for (const part of [`${file}.1`, file]) {
++		let text: string;
++
++		try {
++			text = await fs.promises.readFile(part, "utf8");
++		} catch {
++			continue;
++		}
++
++		for (const line of text.split("\n")) {
++			const entry = parseEntry(line);
++
++			if (entry) {
++				entries.push(entry);
++			}
++		}
++	}
++
++	return entries;
++}
++
++/** NexusIRC message for a journal entry, shaped like the live fe-web ones. */
++export function entryToMsg(entry: JournalEntry): Msg | null {
++	const time = new Date(Math.round(entry.t * 1000));
++	const from = new User({nick: entry.n || ""});
++	const self = entry.s === 1;
++
++	switch (entry.k) {
++		case "msg":
++			return new Msg({
++				type: MessageType.MESSAGE,
++				time,
++				from,
++				text: entry.x || "",
++				self,
++				highlight: entry.hl === 1 && !self,
++			});
++		case "action":
++			return new Msg({
++				type: MessageType.ACTION,
++				time,
++				from,
++				text: entry.x || "",
++				self,
++				highlight: entry.hl === 1 && !self,
++			});
++		case "notice":
++			return new Msg({type: MessageType.NOTICE, time, from, text: entry.x || "", self});
++		case "join":
++			return new Msg({type: MessageType.JOIN, time, from, hostmask: entry.h || "", self});
++		case "part":
++			return new Msg({
++				type: MessageType.PART,
++				time,
++				from,
++				hostmask: entry.h || "",
++				text: entry.x || "",
++				self,
++			});
++		case "quit":
++			return new Msg({
++				type: MessageType.QUIT,
++				time,
++				from,
++				hostmask: entry.h || "",
++				text: entry.x || "",
++			});
++		case "kick":
++			return new Msg({
++				type: MessageType.KICK,
++				time,
++				from,
++				target: new User({nick: entry.tg || ""}),
++				text: entry.x || "",
++			});
++		case "topic":
++			return new Msg({type: MessageType.TOPIC, time, from, text: entry.x || ""});
++		case "mode":
++			return new Msg({type: MessageType.MODE_CHANNEL, time, from, text: entry.x || ""});
++		case "nick":
++			return new Msg({type: MessageType.NICK, time, from, new_nick: entry.nn || "", self});
++		case "text":
++			// A line exactly as erssi printed it in a window without a channel.
++			return new Msg({
++				type: MessageType.MESSAGE,
++				time,
++				text: entry.x || "",
++				highlight: entry.hl === 1,
++			});
++		default:
++			return null;
++	}
++}
++
++function signature(msg: Msg): string {
++	const nick = msg.from?.nick || "";
++	const extra =
++		msg.type === MessageType.NICK
++			? (msg as any).new_nick || ""
++			: msg.type === MessageType.KICK
++				? msg.target?.nick || ""
++				: "";
++	return `${msg.type}\u0000${nick.toLowerCase()}\u0000${msg.text || ""}\u0000${extra}`;
++}
++
++/**
++ * Messages from the journal that are not in storage yet. `stored` must hold
++ * the stored messages from the oldest candidate's time (minus the dedup
++ * window) on. A stored message matches one journal entry at most.
++ */
++export function missingMessages(entries: JournalEntry[], stored: Msg[], now = Date.now()): Msg[] {
++	const pool = new Map<string, number[]>();
++
++	for (const msg of stored) {
++		const key = signature(msg);
++		const times = pool.get(key) || [];
++		times.push(msg.time.getTime());
++		pool.set(key, times);
++	}
++
++	const missing: Msg[] = [];
++
++	for (const entry of candidates(entries, now)) {
++		const msg = entryToMsg(entry);
++
++		if (!msg) {
++			continue;
++		}
++
++		const times = pool.get(signature(msg));
++		const at = msg.time.getTime();
++		const hit = times ? times.findIndex((t) => Math.abs(t - at) <= DEDUP_WINDOW_MS) : -1;
++
++		if (hit !== -1) {
++			times!.splice(hit, 1);
++			continue;
++		}
++
++		missing.push(msg);
++	}
++
++	return missing;
++}
++
++/** Newest entries worth backfilling, oldest first. */
++export function candidates(entries: JournalEntry[], now = Date.now()): JournalEntry[] {
++	const oldest = now - BACKFILL_MAX_AGE_MS;
++	return entries.filter((e) => e.t * 1000 >= oldest).slice(-BACKFILL_MAX_ENTRIES);
++}
++
++/** Time from which stored messages are needed to deduplicate `entries`. */
++export function dedupSince(entries: JournalEntry[], now = Date.now()): number | null {
++	const list = candidates(entries, now);
++	return list.length ? Math.round(list[0].t * 1000) - DEDUP_WINDOW_MS : null;
++}
++
++export type TailEvent =
++	| {kind: "window"; key: string; entry: JournalEntry}
++	| {kind: "status"; key: string; entry: JournalEntry};
++
++/**
++ * Follows the files that only the journal carries: %windows/*.jsonl and
++ * <tag>/%status.jsonl. Polling keeps it simple and works on every
++ * filesystem; a shrunken file means webjournal.pl rotated it.
++ */
++export class JournalTail {
++	private offsets = new Map<string, number>();
++	private partial = new Map<string, Buffer>(); // bytes after the last newline
++	private timer: ReturnType<typeof setInterval> | null = null;
++	private busy = false;
++
++	constructor(
++		private readonly dir: string,
++		private readonly onEvent: (event: TailEvent) => void,
++		private readonly intervalMs = 1000
++	) {}
++
++	/** Remember current file sizes: only lines written later are reported. */
++	async prime(): Promise<void> {
++		for (const file of await this.files()) {
++			try {
++				this.offsets.set(file, (await fs.promises.stat(file)).size);
++			} catch {
++				// vanished in the meantime
++			}
++		}
++	}
++
++	start(): void {
++		if (this.timer) {
++			return;
++		}
++
++		this.timer = setInterval(() => {
++			void this.poll();
++		}, this.intervalMs);
++		this.timer.unref?.();
++	}
++
++	stop(): void {
++		if (this.timer) {
++			clearInterval(this.timer);
++			this.timer = null;
++		}
++	}
++
++	async poll(): Promise<void> {
++		if (this.busy) {
++			return;
++		}
++
++		this.busy = true;
++
++		try {
++			for (const file of await this.files()) {
++				await this.readNew(file);
++			}
++		} finally {
++			this.busy = false;
++		}
++	}
++
++	private async files(): Promise<string[]> {
++		const found: string[] = [];
++		let dirs: fs.Dirent[];
++
++		try {
++			dirs = await fs.promises.readdir(this.dir, {withFileTypes: true});
++		} catch {
++			return found;
++		}
++
++		for (const dirent of dirs) {
++			if (!dirent.isDirectory()) {
++				continue;
++			}
++
++			const sub = path.join(this.dir, dirent.name);
++
++			if (dirent.name === WINDOWS_DIR) {
++				try {
++					for (const name of await fs.promises.readdir(sub)) {
++						if (name.endsWith(".jsonl")) {
++							found.push(path.join(sub, name));
++						}
++					}
++				} catch {
++					// ignore
++				}
++			} else if (fs.existsSync(path.join(sub, STATUS_FILE))) {
++				found.push(path.join(sub, STATUS_FILE));
++			}
++		}
++
++		return found;
++	}
++
++	private async readNew(file: string): Promise<void> {
++		let size: number;
++
++		try {
++			size = (await fs.promises.stat(file)).size;
++		} catch {
++			return;
++		}
++
++		let offset = this.offsets.get(file) ?? 0;
++
++		if (size < offset) {
++			// rotated: the old content is in <file>.1, this one starts over
++			offset = 0;
++			this.partial.delete(file);
++		}
++
++		if (size === offset) {
++			this.offsets.set(file, offset);
++			return;
++		}
++
++		const handle = await fs.promises.open(file, "r");
++
++		try {
++			const buffer = Buffer.alloc(size - offset);
++			await handle.read(buffer, 0, buffer.length, offset);
++			this.offsets.set(file, size);
++
++			// Split on newline bytes, so a line caught mid-write (possibly in
++			// the middle of a UTF-8 sequence) waits for the next poll intact.
++			const data = Buffer.concat([this.partial.get(file) || Buffer.alloc(0), buffer]);
++			const end = data.lastIndexOf(0x0a);
++			this.partial.set(file, data.subarray(end + 1));
++			const lines = end === -1 ? [] : data.subarray(0, end).toString("utf8").split("\n");
++
++			const parentName = path.basename(path.dirname(file));
++			const kind = parentName === WINDOWS_DIR ? "window" : "status";
++			const key = kind === "window" ? path.basename(file, ".jsonl") : parentName;
++
++			for (const line of lines) {
++				const entry = parseEntry(line);
++
++				if (entry) {
++					this.onEvent({kind, key, entry});
++				}
++			}
++		} finally {
++			await handle.close();
++		}
++	}
++}
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index dd40ca1b..d8a62a30 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -42,6 +42,23 @@ import {
+ 	snakeToCamel,
+ } from "./types/irssi-network.js";
+ import {UAParser} from "ua-parser-js";
++import Prefix from "./models/prefix.js";
++import {ChanState, ChanType} from "../shared/types/chan.js";
++import {MessageType} from "../shared/types/msg.js";
++import {
++	JournalTail,
++	TailEvent,
++	decodeName,
++	dedupSince,
++	encodeName,
++	entryToMsg,
++	journalDir,
++	missingMessages,
++	readEntries,
++	statusFile,
++	targetFile,
++	windowFile,
++} from "./erssiJournal.js";
+ 
+ // LRU Cache for message deduplication (from encrypted.ts)
+ class LRUCache<K, V> {
+@@ -246,6 +263,12 @@ export class IrssiClient {
+ 	// Browser sessions (multiple browsers per user)
+ 	attachedBrowsers: Map<string, BrowserSession> = new Map();
+ 
++	// erssi journal (webjournal.pl): history while Nexus was down and the
++	// erssi windows without a channel (Notices, Mentions, script windows)
++	private journalTail: JournalTail | null = null;
++	private journalNetwork: NetworkData | null = null;
++	private journalBackfilled = new Set<string>();
++
+ 	// Message deduplication cache
+ 	private messageDedup = new MessageDeduplicator();
+ 	private lastMessageDedupCleanup = 0;
+@@ -587,6 +610,7 @@ export class IrssiClient {
+ 			// CLEAR networks on disconnect
+ 			const clearedCount = this.networks.length;
+ 			this.networks = [];
++			this.stopErssiJournal();
+ 			this.lastActiveChannel = -1;
+ 
+ 			// Reset state_dump tracking in FeWebAdapter (allow fresh state_dump on reconnect)
+@@ -738,6 +762,11 @@ export class IrssiClient {
+ 
+ 		const text = data.text;
+ 
++		if (this.journalNetwork?.channels.some((c) => c.id === data.target)) {
++			this.handleJournalWindowInput(socketId, data.target, text);
++			return;
++		}
++
+ 		// Split multi-line input
+ 		const lines = text.split("\n");
+ 
+@@ -859,8 +888,6 @@ export class IrssiClient {
+ 		channel: Chan,
+ 		network: NetworkData
+ 	): Promise<string | false | null> {
+-		const {ChanType} = await import("../shared/types/chan.js");
+-
+ 		switch (command) {
+ 			case "close":
+ 				// /close → translate based on channel type
+@@ -1028,7 +1055,6 @@ export class IrssiClient {
+ 
+ 					// If query doesn't exist, create it
+ 					if (!queryChannel) {
+-						const {ChanState} = await import("../shared/types/chan.js");
+ 						queryChannel = new Chan({
+ 							name: targetNick,
+ 							type: ChanType.QUERY,
+@@ -2037,8 +2063,9 @@ export class IrssiClient {
+ 				});
+ 
+ 				// Send mark_read to irssi ONLY if NOT from irssi
+-				// This prevents infinite loop and unnecessary window switches
+-				if (this.irssiConnection && !fromIrssi) {
++				// This prevents infinite loop and unnecessary window switches.
++				// erssi journal windows have no fe-web counterpart.
++				if (this.irssiConnection && !fromIrssi && net !== this.journalNetwork) {
+ 					logger.debug(
+ 						`[IrssiClient] Preparing to send mark_read to irssi (connection exists, fromIrssi=${fromIrssi})`
+ 					);
+@@ -2107,7 +2134,6 @@ export class IrssiClient {
+ 		}
+ 
+ 		// Import ChanType dynamically
+-		const {ChanType} = await import("../shared/types/chan.js");
+ 
+ 		// Find query by nick
+ 		const query = network.channels.find(
+@@ -2153,6 +2179,12 @@ export class IrssiClient {
+ 			this.networks[index] = network;
+ 		} else {
+ 			this.networks.push(network);
++
++			const lobby = network.channels.find((c) => c.type === ChanType.LOBBY);
++
++			if (this.journalTail && lobby) {
++				void this.backfillChannel(network, lobby);
++			}
+ 		}
+ 
+ 		// If this is a new network that just connected, send full network to frontend
+@@ -2187,6 +2219,270 @@ export class IrssiClient {
+ 		});
+ 	}
+ 
++	/**
++	 * ========================================================================
++	 * ERSSI JOURNAL (webjournal.pl)
++	 * ========================================================================
++	 */
++
++	private static readonly JOURNAL_NETWORK_UUID = "erssi-windows";
++
++	/**
++	 * Restore storage gaps from the erssi journal, build the "erssi" window
++	 * group and start following the text windows. Returns the window group,
++	 * or null when there is no journal (webjournal.pl not loaded).
++	 */
++	private async setupErssiJournal(networks: NetworkData[]): Promise<NetworkData | null> {
++		this.stopErssiJournal();
++		const dir = journalDir();
++
++		if (!this.messageStorage || !fs.existsSync(dir)) {
++			return null;
++		}
++
++		// Sizes first: nothing written during the backfill is missed. Lines
++		// read twice are dropped by the dedup cache (filled by backfill).
++		const tail = new JournalTail(dir, (event) => this.handleJournalEvent(event));
++		await tail.prime();
++
++		const windows = await this.buildJournalNetwork(dir, networks);
++		this.journalNetwork = windows;
++
++		for (const network of [windows, ...networks]) {
++			for (const channel of network.channels) {
++				await this.backfillChannel(network, channel);
++			}
++		}
++
++		await this.messageStorage.flush();
++		this.journalTail = tail;
++		tail.start();
++		logger.info(
++			`[IrssiClient] erssi journal: ${dir}, ${windows.channels.length - 1} erssi windows`
++		);
++		return windows;
++	}
++
++	private stopErssiJournal(): void {
++		this.journalTail?.stop();
++		this.journalTail = null;
++		this.journalNetwork = null;
++		this.journalBackfilled.clear();
++	}
++
++	/** "erssi" group: one window per %windows/*.jsonl, Notices first. */
++	private async buildJournalNetwork(dir: string, networks: NetworkData[]): Promise<NetworkData> {
++		const lobby = new Chan({name: "erssi", type: ChanType.LOBBY});
++		lobby.id = this.allocateChannelId();
++		lobby.state = ChanState.JOINED;
++
++		const network: NetworkData = {
++			uuid: IrssiClient.JOURNAL_NETWORK_UUID,
++			name: "erssi",
++			nick: networks.find((n) => n.nick)?.nick || "",
++			serverTag: "",
++			channels: [lobby],
++			connected: true,
++			serverOptions: {
++				CHANTYPES: ["#", "&", "!"],
++				PREFIX: new Prefix([
++					{symbol: "@", mode: "o"},
++					{symbol: "+", mode: "v"},
++				]),
++				NETWORK: "erssi",
++			},
++		};
++
++		const names: string[] = [];
++
++		try {
++			for (const file of await fs.promises.readdir(path.join(dir, "%windows"))) {
++				if (!file.endsWith(".jsonl")) {
++					continue;
++				}
++
++				const entries = await readEntries(path.join(dir, "%windows", file));
++				const named = [...entries].reverse().find((e) => e.w);
++				names.push(named?.w || decodeName(path.basename(file, ".jsonl")));
++			}
++		} catch {
++			// no text windows yet
++		}
++
++		names.sort((a, b) =>
++			a.toLowerCase() === "notices"
++				? -1
++				: b.toLowerCase() === "notices"
++					? 1
++					: a.localeCompare(b, "pl", {sensitivity: "base"})
++		);
++
++		for (const name of names) {
++			network.channels.push(this.newJournalWindow(name));
++		}
++
++		return network;
++	}
++
++	private allocateChannelId(): number {
++		return this.feWebAdapter ? this.feWebAdapter.getNextChannelId() : this.idChan++;
++	}
++
++	private newJournalWindow(name: string): Chan {
++		const chan = new Chan({name, type: ChanType.QUERY});
++		chan.id = this.allocateChannelId();
++		chan.state = ChanState.JOINED;
++		return chan;
++	}
++
++	private journalFile(network: NetworkData, channel: Chan): string | null {
++		const dir = journalDir();
++
++		if (network.uuid === IrssiClient.JOURNAL_NETWORK_UUID) {
++			return channel.type === ChanType.LOBBY ? null : windowFile(dir, channel.name);
++		}
++
++		if (channel.type === ChanType.LOBBY) {
++			return statusFile(dir, network.serverTag);
++		}
++
++		return targetFile(dir, network.serverTag, channel.name);
++	}
++
++	/** Store journal entries of one window that storage does not have yet. */
++	private async backfillChannel(network: NetworkData, channel: Chan): Promise<void> {
++		const key = this.getMarkerKey(network.uuid, channel.name.toLowerCase());
++		const file = this.journalFile(network, channel);
++
++		if (!this.messageStorage || !file || this.journalBackfilled.has(key)) {
++			return;
++		}
++
++		this.journalBackfilled.add(key);
++
++		try {
++			const entries = await readEntries(file);
++			const since = dedupSince(entries);
++
++			if (since === null) {
++				return;
++			}
++
++			await this.messageStorage.flush();
++			const stored = await this.messageStorage.getMessagesSince(
++				network.uuid,
++				channel.name,
++				since
++			);
++			const missing = missingMessages(entries, stored);
++
++			for (const msg of missing) {
++				await this.messageStorage.index(
++					{uuid: network.uuid, name: network.name} as Network,
++					{name: channel.name} as Chan,
++					msg
++				);
++				// the live tail may report the same lines once more
++				this.messageDedup.isDuplicate(
++					network.uuid,
++					channel.id,
++					msg.time.getTime(),
++					msg.text ?? ""
++				);
++			}
++
++			if (missing.length > 0) {
++				logger.info(
++					`[IrssiClient] erssi journal: restored ${missing.length} messages for ${network.name}/${channel.name}`
++				);
++			}
++		} catch (err) {
++			logger.error(
++				`[IrssiClient] erssi journal backfill failed for ${network.name}/${channel.name}: ${err}`
++			);
++		}
++	}
++
++	/** New line in a text window or a network status window. */
++	private handleJournalEvent(event: TailEvent): void {
++		const msg = entryToMsg(event.entry);
++
++		if (!msg) {
++			return;
++		}
++
++		msg.id = this.nextMessageId();
++
++		if (event.kind === "window") {
++			const network = this.journalNetwork;
++
++			if (!network) {
++				return;
++			}
++
++			let channel = network.channels.find(
++				(c) => c.type !== ChanType.LOBBY && encodeName(c.name) === event.key
++			);
++
++			if (!channel) {
++				channel = this.newJournalWindow(event.entry.w || decodeName(event.key));
++				network.channels.push(channel);
++				this.journalBackfilled.add(
++					this.getMarkerKey(network.uuid, channel.name.toLowerCase())
++				);
++				this.broadcastToAllBrowsers("join", {
++					shouldOpen: false,
++					index: network.channels.length - 1,
++					network: network.uuid,
++					chan: channel.getFilteredClone(true) as any,
++				});
++			}
++
++			this.handleMessage(network.uuid, channel.id, msg);
++			return;
++		}
++
++		const network = this.networks.find(
++			(n) => n !== this.journalNetwork && encodeName(n.serverTag) === event.key
++		);
++		const lobby = network?.channels.find((c) => c.type === ChanType.LOBBY);
++
++		if (network && lobby) {
++			this.handleMessage(network.uuid, lobby.id, msg);
++		}
++	}
++
++	/**
++	 * Input in an erssi window: commands run in erssi as if typed in that
++	 * window of the terminal (no network context, like Notices); plain text
++	 * has no recipient, so the browser gets an explanation instead.
++	 */
++	private handleJournalWindowInput(socketId: string, target: number, text: string): void {
++		for (const line of text.split("\n")) {
++			if (!line.trim()) {
++				continue;
++			}
++
++			if (line.charAt(0) === "/" && line.charAt(1) !== "/") {
++				this.irssiConnection?.executeCommand(line.substring(1));
++				continue;
++			}
++
++			const notice = new Msg({
++				type: MessageType.ERROR,
++				time: new Date(),
++				text: "To okno pokazuje tylko to, co erssi wypisuje w tym oknie. Komendy wpisuj z ukośnikiem, np. /skaner #kanał.",
++			});
++			notice.id = this.nextMessageId();
++			this.attachedBrowsers.get(socketId)?.socket.emit("msg", {
++				chan: target,
++				msg: notice,
++				unread: 0,
++				highlight: 0,
++			});
++		}
++	}
++
+ 	private handleMessage(networkUuid: string, channelId: number, msg: Msg): void {
+ 		// PRIVACY: Never log message text content
+ 		logger.debug({msg: redactMsg(msg)}, `[IrssiClient] Message received (type: ${msg.type})`);
+@@ -2300,6 +2596,14 @@ export class IrssiClient {
+ 		// Loading here causes duplicates when browser reconnects with existing messages in local store.
+ 		channel.messages = [];
+ 
++		// Joined after init (another network's state dump, a new /join):
++		// restore what the erssi journal has and storage does not.
++		const joinedNetwork = this.networks.find((n) => n.uuid === networkUuid);
++
++		if (this.journalTail && joinedNetwork) {
++			await this.backfillChannel(joinedNetwork, channel);
++		}
++
+ 		// BUT we need to set totalMessagesInStorage so frontend knows there's history to load
+ 		if (this.messageStorage) {
+ 			try {
+@@ -2358,7 +2662,10 @@ export class IrssiClient {
+ 			return; // Already removed - idempotent!
+ 		}
+ 
+-		const {ChanType} = await import("../shared/types/chan.js");
++		// erssi windows (Notices, Mentions, ...) are immortal in erssi too
++		if (network === this.journalNetwork) {
++			return;
++		}
+ 
+ 		logger.info(
+ 			`User ${chalk.bold(this.name)}: Part channel ${channel.name} on ${
+@@ -2485,6 +2792,16 @@ export class IrssiClient {
+ 			`[HANDLEINIT] BEFORE assignment: this.networks.length = ${this.networks.length}`
+ 		);
+ 		this.networks = networks;
++
++		// erssi journal: fill storage gaps and add the "erssi" window group
++		// before messages are loaded below.
++		const journalNetwork = await this.setupErssiJournal(networks);
++
++		if (journalNetwork) {
++			networks = [journalNetwork, ...networks];
++			this.networks = networks;
++		}
++
+ 		logger.info(
+ 			`[HANDLEINIT] AFTER assignment: this.networks.length = ${this.networks.length}`
+ 		);
+@@ -2528,14 +2845,8 @@ export class IrssiClient {
+ 			for (const network of networks) {
+ 				for (const channel of network.channels) {
+ 					try {
+-						const {ChanType} = await import("../shared/types/chan.js");
+-
+-						// Don't load messages for lobby
+-						if (channel.type === ChanType.LOBBY) {
+-							continue;
+-						}
+-
+-						// Load last 100 messages from encrypted storage
++						// Load last 100 messages from encrypted storage (the lobby
++						// holds the erssi network status window from the journal)
+ 						const messages = await this.messageStorage.getLastMessages(
+ 							network.uuid,
+ 							channel.name,
+diff --git a/server/plugins/messageStorage/encrypted.ts b/server/plugins/messageStorage/encrypted.ts
+index 88cafe26..02d3e65f 100644
+--- a/server/plugins/messageStorage/encrypted.ts
++++ b/server/plugins/messageStorage/encrypted.ts
+@@ -682,6 +682,59 @@ export class EncryptedMessageStorage implements SearchableMessageStorage {
+ 		return messages;
+ 	}
+ 
++	/**
++	 * Write out messages still waiting in the batch queue. Used before reading
++	 * back what was just indexed (erssi journal backfill).
++	 */
++	async flush(): Promise<void> {
++		await this.initDone.promise;
++
++		if (this.batchTimer) {
++			clearTimeout(this.batchTimer);
++			this.batchTimer = null;
++		}
++
++		await this.flushBatch();
++	}
++
++	/**
++	 * Messages of a channel from a given time on (inclusive), oldest first.
++	 * Used to tell which erssi journal entries are already stored.
++	 */
++	async getMessagesSince(
++		networkUuid: string,
++		channelName: string,
++		sinceMs: number
++	): Promise<Message[]> {
++		await this.initDone.promise;
++
++		if (!this.isEnabled) {
++			return [];
++		}
++
++		const rows = await this.serialize_fetchall(
++			"SELECT encrypted_data, time, type FROM messages WHERE network = ? AND channel = ? AND time >= ? ORDER BY time ASC",
++			networkUuid,
++			channelName.toLowerCase(),
++			sinceMs
++		);
++
++		const messages: Message[] = [];
++
++		for (const row of rows) {
++			try {
++				const msg = JSON.parse(this.decrypt(row.encrypted_data));
++				msg.time = new Date(row.time);
++				msg.type = row.type;
++				messages.push(new Msg(msg));
++			} catch (error) {
++				log.error(`Failed to decrypt message: ${error}`);
++			}
++		}
++
++		return messages;
++	}
++
+ 	/**
+ 	 * Get messages before a specific timestamp (for lazy loading)
+ 	 * Used when user scrolls up and clicks "Show older messages"
+diff --git a/server/server.ts b/server/server.ts
+index 87cd20db..b236b5be 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -654,7 +654,14 @@ function getBuildCacheBust(): string {
+ 	const hash = crypto.createHash("sha256").update(Helper.getVersion());
+ 
+ 	try {
+-		for (const file of ["js/bundle.js", "css/style.css"]) {
++		const themesDir = Utils.getFileFromRelativeToRoot("public", "themes");
++		const themeFiles = fs
++			.readdirSync(themesDir, {recursive: true, encoding: "utf8"})
++			.filter((file) => file.endsWith(".css"))
++			.sort()
++			.map((file) => path.join("themes", file));
++
++		for (const file of ["js/bundle.js", "css/style.css", ...themeFiles]) {
+ 			hash.update(fs.readFileSync(Utils.getFileFromRelativeToRoot("public", file)));
+ 		}
+ 	} catch (e: any) {
+@@ -1000,7 +1007,6 @@ function initializeIrssiClient(
+ 
+ 			// Derive message storage encryption key (only if userPassword is available)
+ 			if (client.userPassword) {
+-				const crypto = await import("crypto");
+ 				client.encryptionKey = crypto.pbkdf2Sync(
+ 					client.userPassword,
+ 					client.irssiPassword,
+diff --git a/test/tests/erssiJournal.ts b/test/tests/erssiJournal.ts
+new file mode 100644
+index 00000000..f49a7a21
+--- /dev/null
++++ b/test/tests/erssiJournal.ts
+@@ -0,0 +1,194 @@
++import {expect} from "chai";
++import fs from "fs";
++import os from "os";
++import path from "path";
++
++import Msg from "../../dist/server/models/msg.js";
++import User from "../../dist/server/models/user.js";
++import {
++	DEDUP_WINDOW_MS,
++	JournalTail,
++	type TailEvent,
++	dedupSince,
++	encodeName,
++	entryToMsg,
++	missingMessages,
++	readEntries,
++	statusFile,
++	targetFile,
++	windowFile,
++} from "../../dist/server/erssiJournal.js";
++
++const T0 = 1790950000; // seconds
++
++describe("erssi journal", function () {
++	describe("encodeName", function () {
++		it("lowercases ASCII and keeps channel characters", function () {
++			expect(encodeName("#Bash.ORG.pl")).to.equal("#bash.org.pl");
++		});
++
++		it("percent-encodes UTF-8 bytes like webjournal.pl", function () {
++			expect(encodeName("#żółw")).to.equal("#%C5%BC%C3%B3%C5%82w");
++			expect(encodeName("a/b c")).to.equal("a%2Fb%20c");
++		});
++
++		it("builds the file layout", function () {
++			expect(targetFile("/j", "IRCnet", "#Polska")).to.equal("/j/ircnet/#polska.jsonl");
++			expect(statusFile("/j", "IRCnet")).to.equal("/j/ircnet/%status.jsonl");
++			expect(windowFile("/j", "Notices")).to.equal("/j/%windows/notices.jsonl");
++		});
++	});
++
++	describe("entryToMsg", function () {
++		it("maps messages with time, nick, self and highlight", function () {
++			const msg = entryToMsg({t: T0 + 0.5, k: "msg", n: "kofany", x: "yooz?", hl: 1})!;
++			expect(msg.type).to.equal("message");
++			expect(msg.time.getTime()).to.equal((T0 + 0.5) * 1000);
++			expect(msg.from.nick).to.equal("kofany");
++			expect(msg.highlight).to.equal(true);
++
++			const own = entryToMsg({t: T0, k: "action", n: "yooz", x: "macha", s: 1, hl: 1})!;
++			expect(own.type).to.equal("action");
++			expect(own.self).to.equal(true);
++			expect(own.highlight).to.equal(false);
++		});
++
++		it("maps kick, nick and text lines", function () {
++			const kick = entryToMsg({t: T0, k: "kick", n: "oper", tg: "spamer", x: "bye"})!;
++			expect(kick.target.nick).to.equal("spamer");
++
++			const nick = entryToMsg({t: T0, k: "nick", n: "kofany", nn: "kofany_"})!;
++			expect(nick.new_nick).to.equal("kofany_");
++
++			const text = entryToMsg({t: T0, k: "text", x: "-NickServ- witaj", w: "Notices"})!;
++			expect(text.type).to.equal("message");
++			expect(text.from?.nick || "").to.equal(""); // no nick column, like erssi
++			expect(text.text).to.equal("-NickServ- witaj");
++		});
++
++		it("skips unknown kinds", function () {
++			expect(entryToMsg({t: T0, k: "unknown"})).to.equal(null);
++		});
++	});
++
++	describe("missingMessages", function () {
++		const now = (T0 + 60) * 1000;
++		const stored = (type: string, nick: string, text: string, seconds: number) =>
++			new Msg({
++				type: type as any,
++				from: new User({nick}),
++				text,
++				time: new Date(seconds * 1000),
++			});
++
++		it("returns only entries storage does not have", function () {
++			const entries = [
++				{t: T0 + 1.2, k: "msg", n: "kofany", x: "raz"},
++				{t: T0 + 2.4, k: "msg", n: "kofany", x: "dwa"},
++				{t: T0 + 3.1, k: "join", n: "TAI", h: "t@h"},
++			];
++			// "raz" stored live with a slightly different time, join stored by Nexus
++			const missing = missingMessages(
++				entries,
++				[stored("message", "kofany", "raz", T0 + 1), stored("join", "TAI", "", T0 + 4)],
++				now
++			);
++			expect(missing.map((m) => m.text || m.type)).to.deep.equal(["dwa"]);
++		});
++
++		it("lets one stored message match only one entry", function () {
++			const entries = [
++				{t: T0 + 1, k: "msg", n: "kofany", x: ":)"},
++				{t: T0 + 2, k: "msg", n: "kofany", x: ":)"},
++			];
++			const missing = missingMessages(
++				entries,
++				[stored("message", "kofany", ":)", T0 + 1)],
++				now
++			);
++			expect(missing).to.have.length(1);
++			expect(missing[0].time.getTime()).to.equal((T0 + 2) * 1000);
++		});
++
++		it("does not match outside the dedup window", function () {
++			const entries = [{t: T0 + 30, k: "msg", n: "kofany", x: "znowu"}];
++			const far = T0 + 30 - DEDUP_WINDOW_MS / 1000 - 1;
++			expect(
++				missingMessages(entries, [stored("message", "kofany", "znowu", far)], now)
++			).to.have.length(1);
++		});
++
++		it("ignores entries older than the backfill age", function () {
++			const old = [{t: T0 - 8 * 24 * 3600, k: "msg", n: "a", x: "stare"}];
++			expect(missingMessages(old, [], now)).to.have.length(0);
++			expect(dedupSince(old, now)).to.equal(null);
++		});
++
++		it("asks for stored messages from the oldest candidate minus the window", function () {
++			const entries = [{t: T0 + 10, k: "msg", n: "a", x: "x"}];
++			expect(dedupSince(entries, now)).to.equal((T0 + 10) * 1000 - DEDUP_WINDOW_MS);
++		});
++	});
++
++	describe("files", function () {
++		let dir: string;
++
++		beforeEach(function () {
++			dir = fs.mkdtempSync(path.join(os.tmpdir(), "erssi-journal-"));
++		});
++
++		afterEach(function () {
++			fs.rmSync(dir, {recursive: true, force: true});
++		});
++
++		it("reads the rotated part first and skips broken lines", async function () {
++			const file = path.join(dir, "a.jsonl");
++			fs.writeFileSync(`${file}.1`, `{"t":1,"k":"msg","x":"stary"}\n`);
++			fs.writeFileSync(file, `nie json\n{"t":2,"k":"msg","x":"nowy"}\n{"t":3}\n`);
++			const entries = await readEntries(file);
++			expect(entries.map((e) => e.x)).to.deep.equal(["stary", "nowy"]);
++		});
++
++		it("tails new lines of text and status windows only", async function () {
++			fs.mkdirSync(path.join(dir, "%windows"));
++			fs.mkdirSync(path.join(dir, "ircnet"));
++			const notices = path.join(dir, "%windows", "notices.jsonl");
++			const status = path.join(dir, "ircnet", "%status.jsonl");
++			const channel = path.join(dir, "ircnet", "#polska.jsonl");
++			fs.writeFileSync(notices, `{"t":1,"k":"text","x":"przed"}\n`);
++
++			const events: TailEvent[] = [];
++			const tail = new JournalTail(dir, (event) => events.push(event));
++			await tail.prime();
++
++			fs.appendFileSync(notices, `{"t":2,"k":"text","x":"po","w":"Notices"}\n`);
++			fs.writeFileSync(status, `{"t":3,"k":"text","x":"motd"}\n`);
++			fs.writeFileSync(channel, `{"t":4,"k":"msg","x":"kanal"}\n`);
++			// a line caught mid-write, split inside a UTF-8 sequence
++			const line = Buffer.from(`{"t":5,"k":"text","x":"zażółć"}\n`);
++			const cut = line.indexOf(Buffer.from("ż")) + 1;
++			fs.appendFileSync(notices, line.subarray(0, cut));
++			await tail.poll();
++			const first = events.map((e) => `${e.kind}:${e.key}:${e.entry.x}`).sort();
++			expect(first).to.deep.equal(["status:ircnet:motd", "window:notices:po"]);
++
++			fs.appendFileSync(notices, line.subarray(cut));
++			await tail.poll();
++			expect(events).to.have.length(3);
++			expect(events[2].entry.x).to.equal("zażółć");
++		});
++
++		it("starts over when a file was rotated", async function () {
++			fs.mkdirSync(path.join(dir, "%windows"));
++			const file = path.join(dir, "%windows", "skaner.jsonl");
++			fs.writeFileSync(file, `{"t":1,"k":"text","x":"${"x".repeat(200)}"}\n`);
++			const events: TailEvent[] = [];
++			const tail = new JournalTail(dir, (event) => events.push(event));
++			await tail.prime();
++			fs.renameSync(file, `${file}.1`);
++			fs.writeFileSync(file, `{"t":2,"k":"text","x":"nowy plik"}\n`);
++			await tail.poll();
++			expect(events.map((e) => e.entry.x)).to.deep.equal(["nowy plik"]);
++		});
++	});
++});
+-- 
+2.47.3
+
