@@ -81,19 +81,43 @@ void initialize_notices_window(void)
 	
 	sp_logf("AUTO-SEPARATOR: Initializing Notices window programmatically");
 	
-	/* Get window 1 - it should already exist */
-	window1 = window_find_refnum(1);
+	/* Pick the Notices window without clobbering anyone else's window.
+	 * Scripts loaded at startup (e.g. a "Mentions" or "hilight" window)
+	 * may already sit at refnum 1 after sidepanel sorting; renaming it
+	 * would silently destroy that window's identity. Order:
+	 *   1. an existing window already named "Notices",
+	 *   2. the startup window wherever sorting put it: lowest refnum that is
+	 *      unnamed or the irssi status window "(status)" and holds no
+	 *      channel/query,
+	 *   3. a new window - sidepanel sorting moves "Notices" to the top. */
+	window1 = window_find_name("Notices");
+	if (window1 == NULL) {
+		GSList *tmp;
+
+		for (tmp = windows; tmp != NULL; tmp = tmp->next) {
+			WINDOW_REC *win = tmp->data;
+			gboolean unnamed = win->name == NULL || *win->name == '\0' ||
+			                   g_strcmp0(win->name, "(status)") == 0;
+
+			if (unnamed && win->items == NULL &&
+			    (window1 == NULL || win->refnum < window1->refnum))
+				window1 = win;
+		}
+	}
+	if (window1 == NULL) {
+		sp_logf("AUTO-SEPARATOR: no free startup window - creating a separate Notices window");
+		window1 = window_create(NULL, TRUE);
+	}
 	if (!window1) {
-		sp_logf("AUTO-SEPARATOR: Window 1 not found - this should not happen");
+		sp_logf("AUTO-SEPARATOR: no window available for Notices");
 		return;
 	}
-	
-	sp_logf("AUTO-SEPARATOR: Setting up window 1 as Notices window using direct functions");
-	
+
+	sp_logf("AUTO-SEPARATOR: Setting up window %d as Notices window", window1->refnum);
+
 	/* Set window name */
-	if (window1->name)
-		g_free(window1->name);
-	window1->name = g_strdup("Notices");
+	if (window1->name == NULL || g_strcmp0(window1->name, "Notices") != 0)
+		window_set_name(window1, "Notices");
 	
 	/* Set level to NOTICES + client messages (help, errors, command output) */
 	window_set_level(window1, MSGLEVEL_NOTICES | MSGLEVEL_CLIENTNOTICE | MSGLEVEL_CLIENTCRAP | MSGLEVEL_CLIENTERROR);
