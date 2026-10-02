@@ -102,15 +102,15 @@ irssi.
 /set colors_ansi_24bit on                 # default: 24-bit where detected, else 256 colors
 ```
 
-**Terminals and multiplexers.** 24-bit colors are used when the terminal
-announces them (`COLORTERM=truecolor` or `24bit`, kitty, Ghostty, WezTerm,
-iTerm2), everywhere else the 256-color palette. In tmux start erssi with
-`COLORTERM=truecolor` and enable RGB in tmux
-(`set -as terminal-features ',*:RGB'`). In **GNU Screen** (4.x and 5.x)
-erssi uses the 256-color palette, because screen drops 24-bit color codes
-unless screen 5 runs with `truecolor on`; then `/set term_force_colors on`
-switches erssi to 24-bit colors. Tested in GNU Screen 4.09 and 5.0.1 and in
-tmux 3.5.
+**Terminals and multiplexers.** 24-bit colors are used everywhere except
+where the terminal is known not to show them: GNU Screen (4.x drops 24-bit
+color codes, 5.x passes them only with `truecolor on`), the Linux console,
+8/16-color and mono terminals, Apple Terminal without `COLORTERM`. There
+erssi uses the nearest 256-color palette entry. `/set term_truecolor
+auto|on|off` overrides the detection (`on` for screen 5 with `truecolor
+on`). In tmux enable RGB (`set -as terminal-features ',*:RGB'`). Tested in
+tmux 3.5 (with and without `COLORTERM`), GNU Screen 4.09 and 5.0.1 and on
+`TERM=linux`.
 
 ## Web client
 
