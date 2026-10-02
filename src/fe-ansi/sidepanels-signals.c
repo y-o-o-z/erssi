@@ -160,7 +160,9 @@ static void create_server_separator_window(const char *server_tag)
 	window = window_create(NULL, FALSE);
 	window_change_server(window, server);
 
-	window_set_name(window, server_tag);
+	/* as /WINDOW NAME: never a second window with the same name */
+	if (window_find_name(server_tag) == NULL)
+		window_set_name(window, server_tag);
 	/* everything except client messages and notices (the Notices window has those) */
 	window_set_level(window, MSGLEVEL_ALL & ~(MSGLEVEL_NOTICES | MSGLEVEL_CLIENTNOTICE |
 	                                          MSGLEVEL_CLIENTCRAP | MSGLEVEL_CLIENTERROR));
