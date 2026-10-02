@@ -407,6 +407,53 @@ static char *expando_nickcolored(SERVER_REC *server, void *item, int *free_ret)
 	return result;
 }
 
+/* Nick mode prefix colored by rank: nick_mode_color_owner (~ &), _op (@),
+ * _halfop (%), _voice (+), _normal (no mode). The mode comes from the
+ * message context like $nickalign; a nick without a mode gets one space, so
+ * the nick column keeps its width. */
+static char *expando_nickmode(SERVER_REC *server, void *item, int *free_ret)
+{
+	const char *mode, *setting, *p;
+	GString *raw;
+	char *result;
+
+	if (!nick_context_valid || current_nick == NULL)
+		return "";
+
+	mode = current_mode != NULL && *current_mode != '\0' ? current_mode : " ";
+	switch (*mode) {
+	case '~':
+	case '&':
+		setting = "nick_mode_color_owner";
+		break;
+	case '@':
+		setting = "nick_mode_color_op";
+		break;
+	case '%':
+		setting = "nick_mode_color_halfop";
+		break;
+	case '+':
+		setting = "nick_mode_color_voice";
+		break;
+	default:
+		setting = "nick_mode_color_normal";
+		break;
+	}
+
+	raw = g_string_new(settings_get_str(setting));
+	for (p = mode; *p != '\0'; p++) {
+		if (*p == '%')
+			g_string_append_c(raw, '%'); /* literal %, not a format code */
+		g_string_append_c(raw, *p);
+	}
+	g_string_append(raw, "%n");
+
+	*free_ret = TRUE;
+	result = format_string_expand(raw->str, NULL);
+	g_string_free(raw, TRUE);
+	return result;
+}
+
 /* Reset event parser and helper functions */
 
 static gboolean should_reset_on_event(const char *event)
@@ -583,6 +630,8 @@ void fe_expandos_init(void)
 	               "message own_public", EXPANDO_ARG_NONE, NULL);
 	expando_create("nickcolored", expando_nickcolored, "message public", EXPANDO_ARG_NONE,
 	               "message own_public", EXPANDO_ARG_NONE, NULL);
+	expando_create("nickmode", expando_nickmode, "message public", EXPANDO_ARG_NONE,
+	               "message own_public", EXPANDO_ARG_NONE, NULL);
 	
 	/* Register signal handlers for nick cleanup */
 	signal_add("message quit", (SIGNAL_FUNC) cleanup_nick_on_quit);
@@ -600,6 +649,7 @@ void fe_expandos_deinit(void)
 	expando_destroy("nickalign", expando_nickalign);
 	expando_destroy("nicktrunc", expando_nicktrunc);
 	expando_destroy("nickcolored", expando_nickcolored);
+	expando_destroy("nickmode", expando_nickmode);
 	
 	/* Unregister signal handlers */
 	signal_remove("message quit", (SIGNAL_FUNC) cleanup_nick_on_quit);
