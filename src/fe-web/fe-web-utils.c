@@ -417,11 +417,11 @@ void fe_web_send_message(WEB_CLIENT_REC *client, WEB_MESSAGE_REC *msg)
 		}
 
 		/* Create WebSocket binary frame with encrypted data */
-		frame = fe_web_websocket_create_frame(0x2, encrypted, encrypted_len, &frame_len);
+		frame = fe_web_websocket_create_frame(WS_OPCODE_BINARY, encrypted, encrypted_len, &frame_len);
 		g_free(encrypted);
 	} else {
 		/* Create WebSocket text frame with plain JSON */
-		frame = fe_web_websocket_create_frame(0x1, (const guchar *) json, strlen(json),
+		frame = fe_web_websocket_create_frame(WS_OPCODE_TEXT, (const guchar *) json, strlen(json),
 		                                      &frame_len);
 	}
 
