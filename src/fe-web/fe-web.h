@@ -192,6 +192,14 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len, int *fin, i
                                  int *masked, guint64 *payload_len, guchar mask_key[4],
                                  const guchar **payload);
 void fe_web_websocket_unmask(guchar *payload, guint64 payload_len, const guchar mask_key[4]);
+/* WebSocket opcodes (RFC 6455, section 5.2) */
+#define WS_OPCODE_CONTINUATION 0x0
+#define WS_OPCODE_TEXT 0x1
+#define WS_OPCODE_BINARY 0x2
+#define WS_OPCODE_CLOSE 0x8
+#define WS_OPCODE_PING 0x9
+#define WS_OPCODE_PONG 0xA
+
 guchar *fe_web_websocket_create_frame(int opcode, const guchar *payload, guint64 payload_len,
                                       gsize *frame_len);
 

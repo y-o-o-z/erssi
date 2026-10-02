@@ -265,7 +265,7 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 		frame_total_len = (payload - client->input_buffer->data) + payload_len;
 
 		/* Handle different opcodes */
-		if (opcode == 0x1 || opcode == 0x2) { /* Text frame or Binary frame (encrypted) */
+		if (opcode == WS_OPCODE_TEXT || opcode == WS_OPCODE_BINARY) { /* binary = encrypted */
 			/* Unmask payload if needed */
 			if (masked) {
 				unmasked_payload = g_malloc(payload_len + 1);
@@ -274,7 +274,7 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 				unmasked_payload[payload_len] = '\0';
 
 				/* Binary frame = encrypted data */
-				if (opcode == 0x2) {
+				if (opcode == WS_OPCODE_BINARY) {
 					unsigned char *decrypted;
 					int decrypted_len;
 					const unsigned char *key;
@@ -321,14 +321,33 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 				fe_web_client_handle_message(client, (const char *)unmasked_payload);
 				g_free(unmasked_payload);
 			}
-		} else if (opcode == 0x8) { /* Close frame */
+		} else if (opcode == WS_OPCODE_CLOSE) {
+			/* RFC 6455 5.5.1: answer with a Close frame (echoing the
+			 * status code), then close - the client then sees an orderly
+			 * close instead of waiting for its timeout. A client's close
+			 * payload is masked; only the 2-byte status code is echoed. */
+			guchar status[2] = { 0x03, 0xE8 }; /* 1000 normal closure */
+			guchar *close_frame;
+			gsize close_len;
+
+			if (payload_len >= 2) {
+				status[0] = payload[0] ^ (masked ? mask_key[0] : 0);
+				status[1] = payload[1] ^ (masked ? mask_key[1] : 0);
+			}
+			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
+			if (client->use_ssl && client->ssl_channel != NULL)
+				fe_web_ssl_write(client->ssl_channel, (const char *)close_frame, close_len);
+			else
+				net_sendbuffer_send(client->handle, (const char *)close_frame, close_len);
+			g_free(close_frame);
+
 			fe_web_close_client(client);
 			return;
-		} else if (opcode == 0x9) { /* Ping frame */
+		} else if (opcode == WS_OPCODE_PING) {
 			/* Send pong - MUST use SSL if enabled! */
 			guchar *pong_frame;
 			gsize pong_len;
-			pong_frame = fe_web_websocket_create_frame(0xA, payload, payload_len, &pong_len);
+			pong_frame = fe_web_websocket_create_frame(WS_OPCODE_PONG, payload, payload_len, &pong_len);
 
 			if (client->use_ssl && client->ssl_channel != NULL) {
 				/* Send through SSL */
@@ -340,7 +359,7 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 
 			g_free(pong_frame);
 		}
-		/* Opcode 0xA (pong) - ignore */
+		/* WS_OPCODE_PONG - nothing to do */
 
 		/* Remove processed frame from buffer */
 		g_byte_array_remove_range(client->input_buffer, 0, frame_total_len);
