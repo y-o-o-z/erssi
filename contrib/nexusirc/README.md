@@ -14,6 +14,7 @@ to samo co terminal erssi, pod marką **erssi@tahio**.
 | `0005-erssi-windows-ui.patch` | Okna erssi bez przycisków zamknij/dołącz; linie tekstu bez kolumny nicka. |
 | `0006-fe-web-close-handshake.patch` | Zamknięcie połączenia z fe-web z handshake, bez błędów SSL w erssi przy restarcie. |
 | `0007-erssi-journal-line-order.patch` | Linie wypisane w tej samej milisekundzie zostają w kolejności z erssi. |
+| `0008-erssi-journal-client-lines.patch` | Komunikaty skryptów w oknach kanałów (np. `[E2E] …` z `rpe2e.pl`) widoczne w webie na żywo. |
 
 ## 0001 — Recent mentions
 
@@ -56,6 +57,10 @@ każde okno erssi do `~/.erssi/journal/` (JSONL). `server/erssiJournal.ts`:
 - czyta na żywo okna bez kanału i pokazuje je w grupie „erssi” (Notices
   pierwsze, potem Mentions, skaner…); okno statusu sieci trafia do lobby
   sieci; komendy wpisane w tych oknach wykonuje erssi,
+- pokazuje na żywo komunikaty klienta i skryptów z okien kanałów (wpisy
+  `text` w plikach kanałów, `webjournal.pl` ≥ 1.1.0) — fe-web przesyła tylko
+  wiadomości, a bez tego w webie nie byłoby widać np. prośby o wymianę kluczy
+  E2E (łatka 0008),
 - katalog dziennika: `ERSSI_JOURNAL_DIR`, domyślnie `~/.erssi/journal`; bez
   dziennika Nexus działa jak dotąd.
 
