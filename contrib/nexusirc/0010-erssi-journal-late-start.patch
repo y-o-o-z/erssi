@@ -1,0 +1,109 @@
+From 298d9500763cb815cd77e101bc5b90ee71a68688 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 18:27:10 +0200
+Subject: [PATCH 10/11] local: erssi journal also starts when networks connect
+ after Nexus
+
+The journal was set up in handleInit only, and init comes from the state
+dump of networks already connected. When Nexus starts while erssi has no
+server yet (erssi restart, box reboot), networks arrive one by one, init
+never happens and neither the erssi window group nor the live tail started.
+The first new network now starts the journal; the tail is published before
+the backfill so channels joining meanwhile backfill themselves.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ server/irssiClient.ts | 49 ++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index 6aafaa62..1bb5623a 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -268,6 +268,7 @@ export class IrssiClient {
+ 	private journalTail: JournalTail | null = null;
+ 	private journalNetwork: NetworkData | null = null;
+ 	private journalBackfilled = new Set<string>();
++	private journalStarting = false;
+ 
+ 	// Message deduplication cache
+ 	private messageDedup = new MessageDeduplicator();
+@@ -2194,6 +2195,10 @@ export class IrssiClient {
+ 
+ 			if (this.journalTail && lobby) {
+ 				void this.backfillChannel(network, lobby);
++			} else if (!this.journalTail) {
++				// erssi had no server when Nexus started: no state dump, no
++				// init - the journal starts with the first network instead
++				void this.startErssiJournalLate();
+ 			}
+ 		}
+ 
+@@ -2257,6 +2262,9 @@ export class IrssiClient {
+ 
+ 		const windows = await this.buildJournalNetwork(dir, networks);
+ 		this.journalNetwork = windows;
++		// set before the backfill: channels joining meanwhile backfill
++		// themselves (handleChannelJoin), the backfilled set prevents doubles
++		this.journalTail = tail;
+ 
+ 		for (const network of [windows, ...networks]) {
+ 			for (const channel of network.channels) {
+@@ -2265,7 +2273,6 @@ export class IrssiClient {
+ 		}
+ 
+ 		await this.messageStorage.flush();
+-		this.journalTail = tail;
+ 		tail.start();
+ 		logger.info(
+ 			`[IrssiClient] erssi journal: ${dir}, ${windows.channels.length - 1} erssi windows`
+@@ -2273,6 +2280,46 @@ export class IrssiClient {
+ 		return windows;
+ 	}
+ 
++	/**
++	 * Journal for networks that connected after Nexus started (no init):
++	 * set it up now and add the "erssi" group to the attached browsers.
++	 */
++	private async startErssiJournalLate(): Promise<void> {
++		if (this.journalStarting || this.journalTail) {
++			return;
++		}
++
++		this.journalStarting = true;
++
++		try {
++			const real = this.networks.filter((n) => n.uuid !== IrssiClient.JOURNAL_NETWORK_UUID);
++			const windows = await this.setupErssiJournal(real);
++
++			if (!windows) {
++				return;
++			}
++
++			this.networks = [
++				windows,
++				...this.networks.filter((n) => n.uuid !== IrssiClient.JOURNAL_NETWORK_UUID),
++			];
++			this.broadcastToAllBrowsers("network", {
++				network: {
++					uuid: windows.uuid,
++					name: windows.name,
++					nick: windows.nick,
++					serverOptions: windows.serverOptions,
++					status: {connected: true, secure: true},
++					channels: windows.channels.map((chan) => chan.getFilteredClone(true)),
++				},
++			} as any);
++		} catch (err) {
++			logger.error(`[IrssiClient] erssi journal start failed: ${err}`);
++		} finally {
++			this.journalStarting = false;
++		}
++	}
++
+ 	private stopErssiJournal(): void {
+ 		this.journalTail?.stop();
+ 		this.journalTail = null;
+-- 
+2.47.3
+

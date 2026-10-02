@@ -2,7 +2,7 @@
 
 [NexusIRC](https://github.com/kofany/nexus) to webowy frontend erssi przez
 fe-web (fork The Lounge). Łatki poniżej (seria względem `kofany/nexus`
-ba3fb21, nakładane po kolei przez `git am`) robią z niego web, który pokazuje
+ba3fb21, nakładane po kolei przez `git am`, 0001–0011) robią z niego web, który pokazuje
 to samo co terminal erssi, pod marką **erssi@tahio**.
 
 | Łatka | Co daje |
@@ -16,6 +16,8 @@ to samo co terminal erssi, pod marką **erssi@tahio**.
 | `0007-erssi-journal-line-order.patch` | Linie wypisane w tej samej milisekundzie zostają w kolejności z erssi. |
 | `0008-erssi-journal-client-lines.patch` | Komunikaty skryptów w oknach kanałów (np. `[E2E] …` z `rpe2e.pl`) widoczne w webie na żywo. |
 | `0009-fe-web-command-target.patch` | Komenda wpisana w oknie kanału idzie z polem `target` — erssi wykonuje ją w kontekście tego kanału (`/e2e on`, `/topic`, `/kick`). |
+| `0010-erssi-journal-late-start.patch` | Dziennik startuje także, gdy sieci łączą się po starcie Nexusa (restart erssi, reboot) — wcześniej bez initu nie było grupy „erssi” ani taila. |
+| `0011-erssi-journal-single-setup.patch` | Dwa nakładające się uruchomienia dziennika (późny start i init) nie zostawiają osieroconego taila. |
 
 ## 0001 — Recent mentions
 
