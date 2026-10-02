@@ -1,28 +1,82 @@
-# NexusIRC — „Recent mentions” dla użytkowników erssi
+# NexusIRC dla erssi — łatki
 
-[NexusIRC](https://github.com/kofany/nexus) (webowy frontend erssi przez
-fe-web, fork The Lounge) ma w kliencie okno **Recent mentions**, ale w trybie
-irssi/erssi serwer nigdy go nie wypełnia: tablica `IrssiClient.mentions` jest
-zadeklarowana i pusta, a zdarzeń `mentions:get`, `mentions:dismiss` i
-`mentions:dismiss_all` nikt nie obsługuje.
+[NexusIRC](https://github.com/kofany/nexus) to webowy frontend erssi przez
+fe-web (fork The Lounge). Łatki poniżej (seria względem `kofany/nexus`
+ba3fb21, nakładane po kolei przez `git am`) robią z niego web, który pokazuje
+to samo co terminal erssi, pod marką **erssi@tahio**.
 
-`0001-recent-mentions-for-erssi-users.patch` (względem `kofany/nexus`
-ba3fb21):
+| Łatka | Co daje |
+|---|---|
+| `0001-recent-mentions-for-erssi-users.patch` | Okno *Recent mentions* działa dla erssi (wcześniej zawsze puste). |
+| `0002-erssi-tahio-branding-theme-sign-in.patch` | Marka erssi@tahio, motyw `tahio` (miedź i krem, kroje Geist), nowa strona logowania po polsku. |
+| `0003-sign-in-ircnet-map-cache-busting.patch` | Strona logowania z panelem mapy IRCnetu; cache-busting z treści builda. |
+| `0004-erssi-journal-history-and-windows.patch` | Historia bez dziur i okna erssi bez kanału (Notices, Mentions, skaner, status sieci) z dziennika `webjournal.pl`. |
+| `0005-erssi-windows-ui.patch` | Okna erssi bez przycisków zamknij/dołącz; linie tekstu bez kolumny nicka. |
+| `0006-fe-web-close-handshake.patch` | Zamknięcie połączenia z fe-web z handshake, bez błędów SSL w erssi przy restarcie. |
 
-- zapamiętuje wiadomości oznaczone jako podświetlenie (bez własnych), do 100
-  najnowszych — tak jak The Lounge; o podświetleniu decyduje flaga fe-web
-  `is_highlight` (reguły terminala erssi), a nick w treści tylko jako zapas,
-  gdy Nexus zna już prawdziwy nick (zaraz po połączeniu bywa pusty lub „*”),
-- obsługuje `mentions:get` / `mentions:dismiss` / `mentions:dismiss_all`.
+## 0001 — Recent mentions
 
-Razem z poprawką fe-web w tym forku (`is_highlight` liczone tak jak w
-terminalu) web pokazuje te same wzmianki co okno *Mentions* w erssi.
+W trybie irssi/erssi serwer nigdy nie wypełniał okna: tablica
+`IrssiClient.mentions` była pusta, a zdarzeń `mentions:get`,
+`mentions:dismiss` i `mentions:dismiss_all` nikt nie obsługiwał. Łatka
+zapamiętuje podświetlenia (bez własnych), do 100 najnowszych, jak The Lounge.
+O podświetleniu decyduje flaga fe-web `is_highlight` (reguły terminala erssi,
+poprawione w tym forku), a nick w treści służy tylko jako zapas.
 
-Zastosowanie w lokalnej kopii Nexusa:
+## 0002, 0003 — erssi@tahio
+
+- motyw `client/themes/tahio.css` w tożsamości tahio (krem `#f3ede1`, papier
+  `#fffdf8`, miedź `#b25f10`), kroje Geist i Geist Mono dołączone lokalnie
+  (OFL, `client/themes/tahio/fonts/OFL.txt`); kolumna czasu w Geist Mono,
+- strona logowania: formularz po polsku (pokaż/ukryj hasło, Caps Lock,
+  komunikat błędu z fokusem w polu hasła) i panel z mapą Europy z drzewem
+  łączy w stylu IRCnetu, wygenerowany przez `scripts/generate-ircnet-map.py`
+  z danych Natural Earth (domena publiczna); animacja wyłącza się przy
+  `prefers-reduced-motion`,
+- ikony, manifest i ekran ładowania z marką erssi@tahio,
+- cache-busting: vendor chunk nazwany hashem treści, `?v=` liczone z
+  `bundle.js`, `style.css` i arkuszy motywów zamiast z numeru wersji —
+  lokalna przebudowa bez zmiany wersji nie jest już podawana z cache CDN
+  (Cloudflare trzymał stary `bundle.vendor.js` i strona się nie ładowała).
+
+## 0004, 0005 — web pokazuje to samo co terminal
+
+fe-web przesyła tylko zdarzenia na żywo i tylko kanały oraz rozmowy. Wszystko,
+co padło, gdy Nexus nie działał (restart, przebudowa), nigdy nie trafiało do
+jego bazy, a okien bez kanału web w ogóle nie znał.
+
+Skrypt `webjournal.pl` z
+[y-o-o-z/irssi_scripts](https://github.com/y-o-o-z/irssi_scripts) zapisuje
+każde okno erssi do `~/.erssi/journal/` (JSONL). `server/erssiJournal.ts`:
+
+- przy starcie dopisuje do bazy wpisy dziennika, których w niej nie ma
+  (porównanie: rodzaj, nick, treść, ±5 s — zdarzenia na żywo mają czas
+  odbioru przez Nexusa, nie erssi),
+- czyta na żywo okna bez kanału i pokazuje je w grupie „erssi” (Notices
+  pierwsze, potem Mentions, skaner…); okno statusu sieci trafia do lobby
+  sieci; komendy wpisane w tych oknach wykonuje erssi,
+- katalog dziennika: `ERSSI_JOURNAL_DIR`, domyślnie `~/.erssi/journal`; bez
+  dziennika Nexus działa jak dotąd.
+
+Testy: `test/tests/erssiJournal.ts` (kodowanie nazw jak w skrypcie,
+deduplikacja, rotacja, linia ucięta w środku znaku UTF-8).
+
+## 0006 — zamknięcie połączenia
+
+`FeWebSocket.disconnect()` zrywał połączenie (`terminate()`) bez TLS
+close_notify, więc erssi przy każdym restarcie Nexusa wypisywało w Notices
+`fe-web-ssl: ... unexpected eof while reading` i `Connection error`. Teraz
+najpierw `close()`, `terminate()` dopiero po 1 s. Ten fork erssi i tak
+traktuje takie zerwanie jak zwykłe rozłączenie (`fix(fe-web)`).
+
+## Zastosowanie
 
 ```sh
 cd ~/nexus
-git checkout -b local/mentions
-git am /ścieżka/do/0001-recent-mentions-for-erssi-users.patch
-yarn build:server
+git checkout -b local/tahio-theme ba3fb21
+git am /ścieżka/do/contrib/nexusirc/0*.patch
+NODE_ENV=production yarn build      # klient i serwer
 ```
+
+W `~/.nexusirc/config.js`: `theme: "tahio"`. Zatrzymuj Nexusa łagodnie
+(SIGTERM / Ctrl-C), nie zabijając sesji tmux.
