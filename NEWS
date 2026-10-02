@@ -3,8 +3,12 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	on the irssi 1.4.5 code base (details: README.md).
 
 	+ Themes
-	  - shellter (colors of shellter.me) is the start theme: one column for
-	    nicks and events, no double-width emoji, start banner
+	  - shellter 1.2 (colors of shellter.me) is the start theme: every line
+	    (messages, events, server replies, WHOIS with field labels,
+	    notices, private messages) has the same column and separator, so
+	    text starts in one place; wrapped lines start under the text; no
+	    double-width emoji; start banner
+	  - hilight_color and hilight_act_color default to theme colors
 	  - $nickmode with nick_mode_color_*: @ op, + voice, % halfop, ~ & owner
 	    in rank colors, in messages and in the nick list
 	  - nick_hash_colors accepts 24-bit colors; a "fe-text" section in old
@@ -30,7 +34,13 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    (print_whois_rpl_in_server_window)
 	  - no g_debug with the text of every sent line (recode)
 	  - sidepanels: names cut with an ellipsis, scroll arrows outside the
-	    nick text, the Notices window keeps other windows' identity
+	    nick text, the Notices window keeps other windows' identity;
+	    network windows are created without printing "Window level is
+	    now ...", "Window's server set sticky", "Changed to ... server"
+	  - /NAMES: no padding after the last nick of a row (it wrapped into
+	    blank lines when the terminal got narrower)
+	  - "Waiting for CAP LS response" is a client notice like the other
+	    connection messages
 	  - anti_floodnet_notices
 
 	+ Scripts (installed, not autoloaded)
