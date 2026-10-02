@@ -14,6 +14,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0006 | Closing the fe-web connection with a handshake (no TLS errors in erssi). |
 | 0009 | Commands typed in a channel window run in that channel. |
 | 0014 | Sender rank (`@`, `+`) on messages, plain wording of events. |
+| 0015 | Networks that finished connecting before Nexus attached still reach the browser. |
 
 Patches 0002 and 0003 brand the web client as **erssi@tahio** (logo, icons,
 sign-in texts in Polish). To use your own brand, edit
