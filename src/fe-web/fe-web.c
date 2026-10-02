@@ -30,29 +30,62 @@
 #include <irssi/src/core/commands.h>
 #include <irssi/src/fe-common/core/printtext.h>
 
+#include <string.h>
+
 /* Global clients list */
 GSList *web_clients = NULL;
 
-static void fe_web_setup_changed(void)
+/* fe-web settings last applied. "setup changed" is emitted on every /SET,
+ * so only a real change of these restarts the server - an unrelated /SET
+ * must not drop web clients or print notices. */
+static gboolean applied_enabled = FALSE;
+static int applied_port = -1;
+static char *applied_bind = NULL;
+static char *applied_password = NULL;
+
+static gboolean fe_web_settings_differ(void)
 {
-	gboolean enabled;
+	return settings_get_bool("fe_web_enabled") != applied_enabled ||
+	       settings_get_int("fe_web_port") != applied_port ||
+	       g_strcmp0(settings_get_str("fe_web_bind"), applied_bind) != 0 ||
+	       g_strcmp0(settings_get_str("fe_web_password"), applied_password) != 0;
+}
 
-	enabled = settings_get_bool("fe_web_enabled");
+static void fe_web_settings_forget(void)
+{
+	g_free(applied_bind);
+	applied_bind = NULL;
+	if (applied_password != NULL)
+		memset(applied_password, 0, strlen(applied_password));
+	g_free(applied_password);
+	applied_password = NULL;
+}
 
-	if (enabled) {
-		/* Reinitialize crypto in case password was changed or is now available */
+/* Start, stop or restart the server for the current settings. The server
+ * prints its own started/stopped notices and errors (e.g. no password). */
+static void fe_web_apply_settings(void)
+{
+	if (applied_enabled)
+		fe_web_server_deinit();
+
+	fe_web_settings_forget();
+	applied_enabled = settings_get_bool("fe_web_enabled");
+	applied_port = settings_get_int("fe_web_port");
+	applied_bind = g_strdup(settings_get_str("fe_web_bind"));
+	applied_password = g_strdup(settings_get_str("fe_web_password"));
+
+	if (applied_enabled) {
+		/* key derived from the (possibly new) password */
 		fe_web_crypto_deinit();
 		fe_web_crypto_init();
-
 		fe_web_server_init();
-		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-		          "fe-web: WebSocket server started on port %d",
-		          settings_get_int("fe_web_port"));
-	} else {
-		fe_web_server_deinit();
-		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-		          "fe-web: WebSocket server stopped");
 	}
+}
+
+static void fe_web_setup_changed(void)
+{
+	if (fe_web_settings_differ())
+		fe_web_apply_settings();
 }
 
 /* SYNTAX: FE_WEB STATUS */
@@ -122,17 +155,16 @@ void fe_web_init(void)
 	/* Initialize subsystems */
 	fe_web_signals_init();
 
-	/* SSL and encryption are ALWAYS enabled - no option to disable */
+	/* SSL and encryption are ALWAYS enabled - no option to disable; the
+	 * key is derived when the server starts (only if fe_web_enabled) */
 	fe_web_ssl_init();
-	fe_web_crypto_init();
 
 	/* Watch for settings changes */
 	signal_add_first("setup changed", (SIGNAL_FUNC) fe_web_setup_changed);
 
 	/* Start server if enabled */
-	if (settings_get_bool("fe_web_enabled")) {
-		fe_web_server_init();
-	}
+	if (settings_get_bool("fe_web_enabled"))
+		fe_web_apply_settings();
 
 	/* Register module */
 	module_register("web", "fe");
@@ -145,7 +177,9 @@ void fe_web_deinit(void)
 	command_unbind("fe_web", (SIGNAL_FUNC) cmd_fe_web);
 	command_unbind("fe_web status", (SIGNAL_FUNC) cmd_fe_web_status);
 
-	fe_web_server_deinit();
+	if (applied_enabled)
+		fe_web_server_deinit();
+	fe_web_settings_forget();
 	fe_web_signals_deinit();
 	fe_web_ssl_deinit();
 	fe_web_crypto_deinit();
