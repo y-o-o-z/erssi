@@ -12,6 +12,7 @@ struct _FE_WEB_SSL_CHANNEL {
 	int fd;                     /* File descriptor */
 	unsigned int ssl_enabled:1; /* Whether SSL is active */
 	unsigned int handshake_done:1; /* Whether SSL handshake completed */
+	unsigned int failed:1;      /* Fatal error/EOF seen: no SSL_shutdown allowed */
 };
 
 typedef struct _FE_WEB_SSL_CHANNEL FE_WEB_SSL_CHANNEL;

@@ -292,8 +292,13 @@ void fe_web_ssl_channel_free(FE_WEB_SSL_CHANNEL *ssl_chan)
 	}
 
 	if (ssl_chan->ssl) {
-		SSL_shutdown(ssl_chan->ssl);
+		/* SSL_shutdown after a fatal error or EOF is forbidden by OpenSSL
+		 * and only queues more errors. */
+		if (ssl_chan->handshake_done && !ssl_chan->failed)
+			SSL_shutdown(ssl_chan->ssl);
 		SSL_free(ssl_chan->ssl);
+		/* the error queue is per thread and shared with irssi's own TLS */
+		ERR_clear_error();
 	}
 
 	g_free(ssl_chan);
@@ -347,6 +352,9 @@ int fe_web_ssl_read(FE_WEB_SSL_CHANNEL *ssl_chan, char *buf, int len)
 		return -1;
 	}
 
+	/* errno and the OpenSSL error queue must describe THIS call only */
+	errno = 0;
+	ERR_clear_error();
 	ret = SSL_read(ssl_chan->ssl, buf, len);
 
 	if (ret > 0) {
@@ -371,33 +379,40 @@ int fe_web_ssl_read(FE_WEB_SSL_CHANNEL *ssl_chan, char *buf, int len)
 	 * dropped network, WebSocket terminate()). That is an ordinary
 	 * disconnect, not an error worth a line in the Notices window:
 	 * OpenSSL 3 reports it as SSL_R_UNEXPECTED_EOF_WHILE_READING,
-	 * OpenSSL 1.1 as SSL_ERROR_SYSCALL with errno 0, and a reset
-	 * connection gives ECONNRESET. */
-	if (ssl_err == SSL_ERROR_SYSCALL && (errno == 0 || errno == ECONNRESET)) {
+	 * OpenSSL 1.1 as SSL_ERROR_SYSCALL with ret 0 (errno untouched), and
+	 * a reset connection gives ECONNRESET. */
+	if (ssl_err == SSL_ERROR_SYSCALL &&
+	    (ret == 0 || errno == 0 || errno == ECONNRESET)) {
+		ssl_chan->failed = 1;
 		ERR_clear_error();
 		return 0;
 	}
 
 #ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
 	if (ssl_err == SSL_ERROR_SSL &&
-	    ERR_GET_REASON(ERR_peek_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+	    ERR_GET_REASON(ERR_peek_last_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+		ssl_chan->failed = 1;
 		ERR_clear_error();
 		return 0;
 	}
 #endif
 
 	if (ssl_err == SSL_ERROR_SYSCALL) {
+		ssl_chan->failed = 1;
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: SSL_ERROR_SYSCALL - system call error (errno=%d: %s)",
 		          errno, strerror(errno));
+		ERR_clear_error();
 		return -1;
 	}
 
 	if (ssl_err == SSL_ERROR_SSL) {
-		err_code = ERR_get_error();
+		ssl_chan->failed = 1;
+		err_code = ERR_peek_last_error();
 		ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: SSL_ERROR_SSL - protocol error: %s", err_buf);
+		ERR_clear_error();
 		return -1;
 	}
 
@@ -421,6 +436,8 @@ int fe_web_ssl_write(FE_WEB_SSL_CHANNEL *ssl_chan, const char *data, int len)
 		return -1;
 	}
 
+	errno = 0;
+	ERR_clear_error();
 	ret = SSL_write(ssl_chan->ssl, data, len);
 
 	if (ret > 0) {
@@ -438,17 +455,21 @@ int fe_web_ssl_write(FE_WEB_SSL_CHANNEL *ssl_chan, const char *data, int len)
 	}
 
 	if (ssl_err == SSL_ERROR_SYSCALL) {
+		ssl_chan->failed = 1;
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: SSL_ERROR_SYSCALL - system call error (errno=%d: %s)",
 		          errno, strerror(errno));
+		ERR_clear_error();
 		return -1;
 	}
 
 	if (ssl_err == SSL_ERROR_SSL) {
-		err_code = ERR_get_error();
+		ssl_chan->failed = 1;
+		err_code = ERR_peek_last_error();
 		ERR_error_string_n(err_code, err_buf, sizeof(err_buf));
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: SSL_ERROR_SSL - protocol error: %s", err_buf);
+		ERR_clear_error();
 		return -1;
 	}
 
