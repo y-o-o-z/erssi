@@ -15,6 +15,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/nicklist.h>
+#include <irssi/src/core/channels.h>
 #include <irssi/src/core/queries.h>
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/settings.h>
@@ -200,12 +201,38 @@ static void fe_web_send_nicklist_update(IRC_SERVER_REC *server, IRC_CHANNEL_REC 
 	fe_web_message_free(msg);
 }
 
+/* Is this channel message a highlight for us? Same rules as the terminal
+ * (fe-common/core/fe-messages.c): our own nick per hilight_nick_matches /
+ * hilight_nick_matches_everywhere, then any /HILIGHT rule. Previously only
+ * /HILIGHT rules were checked, so "alice: hello" reached web clients
+ * unflagged unless the user had added their own nick as a /HILIGHT. */
+static int fe_web_is_highlight(IRC_SERVER_REC *server, const char *target, const char *nick,
+                               const char *address, const char *msg)
+{
+	CHANNEL_REC *chanrec;
+	int for_me = FALSE;
+
+	if (msg == NULL)
+		return FALSE;
+
+	if (server->nick != NULL && settings_get_bool("hilight_nick_matches")) {
+		chanrec = channel_find(SERVER(server), target);
+		for_me = settings_get_bool("hilight_nick_matches_everywhere") ?
+		             nick_match_msg_everywhere(chanrec, msg, server->nick) :
+		             nick_match_msg(chanrec, msg, server->nick);
+	}
+	if (for_me)
+		return TRUE;
+
+	return hilight_match(SERVER(server), target, nick, address, MSGLEVEL_PUBLIC, msg, NULL,
+	                     NULL) != NULL;
+}
+
 /* Signal: "message public" */
 static void sig_message_public(IRC_SERVER_REC *server, const char *msg, const char *nick,
                                const char *address, const char *target)
 {
 	WEB_MESSAGE_REC *web_msg;
-	HILIGHT_REC *hilight;
 
 	if (server == NULL) {
 		return;
@@ -220,10 +247,8 @@ static void sig_message_public(IRC_SERVER_REC *server, const char *msg, const ch
 	web_msg->level = MSGLEVEL_PUBLIC;
 	web_msg->is_own = FALSE;
 
-	/* Check if message is a highlight (mentions user's nick) */
-	hilight =
-	    hilight_match(SERVER(server), target, nick, address, MSGLEVEL_PUBLIC, msg, NULL, NULL);
-	web_msg->is_highlight = (hilight != NULL);
+	/* Highlight: our nick (as in the terminal) or a /HILIGHT rule */
+	web_msg->is_highlight = fe_web_is_highlight(server, target, nick, address, msg);
 
 	fe_web_send_to_server_clients(server, web_msg);
 	fe_web_message_free(web_msg);
@@ -315,6 +340,9 @@ static void sig_message_irc_action(IRC_SERVER_REC *server, const char *msg, cons
 	web_msg->text = g_strdup(msg);
 	web_msg->level = MSGLEVEL_ACTIONS; /* Mark as ACTION */
 	web_msg->is_own = FALSE;
+	/* "/me waves at alice" on a channel is a mention too */
+	web_msg->is_highlight = target != NULL && server_ischannel(SERVER(server), target) &&
+	                        fe_web_is_highlight(server, target, nick, address, msg);
 
 	fe_web_send_to_server_clients(server, web_msg);
 	fe_web_message_free(web_msg);
