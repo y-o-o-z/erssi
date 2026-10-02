@@ -41,6 +41,8 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    blank lines when the terminal got narrower)
 	  - "Waiting for CAP LS response" is a client notice like the other
 	    connection messages
+	  - no server tag on lines in a window bound to that server (network
+	    windows); the Notices window keeps tags
 	  - anti_floodnet_notices
 
 	+ Scripts (installed, not autoloaded)
