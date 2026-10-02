@@ -15,6 +15,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0009 | Commands typed in a channel window run in that channel. |
 | 0014 | Sender rank (`@`, `+`) on messages, plain wording of events. |
 | 0015 | Networks that finished connecting before Nexus attached still reach the browser. |
+| 0016 | The message view follows the terminal: sender column as wide as the longest nick in the window, time without brackets, erssi lines with their source in the sender column; shellter polish (readable hover, dark inputs, sentence-case buttons, mIRC colors readable on both backgrounds). |
 
 Patches 0002 and 0003 brand the web client as **erssi@tahio** (logo, icons,
 sign-in texts in Polish). To use your own brand, edit

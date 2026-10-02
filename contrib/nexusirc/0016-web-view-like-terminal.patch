@@ -1,0 +1,569 @@
+From 80048ab9be8cfd614a9701ce5aaa7f1a7427e740 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 21:04:44 +0200
+Subject: [PATCH] local: web view like the erssi terminal, shellter polish
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- sender column as wide as the longest nick in the window (4-16 chars,
+  Geist Mono), so short nicks leave no gap after the time
+- time without brackets, as in the terminal
+- erssi lines ("erssi │ ...", "· │ ...") show their source in the
+  sender column; the column stays for lines without a sender
+- the old trackbar line (────) from the journal is not shown
+- shellter: readable hover in the light sidebar, dark inputs and nick
+  list header, buttons in sentence case, theme accent for checkboxes,
+  code and focus, mIRC colors 0-15 readable on both backgrounds,
+  separators in theme colors, space after the time on phones
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ client/components/Message.vue     |  27 ++-
+ client/components/MessageList.vue |  48 ++++-
+ client/css/style.css              |   6 -
+ client/js/helpers/clientLine.ts   |   2 +
+ client/themes/shellter.css        | 287 +++++++++++++++++++++++++++++-
+ 5 files changed, 349 insertions(+), 21 deletions(-)
+ create mode 100644 client/js/helpers/clientLine.ts
+
+diff --git a/client/components/Message.vue b/client/components/Message.vue
+index aa9a6ded..1b3650cf 100644
+--- a/client/components/Message.vue
++++ b/client/components/Message.vue
+@@ -11,7 +11,7 @@
+ 		]"
+ 		:data-type="message.type"
+ 		:data-command="message.command"
+-		:data-from="message.from && message.from.nick"
++		:data-from="(message.from && message.from.nick) || (clientLine && clientLine.source)"
+ 	>
+ 		<span
+ 			aria-hidden="true"
+@@ -57,6 +57,10 @@
+ 					<Username :user="message.from" :network="network" :channel="channel" />
+ 					<span class="only-copy" aria-hidden="true">&gt;&nbsp;</span>
+ 				</template>
++				<span v-else-if="clientLine" class="erssi-source"
++					>{{ clientLine.source
++					}}<span class="only-copy" aria-hidden="true">&nbsp;│&nbsp;</span></span
++				>
+ 			</span>
+ 			<span v-else-if="message.type === 'plugin'" class="from">
+ 				<template v-if="message.from && message.from.nick">
+@@ -85,7 +89,7 @@
+ 					class="msg-statusmsg tooltipped tooltipped-e"
+ 					><span>{{ message.statusmsgGroup }}</span></span
+ 				>
+-				<ParsedMessage :network="network" :message="message" />
++				<ParsedMessage :network="network" :message="shownMessage" />
+ 				<LinkPreview
+ 					v-for="preview in message.previews"
+ 					:key="preview.link"
+@@ -104,6 +108,7 @@ import dayjs from "dayjs";
+ 
+ import constants from "../js/constants";
+ import localetime from "../js/helpers/localetime";
++import CLIENT_LINE from "../js/helpers/clientLine";
+ import Username from "./Username.vue";
+ import LinkPreview from "./LinkPreview.vue";
+ import ParsedMessage from "./ParsedMessage.vue";
+@@ -154,6 +159,22 @@ export default defineComponent({
+ 			return "message-" + (props.message.type || "invalid"); // TODO: force existence of type in sharedmsg
+ 		});
+ 
++		// erssi lines from the journal ("erssi │ #polska synced", "· │ Users on
++		// #tahio") carry their source in the text; it goes to the sender
++		// column, as in the terminal.
++		const clientLine = computed(() => {
++			if (props.message.type !== "message" || props.message.from?.nick) {
++				return null;
++			}
++
++			const match = CLIENT_LINE.exec(props.message.text || "");
++			return match ? {source: match[1], text: match[2]} : null;
++		});
++
++		const shownMessage = computed(() =>
++			clientLine.value ? {...props.message, text: clientLine.value.text} : props.message
++		);
++
+ 		const isAction = () => {
+ 			if (!props.message.type) {
+ 				return false;
+@@ -168,6 +189,8 @@ export default defineComponent({
+ 			messageTimeLocale,
+ 			messageComponent,
+ 			isAction,
++			clientLine,
++			shownMessage,
+ 		};
+ 	},
+ });
+diff --git a/client/components/MessageList.vue b/client/components/MessageList.vue
+index ea473472..8b8a8319 100644
+--- a/client/components/MessageList.vue
++++ b/client/components/MessageList.vue
+@@ -16,6 +16,7 @@
+ 			role="log"
+ 			aria-live="polite"
+ 			aria-relevant="additions"
++			:style="{'--nick-col': nickColumnWidth + 'ch'}"
+ 			@copy="onCopy"
+ 		>
+ 			<template v-for="(message, id) in condensedMessages">
+@@ -65,6 +66,7 @@ import eventbus from "../js/eventbus";
+ import clipboard from "../js/clipboard";
+ import socket from "../js/socket";
+ import Message from "./Message.vue";
++import CLIENT_LINE from "../js/helpers/clientLine";
+ import MessageCondensed from "./MessageCondensed.vue";
+ import DateMarker from "./DateMarker.vue";
+ import {
+@@ -178,28 +180,61 @@ export default defineComponent({
+ 			logger.error("Error in new IntersectionObserver", e);
+ 		});
+ 
++		// erssi's trackbar ("────") as journaled by webjournal.pl before 1.2.1:
++		// a screen-only marker, not part of the conversation.
++		const isTrackbarLine = (message: ClientMessage) =>
++			message.type === "message" &&
++			!message.from?.nick &&
++			/^[─━]{8,}$/.test(message.text || "");
++
++		// Width of the sender column, in characters: the longest sender (with
++		// its mode prefix) among the loaded messages, 4 to 16. Short nicks
++		// leave no gap after the time, long ones still line up.
++		const nickColumnWidth = computed(() => {
++			let longest = 4;
++
++			for (const message of props.channel.messages) {
++				const from = message.from;
++
++				let length = 0;
++
++				if (from?.nick && (message.type === "message" || message.type === "notice")) {
++					const mode: string = (from as any).mode || (from as any).modes?.[0] || "";
++					length = from.nick.length + mode.length;
++				} else if (message.type === "message") {
++					length = CLIENT_LINE.exec(message.text || "")?.[1].length || 0;
++				}
++
++				if (length > longest) {
++					longest = length;
++				}
++			}
++
++			return Math.min(longest, 16);
++		});
++
+ 		const condensedMessages = computed(() => {
++			const messages = props.channel.messages.filter((message) => !isTrackbarLine(message));
++
+ 			if (props.channel.type !== ChanType.CHANNEL && props.channel.type !== ChanType.QUERY) {
+-				return props.channel.messages;
++				return messages;
+ 			}
+ 
+ 			// If actions are hidden, just return a message list with them excluded
+ 			if (store.state.settings.statusMessages === "hidden") {
+-				return props.channel.messages.filter(
+-					(message) => !condensedTypes.has(message.type || "")
+-				);
++				return messages.filter((message) => !condensedTypes.has(message.type || ""));
+ 			}
+ 
+ 			// If actions are not condensed, just return raw message list
+ 			if (store.state.settings.statusMessages !== "condensed") {
+-				return props.channel.messages;
++				return messages;
+ 			}
+ 
+ 			let lastCondensedContainer: CondensedMessageContainer | null = null;
+ 
+ 			const condensed: (ClientMessage | CondensedMessageContainer)[] = [];
+ 
+-			for (const message of props.channel.messages) {
++			for (const message of messages) {
+ 				// If this message is not condensable, or its an action affecting our user,
+ 				// then just append the message to container and be done with it
+ 				if (message.self || message.highlight || !condensedTypes.has(message.type || "")) {
+@@ -442,6 +477,7 @@ export default defineComponent({
+ 			loadMoreButton,
+ 			onCopy,
+ 			condensedMessages,
++			nickColumnWidth,
+ 			shouldDisplayDateMarker,
+ 			shouldDisplayUnreadMarker,
+ 			keepScrollPosition,
+diff --git a/client/css/style.css b/client/css/style.css
+index 7e545fad..b37961b7 100644
+--- a/client/css/style.css
++++ b/client/css/style.css
+@@ -1373,12 +1373,6 @@ textarea.input {
+ 	padding: 0 10px;
+ }
+ 
+-/* Lines printed by erssi in a window without a channel (erssi journal)
+-   have no sender - the text starts right after the time, as in erssi. */
+-#chat .msg[data-type="message"]:not([data-from]) .from {
+-	display: none;
+-}
+-
+ #chat .time,
+ #chat .from,
+ #chat .content {
+diff --git a/client/js/helpers/clientLine.ts b/client/js/helpers/clientLine.ts
+new file mode 100644
+index 00000000..1953824f
+--- /dev/null
++++ b/client/js/helpers/clientLine.ts
+@@ -0,0 +1,2 @@
++/** "<source> │ <text>": a line erssi printed with its own sender column */
++export default /^(\S{1,16}) │ ([\s\S]*)$/;
+diff --git a/client/themes/shellter.css b/client/themes/shellter.css
+index cc0ff110..34ff9814 100644
+--- a/client/themes/shellter.css
++++ b/client/themes/shellter.css
+@@ -115,6 +115,17 @@ select {
+ 	background-color: var(--sh-primary-soft);
+ }
+ 
++/* bazowy arkusz daje bialy tekst pod kursorem (zaklada ciemny panel) */
++.channel-list-item:hover,
++#footer button:hover,
++#footer button.active {
++	color: var(--sh-fg);
++}
++
++#footer button.active {
++	background-color: var(--sh-muted);
++}
++
+ .channel-list-item.active {
+ 	background-color: var(--sh-card);
+ 	color: var(--sh-fg);
+@@ -212,19 +223,209 @@ select {
+ 	white-space: nowrap;
+ }
+ 
+-/* Kolumna czasu w znakach kroju Geist Mono (bazowe szerokosci w px sa
+-   dobrane pod Hack): [HH:MM], [HH:MM:SS], [HH:MM AM], [HH:MM:SS AM]. */
++/* Czas jak w terminalu, bez nawiasow; kolumna w znakach Geist Mono:
++   HH:MM, HH:MM:SS, HH:MM AM, HH:MM:SS AM (+1 na odstep). */
++#chat .time-bracket {
++	display: none;
++}
++
+ #chat .time {
+-	width: 7ch;
++	width: 6ch;
+ }
+ 
+ #chat.time-12h .time,
+ #chat.time-seconds .time {
+-	width: 10ch;
++	width: 9ch;
+ }
+ 
+ #chat.time-seconds.time-12h .time {
+-	width: 13ch;
++	width: 12ch;
++}
++
++/* Kolumna nadawcy na szerokosc najdluzszego nicka w oknie (--nick-col
++   liczy MessageList, 4-16 znakow): krotkie nicki bez dziury po czasie,
++   dlugie dalej w jednej linii. Geist Mono, zeby 1ch = 1 znak nicka;
++   +20px to padding kolumny z bazowego arkusza. Ponizej 480px kolumn nie ma. */
++@media (width >= 480px) {
++	#chat .from {
++		width: calc(var(--nick-col, 13ch) + 20px);
++		font-family: "Geist Mono", ui-monospace, monospace;
++	}
++}
++
++#chat .erssi-source {
++	color: var(--sh-fg-subtle);
++}
++
++/* Paleta mIRC 0-15 czytelna na tle motywu (bazowa clrs.cc dawala np.
++   granat #001f3f na ciemnym i bialy na kremowym). Tylko tekst bez wlasnego
++   tla - pary kolor+tlo zostaja jak w bazie. Jak paleta terminala. */
++.irc-fg0:not([class*="irc-bg"]) {
++	color: #8a7960;
++}
++
++.irc-fg1:not([class*="irc-bg"]) {
++	color: #1d1714;
++}
++
++.irc-fg2:not([class*="irc-bg"]) {
++	color: #1e3a8a;
++}
++
++.irc-fg3:not([class*="irc-bg"]) {
++	color: #15803d;
++}
++
++.irc-fg4:not([class*="irc-bg"]) {
++	color: #b42318;
++}
++
++.irc-fg5:not([class*="irc-bg"]) {
++	color: #7f1d1d;
++}
++
++.irc-fg6:not([class*="irc-bg"]) {
++	color: #7e22ce;
++}
++
++.irc-fg7:not([class*="irc-bg"]) {
++	color: #c2410c;
++}
++
++.irc-fg8:not([class*="irc-bg"]) {
++	color: #a16207;
++}
++
++.irc-fg9:not([class*="irc-bg"]) {
++	color: #16a34a;
++}
++
++.irc-fg10:not([class*="irc-bg"]) {
++	color: #0e7490;
++}
++
++.irc-fg11:not([class*="irc-bg"]) {
++	color: #0369a1;
++}
++
++.irc-fg12:not([class*="irc-bg"]) {
++	color: #1d4ed8;
++}
++
++.irc-fg13:not([class*="irc-bg"]) {
++	color: #be185d;
++}
++
++.irc-fg14:not([class*="irc-bg"]) {
++	color: #6b7280;
++}
++
++.irc-fg15:not([class*="irc-bg"]) {
++	color: #8a7960;
++}
++
++@media (prefers-color-scheme: dark) {
++	.irc-fg0:not([class*="irc-bg"]) {
++		color: #e6edf3;
++	}
++
++	.irc-fg1:not([class*="irc-bg"]) {
++		color: #7d8590;
++	}
++
++	.irc-fg2:not([class*="irc-bg"]) {
++		color: #79c0ff;
++	}
++
++	.irc-fg3:not([class*="irc-bg"]) {
++		color: #3fb950;
++	}
++
++	.irc-fg4:not([class*="irc-bg"]) {
++		color: #ff7b72;
++	}
++
++	.irc-fg5:not([class*="irc-bg"]) {
++		color: #e5797b;
++	}
++
++	.irc-fg6:not([class*="irc-bg"]) {
++		color: #d2a8ff;
++	}
++
++	.irc-fg7:not([class*="irc-bg"]) {
++		color: #ffa657;
++	}
++
++	.irc-fg8:not([class*="irc-bg"]) {
++		color: #fcd34d;
++	}
++
++	.irc-fg9:not([class*="irc-bg"]) {
++		color: #7ee787;
++	}
++
++	.irc-fg10:not([class*="irc-bg"]) {
++		color: #39c5cf;
++	}
++
++	.irc-fg11:not([class*="irc-bg"]) {
++		color: #a5d6ff;
++	}
++
++	.irc-fg12:not([class*="irc-bg"]) {
++		color: #58a6ff;
++	}
++
++	.irc-fg13:not([class*="irc-bg"]) {
++		color: #f778ba;
++	}
++
++	.irc-fg14:not([class*="irc-bg"]) {
++		color: #8b949e;
++	}
++
++	.irc-fg15:not([class*="irc-bg"]) {
++		color: #c9d1d9;
++	}
++}
++
++/* telefon: czas, nadawca i tresc w jednym wierszu - odstep po czasie */
++@media (width <= 768px) {
++	#chat .time {
++		padding-right: 6px;
++	}
++}
++
++#chat .content {
++	border-left-color: var(--sh-line);
++}
++
++#chat .chat-view[data-type="channel"] .msg.highlight .time {
++	color: var(--sh-fg-subtle);
++}
++
++#chat .msg[data-type="notice"] .time,
++#chat .msg[data-type="wallops"] .time {
++	color: var(--sh-fg-subtle);
++}
++
++#chat .msg[data-type="notice"] .content,
++#chat .msg[data-type="wallops"] .content,
++#chat .msg[data-type="notice"] .user,
++#chat .msg[data-type="wallops"] .user {
++	color: var(--sh-mode-voice);
++}
++
++#chat .msg[data-type="action"] .from,
++#chat .msg[data-type="action"] .content,
++#chat .msg[data-type="action"] .user {
++	color: var(--sh-primary);
++}
++
++#chat .msg[data-type="error"],
++#chat .msg[data-type="error"] .from {
++	color: var(--sh-danger);
+ }
+ 
+ #chat .chat-view[data-type="channel"] .msg.highlight {
+@@ -242,6 +443,34 @@ select {
+ 	color: var(--sh-fg-muted);
+ }
+ 
++#form #input {
++	color: var(--sh-fg);
++}
++
++#form #upload,
++#form #submit {
++	color: var(--sh-fg-subtle);
++}
++
++#form #upload:hover,
++#form #submit:hover {
++	color: var(--sh-primary);
++}
++
++::placeholder {
++	color: var(--sh-fg-subtle);
++}
++
++/* naglowek listy nickow ("333 users" + szukaj): bazowo jasnoszary */
++#chat .userlist .count {
++	background: var(--sh-card);
++	border-bottom: 1px solid var(--sh-line);
++}
++
++#chat .userlist .search {
++	color: var(--sh-fg);
++}
++
+ /* ── pola i przyciski ───────────────────────────────────────────── */
+ 
+ .input {
+@@ -258,17 +487,60 @@ select {
+ 	outline: none;
+ }
+ 
++/* przyciski: zwykle litery i cienka ramka zamiast bazowych WERSALIKOW */
+ .btn {
+-	border-color: var(--sh-primary);
++	border: 1px solid var(--sh-primary);
+ 	border-radius: 6px;
+ 	color: var(--sh-primary-strong);
++	font-size: 13px;
++	font-weight: 600;
++	letter-spacing: 0;
++	word-spacing: 0;
++	text-transform: none;
++	padding: 8px 16px;
++}
++
++.btn-small {
++	padding: 5px 12px;
+ }
+ 
+ .btn:hover,
+ .btn:focus-visible {
+ 	background-color: var(--sh-primary);
+ 	border-color: var(--sh-primary);
+-	color: var(--sh-card);
++	color: var(--sh-on-primary);
++}
++
++.btn:focus,
++.btn:active {
++	box-shadow: 0 0 0 3px var(--sh-focus);
++}
++
++/* Ustawienia polaczenia: Test i Zapisz w barwach motywu (bez zieleni) */
++#settings .btn-primary,
++#settings .btn-success {
++	background-color: var(--sh-primary);
++	border-color: var(--sh-primary);
++	color: var(--sh-on-primary);
++}
++
++#settings .btn-primary:hover,
++#settings .btn-success:hover {
++	background-color: var(--sh-primary-strong);
++	border-color: var(--sh-primary-strong);
++}
++
++input[type="checkbox"],
++input[type="radio"] {
++	accent-color: var(--sh-primary);
++}
++
++code,
++.irc-monospace {
++	font-family: "Geist Mono", ui-monospace, monospace;
++	color: var(--sh-primary-strong);
++	background-color: var(--sh-muted);
++	border-radius: 4px;
+ }
+ 
+ :focus-visible {
+@@ -278,6 +550,7 @@ select {
+ 
+ #user-visible-error {
+ 	background: var(--sh-danger);
++	text-transform: none;
+ }
+ 
+ /* ── ekran ladowania ────────────────────────────────────────────── */
+-- 
+2.47.3
+
