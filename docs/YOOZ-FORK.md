@@ -13,6 +13,7 @@ wynikającymi z codziennego używania erssi na IRCnet. Gałąź `main` = upstrea
 | `fix(fe-web)`: `is_highlight` jak w terminalu | Web nie oznaczał „hej yooz, …” jako wzmianki bez osobnego `/hilight`; `/me` nigdy. |
 | `feat(anti-floodnet)`: `anti_floodnet_notices` | Komunikaty Anti-Floodnet (lokalne `printtext`) nie dały się ukryć `/ignore` ani skryptem. |
 | `feat(themes)`: motyw `shellter` | Ciemny motyw w barwach shellter.me, kolumna nicków, panele bez urywania nazw. |
+| `fix(recode)`: bez `g_debug` z treścią każdej wysyłanej linii | Każda wiadomość dawała w Notices „GLib default debug: recode_out: UTF-8 bypass for: <treść>” (motywy bez `$2` pokazywały samo „default debug”). |
 | `feat(fe-web)`: komenda z polem `target` wykonuje się w kontekście kanału | Komendy z weba nie miały okna: `/e2e on`, `/topic`, `/kick` bez kanału kończyły się „not in a channel”. |
 | `fix(fe-web)`: zerwanie bez TLS close_notify = zwykłe rozłączenie | Każdy restart weba wypisywał w Notices `fe-web-ssl: ... unexpected eof while reading` i `Connection error`. |
 | `docs(contrib)`: łatki NexusIRC (`contrib/nexusirc/`) | Web erssi@tahio: wzmianki, motyw `tahio`, strona logowania, historia bez dziur i okna Notices/Mentions z `webjournal.pl`. |
