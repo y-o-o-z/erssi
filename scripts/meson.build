@@ -6,9 +6,13 @@ install_data(
     'dns.pl',
     'kills.pl',
     'mail.pl',
+    'mentions.pl',
     'mlock.pl',
     'quitmsg.pl',
     'scriptassist.pl',
+    'skaner.pl',
+    'tk.pl',
     'usercount.pl',
+    'webjournal.pl',
   ),
   install_dir : scriptdir)
