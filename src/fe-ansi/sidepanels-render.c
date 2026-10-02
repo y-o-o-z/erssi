@@ -345,7 +345,7 @@ static inline void unformat(const unsigned char **ptr, int *color, unsigned int 
 }
 
 void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format_id,
-                            const char *text)
+                            const char *text, int max_width)
 {
 	TEXT_DEST_REC dest;
 	THEME_REC *theme;
@@ -356,6 +356,7 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 	int char_width;
 	unsigned int fg24, bg24;
 	unichar chr;
+	int col;
 
 	format_create_dest(&dest, NULL, NULL, 0, wctx);
 	theme = window_get_theme(wctx);
@@ -373,7 +374,11 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 		term_move(tw, x, y);
 		term_set_color(tw, ATTR_RESET);
 
-		/* Process each character with color codes (like textbuffer-view.c) */
+		/* Process each character with color codes (like textbuffer-view.c).
+		 * The theme may add characters around the (already truncated) name,
+		 * so clip to max_width here and end with an ellipsis instead of
+		 * letting the panel border cut a word in half. */
+		col = 0;
 		while (*ptr != '\0') {
 			if (*ptr == 4) {
 				/* Format code - process color change */
@@ -389,7 +394,13 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 			chr = read_unichar(ptr, &next_ptr, &char_width);
 
 			if (unichar_isprint(chr)) {
+				if (max_width > 0 && col + char_width > max_width) {
+					term_move(tw, x + max_width - 1, y);
+					term_addstr(tw, sidepanel_ellipsis());
+					break;
+				}
 				term_add_unichar(tw, chr);
+				col += char_width;
 			}
 			ptr = next_ptr;
 		}
@@ -426,7 +437,7 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
  * };
  */
 void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format_id,
-                                    const char *param1, const char *param2)
+                                    const char *param1, const char *param2, int max_width)
 {
 	TEXT_DEST_REC dest;
 	THEME_REC *theme;
@@ -437,6 +448,7 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 	int char_width;
 	unsigned int fg24, bg24;
 	unichar chr;
+	int col;
 	char *args[3];
 
 	format_create_dest(&dest, NULL, NULL, 0, wctx);
@@ -461,7 +473,11 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 		term_move(tw, x, y);
 		term_set_color(tw, ATTR_RESET);
 
-		/* Process each character with color codes (like textbuffer-view.c) */
+		/* Process each character with color codes (like textbuffer-view.c).
+		 * The theme may add characters around the (already truncated) name,
+		 * so clip to max_width here and end with an ellipsis instead of
+		 * letting the panel border cut a word in half. */
+		col = 0;
 		while (*ptr != '\0') {
 			if (*ptr == 4) {
 				/* Format code - process color change */
@@ -477,7 +493,13 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 			chr = read_unichar(ptr, &next_ptr, &char_width);
 
 			if (unichar_isprint(chr)) {
+				if (max_width > 0 && col + char_width > max_width) {
+					term_move(tw, x + max_width - 1, y);
+					term_addstr(tw, sidepanel_ellipsis());
+					break;
+				}
 				term_add_unichar(tw, chr);
+				col += char_width;
 			}
 			ptr = next_ptr;
 		}
@@ -490,6 +512,13 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 		term_addstr(tw, param2 ? param2 : "");
 	}
 	g_free(out);
+}
+
+/* Marker for text cut to fit a panel: a real ellipsis on UTF-8 terminals,
+ * '+' (the classic irssi marker) elsewhere. Both are one column wide. */
+const char *sidepanel_ellipsis(void)
+{
+	return term_type == TERM_TYPE_UTF8 ? "\xe2\x80\xa6" : "+";
 }
 
 char *truncate_nick_for_sidepanel(const char *nick, int max_width)
@@ -527,19 +556,17 @@ char *truncate_nick_for_sidepanel(const char *nick, int max_width)
 			}
 
 			if (p > nick) {
-				/* Create truncated nick with + */
+				/* Truncated nick followed by the ellipsis marker */
 				truncated_len = p - nick;
-				result = g_malloc(truncated_len + 2); /* +1 for +, +1 for \0 */
-				memcpy(result, nick, truncated_len);
-				result[truncated_len] = '+';
-				result[truncated_len + 1] = '\0';
+				result = g_strdup_printf("%.*s%s", truncated_len, nick,
+				                         sidepanel_ellipsis());
 			} else {
-				/* No space for nick, just return + */
-				result = g_strdup("+");
+				/* No space for nick, just the marker */
+				result = g_strdup(sidepanel_ellipsis());
 			}
 		} else {
-			/* max_width is 1, just return + */
-			result = g_strdup("+");
+			/* max_width is 1, just the marker */
+			result = g_strdup(sidepanel_ellipsis());
 		}
 	}
 
@@ -717,7 +744,7 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 
 			/* Draw the new content */
 			draw_str_themed_2params(tw, 0, row, mw->active, format,
-			                        refnum_str, truncated_name);
+			                        refnum_str, truncated_name, width - 1);
 
 			/* Update cache */
 			sp_cache_line_update(&cache->lines[row], truncated_name,
@@ -1030,7 +1057,7 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 
 				/* Draw the new content */
 				draw_str_themed_2params(tw, 1, row, mw->active, format,
-				                        prefix_str, truncated_nick);
+				                        prefix_str, truncated_nick, width - 1);
 
 				/* Update cache */
 				sp_cache_line_update(&cache->lines[row], truncated_nick,
