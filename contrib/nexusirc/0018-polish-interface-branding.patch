@@ -1,0 +1,4960 @@
+From 7bf9ea375d706b8a8acc2b1899c1b7ec14670383 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 22:12:03 +0200
+Subject: [PATCH 18/18] local: Polish interface, erssi@tahio branding
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Every visible text in Polish: chat, event lines, condensed events with
+Polish plural forms (1 osoba / 2 osoby / 5 osób), settings, network
+manager, help (commands and shortcuts), context menus, notifications,
+connection states, loading screen, server feedback (connection test,
+WeeChat relay, rate limits), user list groups, dates (dayjs pl).
+
+Branding: the app is erssi@tahio everywhere; NexusIRC appears only as a
+credit line in Help. Help points to y-o-o-z/erssi instead of upstream
+NexusIRC links; the upstream version checker is gone from Help. /quit is
+described as closing all of erssi (it does, from the web).
+
+Settings tabs get a separate label prop; the irssi and WeeChat tabs now
+use their real route names, so they are marked active (they never were).
+
+vue-tsc: 58 errors before and after (all pre-existing), eslint clean.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ client/components/Channel.vue                 |  10 +-
+ client/components/ChannelWrapper.vue          |  45 ++-
+ client/components/Chat.vue                    |  40 ++-
+ client/components/ChatInput.vue               |  16 +-
+ client/components/ChatUserList.vue            |  27 +-
+ client/components/ConfirmDialog.vue           |   2 +-
+ client/components/DateMarker.vue              |   4 +-
+ client/components/ImageViewer.vue             |   6 +-
+ client/components/JoinChannel.vue             |  10 +-
+ client/components/LinkPreview.vue             |  14 +-
+ client/components/LinkPreviewToggle.vue       |   2 +-
+ client/components/Mentions.vue                |  16 +-
+ client/components/Message.vue                 |   4 +-
+ client/components/MessageCondensed.vue        |  51 ++-
+ client/components/MessageList.vue             |   4 +-
+ client/components/MessageSearchForm.vue       |   4 +-
+ client/components/MessageTypes/away.vue       |   2 +-
+ client/components/MessageTypes/back.vue       |   2 +-
+ client/components/MessageTypes/chghost.vue    |   6 +-
+ .../components/MessageTypes/ctcp_request.vue  |   2 +-
+ client/components/MessageTypes/error.vue      |  26 +-
+ client/components/MessageTypes/invite.vue     |   6 +-
+ client/components/MessageTypes/join.vue       |   6 +-
+ client/components/MessageTypes/kick.vue       |   4 +-
+ client/components/MessageTypes/mode.vue       |   2 +-
+ .../components/MessageTypes/mode_channel.vue  |   4 +-
+ client/components/MessageTypes/mode_user.vue  |   2 +-
+ client/components/MessageTypes/nick.vue       |   4 +-
+ client/components/MessageTypes/part.vue       |   6 +-
+ client/components/MessageTypes/quit.vue       |   4 +-
+ client/components/MessageTypes/topic.vue      |  10 +-
+ .../components/MessageTypes/topic_set_by.vue  |   4 +-
+ client/components/MessageTypes/whois.vue      |  44 +--
+ client/components/NetworkList.vue             |  12 +-
+ client/components/NetworkLobby.vue            |   8 +-
+ client/components/RevealPassword.vue          |   4 +-
+ client/components/Session.vue                 |   8 +-
+ client/components/Settings/Account.vue        |  38 +-
+ client/components/Settings/Appearance.vue     |  50 +--
+ client/components/Settings/General.vue        |  42 +--
+ .../components/Settings/IrssiConnection.vue   |  50 +--
+ client/components/Settings/Navigation.vue     |  36 +-
+ client/components/Settings/Notifications.vue  |  52 +--
+ client/components/Settings/SettingTabItem.vue |  15 +-
+ client/components/Settings/WeeChatRelay.vue   |  96 ++---
+ client/components/Sidebar.vue                 |  12 +-
+ client/components/SidebarToggle.vue           |   6 +-
+ client/components/Special/ListBans.vue        |   6 +-
+ client/components/Special/ListChannels.vue    |   6 +-
+ client/components/Special/ListIgnored.vue     |   4 +-
+ client/components/Special/ListInvites.vue     |   6 +-
+ client/components/VersionChecker.vue          |  23 +-
+ client/components/Windows/Changelog.vue       |  14 +-
+ client/components/Windows/Help.vue            | 340 ++++++++----------
+ client/components/Windows/NetworkManager.vue  | 168 ++++-----
+ client/components/Windows/SearchResults.vue   |  19 +-
+ client/components/Windows/Settings.vue        |   2 +-
+ client/css/style.css                          |  16 +-
+ client/index.html.tpl                         |   4 +-
+ client/js/constants.ts                        |  32 +-
+ client/js/helpers/contextMenu.ts              |  68 ++--
+ client/js/helpers/friendlysize.ts             |   2 +-
+ client/js/hooks/use-close-channel.ts          |   6 +-
+ client/js/loading-error-handlers.js           |  10 +-
+ client/js/socket-events/auth.ts               |  10 +-
+ client/js/socket-events/configuration.ts      |   2 +-
+ client/js/socket-events/connection.ts         |  10 +-
+ client/js/socket-events/irssi_status.ts       |   2 +-
+ client/js/socket-events/msg.ts                |   8 +-
+ client/js/upload.ts                           |   6 +-
+ client/js/vue.ts                              |  10 +-
+ client/nexusirc.webmanifest                   |   6 +-
+ server/irssiClient.ts                         |   8 +-
+ server/plugins/uploader.ts                    |   2 +-
+ server/server.ts                              |  38 +-
+ 75 files changed, 850 insertions(+), 796 deletions(-)
+
+diff --git a/client/components/Channel.vue b/client/components/Channel.vue
+index c21e55d2..e3049cbe 100644
+--- a/client/components/Channel.vue
++++ b/client/components/Channel.vue
+@@ -12,17 +12,17 @@
+ 			<span
+ 				v-if="channel.state === 0"
+ 				class="parted-channel-tooltip tooltipped tooltipped-w"
+-				aria-label="Not currently joined"
++				aria-label="Poza kanałem"
+ 			>
+ 				<span class="parted-channel-icon" />
+ 			</span>
+-			<span class="close-tooltip tooltipped tooltipped-w" aria-label="Leave">
+-				<button class="close" aria-label="Leave" @click.stop="close" />
++			<span class="close-tooltip tooltipped tooltipped-w" aria-label="Wyjdź">
++				<button class="close" aria-label="Wyjdź" @click.stop="close" />
+ 			</span>
+ 		</template>
+ 		<template v-else>
+-			<span class="close-tooltip tooltipped tooltipped-w" aria-label="Close">
+-				<button class="close" aria-label="Close" @click.stop="close" />
++			<span class="close-tooltip tooltipped tooltipped-w" aria-label="Zamknij">
++				<button class="close" aria-label="Zamknij" @click.stop="close" />
+ 			</span>
+ 		</template>
+ 	</ChannelWrapper>
+diff --git a/client/components/ChannelWrapper.vue b/client/components/ChannelWrapper.vue
+index 380b52af..bcd1bdfd 100644
+--- a/client/components/ChannelWrapper.vue
++++ b/client/components/ChannelWrapper.vue
+@@ -40,6 +40,24 @@ import {computed, defineComponent, PropType} from "vue";
+ import {useStore} from "../js/store";
+ import {switchToChannel} from "../js/router";
+ 
++// Polish plural forms: 1 / 2–4 (except 12–14) / the rest
++const plural = (n: number, one: string, few: string, many: string) => {
++	if (n === 1) {
++		return one;
++	}
++
++	const mod10 = n % 10;
++	const mod100 = n % 100;
++	return mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
++};
++
++const typeLabels: Record<string, string> = {
++	channel: "Kanał",
++	query: "Rozmowa prywatna",
++	lobby: "Okno sieci",
++	special: "Lista",
++};
++
+ export default defineComponent({
+ 	name: "ChannelWrapper",
+ 	props: {
+@@ -63,22 +81,23 @@ export default defineComponent({
+ 
+ 		const getAriaLabel = () => {
+ 			const extra: string[] = [];
+-			const type = props.channel.type;
++			const type = typeLabels[props.channel.type] || props.channel.type;
++			const unread = props.channel.unread;
++			const highlight = props.channel.highlight;
+ 
+-			if (props.channel.unread > 0) {
+-				if (props.channel.unread > 1) {
+-					extra.push(`${props.channel.unread} unread messages`);
+-				} else {
+-					extra.push(`${props.channel.unread} unread message`);
+-				}
++			if (unread > 0) {
++				extra.push(
++					`${unread} ${plural(
++						unread,
++						"nieprzeczytana wiadomość",
++						"nieprzeczytane wiadomości",
++						"nieprzeczytanych wiadomości"
++					)}`
++				);
+ 			}
+ 
+-			if (props.channel.highlight > 0) {
+-				if (props.channel.highlight > 1) {
+-					extra.push(`${props.channel.highlight} mentions`);
+-				} else {
+-					extra.push(`${props.channel.highlight} mention`);
+-				}
++			if (highlight > 0) {
++				extra.push(`${highlight} ${plural(highlight, "wzmianka", "wzmianki", "wzmianek")}`);
+ 			}
+ 
+ 			return `${type}: ${props.channel.name} ${extra.length ? `(${extra.join(", ")})` : ""}`;
+diff --git a/client/components/Chat.vue b/client/components/Chat.vue
+index ea33a98f..f3a138a8 100644
+--- a/client/components/Chat.vue
++++ b/client/components/Chat.vue
+@@ -18,21 +18,19 @@
+ 			>
+ 				<div class="header">
+ 					<SidebarToggle />
+-					<span class="title" :aria-label="'Currently open ' + channel.type">{{
+-						channel.name
+-					}}</span>
++					<span class="title" :aria-label="currentlyOpenLabel">{{ channel.name }}</span>
+ 					<div v-if="channel.editTopic === true" class="topic-container">
+ 						<input
+ 							ref="topicInput"
+ 							:value="channel.topic"
+ 							class="topic-input"
+-							placeholder="Set channel topic"
++							placeholder="Ustaw temat kanału"
+ 							enterkeyhint="done"
+ 							@keyup.enter="saveTopic"
+ 							@keyup.esc="channel.editTopic = false"
+ 						/>
+-						<span aria-label="Save topic" class="save-topic" @click="saveTopic">
+-							<span type="button" aria-label="Save topic"></span>
++						<span aria-label="Zapisz temat" class="save-topic" @click="saveTopic">
++							<span type="button" aria-label="Zapisz temat"></span>
+ 						</span>
+ 					</div>
+ 					<span
+@@ -53,24 +51,20 @@
+ 						:network="network"
+ 						:channel="channel"
+ 					/>
+-					<button
+-						class="mentions"
+-						aria-label="Open your mentions"
+-						@click="openMentions"
+-					/>
++					<button class="mentions" aria-label="Otwórz wzmianki" @click="openMentions" />
+ 					<button
+ 						class="menu"
+-						aria-label="Open the context menu"
++						aria-label="Otwórz menu kontekstowe"
+ 						@click="openContextMenu"
+ 					/>
+ 					<span
+ 						v-if="channel.type === 'channel'"
+ 						class="rt-tooltip tooltipped tooltipped-w"
+-						aria-label="Toggle user list"
++						aria-label="Pokaż/ukryj listę nicków"
+ 					>
+ 						<button
+ 							class="rt"
+-							aria-label="Toggle user list"
++							aria-label="Pokaż/ukryj listę nicków"
+ 							@click="store.commit('toggleUserlist')"
+ 						/>
+ 					</span>
+@@ -94,7 +88,7 @@
+ 							'scroll-down tooltipped tooltipped-w tooltipped-no-touch',
+ 							{'scroll-down-shown': !channel.scrolledToBottom},
+ 						]"
+-						aria-label="Jump to recent messages"
++						aria-label="Przejdź do najnowszych wiadomości"
+ 						@click="messageList?.jumpToBottom()"
+ 					>
+ 						<div class="scroll-down-arrow" />
+@@ -175,6 +169,21 @@ export default defineComponent({
+ 			return undefined;
+ 		});
+ 
++		const currentlyOpenLabel = computed(() => {
++			switch (props.channel.type) {
++				case ChanType.CHANNEL:
++					return "Otwarty kanał";
++				case ChanType.QUERY:
++					return "Otwarta rozmowa prywatna";
++				case ChanType.LOBBY:
++					return "Otwarte okno sieci";
++				case ChanType.SPECIAL:
++					return "Otwarta lista";
++			}
++
++			return "Otwarte okno";
++		});
++
+ 		const channelChanged = () => {
+ 			// Triggered when active channel is set or changed
+ 			emit("channel-changed", props.channel);
+@@ -268,6 +277,7 @@ export default defineComponent({
+ 			messageList,
+ 			topicInput,
+ 			specialComponent,
++			currentlyOpenLabel,
+ 			hideUserVisibleError,
+ 			editTopic,
+ 			saveTopic,
+diff --git a/client/components/ChatInput.vue b/client/components/ChatInput.vue
+index 8cc2f8ed..76df201c 100644
+--- a/client/components/ChatInput.vue
++++ b/client/components/ChatInput.vue
+@@ -19,7 +19,7 @@
+ 			v-if="store.state.serverConfiguration?.fileUpload"
+ 			id="upload-tooltip"
+ 			class="tooltipped tooltipped-w tooltipped-no-touch"
+-			aria-label="Upload file"
++			aria-label="Wyślij plik"
+ 			@click="openFileUpload"
+ 		>
+ 			<input
+@@ -33,19 +33,19 @@
+ 			<button
+ 				id="upload"
+ 				type="button"
+-				aria-label="Upload file"
++				aria-label="Wyślij plik"
+ 				:disabled="!store.state.isConnected"
+ 			/>
+ 		</span>
+ 		<span
+ 			id="submit-tooltip"
+ 			class="tooltipped tooltipped-w tooltipped-no-touch"
+-			aria-label="Send message"
++			aria-label="Wyślij wiadomość"
+ 		>
+ 			<button
+ 				id="submit"
+ 				type="submit"
+-				aria-label="Send message"
++				aria-label="Wyślij wiadomość"
+ 				:disabled="!store.state.isConnected"
+ 			/>
+ 		</span>
+@@ -131,8 +131,12 @@ export default defineComponent({
+ 		};
+ 
+ 		const getInputPlaceholder = (channel: ClientChan) => {
+-			if (channel.type === ChanType.CHANNEL || channel.type === ChanType.QUERY) {
+-				return `Write to ${channel.name}`;
++			if (channel.type === ChanType.CHANNEL) {
++				return `Napisz na ${channel.name}`;
++			}
++
++			if (channel.type === ChanType.QUERY) {
++				return `Napisz do ${channel.name}`;
+ 			}
+ 
+ 			return "";
+diff --git a/client/components/ChatUserList.vue b/client/components/ChatUserList.vue
+index b0259bcf..6f6459ac 100644
+--- a/client/components/ChatUserList.vue
++++ b/client/components/ChatUserList.vue
+@@ -2,19 +2,17 @@
+ 	<aside
+ 		ref="userlist"
+ 		class="userlist"
+-		:aria-label="'User list for ' + channel.name"
++		:aria-label="'Lista nicków na ' + channel.name"
+ 		@mouseleave="removeHoverUser"
+ 	>
+ 		<div class="count">
+ 			<input
+ 				ref="input"
+ 				:value="userSearchInput"
+-				:placeholder="
+-					channel.users.length + ' user' + (channel.users.length === 1 ? '' : 's')
+-				"
++				:placeholder="userCountLabel"
+ 				type="search"
+ 				class="search"
+-				aria-label="Search among the user list"
++				aria-label="Szukaj na liście nicków"
+ 				tabindex="-1"
+ 				@input="setUserSearchInput"
+ 				@keydown.up="navigateUserList($event, -1)"
+@@ -63,6 +61,23 @@ import type {UserInMessage} from "../../shared/types/msg";
+ import type {ClientChan, ClientUser} from "../js/types";
+ import Username from "./Username.vue";
+ 
++// Polish plural of "person" (osoba): 1 / 2–4 (except 12–14) / the rest -
++// natural for any count, unlike "użytkownicy" with compound numbers
++const usersLabel = (n: number) => {
++	const mod10 = n % 10;
++	const mod100 = n % 100;
++
++	if (n === 1) {
++		return `${n} osoba`;
++	}
++
++	if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
++		return `${n} osoby`;
++	}
++
++	return `${n} osób`;
++};
++
+ const modes = {
+ 	"~": "owner",
+ 	"&": "admin",
+@@ -83,6 +98,7 @@ export default defineComponent({
+ 	},
+ 	setup(props) {
+ 		const userSearchInput = ref("");
++		const userCountLabel = computed(() => usersLabel(props.channel.users.length));
+ 		const activeUser = ref<UserInMessage | null>();
+ 		const userlist = ref<HTMLDivElement>();
+ 		const filteredUsers = computed(() => {
+@@ -257,6 +273,7 @@ export default defineComponent({
+ 			filteredUsers,
+ 			groupedUsers,
+ 			userSearchInput,
++			userCountLabel,
+ 			activeUser,
+ 			userlist,
+ 
+diff --git a/client/components/ConfirmDialog.vue b/client/components/ConfirmDialog.vue
+index c47a41d1..4e6d86ee 100644
+--- a/client/components/ConfirmDialog.vue
++++ b/client/components/ConfirmDialog.vue
+@@ -6,7 +6,7 @@
+ 				<p>{{ data?.text }}</p>
+ 			</div>
+ 			<div class="confirm-buttons">
+-				<button class="btn btn-cancel" @click="close(false)">Cancel</button>
++				<button class="btn btn-cancel" @click="close(false)">Anuluj</button>
+ 				<button class="btn btn-danger" @click="close(true)">{{ data?.button }}</button>
+ 			</div>
+ 		</div>
+diff --git a/client/components/DateMarker.vue b/client/components/DateMarker.vue
+index 4125465c..8f13ba26 100644
+--- a/client/components/DateMarker.vue
++++ b/client/components/DateMarker.vue
+@@ -40,8 +40,8 @@ export default defineComponent({
+ 		const friendlyDate = () => {
+ 			// See http://momentjs.com/docs/#/displaying/calendar-time/
+ 			return dayjs(props.message.time).calendar(null, {
+-				sameDay: "[Today]",
+-				lastDay: "[Yesterday]",
++				sameDay: "[Dziś]",
++				lastDay: "[Wczoraj]",
+ 				lastWeek: "D MMMM YYYY",
+ 				sameElse: "D MMMM YYYY",
+ 			});
+diff --git a/client/components/ImageViewer.vue b/client/components/ImageViewer.vue
+index 4a143372..2207fb7e 100644
+--- a/client/components/ImageViewer.vue
++++ b/client/components/ImageViewer.vue
+@@ -8,18 +8,18 @@
+ 		@click="onClick"
+ 	>
+ 		<template v-if="link !== null">
+-			<button class="close-btn" aria-label="Close"></button>
++			<button class="close-btn" aria-label="Zamknij"></button>
+ 
+ 			<button
+ 				v-if="previousImage"
+ 				class="previous-image-btn"
+-				aria-label="Previous image"
++				aria-label="Poprzedni obraz"
+ 				@click.stop="previous"
+ 			></button>
+ 			<button
+ 				v-if="nextImage"
+ 				class="next-image-btn"
+-				aria-label="Next image"
++				aria-label="Następny obraz"
+ 				@click.stop="next"
+ 			></button>
+ 
+diff --git a/client/components/JoinChannel.vue b/client/components/JoinChannel.vue
+index fa5eebc4..2cfb0f36 100644
+--- a/client/components/JoinChannel.vue
++++ b/client/components/JoinChannel.vue
+@@ -14,10 +14,10 @@
+ 			type="text"
+ 			class="input"
+ 			name="channel"
+-			placeholder="Channel"
++			placeholder="Kanał"
+ 			pattern="[^\s]+"
+ 			maxlength="200"
+-			title="The channel name may not contain spaces"
++			title="Nazwa kanału nie może zawierać spacji"
+ 			required
+ 		/>
+ 		<input
+@@ -25,13 +25,13 @@
+ 			type="password"
+ 			class="input"
+ 			name="key"
+-			placeholder="Password (optional)"
++			placeholder="Hasło (opcjonalnie)"
+ 			pattern="[^\s]+"
+ 			maxlength="200"
+-			title="The channel password may not contain spaces"
++			title="Hasło kanału nie może zawierać spacji"
+ 			autocomplete="new-password"
+ 		/>
+-		<button type="submit" class="btn btn-small">Join</button>
++		<button type="submit" class="btn btn-small">Wejdź</button>
+ 	</form>
+ </template>
+ 
+diff --git a/client/components/LinkPreview.vue b/client/components/LinkPreview.vue
+index 03892eea..38a6b7b5 100644
+--- a/client/components/LinkPreview.vue
++++ b/client/components/LinkPreview.vue
+@@ -100,16 +100,16 @@
+ 			</template>
+ 			<template v-else-if="link.type === 'error'">
+ 				<em v-if="link.error === 'image-too-big'">
+-					This image is larger than {{ imageMaxSize }} and cannot be previewed.
+-					<a :href="link.link" target="_blank" rel="noopener">Click here</a>
+-					to open it in a new window.
++					Ten obraz jest większy niż {{ imageMaxSize }} i nie można pokazać podglądu.
++					<a :href="link.link" target="_blank" rel="noopener">Kliknij tutaj</a>, aby
++					otworzyć go w nowym oknie.
+ 				</em>
+ 				<template v-else-if="link.error === 'message'">
+ 					<div>
+ 						<em>
+-							A preview could not be loaded.
+-							<a :href="link.link" target="_blank" rel="noopener">Click here</a>
+-							to open it in a new window.
++							Nie udało się wczytać podglądu.
++							<a :href="link.link" target="_blank" rel="noopener">Kliknij tutaj</a>,
++							aby otworzyć link w nowym oknie.
+ 						</em>
+ 						<br />
+ 						<pre class="prefetch-error">{{ link.message }}</pre>
+@@ -184,7 +184,7 @@ export default defineComponent({
+ 		const container = ref<HTMLDivElement | null>(null);
+ 
+ 		const moreButtonLabel = computed(() => {
+-			return isContentShown.value ? "Less" : "More";
++			return isContentShown.value ? "Mniej" : "Więcej";
+ 		});
+ 
+ 		const imageMaxSize = computed(() => {
+diff --git a/client/components/LinkPreviewToggle.vue b/client/components/LinkPreviewToggle.vue
+index 24351ab7..f88fcbf9 100644
+--- a/client/components/LinkPreviewToggle.vue
++++ b/client/components/LinkPreviewToggle.vue
+@@ -20,7 +20,7 @@ export default defineComponent({
+ 	emits: ["toggle-link-preview"],
+ 	setup(props, {emit}) {
+ 		const ariaLabel = computed(() => {
+-			return props.link.shown ? "Collapse preview" : "Expand preview";
++			return props.link.shown ? "Zwiń podgląd" : "Rozwiń podgląd";
+ 		});
+ 
+ 		const onClick = () => {
+diff --git a/client/components/Mentions.vue b/client/components/Mentions.vue
+index c66daea1..77881144 100644
+--- a/client/components/Mentions.vue
++++ b/client/components/Mentions.vue
+@@ -7,18 +7,18 @@
+ 	>
+ 		<div class="mentions-popup">
+ 			<div class="mentions-popup-title">
+-				Recent mentions
++				Ostatnie wzmianki
+ 				<button
+ 					v-if="resolvedMessages.length"
+ 					class="btn dismiss-all-mentions"
+ 					@click="dismissAllMentions()"
+ 				>
+-					Dismiss all
++					Odrzuć wszystkie
+ 				</button>
+ 			</div>
+ 			<template v-if="resolvedMessages.length === 0">
+-				<p v-if="isLoading">Loading…</p>
+-				<p v-else>You have no recent mentions.</p>
++				<p v-if="isLoading">Wczytywanie…</p>
++				<p v-else>Brak ostatnich wzmianek.</p>
+ 			</template>
+ 			<template v-for="message in resolvedMessages" v-else :key="message.msgId">
+ 				<div :class="['msg', message.type]">
+@@ -27,10 +27,10 @@
+ 							<span class="from">
+ 								<Username :user="message.from as any" />
+ 								<template v-if="message.channel">
+-									in {{ message.channel.channel.name }} on
++									na {{ message.channel.channel.name }} w sieci
+ 									{{ message.channel.network.name }}
+ 								</template>
+-								<template v-else> in unknown channel </template> </span
++								<template v-else> na nieznanym kanale </template> </span
+ 							>{{ ` ` }}
+ 							<span :title="message.localetime" class="time">
+ 								{{ messageTime(message.time.toString()) }}
+@@ -39,11 +39,11 @@
+ 						<div>
+ 							<span
+ 								class="close-tooltip tooltipped tooltipped-w"
+-								aria-label="Dismiss this mention"
++								aria-label="Odrzuć tę wzmiankę"
+ 							>
+ 								<button
+ 									class="msg-dismiss"
+-									aria-label="Dismiss this mention"
++									aria-label="Odrzuć tę wzmiankę"
+ 									@click="dismissMention(message)"
+ 								></button>
+ 							</span>
+diff --git a/client/components/Message.vue b/client/components/Message.vue
+index 1b3650cf..7d722b08 100644
+--- a/client/components/Message.vue
++++ b/client/components/Message.vue
+@@ -79,13 +79,13 @@
+ 			<span class="content" dir="auto">
+ 				<span
+ 					v-if="message.showInActive"
+-					aria-label="This message was shown in your active channel"
++					aria-label="Ta wiadomość została pokazana w aktywnym kanale"
+ 					class="msg-shown-in-active tooltipped tooltipped-e"
+ 					><span></span
+ 				></span>
+ 				<span
+ 					v-if="message.statusmsgGroup"
+-					:aria-label="`This message was only shown to users with ${message.statusmsgGroup} mode`"
++					:aria-label="`Tę wiadomość widzą tylko użytkownicy z trybem ${message.statusmsgGroup}`"
+ 					class="msg-statusmsg tooltipped tooltipped-e"
+ 					><span>{{ message.statusmsgGroup }}</span></span
+ 				>
+diff --git a/client/components/MessageCondensed.vue b/client/components/MessageCondensed.vue
+index aebe9a08..6bd367ca 100644
+--- a/client/components/MessageCondensed.vue
++++ b/client/components/MessageCondensed.vue
+@@ -5,7 +5,7 @@
+ 			<span class="from" />
+ 			<span class="content" @click="onCollapseClick"
+ 				>{{ condensedText
+-				}}<button class="toggle-button" aria-label="Toggle status messages"
++				}}<button class="toggle-button" aria-label="Zwiń lub rozwiń zdarzenia"
+ 			/></span>
+ 		</div>
+ 		<Message
+@@ -25,6 +25,19 @@ import {ClientMessage, ClientNetwork} from "../js/types";
+ import Message from "./Message.vue";
+ import logger from "../js/logger";
+ 
++// Polish plural forms: 1 / 2–4 (except 12–14) / the rest
++const plural = (n: number, one: string, few: string, many: string) => {
++	if (n === 1) {
++		return one;
++	}
++
++	const mod10 = n % 10;
++	const mod100 = n % 100;
++	return mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
++};
++
++const users = (n: number) => `${n} ${plural(n, "osoba", "osoby", "osób")}`;
++
+ export default defineComponent({
+ 	name: "MessageCondensed",
+ 	components: {
+@@ -85,58 +98,44 @@ export default defineComponent({
+ 			const strings: string[] = [];
+ 			condensedTypes.forEach((type) => {
+ 				if (obj[type]) {
++					const n = obj[type];
++
+ 					switch (type) {
+ 						case "chghost":
+ 							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1
+-										? " users have changed hostname"
+-										: " user has changed hostname")
++								`${users(n)} ${plural(n, "zmienia", "zmieniają", "zmienia")} host`
+ 							);
+ 							break;
+ 						case "join":
+ 							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1 ? " users have joined" : " user has joined")
++								`${users(n)} ${plural(n, "wchodzi", "wchodzą", "wchodzi")}`
+ 							);
+ 							break;
+ 						case "part":
+ 							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1 ? " users have left" : " user has left")
++								`${users(n)} ${plural(n, "wychodzi", "wychodzą", "wychodzi")}`
+ 							);
+ 							break;
+ 						case "nick":
+ 							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1
+-										? " users have changed nick"
+-										: " user has changed nick")
++								`${users(n)} ${plural(n, "zmienia", "zmieniają", "zmienia")} nick`
+ 							);
+ 							break;
+ 						case "kick":
+ 							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1 ? " users were kicked" : " user was kicked")
++								`${n} ${plural(n, "wyrzucenie", "wyrzucenia", "wyrzuceń")}`
+ 							);
+ 							break;
+ 						case "mode":
+-							strings.push(
+-								String(obj[type]) +
+-									(obj[type] > 1 ? " modes were set" : " mode was set")
+-							);
++							strings.push(`${n} ${plural(n, "zmiana", "zmiany", "zmian")} trybu`);
+ 							break;
+ 						case "away":
+ 							strings.push(
+-								"marked away " +
+-									(obj[type] > 1 ? String(obj[type]) + " times" : "once")
++								`${n} ${plural(n, "ustawienie", "ustawienia", "ustawień")} nieobecności`
+ 							);
+ 							break;
+ 						case "back":
+-							strings.push(
+-								"marked back " +
+-									(obj[type] > 1 ? String(obj[type]) + " times" : "once")
+-							);
++							strings.push(`${n} ${plural(n, "powrót", "powroty", "powrotów")}`);
+ 							break;
+ 					}
+ 				}
+@@ -146,7 +145,7 @@ export default defineComponent({
+ 				let text = strings.pop();
+ 
+ 				if (strings.length) {
+-					text = strings.join(", ") + ", and " + text!;
++					text = strings.join(", ") + " i " + text!;
+ 				}
+ 
+ 				return text;
+diff --git a/client/components/MessageList.vue b/client/components/MessageList.vue
+index 8b8a8319..1ecab17c 100644
+--- a/client/components/MessageList.vue
++++ b/client/components/MessageList.vue
+@@ -7,8 +7,8 @@
+ 				class="btn"
+ 				@click="onShowMoreClick"
+ 			>
+-				<span v-if="channel.historyLoading">Loading…</span>
+-				<span v-else>Show older messages</span>
++				<span v-if="channel.historyLoading">Wczytywanie…</span>
++				<span v-else>Pokaż starsze wiadomości</span>
+ 			</button>
+ 		</div>
+ 		<div
+diff --git a/client/components/MessageSearchForm.vue b/client/components/MessageSearchForm.vue
+index 98b1a0b2..fe7e9b1e 100644
+--- a/client/components/MessageSearchForm.vue
++++ b/client/components/MessageSearchForm.vue
+@@ -7,7 +7,7 @@
+ 				type="search"
+ 				name="search"
+ 				class="input"
+-				placeholder="Search messages…"
++				placeholder="Szukaj wiadomości…"
+ 				@blur="closeSearch"
+ 				@keyup.esc="closeSearch"
+ 			/>
+@@ -16,7 +16,7 @@
+ 			v-if="!onSearchPage"
+ 			class="search"
+ 			type="button"
+-			aria-label="Search messages in this channel"
++			aria-label="Szukaj wiadomości na tym kanale"
+ 			@mousedown.prevent="toggleSearch"
+ 		/>
+ 	</form>
+diff --git a/client/components/MessageTypes/away.vue b/client/components/MessageTypes/away.vue
+index 39ca76d1..cd49db47 100644
+--- a/client/components/MessageTypes/away.vue
++++ b/client/components/MessageTypes/away.vue
+@@ -3,7 +3,7 @@
+ 		<ParsedMessage v-if="message.self" :network="network" :message="message" />
+ 		<template v-else>
+ 			<Username :user="message.from" />
+-			is away
++			ustawia nieobecność
+ 			<i class="away-message">(<ParsedMessage :network="network" :message="message" />)</i>
+ 		</template>
+ 	</span>
+diff --git a/client/components/MessageTypes/back.vue b/client/components/MessageTypes/back.vue
+index 759d1e33..102bc134 100644
+--- a/client/components/MessageTypes/back.vue
++++ b/client/components/MessageTypes/back.vue
+@@ -3,7 +3,7 @@
+ 		<ParsedMessage v-if="message.self" :network="network" :message="message" />
+ 		<template v-else>
+ 			<Username :user="message.from" />
+-			is back
++			wraca
+ 		</template>
+ 	</span>
+ </template>
+diff --git a/client/components/MessageTypes/chghost.vue b/client/components/MessageTypes/chghost.vue
+index 0f6cd8f4..64eb8159 100644
+--- a/client/components/MessageTypes/chghost.vue
++++ b/client/components/MessageTypes/chghost.vue
+@@ -1,12 +1,12 @@
+ <template>
+ 	<span class="content">
+ 		<Username :user="message.from" />
+-		has changed
++		zmienia
+ 		<span v-if="message.new_ident"
+-			>username to <b>{{ message.new_ident }}</b></span
++			>ident na <b>{{ message.new_ident }}</b></span
+ 		>
+ 		<span v-if="message.new_host"
+-			>hostname to
++			>host na
+ 			<i class="hostmask"><ParsedMessage :network="network" :text="message.new_host" /></i
+ 		></span>
+ 	</span>
+diff --git a/client/components/MessageTypes/ctcp_request.vue b/client/components/MessageTypes/ctcp_request.vue
+index 310bfacd..afd0f2e7 100644
+--- a/client/components/MessageTypes/ctcp_request.vue
++++ b/client/components/MessageTypes/ctcp_request.vue
+@@ -1,7 +1,7 @@
+ <template>
+ 	<span class="content">
+ 		<Username :user="message.from" />
+-		sent a <abbr title="Client-to-client protocol">CTCP</abbr> request:
++		wysyła zapytanie <abbr title="Protokół klient–klient">CTCP</abbr>:
+ 		<span class="ctcp-message"><ParsedMessage :text="message.ctcpMessage" /></span>
+ 	</span>
+ </template>
+diff --git a/client/components/MessageTypes/error.vue b/client/components/MessageTypes/error.vue
+index 64b7f645..b8f43662 100644
+--- a/client/components/MessageTypes/error.vue
++++ b/client/components/MessageTypes/error.vue
+@@ -32,32 +32,32 @@ export default defineComponent({
+ 
+ 			switch (props.message.error) {
+ 				case "bad_channel_key":
+-					return `Cannot join ${chan} - Bad channel key.`;
++					return `Nie można wejść na ${chan} – nieprawidłowy klucz kanału.`;
+ 				case "banned_from_channel":
+-					return `Cannot join ${chan} - You have been banned from the channel.`;
++					return `Nie można wejść na ${chan} – masz bana na tym kanale.`;
+ 				case "cannot_send_to_channel":
+-					return `Cannot send to channel ${chan}`;
++					return `Nie można pisać na kanale ${chan}`;
+ 				case "channel_is_full":
+-					return `Cannot join ${chan} - Channel is full.`;
++					return `Nie można wejść na ${chan} – kanał jest pełny.`;
+ 				case "chanop_privs_needed":
+-					return "Cannot perform action: You're not a channel operator.";
++					return "Nie można wykonać akcji: nie masz opa na tym kanale.";
+ 				case "invite_only_channel":
+-					return `Cannot join ${chan} - Channel is invite only.`;
++					return `Nie można wejść na ${chan} – kanał tylko dla zaproszonych.`;
+ 				case "no_such_nick":
+-					return `User ${nick} hasn't logged in or does not exist.`;
++					return `Użytkownik ${nick} nie jest połączony albo nie istnieje.`;
+ 				case "not_on_channel":
+-					return "Cannot perform action: You're not on the channel.";
++					return "Nie można wykonać akcji: nie jesteś na tym kanale.";
+ 				case "password_mismatch":
+-					return "Password mismatch.";
++					return "Nieprawidłowe hasło.";
+ 				case "too_many_channels":
+-					return `Cannot join ${chan} - You've already reached the maximum number of channels allowed.`;
++					return `Nie można wejść na ${chan} – osiągnięto limit kanałów.`;
+ 				case "unknown_command":
+ 					// TODO: not having message.command should never happen, so force existence
+-					return `Unknown command: ${props.message.command || "!UNDEFINED_COMMAND_BUG"}`;
++					return `Nieznane polecenie: ${props.message.command || "!UNDEFINED_COMMAND_BUG"}`;
+ 				case "user_not_in_channel":
+-					return `User ${nick} is not on the channel.`;
++					return `Użytkownika ${nick} nie ma na kanale.`;
+ 				case "user_on_channel":
+-					return `User ${nick} is already on the channel.`;
++					return `Użytkownik ${nick} jest już na kanale.`;
+ 				default:
+ 					if (props.message.reason) {
+ 						return `${props.message.reason} (${
+diff --git a/client/components/MessageTypes/invite.vue b/client/components/MessageTypes/invite.vue
+index 62c9f989..e349e78d 100644
+--- a/client/components/MessageTypes/invite.vue
++++ b/client/components/MessageTypes/invite.vue
+@@ -1,10 +1,10 @@
+ <template>
+ 	<span class="content">
+ 		<Username :user="message.from" />
+-		invited
+-		<span v-if="message.invitedYou">you</span>
++		zaprasza
++		<span v-if="message.invitedYou">cię</span>
+ 		<Username v-else :user="message.target" />
+-		to <ParsedMessage :network="network" :text="message.channel" />
++		na <ParsedMessage :network="network" :text="message.channel" />
+ 	</span>
+ </template>
+ 
+diff --git a/client/components/MessageTypes/join.vue b/client/components/MessageTypes/join.vue
+index ae0e15cc..4a2c4c42 100644
+--- a/client/components/MessageTypes/join.vue
++++ b/client/components/MessageTypes/join.vue
+@@ -13,10 +13,8 @@
+ 		<template v-if="message.gecos">
+ 			<i class="realname">&#32;({{ message.gecos }})</i>
+ 		</template>
+-		<template v-if="store.state.settings.nexusStyleMessages">
+-			has breached the channel
+-		</template>
+-		<template v-else> has joined the channel </template>
++		<template v-if="store.state.settings.nexusStyleMessages"> wdziera się na kanał </template>
++		<template v-else> wchodzi na kanał </template>
+ 	</span>
+ </template>
+ 
+diff --git a/client/components/MessageTypes/kick.vue b/client/components/MessageTypes/kick.vue
+index 8093192c..14c75278 100644
+--- a/client/components/MessageTypes/kick.vue
++++ b/client/components/MessageTypes/kick.vue
+@@ -2,12 +2,12 @@
+ 	<span class="content">
+ 		<template v-if="store.state.settings.nexusStyleMessages">
+ 			<Username :user="message.target" />
+-			dropped by
++			dostaje kopa od
+ 			<Username :user="message.from" />
+ 		</template>
+ 		<template v-else>
+ 			<Username :user="message.from" />
+-			has kicked
++			wyrzuca
+ 			<Username :user="message.target" />
+ 		</template>
+ 		<i v-if="message.text" class="part-reason"
+diff --git a/client/components/MessageTypes/mode.vue b/client/components/MessageTypes/mode.vue
+index 08fac02a..80ee5c06 100644
+--- a/client/components/MessageTypes/mode.vue
++++ b/client/components/MessageTypes/mode.vue
+@@ -1,7 +1,7 @@
+ <template>
+ 	<span class="content">
+ 		<Username :user="message.from" />
+-		sets mode
++		ustawia tryb
+ 		<ParsedMessage :message="message" />
+ 	</span>
+ </template>
+diff --git a/client/components/MessageTypes/mode_channel.vue b/client/components/MessageTypes/mode_channel.vue
+index 26fb14ad..a943cee9 100644
+--- a/client/components/MessageTypes/mode_channel.vue
++++ b/client/components/MessageTypes/mode_channel.vue
+@@ -2,10 +2,10 @@
+ 	<span class="content">
+ 		<Username :user="message.from" />
+ 		<template v-if="store.state.settings.nexusStyleMessages">
+-			has executed protocol <b>{{ message.text }}</b>
++			uruchamia protokół <b>{{ message.text }}</b>
+ 		</template>
+ 		<template v-else>
+-			sets mode <b>{{ message.text }}</b>
++			ustawia tryb <b>{{ message.text }}</b>
+ 		</template>
+ 	</span>
+ </template>
+diff --git a/client/components/MessageTypes/mode_user.vue b/client/components/MessageTypes/mode_user.vue
+index a4ec7d01..a589889a 100644
+--- a/client/components/MessageTypes/mode_user.vue
++++ b/client/components/MessageTypes/mode_user.vue
+@@ -1,6 +1,6 @@
+ <template>
+ 	<span class="content">
+-		Your user mode is <b>{{ message.raw_modes }}</b>
++		Twój tryb użytkownika: <b>{{ message.raw_modes }}</b>
+ 	</span>
+ </template>
+ 
+diff --git a/client/components/MessageTypes/nick.vue b/client/components/MessageTypes/nick.vue
+index 2e9912a1..2d09916c 100644
+--- a/client/components/MessageTypes/nick.vue
++++ b/client/components/MessageTypes/nick.vue
+@@ -1,8 +1,8 @@
+ <template>
+ 	<span class="content">
+ 		<Username :user="message.from" />
+-		<template v-if="store.state.settings.nexusStyleMessages"> has evolved into </template>
+-		<template v-else> is now known as </template>
++		<template v-if="store.state.settings.nexusStyleMessages"> ewoluuje w </template>
++		<template v-else> zmienia nick na </template>
+ 		<Username :user="{nick: message.new_nick, mode: message.from.mode}" />
+ 	</span>
+ </template>
+diff --git a/client/components/MessageTypes/part.vue b/client/components/MessageTypes/part.vue
+index 7647b336..f93f53a7 100644
+--- a/client/components/MessageTypes/part.vue
++++ b/client/components/MessageTypes/part.vue
+@@ -7,10 +7,8 @@
+ 		<i v-else class="hostmask">
+ 			(<ParsedMessage :network="network" :text="message.hostmask" />)</i
+ 		>
+-		<template v-if="store.state.settings.nexusStyleMessages">
+-			has withdrawn from the channel
+-		</template>
+-		<template v-else> has left the channel </template>
++		<template v-if="store.state.settings.nexusStyleMessages"> wycofuje się z kanału </template>
++		<template v-else> wychodzi z kanału </template>
+ 		<i v-if="message.text" class="part-reason"
+ 			>(<ParsedMessage :network="network" :message="message" />)</i
+ 		>
+diff --git a/client/components/MessageTypes/quit.vue b/client/components/MessageTypes/quit.vue
+index e6596c49..3d145edf 100644
+--- a/client/components/MessageTypes/quit.vue
++++ b/client/components/MessageTypes/quit.vue
+@@ -7,8 +7,8 @@
+ 		<i v-else class="hostmask">
+ 			(<ParsedMessage :network="network" :text="message.hostmask" />)</i
+ 		>
+-		<template v-if="store.state.settings.nexusStyleMessages"> has been deprecated </template>
+-		<template v-else> has quit </template>
++		<template v-if="store.state.settings.nexusStyleMessages"> przechodzi do historii </template>
++		<template v-else> rozłącza się </template>
+ 		<i v-if="message.text" class="quit-reason"
+ 			>(<ParsedMessage :network="network" :message="message" />)</i
+ 		>
+diff --git a/client/components/MessageTypes/topic.vue b/client/components/MessageTypes/topic.vue
+index 80e99960..81386cc0 100644
+--- a/client/components/MessageTypes/topic.vue
++++ b/client/components/MessageTypes/topic.vue
+@@ -2,15 +2,13 @@
+ 	<span class="content">
+ 		<template v-if="message.from && message.from.nick">
+ 			<template v-if="store.state.settings.nexusStyleMessages">
+-				Topic modified by <Username :user="message.from" />:
+-			</template>
+-			<template v-else>
+-				<Username :user="message.from" /> has changed the topic to:
++				Temat zmieniony przez <Username :user="message.from" />:
+ 			</template>
++			<template v-else> <Username :user="message.from" /> zmienia temat na: </template>
+ 		</template>
+ 		<template v-else>
+-			<template v-if="store.state.settings.nexusStyleMessages">Topic: </template>
+-			<template v-else>The topic is: </template>
++			<template v-if="store.state.settings.nexusStyleMessages">Temat: </template>
++			<template v-else>Temat: </template>
+ 		</template>
+ 		<span v-if="message.text" class="new-topic"
+ 			><ParsedMessage :network="network" :message="message"
+diff --git a/client/components/MessageTypes/topic_set_by.vue b/client/components/MessageTypes/topic_set_by.vue
+index e077ad0f..bfcaf151 100644
+--- a/client/components/MessageTypes/topic_set_by.vue
++++ b/client/components/MessageTypes/topic_set_by.vue
+@@ -1,8 +1,8 @@
+ <template>
+ 	<span class="content">
+-		Topic set by
++		Temat ustawiony przez
+ 		<Username :user="message.from" />
+-		on {{ messageTimeLocale }}
++		({{ messageTimeLocale }})
+ 	</span>
+ </template>
+ 
+diff --git a/client/components/MessageTypes/whois.vue b/client/components/MessageTypes/whois.vue
+index 6d2c797f..ad16eb3b 100644
+--- a/client/components/MessageTypes/whois.vue
++++ b/client/components/MessageTypes/whois.vue
+@@ -2,16 +2,16 @@
+ 	<span class="content">
+ 		<p>
+ 			<Username :user="{nick: message.whois.nick}" />
+-			<span v-if="message.whois.whowas"> is offline, last information:</span>
++			<span v-if="message.whois.whowas"> jest offline, ostatnie dane:</span>
+ 		</p>
+ 
+ 		<dl class="whois">
+ 			<template v-if="message.whois.account">
+-				<dt>Logged in as:</dt>
++				<dt>Konto:</dt>
+ 				<dd>{{ message.whois.account }}</dd>
+ 			</template>
+ 
+-			<dt>Host mask:</dt>
++			<dt>Maska hosta:</dt>
+ 			<dd class="hostmask">
+ 				<ParsedMessage
+ 					:network="network"
+@@ -20,7 +20,7 @@
+ 			</dd>
+ 
+ 			<template v-if="message.whois.actual_hostname">
+-				<dt>Actual host:</dt>
++				<dt>Rzeczywisty host:</dt>
+ 				<dd class="hostmask">
+ 					<a
+ 						:href="'https://ipinfo.io/' + message.whois.actual_ip"
+@@ -35,83 +35,83 @@
+ 			</template>
+ 
+ 			<template v-if="message.whois.actual_username">
+-				<dt>Actual username:</dt>
++				<dt>Rzeczywisty ident:</dt>
+ 				<dd>{{ message.whois.actual_username }}</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.real_name">
+-				<dt>Real name:</dt>
++				<dt>Imię i nazwisko:</dt>
+ 				<dd><ParsedMessage :network="network" :text="message.whois.real_name" /></dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.registered_nick">
+-				<dt>Registered nick:</dt>
++				<dt>Zarejestrowany nick:</dt>
+ 				<dd>{{ message.whois.registered_nick }}</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.channels">
+-				<dt>Channels:</dt>
++				<dt>Kanały:</dt>
+ 				<dd><ParsedMessage :network="network" :text="message.whois.channels" /></dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.modes">
+-				<dt>Modes:</dt>
++				<dt>Tryby:</dt>
+ 				<dd>{{ message.whois.modes }}</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.special">
+ 				<template v-for="special in message.whois.special" :key="special">
+-					<dt>Special:</dt>
++					<dt>Specjalne:</dt>
+ 					<dd>{{ special }}</dd>
+ 				</template>
+ 			</template>
+ 
+ 			<template v-if="message.whois.operator">
+-				<dt>Operator:</dt>
++				<dt>IRCop:</dt>
+ 				<dd>{{ message.whois.operator }}</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.helpop">
+-				<dt>Available for help:</dt>
+-				<dd>Yes</dd>
++				<dt>Udziela pomocy:</dt>
++				<dd>Tak</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.bot">
+-				<dt>Is a bot:</dt>
+-				<dd>Yes</dd>
++				<dt>Bot:</dt>
++				<dd>Tak</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.away">
+-				<dt>Away:</dt>
++				<dt>Nieobecność:</dt>
+ 				<dd><ParsedMessage :network="network" :text="message.whois.away" /></dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.secure">
+-				<dt>Secure connection:</dt>
+-				<dd>Yes</dd>
++				<dt>Bezpieczne połączenie:</dt>
++				<dd>Tak</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.certfps">
+ 				<template v-for="certfp in message.whois.certfps" :key="certfp">
+-					<dt>Certificate:</dt>
++					<dt>Certyfikat:</dt>
+ 					<dd>{{ certfp }}</dd>
+ 				</template>
+ 			</template>
+ 
+ 			<template v-if="message.whois.server">
+-				<dt>Connected to:</dt>
++				<dt>Serwer:</dt>
+ 				<dd>
+ 					{{ message.whois.server }} <i>({{ message.whois.server_info }})</i>
+ 				</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.logonTime">
+-				<dt>Connected at:</dt>
++				<dt>Połączenie od:</dt>
+ 				<dd>{{ localetime(message.whois.logonTime) }}</dd>
+ 			</template>
+ 
+ 			<template v-if="message.whois.idle">
+-				<dt>Idle since:</dt>
++				<dt>Bezczynność od:</dt>
+ 				<dd>{{ localetime(message.whois.idleTime) }}</dd>
+ 			</template>
+ 		</dl>
+diff --git a/client/components/NetworkList.vue b/client/components/NetworkList.vue
+index eedc5ece..dc0a018a 100644
+--- a/client/components/NetworkList.vue
++++ b/client/components/NetworkList.vue
+@@ -3,19 +3,19 @@
+ 		v-if="store.state.networks.length === 0"
+ 		class="empty"
+ 		role="navigation"
+-		aria-label="Network and Channel list"
++		aria-label="Lista sieci i kanałów"
+ 	>
+-		You are not connected to any networks yet.
++		Nie masz jeszcze połączenia z żadną siecią.
+ 	</div>
+-	<div v-else ref="networklist" role="navigation" aria-label="Network and Channel list">
++	<div v-else ref="networklist" role="navigation" aria-label="Lista sieci i kanałów">
+ 		<div class="jump-to-input">
+ 			<input
+ 				ref="searchInput"
+ 				:value="searchText"
+-				placeholder="Jump to..."
++				placeholder="Przejdź do…"
+ 				type="search"
+ 				class="search input mousetrap"
+-				aria-label="Search among the channel list"
++				aria-label="Szukaj na liście kanałów"
+ 				tabindex="-1"
+ 				@input="setSearchText"
+ 				@keydown.up="navigateResults($event, -1)"
+@@ -51,7 +51,7 @@
+ 					/>
+ 				</div>
+ 			</div>
+-			<div v-else class="no-results">No results found.</div>
++			<div v-else class="no-results">Brak wyników.</div>
+ 		</div>
+ 		<Draggable
+ 			v-else
+diff --git a/client/components/NetworkLobby.vue b/client/components/NetworkLobby.vue
+index 21a55511..7c7d2f4e 100644
+--- a/client/components/NetworkLobby.vue
++++ b/client/components/NetworkLobby.vue
+@@ -16,14 +16,14 @@
+ 			<span
+ 				v-if="network.status.connected && !network.status.secure"
+ 				class="not-secure-tooltip tooltipped tooltipped-w"
+-				aria-label="Insecure connection"
++				aria-label="Niezabezpieczone połączenie"
+ 			>
+ 				<span class="not-secure-icon" />
+ 			</span>
+ 			<span
+ 				v-if="!network.status.connected"
+ 				class="not-connected-tooltip tooltipped tooltipped-w"
+-				aria-label="Disconnected"
++				aria-label="Rozłączono"
+ 			>
+ 				<span class="not-connected-icon" />
+ 			</span>
+@@ -74,7 +74,7 @@ export default defineComponent({
+ 		});
+ 
+ 		const joinChannelLabel = computed(() => {
+-			return props.isJoinChannelShown ? "Cancel" : "Join a channel…";
++			return props.isJoinChannelShown ? "Anuluj" : "Wejdź na kanał…";
+ 		});
+ 
+ 		const unreadCount = computed(() => {
+@@ -86,7 +86,7 @@ export default defineComponent({
+ 		};
+ 
+ 		const getExpandLabel = (network: ClientNetwork) => {
+-			return network.isCollapsed ? "Expand" : "Collapse";
++			return network.isCollapsed ? "Rozwiń" : "Zwiń";
+ 		};
+ 
+ 		return {
+diff --git a/client/components/RevealPassword.vue b/client/components/RevealPassword.vue
+index fcc2f804..756bde98 100644
+--- a/client/components/RevealPassword.vue
++++ b/client/components/RevealPassword.vue
+@@ -8,10 +8,10 @@
+ 				'reveal-password tooltipped tooltipped-n tooltipped-no-delay',
+ 				{'reveal-password-visible': isVisible},
+ 			]"
+-			:aria-label="isVisible ? 'Hide password' : 'Show password'"
++			:aria-label="isVisible ? 'Ukryj hasło' : 'Pokaż hasło'"
+ 			@click="onClick"
+ 		>
+-			<span :aria-label="isVisible ? 'Hide password' : 'Show password'" />
++			<span :aria-label="isVisible ? 'Ukryj hasło' : 'Pokaż hasło'" />
+ 		</span>
+ 	</div>
+ </template>
+diff --git a/client/components/Session.vue b/client/components/Session.vue
+index f827d43c..752856ec 100644
+--- a/client/components/Session.vue
++++ b/client/components/Session.vue
+@@ -8,16 +8,16 @@
+ 			}}</a>
+ 
+ 			<p v-if="session.active > 1" class="session-usage">
+-				Active in {{ session.active }} browsers
++				Aktywna w {{ session.active }} przeglądarkach
+ 			</p>
+ 			<p v-else-if="!session.current && !session.active" class="session-usage">
+-				Last used on <time>{{ lastUse }}</time>
++				Ostatnio używana: <time>{{ lastUse }}</time>
+ 			</p>
+ 		</div>
+ 		<div class="session-item-btn">
+ 			<button class="btn" @click.prevent="signOut">
+-				<template v-if="session.current">Sign out</template>
+-				<template v-else>Revoke</template>
++				<template v-if="session.current">Wyloguj</template>
++				<template v-else>Unieważnij</template>
+ 			</button>
+ 		</div>
+ 	</div>
+diff --git a/client/components/Settings/Account.vue b/client/components/Settings/Account.vue
+index 029b3374..ee709d05 100644
+--- a/client/components/Settings/Account.vue
++++ b/client/components/Settings/Account.vue
+@@ -9,9 +9,9 @@
+ 			role="group"
+ 			aria-labelledby="label-change-password"
+ 		>
+-			<h2 id="label-change-password">Change password</h2>
++			<h2 id="label-change-password">Zmiana hasła</h2>
+ 			<div class="password-container">
+-				<label for="current-password" class="sr-only"> Enter current password </label>
++				<label for="current-password" class="sr-only"> Obecne hasło </label>
+ 				<RevealPassword v-slot:default="slotProps">
+ 					<input
+ 						id="current-password"
+@@ -20,12 +20,12 @@
+ 						:type="slotProps.isVisible ? 'text' : 'password'"
+ 						name="old_password"
+ 						class="input"
+-						placeholder="Enter current password"
++						placeholder="Obecne hasło"
+ 					/>
+ 				</RevealPassword>
+ 			</div>
+ 			<div class="password-container">
+-				<label for="new-password" class="sr-only"> Enter desired new password </label>
++				<label for="new-password" class="sr-only"> Nowe hasło </label>
+ 				<RevealPassword v-slot:default="slotProps">
+ 					<input
+ 						id="new-password"
+@@ -34,12 +34,12 @@
+ 						name="new_password"
+ 						autocomplete="new-password"
+ 						class="input"
+-						placeholder="Enter desired new password"
++						placeholder="Nowe hasło"
+ 					/>
+ 				</RevealPassword>
+ 			</div>
+ 			<div class="password-container">
+-				<label for="new-password-verify" class="sr-only"> Repeat new password </label>
++				<label for="new-password-verify" class="sr-only"> Powtórz nowe hasło </label>
+ 				<RevealPassword v-slot:default="slotProps">
+ 					<input
+ 						id="new-password-verify"
+@@ -48,7 +48,7 @@
+ 						name="verify_password"
+ 						autocomplete="new-password"
+ 						class="input"
+-						placeholder="Repeat new password"
++						placeholder="Powtórz nowe hasło"
+ 					/>
+ 				</RevealPassword>
+ 			</div>
+@@ -56,7 +56,7 @@
+ 				v-if="passwordChangeStatus && passwordChangeStatus.success"
+ 				class="feedback success"
+ 			>
+-				Successfully updated your password
++				Hasło zostało zmienione.
+ 			</div>
+ 			<div
+ 				v-else-if="passwordChangeStatus && passwordChangeStatus.error"
+@@ -66,19 +66,19 @@
+ 			</div>
+ 			<div>
+ 				<button type="submit" class="btn" @click.prevent="changePassword">
+-					Change password
++					Zmień hasło
+ 				</button>
+ 			</div>
+ 		</div>
+ 
+ 		<div v-if="!store.state.serverConfiguration?.public" class="session-list" role="group">
+-			<h2>Sessions</h2>
++			<h2>Sesje</h2>
+ 
+-			<h3>Current session</h3>
++			<h3>Bieżąca sesja</h3>
+ 			<Session v-if="currentSession" :session="currentSession" />
+ 
+ 			<template v-if="activeSessions.length > 0">
+-				<h3>Active sessions</h3>
++				<h3>Aktywne sesje</h3>
+ 				<Session
+ 					v-for="session in activeSessions"
+ 					:key="session.token"
+@@ -86,10 +86,10 @@
+ 				/>
+ 			</template>
+ 
+-			<h3>Other sessions</h3>
+-			<p v-if="store.state.sessions.length === 0">Loading…</p>
++			<h3>Inne sesje</h3>
++			<p v-if="store.state.sessions.length === 0">Wczytywanie…</p>
+ 			<p v-else-if="otherSessions.length === 0">
+-				<em>You are not currently logged in to any other device.</em>
++				<em>Nie ma innych zalogowanych urządzeń.</em>
+ 			</p>
+ 			<Session
+ 				v-for="session in otherSessions"
+@@ -118,10 +118,10 @@ export default defineComponent({
+ 		const store = useStore();
+ 
+ 		const passwordErrors = {
+-			missing_fields: "Please fill in all fields",
+-			password_mismatch: "Both new password fields must match",
+-			password_incorrect: "The current password field does not match your account password",
+-			update_failed: "Failed to update your password",
++			missing_fields: "Wypełnij wszystkie pola",
++			password_mismatch: "Oba pola nowego hasła muszą być takie same",
++			password_incorrect: "Obecne hasło jest nieprawidłowe",
++			update_failed: "Nie udało się zmienić hasła",
+ 		};
+ 
+ 		const passwordChangeStatus = ref<{
+diff --git a/client/components/Settings/Appearance.vue b/client/components/Settings/Appearance.vue
+index 81ab790a..5b07099f 100644
+--- a/client/components/Settings/Appearance.vue
++++ b/client/components/Settings/Appearance.vue
+@@ -1,10 +1,10 @@
+ <template>
+ 	<div>
+-		<h2>Messages</h2>
++		<h2>Wiadomości</h2>
+ 		<div>
+ 			<label class="opt">
+ 				<input :checked="store.state.settings.motd" type="checkbox" name="motd" />
+-				Show <abbr title="Message Of The Day">MOTD</abbr>
++				Pokazuj <abbr title="Wiadomość dnia serwera">MOTD</abbr>
+ 			</label>
+ 		</div>
+ 		<div>
+@@ -14,7 +14,7 @@
+ 					type="checkbox"
+ 					name="showSeconds"
+ 				/>
+-				Include seconds in timestamp
++				Pokazuj sekundy w godzinach
+ 			</label>
+ 		</div>
+ 		<div>
+@@ -24,29 +24,29 @@
+ 					type="checkbox"
+ 					name="use12hClock"
+ 				/>
+-				Use 12-hour timestamps
++				Godziny w formacie 12-godzinnym
+ 			</label>
+ 		</div>
+ 		<template v-if="store.state.serverConfiguration?.prefetch">
+-			<h2>Link previews</h2>
++			<h2>Podgląd linków</h2>
+ 			<div>
+ 				<label class="opt">
+ 					<input :checked="store.state.settings.media" type="checkbox" name="media" />
+-					Auto-expand media
++					Automatycznie rozwijaj obrazy i filmy
+ 				</label>
+ 			</div>
+ 			<div>
+ 				<label class="opt">
+ 					<input :checked="store.state.settings.links" type="checkbox" name="links" />
+-					Auto-expand websites
++					Automatycznie rozwijaj podgląd stron
+ 				</label>
+ 			</div>
+ 		</template>
+ 		<h2 id="label-status-messages">
+-			Status messages
++			Komunikaty stanu
+ 			<span
+ 				class="tooltipped tooltipped-n tooltipped-no-delay"
+-				aria-label="Joins, parts, quits, kicks, nick changes, and mode changes"
++				aria-label="Wejścia, wyjścia, rozłączenia, wyrzucenia, zmiany nicków i trybów"
+ 			>
+ 				<button class="extra-help" />
+ 			</span>
+@@ -59,7 +59,7 @@
+ 					name="statusMessages"
+ 					value="shown"
+ 				/>
+-				Show all status messages individually
++				Pokazuj każdy komunikat stanu osobno
+ 			</label>
+ 			<label class="opt">
+ 				<input
+@@ -68,7 +68,7 @@
+ 					name="statusMessages"
+ 					value="condensed"
+ 				/>
+-				Condense status messages together
++				Grupuj komunikaty stanu
+ 			</label>
+ 			<label class="opt">
+ 				<input
+@@ -77,10 +77,10 @@
+ 					name="statusMessages"
+ 					value="hidden"
+ 				/>
+-				Hide all status messages
++				Ukrywaj wszystkie komunikaty stanu
+ 			</label>
+ 		</div>
+-		<h2>Visual Aids</h2>
++		<h2>Ułatwienia wizualne</h2>
+ 		<div>
+ 			<label class="opt">
+ 				<input
+@@ -88,7 +88,7 @@
+ 					type="checkbox"
+ 					name="coloredNicks"
+ 				/>
+-				Enable colored nicknames
++				Koloruj nicki
+ 			</label>
+ 			<label class="opt">
+ 				<input
+@@ -96,7 +96,7 @@
+ 					type="checkbox"
+ 					name="autocomplete"
+ 				/>
+-				Enable autocomplete
++				Włącz autouzupełnianie
+ 			</label>
+ 		</div>
+ 		<div>
+@@ -106,10 +106,10 @@
+ 					type="checkbox"
+ 					name="nexusStyleMessages"
+ 				/>
+-				Use Nexus-style event messages
++				Zdarzenia w barwnym stylu
+ 				<span
+ 					class="tooltipped tooltipped-n tooltipped-no-delay"
+-					aria-label="Cyberpunk-themed event messages (breached, dropped, deprecated, etc.)"
++					aria-label="Barwniejsze opisy zdarzeń, np. „wdziera się na kanał”, „dostaje kopa od”"
+ 				>
+ 					<button class="extra-help" />
+ 				</span>
+@@ -118,10 +118,10 @@
+ 		<div>
+ 			<label class="opt">
+ 				<label for="nickPostfix" class="opt">
+-					Nick autocomplete postfix
++					Tekst po nicku przy autouzupełnianiu
+ 					<span
+ 						class="tooltipped tooltipped-n tooltipped-no-delay"
+-						aria-label="Nick autocomplete postfix (for example a comma)"
++						aria-label="Tekst dopisywany po nicku przy autouzupełnianiu (np. przecinek)"
+ 					>
+ 						<button class="extra-help" />
+ 					</span>
+@@ -132,14 +132,14 @@
+ 					type="text"
+ 					name="nickPostfix"
+ 					class="input"
+-					placeholder="Nick autocomplete postfix (e.g. ', ')"
++					placeholder="Tekst po nicku (np. ', ')"
+ 				/>
+ 			</label>
+ 		</div>
+ 
+-		<h2>Theme</h2>
++		<h2>Motyw</h2>
+ 		<div>
+-			<label for="theme-select" class="sr-only">Theme</label>
++			<label for="theme-select" class="sr-only">Motyw</label>
+ 			<select
+ 				id="theme-select"
+ 				:value="store.state.settings.theme"
+@@ -157,16 +157,16 @@
+ 		</div>
+ 
+ 		<div>
+-			<h2>Custom Stylesheet</h2>
++			<h2>Własny arkusz stylów</h2>
+ 			<label for="user-specified-css-input" class="sr-only">
+-				Custom stylesheet. You can override any style with CSS here.
++				Własny arkusz stylów. Tutaj możesz nadpisać dowolny styl za pomocą CSS.
+ 			</label>
+ 			<textarea
+ 				id="user-specified-css-input"
+ 				:value="store.state.settings.userStyles"
+ 				class="input"
+ 				name="userStyles"
+-				placeholder="/* You can override any style with CSS here */"
++				placeholder="/* Tutaj możesz nadpisać dowolny styl za pomocą CSS */"
+ 			/>
+ 		</div>
+ 	</div>
+diff --git a/client/components/Settings/General.vue b/client/components/Settings/General.vue
+index 3cd6a71b..8ac1375c 100644
+--- a/client/components/Settings/General.vue
++++ b/client/components/Settings/General.vue
+@@ -1,14 +1,14 @@
+ <template>
+ 	<div>
+ 		<div v-if="canRegisterProtocol || hasInstallPromptEvent">
+-			<h2>Native app</h2>
++			<h2>Aplikacja</h2>
+ 			<button
+ 				v-if="hasInstallPromptEvent"
+ 				type="button"
+ 				class="btn"
+ 				@click.prevent="nativeInstallPrompt"
+ 			>
+-				Add NexusIRC to Home screen
++				Dodaj erssi@tahio do ekranu głównego
+ 			</button>
+ 			<button
+ 				v-if="canRegisterProtocol"
+@@ -16,11 +16,11 @@
+ 				class="btn"
+ 				@click.prevent="registerProtocol"
+ 			>
+-				Open irc:// URLs with NexusIRC
++				Otwieraj linki irc:// w erssi@tahio
+ 			</button>
+ 		</div>
+ 		<div v-if="store.state.serverConfiguration?.fileUpload">
+-			<h2>File uploads</h2>
++			<h2>Wysyłanie plików</h2>
+ 			<div>
+ 				<label class="opt">
+ 					<input
+@@ -28,11 +28,11 @@
+ 						type="checkbox"
+ 						name="uploadCanvas"
+ 					/>
+-					Attempt to remove metadata from images before uploading
++					Usuwaj metadane ze zdjęć przed wysłaniem
+ 					<span
+ 						class="tooltipped tooltipped-n tooltipped-no-delay"
+-						aria-label="This option renders the image into a canvas element to remove metadata from the image.
+-    This may break orientation if your browser does not support that."
++						aria-label="Zdjęcie jest przerysowywane w elemencie canvas, co usuwa z niego metadane.
++    Jeśli przeglądarka tego nie obsługuje, orientacja zdjęcia może być błędna."
+ 					>
+ 						<button class="extra-help" />
+ 					</span>
+@@ -40,49 +40,49 @@
+ 			</div>
+ 		</div>
+ 		<div v-if="!store.state.serverConfiguration?.public">
+-			<h2>Settings synchronisation</h2>
++			<h2>Synchronizacja ustawień</h2>
+ 			<label class="opt">
+ 				<input
+ 					:checked="store.state.settings.syncSettings"
+ 					type="checkbox"
+ 					name="syncSettings"
+ 				/>
+-				Synchronize settings with other clients
++				Synchronizuj ustawienia z innymi urządzeniami
+ 			</label>
+ 			<template v-if="!store.state.settings.syncSettings">
+ 				<div v-if="store.state.serverHasSettings" class="settings-sync-panel">
+ 					<p>
+-						<strong>Warning:</strong> Checking this box will override the settings of
+-						this client with those stored on the server.
++						<strong>Uwaga:</strong> zaznaczenie tej opcji zastąpi ustawienia tego
++						urządzenia ustawieniami zapisanymi na serwerze.
+ 					</p>
+ 					<p>
+-						Use the button below to enable synchronization, and override any settings
+-						already synced to the server.
++						Przycisk poniżej włącza synchronizację i zastępuje ustawienia zapisane na
++						serwerze ustawieniami z tego urządzenia.
+ 					</p>
+ 					<button type="button" class="btn btn-small" @click="onForceSyncClick">
+-						Sync settings and enable
++						Wyślij ustawienia i włącz synchronizację
+ 					</button>
+ 				</div>
+ 				<div v-else class="settings-sync-panel">
+ 					<p>
+-						<strong>Warning:</strong> No settings have been synced before. Enabling this
+-						will sync all settings of this client as the base for other clients.
++						<strong>Uwaga:</strong> na serwerze nie ma jeszcze zapisanych ustawień. Po
++						włączeniu ustawienia tego urządzenia staną się bazą dla pozostałych.
+ 					</p>
+ 				</div>
+ 			</template>
+ 		</div>
+ 		<div v-if="!store.state.serverConfiguration?.public">
+-			<h2>Automatic away message</h2>
++			<h2>Automatyczna wiadomość nieobecności</h2>
+ 
+ 			<label class="opt">
+-				<label for="awayMessage" class="sr-only">Automatic away message</label>
++				<label for="awayMessage" class="sr-only">Automatyczna wiadomość nieobecności</label>
+ 				<input
+ 					id="awayMessage"
+ 					:value="store.state.settings.awayMessage"
+ 					type="text"
+ 					name="awayMessage"
+ 					class="input"
+-					placeholder="Away message if NexusIRC is not open"
++					placeholder="Wiadomość nieobecności, gdy erssi@tahio jest zamknięte"
+ 				/>
+ 			</label>
+ 		</div>
+@@ -155,9 +155,9 @@ export default defineComponent({
+ 			const uri = document.location.origin + document.location.pathname + "?uri=%s";
+ 			// @ts-expect-error
+ 			// the third argument is deprecated but recommended for compatibility: https://developer.mozilla.org/en-US/docs/Web/API/Navigator/registerProtocolHandler
+-			window.navigator.registerProtocolHandler("irc", uri, "NexusIRC");
++			window.navigator.registerProtocolHandler("irc", uri, "erssi@tahio");
+ 			// @ts-expect-error
+-			window.navigator.registerProtocolHandler("ircs", uri, "NexusIRC");
++			window.navigator.registerProtocolHandler("ircs", uri, "erssi@tahio");
+ 		};
+ 
+ 		return {
+diff --git a/client/components/Settings/IrssiConnection.vue b/client/components/Settings/IrssiConnection.vue
+index ca9ea94a..341c1f25 100644
+--- a/client/components/Settings/IrssiConnection.vue
++++ b/client/components/Settings/IrssiConnection.vue
+@@ -1,10 +1,10 @@
+ <template>
+ 	<div>
+ 		<div id="irssi-connection" role="group" aria-labelledby="label-irssi-connection">
+-			<h2 id="label-irssi-connection">irssi Connection Settings</h2>
++			<h2 id="label-irssi-connection">Połączenie z erssi</h2>
+ 			<p class="help">
+-				Configure connection to your irssi instance running fe-web module. The password
+-				should match the one set in irssi with <code>/SET fe_web_password</code>.
++				Ustawienia połączenia z sesją erssi przez moduł fe-web. Hasło musi być takie samo
++				jak w ustawieniu erssi <code>/SET fe_web_password</code>.
+ 			</p>
+ 
+ 			<div v-if="connectionStatus" class="feedback" :class="connectionStatus.type">
+@@ -12,14 +12,14 @@
+ 			</div>
+ 
+ 			<div class="input-group">
+-				<label for="irssi-host">Host / IP Address</label>
++				<label for="irssi-host">Host lub adres IP</label>
+ 				<input
+ 					id="irssi-host"
+ 					v-model="config.host"
+ 					type="text"
+ 					name="irssi_host"
+ 					class="input"
+-					placeholder="127.0.0.1 or irssi.example.com"
++					placeholder="127.0.0.1 lub erssi.example.com"
+ 					required
+ 				/>
+ 			</div>
+@@ -40,9 +40,10 @@
+ 			</div>
+ 
+ 			<div class="input-group">
+-				<label for="irssi-password">Password</label>
++				<label for="irssi-password">Hasło</label>
+ 				<p class="help">
+-					The password set in irssi with <code>/SET fe_web_password your_password</code>
++					Hasło ustawione w erssi poleceniem
++					<code>/SET fe_web_password your_password</code>
+ 				</p>
+ 				<RevealPassword v-slot:default="slotProps">
+ 					<input
+@@ -52,7 +53,7 @@
+ 						name="irssi_password"
+ 						autocomplete="off"
+ 						class="input"
+-						placeholder="Enter fe-web password"
++						placeholder="Hasło fe-web"
+ 						required
+ 					/>
+ 				</RevealPassword>
+@@ -61,8 +62,8 @@
+ 			<div class="input-group">
+ 				<label class="opt">
+ 					<input v-model="config.useTLS" type="checkbox" name="irssi_use_tls" disabled />
+-					Use SSL/TLS (wss://)
+-					<span class="help">Required for fe-web v1.5</span>
++					Użyj SSL/TLS (wss://)
++					<span class="help">Wymagane przez fe-web v1.5</span>
+ 				</label>
+ 			</div>
+ 
+@@ -73,39 +74,40 @@
+ 						type="checkbox"
+ 						name="irssi_reject_unauthorized"
+ 					/>
+-					Reject unauthorized certificates
++					Odrzucaj niezaufane certyfikaty
+ 					<span class="help"
+-						>Uncheck to accept self-signed certificates (common for local
+-						connections)</span
++						>Odznacz, aby akceptować certyfikaty z własnym podpisem (typowe przy
++						połączeniach lokalnych)</span
+ 					>
+ 				</label>
+ 			</div>
+ 
+ 			<div class="btn-group">
+ 				<button type="button" class="btn btn-primary" @click="testConnection">
+-					Test Connection
++					Sprawdź połączenie
+ 				</button>
+ 				<button type="button" class="btn btn-success" @click="saveConnection">
+-					Save Settings
++					Zapisz ustawienia
+ 				</button>
+ 			</div>
+ 		</div>
+ 
+ 		<!-- Connection Status -->
+ 		<div v-if="currentConnection" class="current-connection" role="group">
+-			<h2>Current Connection</h2>
++			<h2>Bieżące połączenie</h2>
+ 			<div class="connection-info">
+ 				<p>
+ 					<strong>Host:</strong> {{ currentConnection.host }}:{{ currentConnection.port }}
+ 				</p>
+ 				<p>
+-					<strong>Status:</strong>
+-					<span :class="currentConnection.connected ? 'connected' : 'disconnected'">
+-						{{ currentConnection.connected ? "Connected" : "Disconnected" }}
++					<strong>Stan:</strong>&#32;<span
++						:class="currentConnection.connected ? 'connected' : 'disconnected'"
++					>
++						{{ currentConnection.connected ? "Połączono" : "Rozłączono" }}
+ 					</span>
+ 				</p>
+ 				<p v-if="currentConnection.encryption">
+-					<strong>Encryption:</strong> AES-256-GCM (fe-web v1.5)
++					<strong>Szyfrowanie:</strong> AES-256-GCM (fe-web v1.5)
+ 				</p>
+ 			</div>
+ 		</div>
+@@ -239,14 +241,14 @@ export default defineComponent({
+ 			if (!config.value.host || !config.value.port || !config.value.password) {
+ 				connectionStatus.value = {
+ 					type: "error",
+-					message: "Please fill in all required fields",
++					message: "Wypełnij wszystkie wymagane pola",
+ 				};
+ 				return;
+ 			}
+ 
+ 			connectionStatus.value = {
+ 				type: "info",
+-				message: "Testing connection...",
++				message: "Sprawdzanie połączenia…",
+ 			};
+ 
+ 			// Emit test request
+@@ -262,14 +264,14 @@ export default defineComponent({
+ 			if (!config.value.host || !config.value.port || !config.value.password) {
+ 				connectionStatus.value = {
+ 					type: "error",
+-					message: "Please fill in all required fields",
++					message: "Wypełnij wszystkie wymagane pola",
+ 				};
+ 				return;
+ 			}
+ 
+ 			connectionStatus.value = {
+ 				type: "info",
+-				message: "Saving connection settings...",
++				message: "Zapisywanie ustawień połączenia…",
+ 			};
+ 
+ 			// Emit save request
+diff --git a/client/components/Settings/Navigation.vue b/client/components/Settings/Navigation.vue
+index 4d06ce24..c0428a86 100644
+--- a/client/components/Settings/Navigation.vue
++++ b/client/components/Settings/Navigation.vue
+@@ -1,14 +1,34 @@
+ <template>
+ 	<!-- 220px is the width of the sidebar, and we add 100px to allow for the text -->
+ 	<aside class="settings-menu">
+-		<h2>Settings</h2>
+-		<ul role="navigation" aria-label="Settings tabs">
+-			<SettingTabItem name="General" class-name="general" to="" />
+-			<SettingTabItem name="Appearance" class-name="appearance" to="appearance" />
+-			<SettingTabItem name="Notifications" class-name="notifications" to="notifications" />
+-			<SettingTabItem name="irssi Connection" class-name="irssi" to="irssi" />
+-			<SettingTabItem name="WeeChat Relay" class-name="weechat" to="weechat" />
+-			<SettingTabItem name="Account" class-name="account" to="account" />
++		<h2>Ustawienia</h2>
++		<ul role="navigation" aria-label="Sekcje ustawień">
++			<SettingTabItem name="General" label="Ogólne" class-name="general" to="" />
++			<SettingTabItem
++				name="Appearance"
++				label="Wygląd"
++				class-name="appearance"
++				to="appearance"
++			/>
++			<SettingTabItem
++				name="Notifications"
++				label="Powiadomienia"
++				class-name="notifications"
++				to="notifications"
++			/>
++			<SettingTabItem
++				name="IrssiConnection"
++				label="Połączenie z erssi"
++				class-name="irssi"
++				to="irssi"
++			/>
++			<SettingTabItem
++				name="WeeChatRelay"
++				label="Przekaźnik WeeChat"
++				class-name="weechat"
++				to="weechat"
++			/>
++			<SettingTabItem name="Account" label="Konto" class-name="account" to="account" />
+ 		</ul>
+ 	</aside>
+ </template>
+diff --git a/client/components/Settings/Notifications.vue b/client/components/Settings/Notifications.vue
+index a062c8ae..2e4b3a7f 100644
+--- a/client/components/Settings/Notifications.vue
++++ b/client/components/Settings/Notifications.vue
+@@ -1,7 +1,7 @@
+ <template>
+ 	<div>
+ 		<template v-if="!store.state.serverConfiguration?.public">
+-			<h2>Push Notifications</h2>
++			<h2>Powiadomienia push</h2>
+ 			<div>
+ 				<button
+ 					id="pushNotifications"
+@@ -14,25 +14,25 @@
+ 					@click="onPushButtonClick"
+ 				>
+ 					<template v-if="store.state.pushNotificationState === 'subscribed'">
+-						Unsubscribe from push notifications
++						Wyłącz powiadomienia push
+ 					</template>
+ 					<template v-else-if="store.state.pushNotificationState === 'loading'">
+-						Loading…
++						Wczytywanie…
+ 					</template>
+-					<template v-else> Subscribe to push notifications </template>
++					<template v-else> Włącz powiadomienia push </template>
+ 				</button>
+ 				<div v-if="store.state.pushNotificationState === 'nohttps'" class="error">
+-					<strong>Warning</strong>: Push notifications are only supported over HTTPS
+-					connections.
++					<strong>Uwaga</strong>: powiadomienia push działają tylko przy połączeniu przez
++					HTTPS.
+ 				</div>
+ 				<div v-if="store.state.pushNotificationState === 'unsupported'" class="error">
+-					<strong>Warning</strong>:
+-					<span>Push notifications are not supported by your browser.</span>
++					<strong>Uwaga</strong>:
++					<span>ta przeglądarka nie obsługuje powiadomień push.</span>
+ 				</div>
+ 			</div>
+ 		</template>
+ 
+-		<h2>Browser Notifications</h2>
++		<h2>Powiadomienia na pulpicie</h2>
+ 		<div>
+ 			<label class="opt">
+ 				<input
+@@ -42,24 +42,24 @@
+ 					type="checkbox"
+ 					name="desktopNotifications"
+ 				/>
+-				Enable browser notifications<br />
++				Włącz powiadomienia na pulpicie<br />
+ 				<div v-if="store.state.desktopNotificationState === 'unsupported'" class="error">
+-					<strong>Warning</strong>: Notifications are not supported by your browser.
++					<strong>Uwaga</strong>: ta przeglądarka nie obsługuje powiadomień.
+ 				</div>
+ 				<div
+ 					v-if="store.state.desktopNotificationState === 'nohttps'"
+ 					id="warnBlockedDesktopNotifications"
+ 					class="error"
+ 				>
+-					<strong>Warning</strong>: Notifications are only supported over HTTPS
+-					connections.
++					<strong>Uwaga</strong>: powiadomienia działają tylko przy połączeniu przez
++					HTTPS.
+ 				</div>
+ 				<div
+ 					v-if="store.state.desktopNotificationState === 'blocked'"
+ 					id="warnBlockedDesktopNotifications"
+ 					class="error"
+ 				>
+-					<strong>Warning</strong>: Notifications are blocked by your browser.
++					<strong>Uwaga</strong>: przeglądarka blokuje powiadomienia.
+ 				</div>
+ 			</label>
+ 		</div>
+@@ -70,12 +70,12 @@
+ 					type="checkbox"
+ 					name="notification"
+ 				/>
+-				Enable notification sound
++				Odtwarzaj dźwięk powiadomienia
+ 			</label>
+ 		</div>
+ 		<div>
+ 			<div class="opt">
+-				<button id="play" @click.prevent="playNotification">Play sound</button>
++				<button id="play" @click.prevent="playNotification">Odtwórz dźwięk</button>
+ 			</div>
+ 		</div>
+ 
+@@ -86,18 +86,18 @@
+ 					type="checkbox"
+ 					name="notifyAllMessages"
+ 				/>
+-				Enable notification for all messages
++				Powiadamiaj o każdej wiadomości
+ 			</label>
+ 		</div>
+ 
+ 		<div v-if="!store.state.serverConfiguration?.public">
+ 			<label class="opt">
+ 				<label for="highlights" class="opt">
+-					Custom highlights
++					Własne wzmianki
+ 					<span
+ 						class="tooltipped tooltipped-n tooltipped-no-delay"
+-						aria-label="If a message contains any of these comma-separated
+-expressions, it will trigger a highlight."
++						aria-label="Wiadomość zawierająca któreś z tych wyrażeń (rozdzielonych
++przecinkami) zostanie oznaczona jako wzmianka."
+ 					>
+ 						<button class="extra-help" />
+ 					</span>
+@@ -109,7 +109,7 @@ expressions, it will trigger a highlight."
+ 					name="highlights"
+ 					class="input"
+ 					autocomplete="off"
+-					placeholder="Comma-separated, e.g.: word, some more words, anotherword"
++					placeholder="Rozdzielone przecinkami, np.: słowo, kilka słów, innesłowo"
+ 				/>
+ 			</label>
+ 		</div>
+@@ -117,12 +117,12 @@ expressions, it will trigger a highlight."
+ 		<div v-if="!store.state.serverConfiguration?.public">
+ 			<label class="opt">
+ 				<label for="highlightExceptions" class="opt">
+-					Highlight exceptions
++					Wyjątki od wzmianek
+ 					<span
+ 						class="tooltipped tooltipped-n tooltipped-no-delay"
+-						aria-label="If a message contains any of these comma-separated
+-expressions, it will not trigger a highlight even if it contains
+-your nickname or expressions defined in custom highlights."
++						aria-label="Wiadomość zawierająca któreś z tych wyrażeń (rozdzielonych
++przecinkami) nie zostanie oznaczona jako wzmianka, nawet jeśli
++zawiera Twój nick lub wyrażenie z własnych wzmianek."
+ 					>
+ 						<button class="extra-help" />
+ 					</span>
+@@ -134,7 +134,7 @@ your nickname or expressions defined in custom highlights."
+ 					name="highlightExceptions"
+ 					class="input"
+ 					autocomplete="off"
+-					placeholder="Comma-separated, e.g.: word, some more words, anotherword"
++					placeholder="Rozdzielone przecinkami, np.: słowo, kilka słów, innesłowo"
+ 				/>
+ 			</label>
+ 		</div>
+diff --git a/client/components/Settings/SettingTabItem.vue b/client/components/Settings/SettingTabItem.vue
+index 6512db61..312fb2b3 100644
+--- a/client/components/Settings/SettingTabItem.vue
++++ b/client/components/Settings/SettingTabItem.vue
+@@ -1,12 +1,17 @@
+ <template>
+-	<li :aria-label="name" role="tab" :aria-selected="route.name === name" aria-controls="settings">
++	<li
++		:aria-label="label || name"
++		role="tab"
++		:aria-selected="route.name === name"
++		aria-controls="settings"
++	>
+ 		<router-link v-slot:default="{navigate, isExactActive}" :to="'/settings/' + to" custom>
+ 			<button
+ 				:class="['icon', className, {active: isExactActive}]"
+ 				@click="navigate"
+ 				@keypress.enter="navigate"
+ 			>
+-				{{ name }}
++				{{ label || name }}
+ 			</button>
+ 		</router-link>
+ 	</li>
+@@ -19,10 +24,16 @@ import {useRoute} from "vue-router";
+ export default defineComponent({
+ 	name: "SettingTabListItem",
+ 	props: {
++		// nazwa trasy (route.name) - do zaznaczenia aktywnej karty
+ 		name: {
+ 			type: String,
+ 			required: true,
+ 		},
++		// tekst widoczny dla uzytkownika; bez niego pokazywana jest nazwa trasy
++		label: {
++			type: String,
++			default: "",
++		},
+ 		className: {
+ 			type: String,
+ 			required: true,
+diff --git a/client/components/Settings/WeeChatRelay.vue b/client/components/Settings/WeeChatRelay.vue
+index 893cc2a8..3938c302 100644
+--- a/client/components/Settings/WeeChatRelay.vue
++++ b/client/components/Settings/WeeChatRelay.vue
+@@ -1,11 +1,11 @@
+ <template>
+ 	<div>
+ 		<div id="weechat-relay" role="group" aria-labelledby="label-weechat-relay">
+-			<h2 id="label-weechat-relay">WeeChat Relay Settings</h2>
++			<h2 id="label-weechat-relay">Przekaźnik WeeChat</h2>
+ 			<p class="help">
+-				Configure WeeChat Relay server to allow clients like Lith to connect. Each user has
+-				their own relay server on a unique port. You can use Lith and the web interface at
+-				the same time!
++				Przekaźnik WeeChat pozwala połączyć się z tą sesją z aplikacji takich jak Lith.
++				Każdy użytkownik ma własny przekaźnik na osobnym porcie. Z Lith i z interfejsu WWW
++				można korzystać jednocześnie.
+ 			</p>
+ 
+ 			<div v-if="status" class="feedback" :class="status.type">
+@@ -15,8 +15,8 @@
+ 			<div class="input-group">
+ 				<label class="opt">
+ 					<input v-model="config.enabled" type="checkbox" name="weechat_enabled" />
+-					Enable WeeChat Relay
+-					<span class="help">Allow Lith clients to connect</span>
++					Włącz przekaźnik WeeChat
++					<span class="help">Pozwala łączyć się aplikacjom takim jak Lith</span>
+ 				</label>
+ 			</div>
+ 
+@@ -24,8 +24,7 @@
+ 				<div class="input-group">
+ 					<label for="weechat-port">Port</label>
+ 					<p class="help">
+-						Choose a unique port for your WeeChat Relay server. Make sure it's not used
+-						by other services.
++						Wybierz port dla przekaźnika WeeChat. Nie może go używać żadna inna usługa.
+ 					</p>
+ 					<input
+ 						id="weechat-port"
+@@ -41,10 +40,10 @@
+ 				</div>
+ 
+ 				<div class="input-group">
+-					<label for="weechat-protocol">Protocol</label>
++					<label for="weechat-protocol">Protokół</label>
+ 					<p class="help">
+-						Choose connection protocol. TCP is recommended for Lith and weechat-android.
+-						WebSocket is for Glowing Bear and web clients.
++						Wybierz protokół połączenia. TCP jest zalecany dla Lith i weechat-android.
++						WebSocket służy do Glowing Bear i innych klientów WWW.
+ 					</p>
+ 					<select
+ 						id="weechat-protocol"
+@@ -52,16 +51,16 @@
+ 						name="weechat_protocol"
+ 						class="input"
+ 					>
+-						<option value="tcp">TCP (recommended for Lith/weechat-android)</option>
+-						<option value="ws">WebSocket (for Glowing Bear)</option>
++						<option value="tcp">TCP (zalecany dla Lith i weechat-android)</option>
++						<option value="ws">WebSocket (dla Glowing Bear)</option>
+ 					</select>
+ 				</div>
+ 
+ 				<div class="input-group">
+ 					<label class="opt">
+ 						<input v-model="config.tls" type="checkbox" name="weechat_tls" />
+-						Enable TLS/SSL
+-						<span class="help">Secure connection with certificate</span>
++						Włącz TLS/SSL
++						<span class="help">Szyfrowane połączenie z certyfikatem</span>
+ 					</label>
+ 				</div>
+ 
+@@ -73,21 +72,21 @@
+ 								type="checkbox"
+ 								name="weechat_use_self_signed"
+ 							/>
+-							Use self-signed certificate (auto-generated)
++							Użyj certyfikatu z własnym podpisem (generowanego automatycznie)
+ 							<span class="help">
+-								Automatically generate a self-signed certificate. Works with
+-								weechat-android (requires manual accept). Does NOT work with Lith
+-								(use custom certificate instead).
++								Certyfikat z własnym podpisem zostanie wygenerowany automatycznie.
++								Działa z weechat-android (wymaga ręcznej akceptacji). NIE działa z
++								Lith (użyj wtedy własnego certyfikatu).
+ 							</span>
+ 						</label>
+ 					</div>
+ 
+ 					<template v-if="!config.useSelfSigned">
+ 						<div class="input-group">
+-							<label for="weechat-custom-cert">Custom Certificate (PEM)</label>
++							<label for="weechat-custom-cert">Własny certyfikat (PEM)</label>
+ 							<p class="help">
+-								Paste your certificate in PEM format (e.g., Let's Encrypt
+-								fullchain.pem). This will overwrite the auto-generated certificate.
++								Wklej certyfikat w formacie PEM (np. fullchain.pem z Let's Encrypt).
++								Zastąpi on certyfikat wygenerowany automatycznie.
+ 							</p>
+ 							<textarea
+ 								id="weechat-custom-cert"
+@@ -101,10 +100,10 @@ MIIFa...
+ 						</div>
+ 
+ 						<div class="input-group">
+-							<label for="weechat-custom-key">Private Key (PEM)</label>
++							<label for="weechat-custom-key">Klucz prywatny (PEM)</label>
+ 							<p class="help">
+-								Paste your private key in PEM format (e.g., Let's Encrypt
+-								privkey.pem). This will overwrite the auto-generated key.
++								Wklej klucz prywatny w formacie PEM (np. privkey.pem z Let's
++								Encrypt). Zastąpi on klucz wygenerowany automatycznie.
+ 							</p>
+ 							<textarea
+ 								id="weechat-custom-key"
+@@ -120,10 +119,10 @@ MIIJQ...
+ 				</template>
+ 
+ 				<div class="input-group">
+-					<label for="weechat-password">Password</label>
++					<label for="weechat-password">Hasło</label>
+ 					<p class="help">
+-						Set a password for Lith to connect. This is separate from your login
+-						password.
++						Hasło, którym Lith łączy się z przekaźnikiem. Jest niezależne od hasła
++						logowania.
+ 					</p>
+ 					<RevealPassword v-slot:default="slotProps">
+ 						<input
+@@ -133,7 +132,7 @@ MIIJQ...
+ 							name="weechat_password"
+ 							autocomplete="off"
+ 							class="input"
+-							placeholder="Enter WeeChat Relay password"
++							placeholder="Hasło przekaźnika WeeChat"
+ 							:required="config.enabled"
+ 						/>
+ 					</RevealPassword>
+@@ -146,8 +145,8 @@ MIIJQ...
+ 							type="checkbox"
+ 							name="weechat_compression"
+ 						/>
+-						Enable compression (zlib)
+-						<span class="help">Recommended for better performance</span>
++						Włącz kompresję (zlib)
++						<span class="help">Zalecane, zmniejsza ilość przesyłanych danych</span>
+ 					</label>
+ 				</div>
+ 			</template>
+@@ -159,42 +158,43 @@ MIIJQ...
+ 					:disabled="!canSave"
+ 					@click="saveSettings"
+ 				>
+-					Save Settings
++					Zapisz ustawienia
+ 				</button>
+ 			</div>
+ 
+ 			<div v-if="currentConfig" class="current-connection">
+-				<h3>Current Configuration</h3>
++				<h3>Bieżąca konfiguracja</h3>
+ 				<div class="connection-info">
+ 					<p>
+-						<strong>Status:</strong>
++						<strong>Stan:</strong>
+ 						<span :class="currentConfig.enabled ? 'connected' : 'disconnected'">
+-							{{ currentConfig.enabled ? "Enabled" : "Disabled" }}
++							{{ currentConfig.enabled ? "Włączony" : "Wyłączony" }}
+ 						</span>
+ 					</p>
+ 					<p v-if="currentConfig.enabled">
+ 						<strong>Port:</strong> {{ currentConfig.port }}
+ 					</p>
+ 					<p v-if="currentConfig.enabled">
+-						<strong>Protocol:</strong>
++						<strong>Protokół:</strong>
+ 						{{ currentConfig.protocol === "tcp" ? "TCP" : "WebSocket" }}
+ 					</p>
+ 					<p v-if="currentConfig.enabled">
+ 						<strong>TLS/SSL:</strong>
+-						{{ currentConfig.tls ? "Enabled" : "Disabled" }}
++						{{ currentConfig.tls ? "Włączone" : "Wyłączone" }}
+ 					</p>
+ 					<p v-if="currentConfig.enabled">
+-						<strong>Compression:</strong>
+-						{{ currentConfig.compression ? "Enabled" : "Disabled" }}
++						<strong>Kompresja:</strong>
++						{{ currentConfig.compression ? "Włączona" : "Wyłączona" }}
+ 					</p>
+ 					<p v-if="currentConfig.enabled" class="help">
+-						<strong>Connect with Lith:</strong><br />
++						<strong>Połączenie z Lith:</strong><br />
+ 						Host: {{ serverAddress }}<br />
+ 						Port: {{ currentConfig.port }}<br />
+-						Protocol:
+-						{{ currentConfig.protocol === "tcp" ? "Plain socket" : "WebSocket" }}<br />
+-						TLS: {{ currentConfig.tls ? "Yes" : "No" }}<br />
+-						Password: (the password you set above)
++						Protokół:
++						{{ currentConfig.protocol === "tcp" ? "zwykłe gniazdo" : "WebSocket"
++						}}<br />
++						TLS: {{ currentConfig.tls ? "tak" : "nie" }}<br />
++						Hasło: (ustawione powyżej)
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -307,24 +307,24 @@ export default defineComponent({
+ 
+ 		const serverAddress = computed(() => {
+ 			if (typeof window !== "undefined") {
+-				return window.location.hostname || "your-server-address";
++				return window.location.hostname || "adres-serwera";
+ 			}
+ 
+-			return "your-server-address";
++			return "adres-serwera";
+ 		});
+ 
+ 		const saveSettings = () => {
+ 			if (!canSave.value) {
+ 				status.value = {
+ 					type: "error",
+-					message: "Please fill in all required fields",
++					message: "Wypełnij wszystkie wymagane pola",
+ 				};
+ 				return;
+ 			}
+ 
+ 			status.value = {
+ 				type: "info",
+-				message: "Saving WeeChat Relay settings...",
++				message: "Zapisywanie ustawień przekaźnika WeeChat…",
+ 			};
+ 
+ 			const payload = {
+diff --git a/client/components/Sidebar.vue b/client/components/Sidebar.vue
+index 97ef4b8f..0cb7133a 100644
+--- a/client/components/Sidebar.vue
++++ b/client/components/Sidebar.vue
+@@ -10,7 +10,7 @@
+ 				>
+ 				<span
+ 					v-if="isDevelopment"
+-					title="erssi@tahio has been built in development mode"
++					title="erssi@tahio – kompilacja deweloperska"
+ 					:style="{
+ 						backgroundColor: '#ff9e18',
+ 						color: '#000',
+@@ -18,13 +18,13 @@
+ 						borderRadius: '4px',
+ 						fontSize: '12px',
+ 					}"
+-					>DEVELOPER</span
++					>DEV</span
+ 				>
+ 			</div>
+ 			<NetworkList />
+ 		</div>
+ 		<footer id="footer">
+-			<span class="tooltipped tooltipped-n tooltipped-no-touch" aria-label="Network Manager"
++			<span class="tooltipped tooltipped-n tooltipped-no-touch" aria-label="Menedżer sieci"
+ 				><router-link
+ 					v-slot:default="{navigate, isActive}"
+ 					to="/network-manager"
+@@ -38,7 +38,7 @@
+ 						@keypress.enter="navigate"
+ 					></button> </router-link
+ 			></span>
+-			<span class="tooltipped tooltipped-n tooltipped-no-touch" aria-label="Settings"
++			<span class="tooltipped tooltipped-n tooltipped-no-touch" aria-label="Ustawienia"
+ 				><router-link
+ 					v-slot:default="{navigate, isActive}"
+ 					to="/settings"
+@@ -56,8 +56,8 @@
+ 				class="tooltipped tooltipped-n tooltipped-no-touch"
+ 				:aria-label="
+ 					store.state.serverConfiguration?.isUpdateAvailable
+-						? 'Help\n(update available)'
+-						: 'Help'
++						? 'Pomoc\n(dostępna aktualizacja)'
++						: 'Pomoc'
+ 				"
+ 				><router-link
+ 					v-slot:default="{navigate, isActive}"
+diff --git a/client/components/SidebarToggle.vue b/client/components/SidebarToggle.vue
+index c260cac7..27b43d1e 100644
+--- a/client/components/SidebarToggle.vue
++++ b/client/components/SidebarToggle.vue
+@@ -1,5 +1,9 @@
+ <template>
+-	<button class="lt" aria-label="Toggle channel list" @click="store.commit('toggleSidebar')" />
++	<button
++		class="lt"
++		aria-label="Pokaż/ukryj listę kanałów"
++		@click="store.commit('toggleSidebar')"
++	/>
+ </template>
+ 
+ <script lang="ts">
+diff --git a/client/components/Special/ListBans.vue b/client/components/Special/ListBans.vue
+index b9c6a528..de960a0e 100644
+--- a/client/components/Special/ListBans.vue
++++ b/client/components/Special/ListBans.vue
+@@ -2,9 +2,9 @@
+ 	<table class="ban-list">
+ 		<thead>
+ 			<tr>
+-				<th class="hostmask">Banned</th>
+-				<th class="banned_by">Banned By</th>
+-				<th class="banned_at">Banned At</th>
++				<th class="hostmask">Zbanowana maska</th>
++				<th class="banned_by">Kto ustawił</th>
++				<th class="banned_at">Kiedy</th>
+ 			</tr>
+ 		</thead>
+ 		<tbody>
+diff --git a/client/components/Special/ListChannels.vue b/client/components/Special/ListChannels.vue
+index fcc188e9..8b674ce6 100644
+--- a/client/components/Special/ListChannels.vue
++++ b/client/components/Special/ListChannels.vue
+@@ -3,9 +3,9 @@
+ 	<table v-else class="channel-list">
+ 		<thead>
+ 			<tr>
+-				<th class="channel">Channel</th>
+-				<th class="users">Users</th>
+-				<th class="topic">Topic</th>
++				<th class="channel">Kanał</th>
++				<th class="users">Użytkownicy</th>
++				<th class="topic">Temat</th>
+ 			</tr>
+ 		</thead>
+ 		<tbody>
+diff --git a/client/components/Special/ListIgnored.vue b/client/components/Special/ListIgnored.vue
+index 4ea399de..df78c2bd 100644
+--- a/client/components/Special/ListIgnored.vue
++++ b/client/components/Special/ListIgnored.vue
+@@ -2,8 +2,8 @@
+ 	<table class="ignore-list">
+ 		<thead>
+ 			<tr>
+-				<th class="hostmask">Hostmask</th>
+-				<th class="when">Ignored At</th>
++				<th class="hostmask">Maska hosta</th>
++				<th class="when">Ignorowana od</th>
+ 			</tr>
+ 		</thead>
+ 		<tbody>
+diff --git a/client/components/Special/ListInvites.vue b/client/components/Special/ListInvites.vue
+index c04a83a5..9ece3a08 100644
+--- a/client/components/Special/ListInvites.vue
++++ b/client/components/Special/ListInvites.vue
+@@ -2,9 +2,9 @@
+ 	<table class="invite-list">
+ 		<thead>
+ 			<tr>
+-				<th class="hostmask">Invited</th>
+-				<th class="invitened_by">Invited By</th>
+-				<th class="invitened_at">Invited At</th>
++				<th class="hostmask">Zaproszona maska</th>
++				<th class="invitened_by">Kto ustawił</th>
++				<th class="invitened_at">Kiedy</th>
+ 			</tr>
+ 		</thead>
+ 		<tbody>
+diff --git a/client/components/VersionChecker.vue b/client/components/VersionChecker.vue
+index e58fadcf..26ae032d 100644
+--- a/client/components/VersionChecker.vue
++++ b/client/components/VersionChecker.vue
+@@ -1,22 +1,23 @@
+ <template>
+ 	<div id="version-checker" :class="[store.state.versionStatus]">
+-		<p v-if="store.state.versionStatus === 'loading'">Checking for updates…</p>
++		<p v-if="store.state.versionStatus === 'loading'">Sprawdzanie aktualizacji…</p>
+ 		<p v-if="store.state.versionStatus === 'new-version'">
+-			NexusIRC <b>{{ store.state.versionData?.latest.version }}</b>
+-			<template v-if="store.state.versionData?.latest.prerelease"> (pre-release) </template>
+-			is now available.
++			Dostępna jest nowa wersja klienta web:
++			<b>{{ store.state.versionData?.latest.version }}</b>
++			<template v-if="store.state.versionData?.latest.prerelease"> (wersja testowa)</template
++			>.
+ 			<br />
+ 
+ 			<a :href="store.state.versionData?.latest.url" target="_blank" rel="noopener">
+-				Read more on GitHub
++				Szczegóły na GitHubie
+ 			</a>
+ 		</p>
+ 		<p v-if="store.state.versionStatus === 'new-packages'">
+-			NexusIRC is up to date, but there are out of date packages Run
+-			<code>nexuslounge upgrade</code> on the server to upgrade packages.
++			Klient web jest aktualny, ale niektóre pakiety są nieaktualne. Zaktualizuj je na
++			serwerze poleceniem <code>upgrade</code> klienta web.
+ 		</p>
+ 		<template v-if="store.state.versionStatus === 'up-to-date'">
+-			<p>NexusIRC is up to date!</p>
++			<p>Klient web jest aktualny.</p>
+ 
+ 			<button
+ 				v-if="store.state.versionDataExpired"
+@@ -24,13 +25,13 @@
+ 				class="btn btn-small"
+ 				@click="checkNow"
+ 			>
+-				Check now
++				Sprawdź teraz
+ 			</button>
+ 		</template>
+ 		<template v-if="store.state.versionStatus === 'error'">
+-			<p>Information about latest release could not be retrieved.</p>
++			<p>Nie udało się pobrać informacji o najnowszym wydaniu.</p>
+ 
+-			<button id="check-now" class="btn btn-small" @click="checkNow">Try again</button>
++			<button id="check-now" class="btn btn-small" @click="checkNow">Spróbuj ponownie</button>
+ 		</template>
+ 	</div>
+ </template>
+diff --git a/client/components/Windows/Changelog.vue b/client/components/Windows/Changelog.vue
+index c7f2ddb1..8af1e57c 100644
+--- a/client/components/Windows/Changelog.vue
++++ b/client/components/Windows/Changelog.vue
+@@ -1,20 +1,20 @@
+ <template>
+-	<div id="changelog" class="window" aria-label="Changelog">
++	<div id="changelog" class="window" aria-label="Lista zmian">
+ 		<div class="header">
+ 			<SidebarToggle />
+ 		</div>
+ 		<div class="container">
+-			<router-link id="back-to-help" to="/help">« Help</router-link>
++			<router-link id="back-to-help" to="/help">« Pomoc</router-link>
+ 
+ 			<template
+ 				v-if="store.state.versionData?.current && store.state.versionData?.current.version"
+ 			>
+ 				<h1 class="title">
+-					Release notes for {{ store.state.versionData.current.version }}
++					Lista zmian klienta web {{ store.state.versionData.current.version }}
+ 				</h1>
+ 
+ 				<template v-if="store.state.versionData.current.changelog">
+-					<h3>Introduction</h3>
++					<h3>Wprowadzenie</h3>
+ 					<div
+ 						ref="changelog"
+ 						class="changelog-text"
+@@ -22,19 +22,19 @@
+ 					></div>
+ 				</template>
+ 				<template v-else>
+-					<p>Unable to retrieve changelog for current release from GitHub.</p>
++					<p>Nie udało się pobrać z GitHuba listy zmian bieżącego wydania.</p>
+ 					<p>
+ 						<a
+ 							v-if="store.state.serverConfiguration?.version"
+ 							:href="`https://github.com/erssi-org/nexuslounge/releases/tag/v${store.state.serverConfiguration?.version}`"
+ 							target="_blank"
+ 							rel="noopener"
+-							>View release notes for this version on GitHub</a
++							>Zobacz listę zmian tej wersji na GitHubie</a
+ 						>
+ 					</p>
+ 				</template>
+ 			</template>
+-			<p v-else>Loading changelog…</p>
++			<p v-else>Wczytywanie listy zmian…</p>
+ 		</div>
+ 	</div>
+ </template>
+diff --git a/client/components/Windows/Help.vue b/client/components/Windows/Help.vue
+index 5af5456b..af46214b 100644
+--- a/client/components/Windows/Help.vue
++++ b/client/components/Windows/Help.vue
+@@ -1,123 +1,79 @@
+ <template>
+-	<div id="help" class="window" role="tabpanel" aria-label="Help">
++	<div id="help" class="window" role="tabpanel" aria-label="Pomoc">
+ 		<div class="header">
+ 			<SidebarToggle />
+ 		</div>
+ 		<div class="container">
+-			<h1 class="title">Help</h1>
++			<h1 class="title">Pomoc</h1>
+ 
+ 			<h2 class="help-version-title">
+-				<span>About NexusIRC</span>
++				<span>O erssi@tahio</span>
+ 				<small>
+-					v{{ store.state.serverConfiguration?.version }} (<router-link
+-						id="view-changelog"
+-						to="/changelog"
+-						>release notes</router-link
+-					>)
++					(<router-link id="view-changelog" to="/changelog">lista zmian</router-link>)
+ 				</small>
+ 			</h2>
+ 
+ 			<div class="about">
+-				<VersionChecker />
+-
+-				<template v-if="store.state.serverConfiguration?.gitCommit">
+-					<p>
+-						NexusIRC is running from source (<a
+-							:href="`https://github.com/erssi-org/nexuslounge/tree/${store.state.serverConfiguration?.gitCommit}`"
+-							target="_blank"
+-							rel="noopener"
+-							>commit <code>{{ store.state.serverConfiguration?.gitCommit }}</code></a
+-						>).
+-					</p>
+-
+-					<ul>
+-						<li>
+-							Compare
+-							<a
+-								:href="`https://github.com/erssi-org/nexuslounge/compare/${store.state.serverConfiguration?.gitCommit}...main`"
+-								target="_blank"
+-								rel="noopener"
+-								>between
+-								<code>{{ store.state.serverConfiguration?.gitCommit }}</code> and
+-								<code>main</code></a
+-							>
+-							to see what you are missing
+-						</li>
+-						<li>
+-							Compare
+-							<a
+-								:href="`https://github.com/erssi-org/nexuslounge/compare/${store.state.serverConfiguration?.version}...${store.state.serverConfiguration?.gitCommit}`"
+-								target="_blank"
+-								rel="noopener"
+-								>between
+-								<code>{{ store.state.serverConfiguration?.version }}</code> and
+-								<code>{{ store.state.serverConfiguration?.gitCommit }}</code></a
+-							>
+-							to see your local changes
+-						</li>
+-					</ul>
+-				</template>
++				<p>
++					Webowy widok tej samej sesji erssi, którą widzisz w terminalu. Komendy wpisane
++					tutaj wykonuje erssi.
++				</p>
++				<p>
++					Klient web oparty na NexusIRC v{{ store.state.serverConfiguration?.version }}
++					(fork The Lounge).
++				</p>
+ 
+ 				<p>
+ 					<a
+-						href="https://github.com/erssi-org/nexuslounge"
++						href="https://github.com/y-o-o-z/erssi"
+ 						target="_blank"
+ 						rel="noopener"
+ 						class="website-link"
+-						>GitHub Repository</a
++						>erssi na GitHubie</a
+ 					>
+ 				</p>
+ 				<p>
+ 					<a
+-						href="https://github.com/thelounge/thelounge/tree/master/docs"
++						href="https://github.com/y-o-o-z/erssi/blob/main/contrib/nexusirc/README.md"
+ 						target="_blank"
+ 						rel="noopener"
+ 						class="documentation-link"
+-						>Original Documentation</a
+-					>
+-				</p>
+-				<p>
+-					<a
+-						href="https://github.com/erssi-org/nexuslounge/issues/new"
+-						target="_blank"
+-						rel="noopener"
+-						class="report-issue-link"
+-						>Report an issue…</a
++						>Instrukcja klienta web</a
+ 					>
+ 				</p>
+ 			</div>
+ 
+-			<h2 v-if="isTouch">Gestures</h2>
++			<h2 v-if="isTouch">Gesty</h2>
+ 
+ 			<div v-if="isTouch" class="help-item">
+-				<div class="subject gesture">Single-Finger Swipe Left</div>
++				<div class="subject gesture">Przesunięcie jednym palcem w lewo</div>
+ 				<div class="description">
+-					<p>Hide sidebar.</p>
++					<p>Ukryj panel boczny.</p>
+ 				</div>
+ 			</div>
+ 
+ 			<div v-if="isTouch" class="help-item">
+-				<div class="subject gesture">Single-Finger Swipe Right</div>
++				<div class="subject gesture">Przesunięcie jednym palcem w prawo</div>
+ 				<div class="description">
+-					<p>Show sidebar.</p>
++					<p>Pokaż panel boczny.</p>
+ 				</div>
+ 			</div>
+ 
+ 			<div v-if="isTouch" class="help-item">
+-				<div class="subject gesture">Two-Finger Swipe Left</div>
++				<div class="subject gesture">Przesunięcie dwoma palcami w lewo</div>
+ 				<div class="description">
+-					<p>Switch to the next window in the channel list.</p>
++					<p>Przejdź do następnego okna na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+ 			<div v-if="isTouch" class="help-item">
+-				<div class="subject gesture">Two-Finger Swipe Right</div>
++				<div class="subject gesture">Przesunięcie dwoma palcami w prawo</div>
+ 				<div class="description">
+-					<p>Switch to the previous window in the channel list.</p>
++					<p>Przejdź do poprzedniego okna na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+-			<h2>Keyboard Shortcuts</h2>
++			<h2>Skróty klawiszowe</h2>
+ 
+ 			<div class="help-item">
+ 				<div class="subject">
+@@ -125,7 +81,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>↓</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the next lobby in the channel list.</p>
++					<p>Przejdź do następnego okna sieci na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -135,7 +91,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>↑</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the previous lobby in the channel list.</p>
++					<p>Przejdź do poprzedniego okna sieci na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -145,7 +101,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>←</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Collapse current network.</p>
++					<p>Zwiń bieżącą sieć.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -155,7 +111,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>→</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Expand current network.</p>
++					<p>Rozwiń bieżącą sieć.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -165,7 +121,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>↓</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the next window in the channel list.</p>
++					<p>Przejdź do następnego okna na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -175,7 +131,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>↑</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the previous window in the channel list.</p>
++					<p>Przejdź do poprzedniego okna na liście kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -185,7 +141,10 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>↓</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the next window with unread messages in the channel list.</p>
++					<p>
++						Przejdź do następnego okna z nieprzeczytanymi wiadomościami na liście
++						kanałów.
++					</p>
+ 				</div>
+ 			</div>
+ 
+@@ -195,7 +154,10 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>↑</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the previous window with unread messages in the channel list.</p>
++					<p>
++						Przejdź do poprzedniego okna z nieprzeczytanymi wiadomościami na liście
++						kanałów.
++					</p>
+ 				</div>
+ 			</div>
+ 
+@@ -205,7 +167,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>A</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the first window with unread messages.</p>
++					<p>Przejdź do pierwszego okna z nieprzeczytanymi wiadomościami.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -215,7 +177,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>S</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Toggle sidebar.</p>
++					<p>Pokaż lub ukryj panel boczny.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -225,7 +187,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>U</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Toggle channel user list.</p>
++					<p>Pokaż lub ukryj listę nicków kanału.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -235,7 +197,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>J</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Toggle jump to channel switcher.</p>
++					<p>Pokaż lub ukryj szybkie przełączanie kanałów.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -245,7 +207,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>M</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Toggle recent mentions popup.</p>
++					<p>Pokaż lub ukryj okienko ostatnich wzmianek.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -255,7 +217,7 @@
+ 					<span v-else><kbd>⌥</kbd> <kbd>/</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>Switch to the help menu.</p>
++					<p>Przejdź do pomocy.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -265,13 +227,13 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Close current contextual window (context menu, image viewer, topic edit,
+-						etc) and remove focus from input.
++						Zamknij bieżące okno kontekstowe (menu kontekstowe, przeglądarkę obrazów,
++						edycję tematu itp.) i usuń fokus z pola wpisywania.
+ 					</p>
+ 				</div>
+ 			</div>
+ 
+-			<h2>Formatting Shortcuts</h2>
++			<h2>Skróty formatowania</h2>
+ 
+ 			<div class="help-item">
+ 				<div class="subject">
+@@ -280,23 +242,22 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark any text typed after this shortcut to be colored. After hitting this
+-						shortcut, enter an integer in the range
+-						<code>0—15</code> to select the desired color, or use the autocompletion
+-						menu to choose a color name (see below).
++						Tekst wpisany po tym skrócie będzie kolorowy. Po naciśnięciu skrótu wpisz
++						liczbę z zakresu
++						<code>0—15</code>, aby wybrać kolor, albo wybierz nazwę koloru z menu
++						autouzupełniania (patrz niżej).
+ 					</p>
+ 					<p>
+-						Background color can be specified by putting a comma and another integer in
+-						the range <code>0—15</code> after the foreground color number
+-						(autocompletion works too).
++						Kolor tła ustawisz, dopisując po numerze koloru tekstu przecinek i drugą
++						liczbę z zakresu <code>0—15</code> (autouzupełnianie też działa).
+ 					</p>
+ 					<p>
+-						A color reference can be found
++						Tabelę kolorów znajdziesz
+ 						<a
+ 							href="https://modern.ircdocs.horse/formatting.html#colors"
+ 							target="_blank"
+ 							rel="noopener"
+-							>here</a
++							>tutaj</a
+ 						>.
+ 					</p>
+ 				</div>
+@@ -309,8 +270,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark all text typed after this shortcut as
+-						<span class="irc-bold">bold</span>.
++						Tekst wpisany po tym skrócie będzie
++						<span class="irc-bold">pogrubiony</span>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -322,8 +283,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark all text typed after this shortcut as
+-						<span class="irc-underline">underlined</span>.
++						Tekst wpisany po tym skrócie będzie
++						<span class="irc-underline">podkreślony</span>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -335,8 +296,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark all text typed after this shortcut as
+-						<span class="irc-italic">italics</span>.
++						Tekst wpisany po tym skrócie będzie
++						<span class="irc-italic">pochylony</span>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -348,8 +309,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark all text typed after this shortcut as
+-						<span class="irc-strikethrough">struck through</span>.
++						Tekst wpisany po tym skrócie będzie
++						<span class="irc-strikethrough">przekreślony</span>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -361,8 +322,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Mark all text typed after this shortcut as
+-						<span class="irc-monospace">monospaced</span>.
++						Tekst wpisany po tym skrócie będzie pisany
++						<span class="irc-monospace">czcionką o stałej szerokości</span>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -373,29 +334,25 @@
+ 					<span v-else><kbd>⌘</kbd> <kbd>O</kbd></span>
+ 				</div>
+ 				<div class="description">
+-					<p>
+-						Mark all text typed after this shortcut to be reset to its original
+-						formatting.
+-					</p>
++					<p>Tekst wpisany po tym skrócie wróci do pierwotnego formatowania.</p>
+ 				</div>
+ 			</div>
+ 
+-			<h2>Autocompletion</h2>
++			<h2>Autouzupełnianie</h2>
+ 
+ 			<p>
+-				To auto-complete nicknames, channels, commands, and emoji, type one of the
+-				characters below to open a suggestion list. Use the <kbd>↑</kbd> and
+-				<kbd>↓</kbd> keys to highlight an item, and insert it by pressing <kbd>Tab</kbd> or
+-				<kbd>Enter</kbd> (or by clicking the desired item).
++				Aby uzupełnić nick, kanał, komendę lub emoji, wpisz jeden z poniższych znaków —
++				otworzy się lista podpowiedzi. Klawiszami <kbd>↑</kbd> i <kbd>↓</kbd> zaznacz
++				pozycję, a wstaw ją klawiszem <kbd>Tab</kbd> lub <kbd>Enter</kbd> (albo kliknij ją).
+ 			</p>
+-			<p>Autocompletion can be disabled in settings.</p>
++			<p>Autouzupełnianie można wyłączyć w Ustawieniach.</p>
+ 
+ 			<div class="help-item">
+ 				<div class="subject">
+ 					<code>@</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Nickname</p>
++					<p>Nick</p>
+ 				</div>
+ 			</div>
+ 
+@@ -404,7 +361,7 @@
+ 					<code>#</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Channel</p>
++					<p>Kanał</p>
+ 				</div>
+ 			</div>
+ 
+@@ -413,7 +370,7 @@
+ 					<code>/</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Commands (see list of commands below)</p>
++					<p>Komendy (lista komend poniżej)</p>
+ 				</div>
+ 			</div>
+ 
+@@ -423,20 +380,20 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Emoji (note: requires two search characters, to avoid conflicting with
+-						common emoticons like <code>:)</code>)
++						Emoji (wymaga wpisania dwóch znaków, żeby nie kolidować z popularnymi
++						emotikonami, np. <code>:)</code>)
+ 					</p>
+ 				</div>
+ 			</div>
+ 
+-			<h2>Commands</h2>
++			<h2>Komendy</h2>
+ 
+ 			<div class="help-item">
+ 				<div class="subject">
+ 					<code>/away [message]</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Mark yourself as away with an optional message.</p>
++					<p>Ustaw nieobecność z opcjonalną wiadomością.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -445,7 +402,7 @@
+ 					<code>/back</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Remove your away status (set with <code>/away</code>).</p>
++					<p>Usuń status nieobecności (ustawiony przez <code>/away</code>).</p>
+ 				</div>
+ 			</div>
+ 
+@@ -455,8 +412,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Ban (<code>+b</code>) a user from the current channel. This can be a
+-						nickname or a hostmask.
++						Zbanuj (<code>+b</code>) użytkownika na bieżącym kanale. Można podać nick
++						lub maskę hosta.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -466,7 +423,7 @@
+ 					<code>/banlist</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Load the banlist for the current channel.</p>
++					<p>Wczytaj listę banów bieżącego kanału.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -476,8 +433,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Collapse all previews in the current channel (opposite of
+-						<code>/expand</code>)
++						Zwiń wszystkie podglądy na bieżącym kanale (odwrotność
++						<code>/expand</code>).
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -488,8 +445,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Connect to a new IRC network. If <code>port</code> starts with a
+-						<code>+</code> sign, the connection will be made secure using TLS.
++						Połącz z nową siecią IRC. Jeśli <code>port</code> zaczyna się od znaku
++						<code>+</code>, połączenie będzie szyfrowane TLS.
+ 					</p>
+ 					<p>Alias: <code>/server</code></p>
+ 				</div>
+@@ -501,13 +458,14 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Send a <abbr title="Client-to-client protocol">CTCP</abbr>
+-						request. Read more about this on
++						Wyślij żądanie
++						<abbr title="Protokół klient–klient (Client-to-client protocol)">CTCP</abbr
++						>. Więcej o nim w
+ 						<a
+ 							href="https://en.wikipedia.org/wiki/Client-to-client_protocol"
+ 							target="_blank"
+ 							rel="noopener"
+-							>the dedicated Wikipedia article</a
++							>artykule w Wikipedii (po angielsku)</a
+ 						>.
+ 					</p>
+ 				</div>
+@@ -519,8 +477,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Remove op (<code>-o</code>) from one or several users in the current
+-						channel.
++						Odbierz opa (<code>-o</code>) jednemu lub kilku użytkownikom na bieżącym
++						kanale.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -531,8 +489,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Remove voice (<code>-v</code>) from one or several users in the current
+-						channel.
++						Odbierz voice (<code>-v</code>) jednemu lub kilku użytkownikom na bieżącym
++						kanale.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -542,7 +500,7 @@
+ 					<code>/disconnect [message]</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Disconnect from the current network with an optionally-provided message.</p>
++					<p>Rozłącz z bieżącą siecią z opcjonalną wiadomością.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -552,8 +510,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Expand all previews in the current channel (opposite of
+-						<code>/collapse</code>)
++						Rozwiń wszystkie podglądy na bieżącym kanale (odwrotność
++						<code>/collapse</code>).
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -564,9 +522,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Invite a user to the specified channel. If
+-						<code>channel</code> is omitted, user will be invited to the current
+-						channel.
++						Zaproś użytkownika na podany kanał. Jeśli pominiesz
++						<code>channel</code>, użytkownik zostanie zaproszony na bieżący kanał.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -577,8 +534,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Block any messages from the specified user on the current network. This can
+-						be a nickname or a hostmask.
++						Blokuj wszystkie wiadomości od podanego użytkownika w bieżącej sieci. Można
++						podać nick lub maskę hosta.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -588,7 +545,7 @@
+ 					<code>/ignorelist</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Load the list of ignored users for the current network.</p>
++					<p>Wczytaj listę ignorowanych użytkowników w bieżącej sieci.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -598,8 +555,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Join a channel. Password is only needed in protected channels and can
+-						usually be omitted.
++						Wejdź na kanał. Hasło jest potrzebne tylko na chronionych kanałach i zwykle
++						można je pominąć.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -609,7 +566,7 @@
+ 					<code>/kick nick [reason]</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Kick a user from the current channel.</p>
++					<p>Wyrzuć (kick) użytkownika z bieżącego kanału.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -619,8 +576,9 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Kick and ban (<code>+b</code>) a user from the current channel. Unlike
+-						<code>/ban</code>, only nicknames (and not host masks) can be used.
++						Wyrzuć (kick) i zbanuj (<code>+b</code>) użytkownika na bieżącym kanale. W
++						odróżnieniu od <code>/ban</code> działa tylko z nickami (nie z maskami
++						hosta).
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -630,7 +588,7 @@
+ 					<code>/list</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Retrieve a list of available channels on this network.</p>
++					<p>Pobierz listę dostępnych kanałów w tej sieci.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -640,8 +598,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Send an action message to the current channel. NexusIRC will display it
+-						inline, as if the message was posted in the third person.
++						Wyślij akcję na bieżący kanał. erssi wyświetli ją w treści rozmowy, jak
++						wypowiedź w trzeciej osobie.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -652,9 +610,9 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Set the given flags to the current channel if the active window is a
+-						channel, another user if the active window is a private message window, or
+-						yourself if the current window is a server window.
++						Ustaw podane flagi: bieżącemu kanałowi, jeśli aktywne okno to kanał; innemu
++						użytkownikowi, jeśli to okno rozmowy prywatnej; sobie, jeśli to okno
++						serwera.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -664,7 +622,7 @@
+ 					<code>/msg channel message</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Send a message to the specified channel.</p>
++					<p>Wyślij wiadomość na podany kanał.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -674,10 +632,10 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Prevent messages from generating any feedback for a channel. This turns off
+-						the highlight indicator, hides mentions and inhibits push notifications.
+-						Muting a network lobby mutes the entire network. Not specifying any channel
+-						target mutes the current channel. Revert with <code>/unmute</code>.
++						Wycisz kanał, żeby jego wiadomości nie dawały żadnych sygnałów. Wyłącza to
++						wskaźnik wzmianek, ukrywa wzmianki i blokuje powiadomienia push. Wyciszenie
++						okna sieci wycisza całą sieć. Bez podania kanału wyciszany jest bieżący
++						kanał. Cofniesz to komendą <code>/unmute</code>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -687,7 +645,7 @@
+ 					<code>/nick newnick</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Change your nickname on the current network.</p>
++					<p>Zmień swój nick w bieżącej sieci.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -696,7 +654,7 @@
+ 					<code>/notice channel message</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Sends a notice message to the specified channel.</p>
++					<p>Wyślij wiadomość typu notice na podany kanał.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -705,7 +663,9 @@
+ 					<code>/op nick [...nick]</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Give op (<code>+o</code>) to one or several users in the current channel.</p>
++					<p>
++						Daj opa (<code>+o</code>) jednemu lub kilku użytkownikom na bieżącym kanale.
++					</p>
+ 				</div>
+ 			</div>
+ 
+@@ -715,10 +675,10 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Close the specified channel or private message window, or the current
+-						channel if <code>channel</code> is omitted.
++						Zamknij podany kanał lub okno rozmowy prywatnej albo bieżący kanał, jeśli
++						pominiesz <code>channel</code>.
+ 					</p>
+-					<p>Aliases: <code>/close</code>, <code>/leave</code></p>
++					<p>Aliasy: <code>/close</code>, <code>/leave</code></p>
+ 				</div>
+ 			</div>
+ 
+@@ -728,8 +688,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Leave and immediately rejoin the current channel. Useful to quickly get op
+-						from ChanServ in an empty channel, for example.
++						Wyjdź z bieżącego kanału i od razu wejdź ponownie. Przydaje się np. do
++						szybkiego zdobycia opa od ChanServ na pustym kanale.
+ 					</p>
+ 					<p>Alias: <code>/cycle</code></p>
+ 				</div>
+@@ -740,7 +700,7 @@
+ 					<code>/query nick</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Send a private message to the specified user.</p>
++					<p>Rozpocznij rozmowę prywatną z podanym użytkownikiem.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -749,7 +709,10 @@
+ 					<code>/quit [message]</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Disconnect from the current network with an optional message.</p>
++					<p>
++						Zamyka całe erssi: wszystkie sieci i sesję w terminalu. Jedną sieć
++						rozłączysz komendą <code>/disconnect</code>.
++					</p>
+ 				</div>
+ 			</div>
+ 
+@@ -758,8 +721,8 @@
+ 					<code>/raw message</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Send a raw message to the current IRC network.</p>
+-					<p>Aliases: <code>/quote</code>, <code>/send</code></p>
++					<p>Wyślij surową wiadomość do bieżącej sieci IRC.</p>
++					<p>Aliasy: <code>/quote</code>, <code>/send</code></p>
+ 				</div>
+ 			</div>
+ 
+@@ -768,7 +731,7 @@
+ 					<code>/slap nick</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Slap someone in the current channel with a trout!</p>
++					<p>Trzaśnij kogoś pstrągiem na bieżącym kanale!</p>
+ 				</div>
+ 			</div>
+ 
+@@ -777,7 +740,7 @@
+ 					<code>/search query</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Search for messages in the current channel / user</p>
++					<p>Szukaj wiadomości na bieżącym kanale lub w rozmowie prywatnej.</p>
+ 				</div>
+ 			</div>
+ 
+@@ -787,8 +750,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Get the topic in the current channel. If <code>newtopic</code> is specified,
+-						sets the topic in the current channel.
++						Pokaż temat bieżącego kanału. Jeśli podasz <code>newtopic</code>, ustawi go
++						jako nowy temat kanału.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -799,8 +762,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Unban (<code>-b</code>) a user from the current channel. This can be a
+-						nickname or a hostmask.
++						Zdejmij bana (<code>-b</code>) z użytkownika na bieżącym kanale. Można podać
++						nick lub maskę hosta.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -811,8 +774,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Unblock messages from the specified user on the current network. This can be
+-						a nickname or a hostmask.
++						Odblokuj wiadomości od podanego użytkownika w bieżącej sieci. Można podać
++						nick lub maskę hosta.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -823,8 +786,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Un-mutes the given channel(s) or the current channel if no channel is
+-						provided. See <code>/mute</code> for more information.
++						Wyłącz wyciszenie podanych kanałów albo bieżącego kanału, jeśli żadnego nie
++						podano. Szczegóły przy <code>/mute</code>.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -835,7 +798,8 @@
+ 				</div>
+ 				<div class="description">
+ 					<p>
+-						Give voice (<code>+v</code>) to one or several users in the current channel.
++						Daj voice (<code>+v</code>) jednemu lub kilku użytkownikom na bieżącym
++						kanale.
+ 					</p>
+ 				</div>
+ 			</div>
+@@ -845,7 +809,7 @@
+ 					<code>/whois nick</code>
+ 				</div>
+ 				<div class="description">
+-					<p>Retrieve information about the given user on the current network.</p>
++					<p>Pobierz informacje o podanym użytkowniku w bieżącej sieci.</p>
+ 				</div>
+ 			</div>
+ 		</div>
+@@ -856,13 +820,11 @@
+ import {defineComponent} from "vue";
+ import {useStore} from "../../js/store";
+ import SidebarToggle from "../SidebarToggle.vue";
+-import VersionChecker from "../VersionChecker.vue";
+ 
+ export default defineComponent({
+ 	name: "Help",
+ 	components: {
+ 		SidebarToggle,
+-		VersionChecker,
+ 	},
+ 	setup() {
+ 		const store = useStore();
+diff --git a/client/components/Windows/NetworkManager.vue b/client/components/Windows/NetworkManager.vue
+index 1c750ff8..4f7fdbda 100644
+--- a/client/components/Windows/NetworkManager.vue
++++ b/client/components/Windows/NetworkManager.vue
+@@ -1,14 +1,14 @@
+ <template>
+-	<div id="network-manager" class="window" role="tabpanel" aria-label="Network Manager">
++	<div id="network-manager" class="window" role="tabpanel" aria-label="Menedżer sieci">
+ 		<div class="header">
+ 			<SidebarToggle />
+ 		</div>
+ 		<div class="container">
+-			<h1 class="title">IRC Network Manager</h1>
++			<h1 class="title">Menedżer sieci IRC</h1>
+ 
+ 			<!-- Loading indicator -->
+ 			<div v-if="isLoading" class="loading-message">
+-				<p>Loading...</p>
++				<p>Wczytywanie…</p>
+ 			</div>
+ 
+ 			<!-- Success message -->
+@@ -23,7 +23,7 @@
+ 
+ 			<!-- Saved Networks Section -->
+ 			<section v-if="savedNetworks.length > 0" class="saved-networks">
+-				<h2>Saved Networks ({{ savedNetworks.length }})</h2>
++				<h2>Zapisane sieci ({{ savedNetworks.length }})</h2>
+ 				<div class="networks-list">
+ 					<div
+ 						v-for="(network, index) in savedNetworks"
+@@ -48,7 +48,7 @@
+ 									:disabled="isLoading"
+ 									@click="editNetwork(network)"
+ 								>
+-									Edit
++									Edytuj
+ 								</button>
+ 								<button
+ 									type="button"
+@@ -56,7 +56,7 @@
+ 									:disabled="isLoading"
+ 									@click="removeNetwork(network.name)"
+ 								>
+-									Remove
++									Usuń
+ 								</button>
+ 							</div>
+ 						</div>
+@@ -66,15 +66,15 @@
+ 							v-if="network.servers && network.servers.length > 0"
+ 							class="servers-table"
+ 						>
+-							<h4>Servers ({{ network.servers.length }})</h4>
++							<h4>Serwery ({{ network.servers.length }})</h4>
+ 							<table>
+ 								<thead>
+ 									<tr>
+-										<th>Address</th>
++										<th>Adres</th>
+ 										<th>Port</th>
+ 										<th>TLS</th>
+-										<th>Auto-connect</th>
+-										<th>Actions</th>
++										<th>Łącz automatycznie</th>
++										<th>Akcje</th>
+ 									</tr>
+ 								</thead>
+ 								<tbody>
+@@ -91,19 +91,19 @@
+ 												type="button"
+ 												class="btn btn-small btn-connect"
+ 												:disabled="isLoading"
+-												title="Connect to this server"
++												title="Połącz z tym serwerem"
+ 												@click="connectToServer(network, server)"
+ 											>
+-												Connect
++												Połącz
+ 											</button>
+ 											<button
+ 												type="button"
+ 												class="btn btn-small btn-remove"
+ 												:disabled="isLoading"
+-												title="Remove this server"
++												title="Usuń ten serwer"
+ 												@click="removeServer(server, network.name)"
+ 											>
+-												Remove
++												Usuń
+ 											</button>
+ 										</td>
+ 									</tr>
+@@ -111,7 +111,7 @@
+ 							</table>
+ 						</div>
+ 						<div v-else class="no-servers">
+-							<p>No servers configured for this network.</p>
++							<p>Ta sieć nie ma jeszcze żadnych serwerów.</p>
+ 						</div>
+ 					</div>
+ 				</div>
+@@ -119,14 +119,14 @@
+ 
+ 			<!-- Add/Edit Network Section -->
+ 			<section class="add-network">
+-				<h2>{{ isEditing ? `Edit Network: ${editingNetworkName}` : "Add New Network" }}</h2>
++				<h2>{{ isEditing ? `Edycja sieci: ${editingNetworkName}` : "Dodaj nową sieć" }}</h2>
+ 				<form class="network-form" @submit.prevent="addNewNetwork">
+ 					<!-- Basic Network Settings -->
+ 					<fieldset>
+-						<legend>Basic Settings</legend>
++						<legend>Ustawienia podstawowe</legend>
+ 
+ 						<div class="form-row">
+-							<label for="network-name">Network Name *</label>
++							<label for="network-name">Nazwa sieci *</label>
+ 							<input
+ 								id="network-name"
+ 								v-model.trim="newNetwork.name"
+@@ -139,7 +139,7 @@
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-nick">Nickname</label>
++							<label for="network-nick">Nick</label>
+ 							<input
+ 								id="network-nick"
+ 								v-model.trim="newNetwork.nick"
+@@ -151,7 +151,7 @@
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-alt-nick">Alternate Nick</label>
++							<label for="network-alt-nick">Nick zapasowy</label>
+ 							<input
+ 								id="network-alt-nick"
+ 								v-model.trim="newNetwork.alternateNick"
+@@ -163,7 +163,7 @@
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-username">Username (ident)</label>
++							<label for="network-username">Nazwa użytkownika (ident)</label>
+ 							<input
+ 								id="network-username"
+ 								v-model.trim="newNetwork.username"
+@@ -175,13 +175,13 @@
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-realname">Real Name</label>
++							<label for="network-realname">Imię i nazwisko (realname)</label>
+ 							<input
+ 								id="network-realname"
+ 								v-model.trim="newNetwork.realname"
+ 								class="input"
+ 								type="text"
+-								placeholder="My Real Name"
++								placeholder="Jan Kowalski"
+ 								maxlength="255"
+ 							/>
+ 						</div>
+@@ -190,19 +190,19 @@
+ 					<!-- SASL Authentication -->
+ 					<fieldset>
+ 						<legend>
+-							SASL Authentication <span class="optional">(optional)</span>
++							Uwierzytelnianie SASL <span class="optional">(opcjonalne)</span>
+ 						</legend>
+ 
+ 						<div class="form-row">
+-							<label for="sasl-mechanism">SASL Mechanism</label>
++							<label for="sasl-mechanism">Mechanizm SASL</label>
+ 							<select
+ 								id="sasl-mechanism"
+ 								v-model="newNetwork.saslMechanism"
+ 								class="input"
+ 							>
+-								<option value="">None</option>
++								<option value="">Brak</option>
+ 								<option value="PLAIN">PLAIN</option>
+-								<option value="EXTERNAL">EXTERNAL (client cert)</option>
++								<option value="EXTERNAL">EXTERNAL (certyfikat klienta)</option>
+ 								<option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+ 							</select>
+ 						</div>
+@@ -213,7 +213,7 @@
+ 							"
+ 							class="form-row"
+ 						>
+-							<label for="sasl-username">SASL Username</label>
++							<label for="sasl-username">Nazwa użytkownika SASL</label>
+ 							<input
+ 								id="sasl-username"
+ 								v-model.trim="newNetwork.saslUsername"
+@@ -230,13 +230,13 @@
+ 							"
+ 							class="form-row"
+ 						>
+-							<label for="sasl-password">SASL Password</label>
++							<label for="sasl-password">Hasło SASL</label>
+ 							<input
+ 								id="sasl-password"
+ 								v-model="newNetwork.saslPassword"
+ 								class="input"
+ 								type="password"
+-								placeholder="secret"
++								placeholder="hasło"
+ 								maxlength="255"
+ 							/>
+ 						</div>
+@@ -245,11 +245,11 @@
+ 					<!-- Advanced Network Settings -->
+ 					<fieldset>
+ 						<legend>
+-							Advanced Network Settings <span class="optional">(optional)</span>
++							Zaawansowane ustawienia sieci <span class="optional">(opcjonalne)</span>
+ 						</legend>
+ 
+ 						<div class="form-row">
+-							<label for="network-usermode">User Mode</label>
++							<label for="network-usermode">Tryby użytkownika</label>
+ 							<input
+ 								id="network-usermode"
+ 								v-model.trim="newNetwork.usermode"
+@@ -258,43 +258,45 @@
+ 								placeholder="+iw"
+ 								maxlength="50"
+ 							/>
+-							<span class="help-inline">e.g., +iw for invisible and wallops</span>
++							<span class="help-inline">np. +iw: niewidoczny i wallops</span>
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-autosendcmd">Commands After Connect</label>
++							<label for="network-autosendcmd">Polecenia po połączeniu</label>
+ 							<textarea
+ 								id="network-autosendcmd"
+ 								v-model.trim="newNetwork.autosendcmd"
+ 								class="input"
+ 								rows="3"
+-								placeholder="/msg NickServ identify password"
++								placeholder="/msg NickServ identify hasło"
+ 								maxlength="500"
+ 							/>
+ 							<span class="help-inline"
+-								>Commands to run after connecting (one per line or separated by
+-								;)</span
++								>Polecenia wykonywane po połączeniu (każde w osobnej linii lub
++								rozdzielone średnikiem)</span
+ 							>
+ 						</div>
+ 
+ 						<div class="form-row">
+-							<label for="network-ownhost">Bind to Address</label>
++							<label for="network-ownhost">Adres źródłowy</label>
+ 							<input
+ 								id="network-ownhost"
+ 								v-model.trim="newNetwork.ownHost"
+ 								class="input"
+ 								type="text"
+-								placeholder="192.168.1.100 or example.com"
++								placeholder="192.168.1.100 lub example.com"
+ 								maxlength="255"
+ 							/>
+-							<span class="help-inline">Bind to specific local IP/hostname</span>
++							<span class="help-inline"
++								>Łącz z wybranego lokalnego adresu IP lub nazwy hosta</span
++							>
+ 						</div>
+ 					</fieldset>
+ 
+ 					<!-- Servers -->
+ 					<fieldset>
+ 						<legend>
+-							Servers <span class="required">(at least one required)</span>
++							Serwery <span class="required">(wymagany co najmniej jeden)</span>
+ 						</legend>
+ 
+ 						<div
+@@ -305,7 +307,7 @@
+ 							<div class="server-fields">
+ 								<!-- Basic Server Settings -->
+ 								<div class="form-row server-address-row">
+-									<label :for="`server-address-${index}`">Server Address *</label>
++									<label :for="`server-address-${index}`">Adres serwera *</label>
+ 									<div class="input-wrap">
+ 										<input
+ 											:id="`server-address-${index}`"
+@@ -335,7 +337,7 @@
+ 									<div class="input-wrap">
+ 										<label class="checkbox-label">
+ 											<input v-model="server.useTLS" type="checkbox" />
+-											Use TLS
++											Użyj TLS
+ 										</label>
+ 										<label class="checkbox-label">
+ 											<input
+@@ -343,35 +345,35 @@
+ 												type="checkbox"
+ 												:disabled="!server.useTLS"
+ 											/>
+-											Verify TLS Certificate
++											Weryfikuj certyfikat TLS
+ 										</label>
+ 										<label class="checkbox-label">
+ 											<input v-model="server.autoConnect" type="checkbox" />
+-											Auto-connect
++											Łącz automatycznie
+ 										</label>
+ 									</div>
+ 								</div>
+ 
+ 								<!-- Server Password -->
+ 								<div class="form-row">
+-									<label :for="`server-password-${index}`">Server Password</label>
++									<label :for="`server-password-${index}`">Hasło serwera</label>
+ 									<input
+ 										:id="`server-password-${index}`"
+ 										v-model="server.password"
+ 										class="input"
+ 										type="password"
+-										placeholder="(optional)"
++										placeholder="(opcjonalne)"
+ 										maxlength="255"
+ 									/>
+ 								</div>
+ 
+ 								<!-- TLS Client Certificates -->
+ 								<details class="advanced-section">
+-									<summary>TLS Client Certificates (for SASL EXTERNAL)</summary>
++									<summary>Certyfikaty klienta TLS (dla SASL EXTERNAL)</summary>
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-tls-cert-${index}`"
+-											>Client Certificate Path</label
++											>Ścieżka certyfikatu klienta</label
+ 										>
+ 										<input
+ 											:id="`server-tls-cert-${index}`"
+@@ -385,7 +387,7 @@
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-tls-pkey-${index}`"
+-											>Client Private Key Path</label
++											>Ścieżka klucza prywatnego klienta</label
+ 										>
+ 										<input
+ 											:id="`server-tls-pkey-${index}`"
+@@ -399,21 +401,21 @@
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-tls-pass-${index}`"
+-											>Private Key Password</label
++											>Hasło klucza prywatnego</label
+ 										>
+ 										<input
+ 											:id="`server-tls-pass-${index}`"
+ 											v-model="server.tlsPass"
+ 											class="input"
+ 											type="password"
+-											placeholder="(if key is encrypted)"
++											placeholder="(jeśli klucz jest zaszyfrowany)"
+ 											maxlength="255"
+ 										/>
+ 									</div>
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-tls-cafile-${index}`"
+-											>CA Certificate File</label
++											>Plik certyfikatów CA</label
+ 										>
+ 										<input
+ 											:id="`server-tls-cafile-${index}`"
+@@ -427,7 +429,7 @@
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-tls-capath-${index}`"
+-											>CA Certificate Directory</label
++											>Katalog certyfikatów CA</label
+ 										>
+ 										<input
+ 											:id="`server-tls-capath-${index}`"
+@@ -442,11 +444,11 @@
+ 
+ 								<!-- Advanced Server Settings -->
+ 								<details class="advanced-section">
+-									<summary>Advanced Server Settings</summary>
++									<summary>Zaawansowane ustawienia serwera</summary>
+ 
+ 									<div class="form-row">
+ 										<label :for="`server-ownhost-${index}`"
+-											>Bind to Address</label
++											>Adres źródłowy</label
+ 										>
+ 										<input
+ 											:id="`server-ownhost-${index}`"
+@@ -459,15 +461,15 @@
+ 									</div>
+ 
+ 									<div class="form-row">
+-										<label :for="`server-family-${index}`">IP Protocol</label>
++										<label :for="`server-family-${index}`">Protokół IP</label>
+ 										<select
+ 											:id="`server-family-${index}`"
+ 											v-model.number="server.family"
+ 											class="input"
+ 										>
+-											<option :value="0">Auto (IPv4/IPv6)</option>
+-											<option :value="2">IPv4 only</option>
+-											<option :value="10">IPv6 only</option>
++											<option :value="0">Automatycznie (IPv4/IPv6)</option>
++											<option :value="2">Tylko IPv4</option>
++											<option :value="10">Tylko IPv6</option>
+ 										</select>
+ 									</div>
+ 
+@@ -476,11 +478,11 @@
+ 										<div class="input-wrap">
+ 											<label class="checkbox-label">
+ 												<input v-model="server.noCap" type="checkbox" />
+-												Disable CAP negotiation
++												Wyłącz negocjację CAP
+ 											</label>
+ 											<label class="checkbox-label">
+ 												<input v-model="server.noProxy" type="checkbox" />
+-												Don't use proxy
++												Nie używaj proxy
+ 											</label>
+ 										</div>
+ 									</div>
+@@ -490,7 +492,7 @@
+ 								v-if="newNetwork.servers.length > 1"
+ 								type="button"
+ 								class="btn btn-small btn-remove-server"
+-								title="Remove this server"
++								title="Usuń ten serwer"
+ 								@click="removeServerFromForm(index)"
+ 							>
+ 								×
+@@ -502,13 +504,13 @@
+ 							class="btn btn-small btn-add-server"
+ 							@click="addServer"
+ 						>
+-							+ Add Server
++							+ Dodaj serwer
+ 						</button>
+ 					</fieldset>
+ 
+ 					<div class="form-actions">
+ 						<button type="submit" class="btn" :disabled="actionInProgress">
+-							{{ isEditing ? "Update Network" : "Add Network" }}
++							{{ isEditing ? "Zapisz zmiany" : "Dodaj sieć" }}
+ 						</button>
+ 						<button
+ 							type="button"
+@@ -516,7 +518,7 @@
+ 							:disabled="actionInProgress"
+ 							@click="resetForm"
+ 						>
+-							{{ isEditing ? "Cancel" : "Clear" }}
++							{{ isEditing ? "Anuluj edycję" : "Wyczyść formularz" }}
+ 						</button>
+ 					</div>
+ 				</form>
+@@ -1083,12 +1085,13 @@ export default defineComponent({
+ 						} else {
+ 							// Even if server list fails, show networks without servers
+ 							savedNetworks.value = networks;
+-							errorMessage.value = serverResult.error || "Failed to load servers";
++							errorMessage.value =
++								serverResult.error || "Nie udało się wczytać serwerów";
+ 						}
+ 					});
+ 				} else {
+ 					isLoading.value = false;
+-					errorMessage.value = result.error || "Failed to load networks";
++					errorMessage.value = result.error || "Nie udało się wczytać sieci";
+ 				}
+ 			});
+ 		};
+@@ -1125,12 +1128,12 @@ export default defineComponent({
+ 
+ 		const addNewNetwork = () => {
+ 			if (!newNetwork.value.name || newNetwork.value.servers.length === 0) {
+-				errorMessage.value = "Network name and at least one server are required";
++				errorMessage.value = "Podaj nazwę sieci i co najmniej jeden serwer";
+ 				return;
+ 			}
+ 
+ 			if (!newNetwork.value.servers[0].address) {
+-				errorMessage.value = "Server address is required";
++				errorMessage.value = "Podaj adres serwera";
+ 				return;
+ 			}
+ 
+@@ -1140,7 +1143,7 @@ export default defineComponent({
+ 				);
+ 
+ 				if (exists) {
+-					errorMessage.value = `Network '${newNetwork.value.name}' already exists. Use Edit to modify it.`;
++					errorMessage.value = `Sieć „${newNetwork.value.name}” już istnieje. Aby ją zmienić, kliknij Edytuj.`;
+ 					return;
+ 				}
+ 			}
+@@ -1160,7 +1163,7 @@ export default defineComponent({
+ 						successMessage.value = "";
+ 					}, 5000);
+ 				} else {
+-					errorMessage.value = result.message || "Failed to add network";
++					errorMessage.value = result.message || "Nie udało się dodać sieci";
+ 				}
+ 			});
+ 		};
+@@ -1176,9 +1179,9 @@ export default defineComponent({
+ 			eventbus.emit(
+ 				"confirm-dialog",
+ 				{
+-					title: "Remove Network",
+-					text: `Are you sure you want to remove network '${networkName}'?`,
+-					button: "Remove",
++					title: "Usuń sieć",
++					text: `Czy na pewno usunąć sieć „${networkName}”?`,
++					button: "Usuń sieć",
+ 				},
+ 				(result: boolean) => {
+ 					if (!result) {
+@@ -1199,7 +1202,7 @@ export default defineComponent({
+ 								successMessage.value = "";
+ 							}, 5000);
+ 						} else {
+-							errorMessage.value = response.message || "Failed to remove network";
++							errorMessage.value = response.message || "Nie udało się usunąć sieci";
+ 						}
+ 					});
+ 				}
+@@ -1218,9 +1221,9 @@ export default defineComponent({
+ 				},
+ 				(response: any) => {
+ 					if (response && !response.success) {
+-						errorMessage.value = `Failed to connect: ${response.message}`;
++						errorMessage.value = `Nie udało się połączyć: ${response.message}`;
+ 					} else {
+-						successMessage.value = `Connecting to ${server.address}:${server.port} (${network.name})...`;
++						successMessage.value = `Łączenie z ${server.address}:${server.port} (${network.name})…`;
+ 						setTimeout(() => {
+ 							successMessage.value = "";
+ 						}, 3000);
+@@ -1233,9 +1236,9 @@ export default defineComponent({
+ 			eventbus.emit(
+ 				"confirm-dialog",
+ 				{
+-					title: "Remove Server",
+-					text: `Are you sure you want to remove server ${server.address}:${server.port} from ${chatnet}?`,
+-					button: "Remove",
++					title: "Usuń serwer",
++					text: `Czy na pewno usunąć serwer ${server.address}:${server.port} z sieci ${chatnet}?`,
++					button: "Usuń serwer",
+ 				},
+ 				(result: boolean) => {
+ 					if (!result) {
+@@ -1263,7 +1266,8 @@ export default defineComponent({
+ 									successMessage.value = "";
+ 								}, 5000);
+ 							} else {
+-								errorMessage.value = response.message || "Failed to remove server";
++								errorMessage.value =
++									response.message || "Nie udało się usunąć serwera";
+ 							}
+ 						}
+ 					);
+diff --git a/client/components/Windows/SearchResults.vue b/client/components/Windows/SearchResults.vue
+index 0175753f..90aba6c6 100644
+--- a/client/components/Windows/SearchResults.vue
++++ b/client/components/Windows/SearchResults.vue
+@@ -10,20 +10,21 @@
+ 			<div
+ 				class="chat-view"
+ 				data-type="search-results"
+-				aria-label="Search results"
++				aria-label="Wyniki wyszukiwania"
+ 				role="tabpanel"
+ 			>
+ 				<div v-if="network && channel" class="header">
+ 					<SidebarToggle />
+ 					<span class="title"
+-						>Searching in <span class="channel-name">{{ channel.name }}</span> for</span
++						>Szukanie w <span class="channel-name">{{ channel.name }}</span
++						>:</span
+ 					>
+ 					<span class="topic">{{ route.query.q }}</span>
+ 					<MessageSearchForm :network="network" :channel="channel" />
+ 					<button
+ 						class="close"
+-						aria-label="Close search window"
+-						title="Close search window"
++						aria-label="Zamknij wyszukiwanie"
++						title="Zamknij wyszukiwanie"
+ 						@click="closeSearch"
+ 					/>
+ 				</div>
+@@ -39,8 +40,10 @@
+ 								class="btn"
+ 								@click="onShowMoreClick"
+ 							>
+-								<span v-if="store.state.messageSearchPendingQuery">Loading…</span>
+-								<span v-else>Show older messages</span>
++								<span v-if="store.state.messageSearchPendingQuery"
++									>Wczytywanie…</span
++								>
++								<span v-else>Pokaż starsze wyniki</span>
+ 							</button>
+ 						</div>
+ 
+@@ -48,10 +51,10 @@
+ 							v-if="store.state.messageSearchPendingQuery && !offset"
+ 							class="search-status"
+ 						>
+-							Searching…
++							Szukanie…
+ 						</div>
+ 						<div v-else-if="!messages.length && !offset" class="search-status">
+-							No results found.
++							Brak wyników.
+ 						</div>
+ 						<div
+ 							class="messages"
+diff --git a/client/components/Windows/Settings.vue b/client/components/Windows/Settings.vue
+index 0fa95372..0165f501 100644
+--- a/client/components/Windows/Settings.vue
++++ b/client/components/Windows/Settings.vue
+@@ -1,5 +1,5 @@
+ <template>
+-	<div id="settings" class="window" role="tabpanel" aria-label="Settings">
++	<div id="settings" class="window" role="tabpanel" aria-label="Ustawienia">
+ 		<div class="header">
+ 			<SidebarToggle />
+ 		</div>
+diff --git a/client/css/style.css b/client/css/style.css
+index b37961b7..4aca15d5 100644
+--- a/client/css/style.css
++++ b/client/css/style.css
+@@ -1341,7 +1341,7 @@ textarea.input {
+ }
+ 
+ #chat .unread-marker-text::before {
+-	content: "New messages";
++	content: "Nowe wiadomości";
+ 	background-color: var(--window-bg-color);
+ 	color: var(--unread-marker-color);
+ 	padding: 0 10px;
+@@ -1789,31 +1789,31 @@ part/quit messages where we don't load previews (adds a blank line otherwise) */
+ }
+ 
+ #chat .user-mode.owner::before {
+-	content: "Owners";
++	content: "Właściciele";
+ }
+ 
+ #chat .user-mode.admin::before {
+-	content: "Administrators";
++	content: "Admini";
+ }
+ 
+ #chat .user-mode.op::before {
+-	content: "Operators";
++	content: "Opy";
+ }
+ 
+ #chat .user-mode.half-op::before {
+-	content: "Half-Operators";
++	content: "Półopy";
+ }
+ 
+ #chat .user-mode.voice::before {
+-	content: "Voiced";
++	content: "Z voice'em";
+ }
+ 
+ #chat .user-mode.normal::before {
+-	content: "Users";
++	content: "Użytkownicy";
+ }
+ 
+ #chat .user-mode-search::before {
+-	content: "Search Results";
++	content: "Wyniki wyszukiwania";
+ }
+ 
+ #loading {
+diff --git a/client/index.html.tpl b/client/index.html.tpl
+index cc827114..386dfc1c 100644
+--- a/client/index.html.tpl
++++ b/client/index.html.tpl
+@@ -60,8 +60,8 @@
+                     <p id="loading-page-message">erssi@tahio wymaga przeglądarki z włączonym JavaScriptem.</p>
+                 </div>
+                 <div id="loading-reload-container">
+-                    <p id="loading-slow">This is taking longer than it should, there might be connectivity issues.</p>
+-                    <button id="loading-reload" class="btn">Reload page</button>
++                    <p id="loading-slow">Wczytywanie trwa dłużej niż zwykle - możliwe problemy z połączeniem.</p>
++                    <button id="loading-reload" class="btn">Odśwież stronę</button>
+                 </div>
+             </div>
+         </div>
+diff --git a/client/js/constants.ts b/client/js/constants.ts
+index 725224bd..c510edf0 100644
+--- a/client/js/constants.ts
++++ b/client/js/constants.ts
+@@ -1,20 +1,20 @@
+ const colorCodeMap = [
+-	["00", "White"],
+-	["01", "Black"],
+-	["02", "Blue"],
+-	["03", "Green"],
+-	["04", "Red"],
+-	["05", "Brown"],
+-	["06", "Magenta"],
+-	["07", "Orange"],
+-	["08", "Yellow"],
+-	["09", "Light Green"],
+-	["10", "Cyan"],
+-	["11", "Light Cyan"],
+-	["12", "Light Blue"],
+-	["13", "Pink"],
+-	["14", "Grey"],
+-	["15", "Light Grey"],
++	["00", "biały"],
++	["01", "czarny"],
++	["02", "niebieski"],
++	["03", "zielony"],
++	["04", "czerwony"],
++	["05", "brązowy"],
++	["06", "magenta"],
++	["07", "pomarańczowy"],
++	["08", "żółty"],
++	["09", "jasnozielony"],
++	["10", "cyjan"],
++	["11", "jasny cyjan"],
++	["12", "jasnoniebieski"],
++	["13", "różowy"],
++	["14", "szary"],
++	["15", "jasnoszary"],
+ ];
+ 
+ const timeFormats = {
+diff --git a/client/js/helpers/contextMenu.ts b/client/js/helpers/contextMenu.ts
+index 1c7e9b41..71fa3a84 100644
+--- a/client/js/helpers/contextMenu.ts
++++ b/client/js/helpers/contextMenu.ts
+@@ -44,10 +44,10 @@ export function generateChannelContextMenu(
+ 	};
+ 
+ 	const closeMap = {
+-		lobby: "Remove",
+-		channel: "Leave",
+-		query: "Close",
+-		special: "Close",
++		lobby: "Usuń sieć",
++		channel: "Wyjdź z kanału",
++		query: "Zamknij rozmowę",
++		special: "Zamknij okno",
+ 	};
+ 
+ 	let items: ContextMenuItem[] = [
+@@ -67,19 +67,19 @@ export function generateChannelContextMenu(
+ 		items = [
+ 			...items,
+ 			{
+-				label: "Edit this network…",
++				label: "Edytuj sieć…",
+ 				type: "item",
+ 				class: "edit",
+ 				link: `/edit-network/${network.uuid}`,
+ 			},
+ 			{
+-				label: "Join a channel…",
++				label: "Wejdź na kanał…",
+ 				type: "item",
+ 				class: "join",
+ 				action: () => (network.isJoinChannelShown = true),
+ 			},
+ 			{
+-				label: "List all channels",
++				label: "Lista kanałów",
+ 				type: "item",
+ 				class: "list",
+ 				action: () =>
+@@ -89,7 +89,7 @@ export function generateChannelContextMenu(
+ 					}),
+ 			},
+ 			{
+-				label: "List ignored users",
++				label: "Ignorowani użytkownicy",
+ 				type: "item",
+ 				class: "list",
+ 				action: () =>
+@@ -100,7 +100,7 @@ export function generateChannelContextMenu(
+ 			},
+ 			network.status.connected
+ 				? {
+-						label: "Disconnect",
++						label: "Rozłącz",
+ 						type: "item",
+ 						class: "disconnect",
+ 						action: () =>
+@@ -110,7 +110,7 @@ export function generateChannelContextMenu(
+ 							}),
+ 					}
+ 				: {
+-						label: "Connect",
++						label: "Połącz",
+ 						type: "item",
+ 						class: "connect",
+ 						action: () =>
+@@ -125,7 +125,7 @@ export function generateChannelContextMenu(
+ 	// Add menu items for channels
+ 	if (channel.type === ChanType.CHANNEL) {
+ 		items.push({
+-			label: "Edit topic",
++			label: "Zmień temat",
+ 			type: "item",
+ 			class: "edit",
+ 			action() {
+@@ -134,7 +134,7 @@ export function generateChannelContextMenu(
+ 			},
+ 		});
+ 		items.push({
+-			label: "List banned users",
++			label: "Lista banów",
+ 			type: "item",
+ 			class: "list",
+ 			action() {
+@@ -150,7 +150,7 @@ export function generateChannelContextMenu(
+ 	if (channel.type === ChanType.QUERY) {
+ 		items.push(
+ 			{
+-				label: "User information",
++				label: "Informacje o użytkowniku",
+ 				type: "item",
+ 				class: "action-whois",
+ 				action() {
+@@ -162,7 +162,7 @@ export function generateChannelContextMenu(
+ 				},
+ 			},
+ 			{
+-				label: "Ignore user",
++				label: "Ignoruj użytkownika",
+ 				type: "item",
+ 				class: "action-ignore",
+ 				action() {
+@@ -177,16 +177,16 @@ export function generateChannelContextMenu(
+ 
+ 	if (channel.type === ChanType.CHANNEL || channel.type === ChanType.QUERY) {
+ 		items.push({
+-			label: "Clear history",
++			label: "Wyczyść historię",
+ 			type: "item",
+ 			class: "clear-history",
+ 			action() {
+ 				eventbus.emit(
+ 					"confirm-dialog",
+ 					{
+-						title: "Clear history",
+-						text: `Are you sure you want to clear history for ${channel.name}? This cannot be undone.`,
+-						button: "Clear history",
++						title: "Wyczyść historię",
++						text: `Wyczyścić historię ${channel.name}? Tego nie da się cofnąć.`,
++						button: "Wyczyść historię",
+ 					},
+ 					(result) => {
+ 						if (!result) {
+@@ -203,9 +203,9 @@ export function generateChannelContextMenu(
+ 	}
+ 
+ 	const humanFriendlyChanTypeMap: Record<string, string> = {
+-		lobby: "network",
+-		channel: "channel",
+-		query: "conversation",
++		lobby: "sieć",
++		channel: "kanał",
++		query: "rozmowę",
+ 	};
+ 
+ 	// We don't allow the muting of ChanType.SPECIAL channels
+@@ -215,7 +215,7 @@ export function generateChannelContextMenu(
+ 		const chanType = humanFriendlyChanTypeMap[channel.type];
+ 
+ 		items.push({
+-			label: channel.muted ? `Unmute ${chanType}` : `Mute ${chanType}`,
++			label: channel.muted ? `Cofnij wyciszenie (${chanType})` : `Wycisz ${chanType}`,
+ 			type: "item",
+ 			class: "mute",
+ 			action() {
+@@ -267,7 +267,7 @@ export function generateInlineChannelContextMenu(
+ 	if (channel) {
+ 		return [
+ 			{
+-				label: "Go to channel",
++				label: "Przejdź do kanału",
+ 				type: "item",
+ 				class: "chan",
+ 				link: `/chan-${channel.id}`,
+@@ -277,7 +277,7 @@ export function generateInlineChannelContextMenu(
+ 
+ 	return [
+ 		{
+-			label: "Join channel",
++			label: "Wejdź na kanał",
+ 			type: "item",
+ 			class: "join",
+ 			action: join,
+@@ -319,13 +319,13 @@ export function generateUserContextMenu(
+ 			type: "divider",
+ 		},
+ 		{
+-			label: "User information",
++			label: "Informacje o użytkowniku",
+ 			type: "item",
+ 			class: "action-whois",
+ 			action: whois,
+ 		},
+ 		{
+-			label: "Ignore user",
++			label: "Ignoruj użytkownika",
+ 			type: "item",
+ 			class: "action-ignore",
+ 			action() {
+@@ -336,7 +336,7 @@ export function generateUserContextMenu(
+ 			},
+ 		},
+ 		{
+-			label: "Direct messages",
++			label: "Rozmowa prywatna",
+ 			type: "item",
+ 			class: "action-query",
+ 			action() {
+@@ -361,10 +361,10 @@ export function generateUserContextMenu(
+ 
+ 	// Names of the standard modes we are able to change
+ 	const modeCharToName = {
+-		"~": "owner",
+-		"&": "admin",
+-		"@": "operator",
+-		"%": "half-op",
++		"~": "właściciela",
++		"&": "admina",
++		"@": "opa",
++		"%": "half-opa",
+ 		"+": "voice",
+ 	};
+ 
+@@ -377,7 +377,7 @@ export function generateUserContextMenu(
+ 				return "";
+ 			}
+ 
+-			const res = name ? `Revoke ${name} (-${m.mode})` : `Mode -${m.mode}`;
++			const res = name ? `Odbierz ${name} (-${m.mode})` : `Tryb -${m.mode}`;
+ 			return res;
+ 		},
+ 		give(m: {symbol: string; mode: string}) {
+@@ -387,7 +387,7 @@ export function generateUserContextMenu(
+ 				return "";
+ 			}
+ 
+-			const res = name ? `Give ${name} (+${m.mode})` : `Mode +${m.mode}`;
++			const res = name ? `Daj ${name} (+${m.mode})` : `Tryb +${m.mode}`;
+ 			return res;
+ 		},
+ 	};
+@@ -452,7 +452,7 @@ export function generateUserContextMenu(
+ 		// Check if the target user has no mode or a mode lower than ours.
+ 		if (user.modes.length === 0 || compare(currentChannelUser.modes[0], user.modes[0])) {
+ 			items.push({
+-				label: "Kick",
++				label: "Wyrzuć z kanału",
+ 				type: "item",
+ 				class: "action-kick",
+ 				action() {
+diff --git a/client/js/helpers/friendlysize.ts b/client/js/helpers/friendlysize.ts
+index d29ba73f..1d4dcaa0 100644
+--- a/client/js/helpers/friendlysize.ts
++++ b/client/js/helpers/friendlysize.ts
+@@ -1,4 +1,4 @@
+-const sizes = ["Bytes", "KiB", "MiB", "GiB", "TiB", "PiB"];
++const sizes = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+ 
+ export default (size: number) => {
+ 	// Loosely inspired from https://stackoverflow.com/a/18650828/1935861
+diff --git a/client/js/hooks/use-close-channel.ts b/client/js/hooks/use-close-channel.ts
+index 97baa9f5..ac5fffe0 100644
+--- a/client/js/hooks/use-close-channel.ts
++++ b/client/js/hooks/use-close-channel.ts
+@@ -11,9 +11,9 @@ export default function useCloseChannel(channel: ClientChan) {
+ 			eventbus.emit(
+ 				"confirm-dialog",
+ 				{
+-					title: "Remove network",
+-					text: `Are you sure you want to quit and remove ${channel.name}? This cannot be undone.`,
+-					button: "Remove network",
++					title: "Usuń sieć",
++					text: `Rozłączyć i usunąć ${channel.name}? Tego nie da się cofnąć.`,
++					button: "Usuń sieć",
+ 				},
+ 				(result: boolean) => {
+ 					if (!result) {
+diff --git a/client/js/loading-error-handlers.js b/client/js/loading-error-handlers.js
+index c7b887b8..0f068dbf 100644
+--- a/client/js/loading-error-handlers.js
++++ b/client/js/loading-error-handlers.js
+@@ -11,7 +11,7 @@
+ 	const msg = document.getElementById("loading-page-message");
+ 
+ 	if (msg) {
+-		msg.textContent = "Loading the app…";
++		msg.textContent = "Wczytywanie erssi@tahio…";
+ 	}
+ 
+ 	document.getElementById("loading-reload")?.addEventListener("click", () => location.reload());
+@@ -42,16 +42,16 @@
+ 			return;
+ 		}
+ 
+-		msg.textContent = "An error has occurred that prevented the client from loading correctly.";
++		msg.textContent = "Błąd uniemożliwił wczytanie erssi@tahio.";
+ 
+ 		const summary = document.createElement("summary");
+-		summary.textContent = "More details";
++		summary.textContent = "Szczegóły";
+ 
+ 		const data = document.createElement("pre");
+ 		data.textContent = e.message; // e is an ErrorEvent
+ 
+ 		const info = document.createElement("p");
+-		info.textContent = "Open the developer tools of your browser for more information.";
++		info.textContent = "Więcej informacji w narzędziach deweloperskich przeglądarki.";
+ 
+ 		const details = document.createElement("details");
+ 		details.appendChild(summary);
+@@ -119,7 +119,7 @@
+ 			if (event.data.type === "fetch-error") {
+ 				// @ts-expect-error Argument of type '{ message: string; }' is not assignable to parameter of type 'ErrorEvent'.
+ 				errorHandler({
+-					message: `Service worker failed to fetch an url: ${event.data.message}`,
++					message: `Service worker nie pobrał adresu: ${event.data.message}`,
+ 				});
+ 
+ 				// Display only one fetch error
+diff --git a/client/js/socket-events/auth.ts b/client/js/socket-events/auth.ts
+index 375ace37..9cb005dd 100644
+--- a/client/js/socket-events/auth.ts
++++ b/client/js/socket-events/auth.ts
+@@ -12,7 +12,7 @@ declare global {
+ }
+ 
+ socket.on("auth:success", function () {
+-	store.commit("currentUserVisibleError", "Loading messages…");
++	store.commit("currentUserVisibleError", "Wczytywanie wiadomości…");
+ 	updateLoadingMessage();
+ });
+ 
+@@ -20,7 +20,7 @@ socket.on("auth:failed", async function () {
+ 	storage.remove("token");
+ 
+ 	if (store.state.appLoaded) {
+-		return reloadPage("Authentication failed, reloading…");
++		return reloadPage("Logowanie nieudane, odświeżam…");
+ 	}
+ 
+ 	await showSignIn();
+@@ -30,7 +30,7 @@ socket.on("auth:start", async function (serverHash) {
+ 	// If we reconnected and serverHash differs, that means the server restarted
+ 	// And we will reload the page to grab the latest version
+ 	if (lastServerHash && serverHash !== lastServerHash) {
+-		return reloadPage("Server restarted, reloading…");
++		return reloadPage("Serwer zrestartowany, odświeżam…");
+ 	}
+ 
+ 	lastServerHash = serverHash;
+@@ -41,12 +41,12 @@ socket.on("auth:start", async function (serverHash) {
+ 
+ 	// If we reconnect and no longer have a stored token, reload the page
+ 	if (store.state.appLoaded && !doFastAuth) {
+-		return reloadPage("Authentication failed, reloading…");
++		return reloadPage("Logowanie nieudane, odświeżam…");
+ 	}
+ 
+ 	// If we have user and token stored, perform auth without showing sign-in first
+ 	if (doFastAuth) {
+-		store.commit("currentUserVisibleError", "Authorizing…");
++		store.commit("currentUserVisibleError", "Logowanie…");
+ 		updateLoadingMessage();
+ 
+ 		let lastMessage = -1;
+diff --git a/client/js/socket-events/configuration.ts b/client/js/socket-events/configuration.ts
+index 1fa7a7a9..32d1a112 100644
+--- a/client/js/socket-events/configuration.ts
++++ b/client/js/socket-events/configuration.ts
+@@ -31,7 +31,7 @@ socket.once("configuration", function (data) {
+ 	if (document.body.classList.contains("public")) {
+ 		window.addEventListener("beforeunload", (e) => {
+ 			e.preventDefault();
+-			e.returnValue = "Are you sure you want to navigate away from this page?";
++			e.returnValue = "Opuścić stronę?";
+ 		});
+ 	}
+ });
+diff --git a/client/js/socket-events/connection.ts b/client/js/socket-events/connection.ts
+index a6226862..6e8837aa 100644
+--- a/client/js/socket-events/connection.ts
++++ b/client/js/socket-events/connection.ts
+@@ -6,12 +6,12 @@ socket.on("connect_error", handleDisconnect);
+ socket.on("error", handleDisconnect);
+ 
+ socket.io.on("reconnect_attempt", function (attempt) {
+-	store.commit("currentUserVisibleError", `Reconnecting… (attempt ${attempt})`);
++	store.commit("currentUserVisibleError", `Ponowne łączenie… (próba ${attempt})`);
+ 	updateLoadingMessage();
+ });
+ 
+ socket.on("connecting", function () {
+-	store.commit("currentUserVisibleError", "Connecting…");
++	store.commit("currentUserVisibleError", "Łączenie…");
+ 	updateLoadingMessage();
+ });
+ 
+@@ -21,7 +21,7 @@ socket.on("connect", function () {
+ 	// nothing is sent to the server that might have happened.
+ 	socket.sendBuffer = [];
+ 
+-	store.commit("currentUserVisibleError", "Finalizing connection…");
++	store.commit("currentUserVisibleError", "Kończę łączenie…");
+ 	updateLoadingMessage();
+ });
+ 
+@@ -33,13 +33,13 @@ function handleDisconnect(data) {
+ 	if (!socket.io.reconnection()) {
+ 		store.commit(
+ 			"currentUserVisibleError",
+-			`Disconnected from the server (${message}), NexusIRC does not reconnect in public mode.`
++			`Rozłączono z serwerem (${message}); w trybie publicznym erssi@tahio nie łączy się ponownie.`
+ 		);
+ 		updateLoadingMessage();
+ 		return;
+ 	}
+ 
+-	store.commit("currentUserVisibleError", `Waiting to reconnect… (${message})`);
++	store.commit("currentUserVisibleError", `Czekam na ponowne połączenie… (${message})`);
+ 	updateLoadingMessage();
+ 
+ 	// If the server shuts down, socket.io skips reconnection
+diff --git a/client/js/socket-events/irssi_status.ts b/client/js/socket-events/irssi_status.ts
+index c5ccb67b..86c03af1 100644
+--- a/client/js/socket-events/irssi_status.ts
++++ b/client/js/socket-events/irssi_status.ts
+@@ -18,7 +18,7 @@ socket.on("irssi:status", function (data) {
+ 		socket.emit("setting:get");
+ 	} else {
+ 		// irssi WebSocket disconnected - CLEAR networks from UI
+-		const errorMsg = data.error || "Lost connection to irssi WebSocket";
++		const errorMsg = data.error || "Utracono połączenie z erssi (fe-web)";
+ 
+ 		// CLEAR all networks from store
+ 		store.commit("networks", []);
+diff --git a/client/js/socket-events/msg.ts b/client/js/socket-events/msg.ts
+index af53a631..3e60ca36 100644
+--- a/client/js/socket-events/msg.ts
++++ b/client/js/socket-events/msg.ts
+@@ -134,11 +134,11 @@ function notifyMessage(
+ 				let title: string;
+ 				let body: string;
+ 				// TODO: fix msg type and get rid of that conditional
+-				const nick = msg.from && msg.from.nick ? msg.from.nick : "unkonown";
++				const nick = msg.from && msg.from.nick ? msg.from.nick : "nieznany";
+ 
+ 				if (msg.type === MessageType.INVITE) {
+-					title = "New channel invite:";
+-					body = nick + " invited you to " + msg.channel;
++					title = "Zaproszenie na kanał";
++					body = nick + " zaprasza cię na " + msg.channel;
+ 				} else {
+ 					title = nick;
+ 
+@@ -147,7 +147,7 @@ function notifyMessage(
+ 					}
+ 
+ 					if (msg.type === MessageType.MESSAGE) {
+-						title += " says:";
++						title += " pisze:";
+ 					}
+ 
+ 					// TODO: fix msg type and get rid of that conditional
+diff --git a/client/js/upload.ts b/client/js/upload.ts
+index 1ad5883f..68561a20 100644
+--- a/client/js/upload.ts
++++ b/client/js/upload.ts
+@@ -116,7 +116,7 @@ class Uploader {
+ 
+ 		if (!store.state.isConnected) {
+ 			this.handleResponse({
+-				error: `You are currently disconnected, unable to initiate upload process.`,
++				error: `Brak połączenia - nie można wysłać pliku.`,
+ 			});
+ 
+ 			return;
+@@ -132,7 +132,7 @@ class Uploader {
+ 
+ 			if (maxFileSize > 0 && file.size > maxFileSize) {
+ 				this.handleResponse({
+-					error: `File ${file.name} is over the maximum allowed size`,
++					error: `Plik ${file.name} przekracza dozwolony rozmiar`,
+ 				});
+ 
+ 				continue;
+@@ -247,7 +247,7 @@ class Uploader {
+ 					// if there is still data to be uploaded. Servers will only error in extreme cases like bad
+ 					// authentication or server-side errors.
+ 					response = {
+-						error: `Upload aborted: ${this.xhr.statusText} (HTTP ${this.xhr.status})`,
++						error: `Wysyłanie przerwane: ${this.xhr.statusText} (HTTP ${this.xhr.status})`,
+ 					};
+ 				}
+ 
+diff --git a/client/js/vue.ts b/client/js/vue.ts
+index fbcb138c..54b6b6c1 100644
+--- a/client/js/vue.ts
++++ b/client/js/vue.ts
+@@ -1,5 +1,8 @@
+ import constants from "./constants";
+ 
++import dayjs from "dayjs";
++import "dayjs/locale/pl";
++
+ import "../css/style.css";
+ import {createApp} from "vue";
+ import {store, CallableGetters, key} from "./store";
+@@ -15,6 +18,9 @@ import "./webpush";
+ import "./keybinds";
+ import {LoungeWindow} from "./types";
+ 
++// interfejs po polsku: nazwy miesiecy, "2 godziny temu"
++dayjs.locale("pl");
++
+ const favicon = document.getElementById("favicon");
+ const faviconNormal = favicon?.getAttribute("href") || "";
+ const faviconAlerted = favicon?.dataset.other || "";
+@@ -75,9 +81,9 @@ store.watch(
+ 
+ VueApp.config.errorHandler = function (e) {
+ 	if (e instanceof Error) {
+-		store.commit("currentUserVisibleError", `Vue error: ${e.message}`);
++		store.commit("currentUserVisibleError", `Błąd interfejsu: ${e.message}`);
+ 	} else {
+-		store.commit("currentUserVisibleError", `Vue error: ${String(e)}`);
++		store.commit("currentUserVisibleError", `Błąd interfejsu: ${String(e)}`);
+ 	}
+ 
+ 	logger.error("Vue error", e);
+diff --git a/client/nexusirc.webmanifest b/client/nexusirc.webmanifest
+index 22ad8271..6ae26282 100644
+--- a/client/nexusirc.webmanifest
++++ b/client/nexusirc.webmanifest
+@@ -1,11 +1,11 @@
+ {
+ 	"name": "erssi@tahio",
+-	"short_name": "erssi",
++	"short_name": "erssi@tahio",
+ 	"description": "erssi w przeglądarce, motyw shellter",
+ 	"start_url": ".",
+ 	"display": "standalone",
+-	"theme_color": "#f3ede1",
+-	"background_color": "#f3ede1",
++	"theme_color": "#faf8f4",
++	"background_color": "#faf8f4",
+ 	"icons": [
+ 		{
+ 			"src": "img/tahio-icon-120.png",
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index c1c1fbe5..2b8e2256 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -629,7 +629,7 @@ export class IrssiClient {
+ 			logger.info(`[DISCONNECT] 1. Sending irssi:status {connected: false}`);
+ 			this.broadcastToAllBrowsers("irssi:status" as any, {
+ 				connected: false,
+-				error: `Lost connection to irssi WebSocket (code: ${code})`,
++				error: `Utracono połączenie z erssi (fe-web, kod ${code})`,
+ 			});
+ 
+ 			// Also send empty init to clear UI networks
+@@ -3427,10 +3427,8 @@ export class IrssiClient {
+ 
+ 		return {
+ 			success: true,
+-			message: `Network '${
+-				networkData.name
+-			}' added successfully with ${successCount} server(s)${
+-				failCount > 0 ? ` (${failCount} failed)` : ""
++			message: `Sieć '${networkData.name}' dodana, serwery: ${successCount}${
++				failCount > 0 ? ` (nieudane: ${failCount})` : ""
+ 			}`,
+ 		};
+ 	}
+diff --git a/server/plugins/uploader.ts b/server/plugins/uploader.ts
+index c1e1c3e0..03b9e244 100644
+--- a/server/plugins/uploader.ts
++++ b/server/plugins/uploader.ts
+@@ -278,7 +278,7 @@ class Uploader {
+ 			doneCallback();
+ 
+ 			if (!uploadUrl) {
+-				return res.status(400).json({error: "Missing file"});
++				return res.status(400).json({error: "Brak pliku"});
+ 			}
+ 
+ 			// upload was done, send the generated file url to the client
+diff --git a/server/server.ts b/server/server.ts
+index b8d3d3c3..d18d69ea 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -133,7 +133,7 @@ export default async function (
+ 	const apiLimiter = rateLimit({
+ 		windowMs: 15 * 60 * 1000, // 15 minutes
+ 		max: 100, // Limit each IP to 100 requests per windowMs
+-		message: "Too many requests from this IP, please try again later.",
++		message: "Za dużo zapytań z tego adresu, spróbuj ponownie później.",
+ 		standardHeaders: true, // Return rate limit info in headers
+ 		legacyHeaders: false,
+ 	});
+@@ -141,7 +141,7 @@ export default async function (
+ 	const uploadLimiter = rateLimit({
+ 		windowMs: 60 * 60 * 1000, // 1 hour
+ 		max: 10, // 10 uploads per hour
+-		message: "Upload limit exceeded, please try again later.",
++		message: "Przekroczono limit wysyłania plików, spróbuj ponownie później.",
+ 	});
+ 
+ 	app.set("env", "production")
+@@ -973,7 +973,7 @@ function initializeIrssiClient(
+ 		if (!_.isPlainObject(data)) {
+ 			log.error(`[irssi:config:save] Invalid data type`);
+ 			(socket as any).emit("irssi:config:error", {
+-				error: "Invalid data",
++				error: "Nieprawidłowe dane",
+ 			});
+ 			return;
+ 		}
+@@ -985,7 +985,7 @@ function initializeIrssiClient(
+ 				`[irssi:config:save] Missing fields: host=${host}, port=${port}, irssiWebSocketPassword=${!!irssiWebSocketPassword}`
+ 			);
+ 			(socket as any).emit("irssi:config:error", {
+-				error: "Missing required fields",
++				error: "Brak wymaganych pól",
+ 			});
+ 			return;
+ 		}
+@@ -1044,12 +1044,12 @@ function initializeIrssiClient(
+ 			await client.connectToIrssi();
+ 
+ 			(socket as any).emit("irssi:config:success", {
+-				message: "Connection settings saved and reconnected",
++				message: "Ustawienia zapisane, połączenie z erssi odnowione",
+ 			});
+ 		} catch (error) {
+ 			log.error(`Failed to save irssi config: ${error}`);
+ 			(socket as any).emit("irssi:config:error", {
+-				error: `Failed to save: ${error}`,
++				error: `Nie udało się zapisać: ${error}`,
+ 			});
+ 		}
+ 	});
+@@ -1060,7 +1060,7 @@ function initializeIrssiClient(
+ 		if (!_.isPlainObject(data)) {
+ 			log.error(`[irssi:config:test] Invalid data type`);
+ 			(socket as any).emit("irssi:config:error", {
+-				error: "Invalid data",
++				error: "Nieprawidłowe dane",
+ 			});
+ 			return;
+ 		}
+@@ -1069,7 +1069,7 @@ function initializeIrssiClient(
+ 
+ 		if (!host || !port || !irssiWebSocketPassword) {
+ 			(socket as any).emit("irssi:config:error", {
+-				error: "Missing required fields",
++				error: "Brak wymaganych pól",
+ 			});
+ 			return;
+ 		}
+@@ -1119,17 +1119,17 @@ function initializeIrssiClient(
+ 
+ 			if (authResult) {
+ 				(socket as any).emit("irssi:config:test:success", {
+-					message: "Connection test successful",
++					message: "Połączenie z erssi działa",
+ 				});
+ 			} else {
+ 				(socket as any).emit("irssi:config:test:error", {
+-					error: "Authentication failed",
++					error: "Złe hasło fe-web",
+ 				});
+ 			}
+ 		} catch (error) {
+ 			log.error(`irssi connection test failed: ${error}`);
+ 			(socket as any).emit("irssi:config:test:error", {
+-				error: `Connection failed: ${error}`,
++				error: `Brak połączenia: ${error}`,
+ 			});
+ 		}
+ 	});
+@@ -1161,7 +1161,7 @@ function initializeIrssiClient(
+ 
+ 		if (!_.isPlainObject(data)) {
+ 			(socket as any).emit("weechat:config:error", {
+-				error: "Invalid data",
++				error: "Nieprawidłowe dane",
+ 			});
+ 			return;
+ 		}
+@@ -1181,14 +1181,14 @@ function initializeIrssiClient(
+ 		// Validate
+ 		if (enabled && (!port || !password)) {
+ 			(socket as any).emit("weechat:config:error", {
+-				error: "Port and password are required when enabled",
++				error: "Po włączeniu podaj port i hasło",
+ 			});
+ 			return;
+ 		}
+ 
+ 		if (enabled && (port < 1024 || port > 65535)) {
+ 			(socket as any).emit("weechat:config:error", {
+-				error: "Port must be between 1024 and 65535",
++				error: "Port musi być z zakresu 1024-65535",
+ 			});
+ 			return;
+ 		}
+@@ -1233,7 +1233,7 @@ function initializeIrssiClient(
+ 				await client.startWeeChatRelay();
+ 
+ 				(socket as any).emit("weechat:config:success", {
+-					message: "WeeChat Relay enabled and started on port " + port,
++					message: "Przekaźnik WeeChat włączony na porcie " + port,
+ 				});
+ 			} else {
+ 				// Disable (create NEW object)
+@@ -1253,13 +1253,13 @@ function initializeIrssiClient(
+ 				client.save();
+ 
+ 				(socket as any).emit("weechat:config:success", {
+-					message: "WeeChat Relay disabled",
++					message: "Przekaźnik WeeChat wyłączony",
+ 				});
+ 			}
+ 		} catch (error) {
+ 			log.error(`Failed to save WeeChat Relay config: ${error}`);
+ 			(socket as any).emit("weechat:config:error", {
+-				error: `Failed to save: ${error}`,
++				error: `Nie udało się zapisać: ${error}`,
+ 			});
+ 		}
+ 	});
+@@ -1332,12 +1332,12 @@ function initializeIrssiClient(
+ 			const {command, server} = data;
+ 
+ 			if (!command) {
+-				callback({success: false, message: "Command is required"});
++				callback({success: false, message: "Podaj komendę"});
+ 				return;
+ 			}
+ 
+ 			client.executeIrssiCommand(command, server);
+-			callback({success: true, message: `Command sent: ${command}`});
++			callback({success: true, message: `Wysłano komendę: ${command}`});
+ 		} catch (error: any) {
+ 			log.error(`[irssi:command] Error: ${error.message}`);
+ 			callback({success: false, message: error.message});
+-- 
+2.47.3
+
