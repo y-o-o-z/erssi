@@ -786,8 +786,9 @@ static void read_settings(void)
 
 void hilight_text_init(void)
 {
-	settings_add_str("lookandfeel", "hilight_color", "%Y");
-	settings_add_str("lookandfeel", "hilight_act_color", "%M");
+	/* shellter (start theme) colors: light amber, coral */
+	settings_add_str("lookandfeel", "hilight_color", "%ZFCD34D");
+	settings_add_str("lookandfeel", "hilight_act_color", "%ZFF7B72");
 	settings_add_level("lookandfeel", "hilight_level", "PUBLIC DCCMSGS");
 
 	read_settings();
