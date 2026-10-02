@@ -35,12 +35,13 @@ erssi 1.3.2 (20261002 1302)
 
 | Change | Why |
 |---|---|
-| `shellter` is the start theme | A dark theme in the colors of [shellter.me](https://shellter.me): one aligned column for nicks and events, no double-width emoji, a start banner. Default `nick_column_width` 13 and a matching `nick_hash_colors` palette. |
+| `shellter` is the start theme | A dark theme in the colors of [shellter.me](https://shellter.me). Every line — messages, events, server replies, WHOIS (field labels in the column), notices, private messages — shares one 13-character column and separator, so text always starts in the same place and wrapped lines continue under it. Default `nick_column_width` 13, a matching `nick_hash_colors` palette and hilight colors. |
 | `$nickmode` and `nick_mode_color_*` | The mode prefix is drawn in the color of the rank (`@` amber, `+` blue, `%` green, `~`/`&` red) in messages and in the nick list, so ops and voiced users stand out at a glance. |
 | 24-bit `nick_hash_colors` | Nick colors can match a 24-bit theme; invalid palette entries are never picked. |
 | `fe-text` section in themes | Themes written before 1.3.0 keep their sidepanel and statusbar formats. |
 | Sidepanel names cut with `…` | Long names (`#bash.org.pl`) are no longer chopped mid-word by the border; scroll arrows sit outside the nick text. |
 | Notices window keeps other windows | A script that creates its window at startup (e.g. *Mentions*) no longer loses it to the Notices window. |
+| Quiet network windows, tidy `/NAMES` | Network windows no longer start with three lines of `/WINDOW` output; the `/NAMES` table has no trailing padding, which wrapped into blank lines after a terminal resize. |
 
 **Behaviour**
 
