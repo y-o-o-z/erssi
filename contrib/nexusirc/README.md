@@ -10,7 +10,9 @@ zadeklarowana i pusta, a zdarzeń `mentions:get`, `mentions:dismiss` i
 ba3fb21):
 
 - zapamiętuje wiadomości oznaczone jako podświetlenie (bez własnych), do 100
-  najnowszych — tak jak The Lounge,
+  najnowszych — tak jak The Lounge; o podświetleniu decyduje flaga fe-web
+  `is_highlight` (reguły terminala erssi), a nick w treści tylko jako zapas,
+  gdy Nexus zna już prawdziwy nick (zaraz po połączeniu bywa pusty lub „*”),
 - obsługuje `mentions:get` / `mentions:dismiss` / `mentions:dismiss_all`.
 
 Razem z poprawką fe-web w tym forku (`is_highlight` liczone tak jak w
