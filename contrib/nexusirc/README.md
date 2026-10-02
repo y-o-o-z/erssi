@@ -23,7 +23,7 @@ sign-in texts in Polish). To use your own brand, edit
 
 ## Install
 
-**1. erssi: fe-web and the journal** (y-o-o-z/erssi ≥ 1.3.0+yooz.1)
+**1. erssi: fe-web and the journal** (y-o-o-z/erssi ≥ 1.3.2)
 
 ```
 /set fe_web_password <long random secret, e.g. from: openssl rand -base64 32>

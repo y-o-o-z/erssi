@@ -51,7 +51,7 @@ Encryption catches **every** outgoing line (`server outgoing modify`): plain
 text, `/me`, `/msg #channel` — including messages sent from the web client.
 Decryption happens before the rest of erssi, so the terminal, fe-web and the
 `webjournal.pl` journal all receive plain text. `/e2e` typed in a web channel
-window works with fe-web `target` support (y-o-o-z/erssi 1.3.0+yooz.1 and
+window works with fe-web `target` support (y-o-o-z/erssi 1.3.2 and
 NexusIRC patch 0009).
 
 ## Install (no root needed)
@@ -106,4 +106,4 @@ fingerprints they run `/e2e reverify <your nick>`.
   checks plain text at the receiver and that only ciphertext crossed the
   server. With a built NexusIRC directory alice turns E2E on through fe-web
   (Nexus's fe-web client, `target` field), exactly like the web. It never
-  touches a running session. Result on erssi 1.3.0+yooz.1: 11/11.
+  touches a running session. Result on erssi 1.3.2: 11/11.
