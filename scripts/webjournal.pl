@@ -43,7 +43,7 @@ use Time::HiRes ();
 use File::Path qw(make_path);
 use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
-our $VERSION = '1.2.0';
+our $VERSION = '1.2.1';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -340,6 +340,8 @@ sub sig_print_text {
     my ($dest, $text, $stripped) = @_;
     my $window = ref $dest ? $dest->{window} : undef;
     return unless $window;
+    # MSGLEVEL_NEVER: linie tylko na ekran (np. kreska trackbar.pl)
+    return if ($dest->{level} // 0) & MSGLEVEL_NEVER;
 
     $stripped = Irssi::strip_codes($text // '') unless defined $stripped;
     # wciecie kolumny z motywu (np. "        erssi │ ...") nie ma sensu w webie
