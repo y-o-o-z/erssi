@@ -770,12 +770,20 @@ void fe_messages_init(void)
 
 	/* Nick column feature settings */
 	settings_add_bool("lookandfeel", "nick_column_enabled", TRUE);
-	settings_add_int("lookandfeel", "nick_column_width", 10);
+	settings_add_int("lookandfeel", "nick_column_width", 13); /* shellter event column */
 	
 	/* Nick hash coloring settings */
 	settings_add_bool("lookandfeel", "nick_hash_color_enabled", TRUE);
-	settings_add_str("lookandfeel", "nick_hash_colors", "g r b m c y G C");
+	settings_add_str("lookandfeel", "nick_hash_colors",
+	                 "#f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787"); /* shellter */
 	settings_add_str("lookandfeel", "nick_hash_reset_event", "quit part");
+	/* $nickmode: colors of the nick mode prefix (format codes, e.g. %Y%_ or
+	 * %ZF59E0B%_), so operators and voiced users stand out */
+	settings_add_str("lookandfeel", "nick_mode_color_owner", "%ZFF7B72%_");
+	settings_add_str("lookandfeel", "nick_mode_color_op", "%ZF59E0B%_");
+	settings_add_str("lookandfeel", "nick_mode_color_halfop", "%Z3FB950%_");
+	settings_add_str("lookandfeel", "nick_mode_color_voice", "%Z79C0FF%_");
+	settings_add_str("lookandfeel", "nick_mode_color_normal", "");
 
 	signal_add_last("message public", (SIGNAL_FUNC) sig_message_public);
 	signal_add_last("message private", (SIGNAL_FUNC) sig_message_private);
