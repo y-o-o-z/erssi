@@ -12,6 +12,13 @@
 #   /set nick_hash_color_enabled on
 #   /set nick_hash_colors #f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787
 #        (kolory 24-bit w nick_hash_colors: erssi z forka y-o-o-z/erssi)
+#   znak trybu w wiadomosciach ($nickmode, fork y-o-o-z/erssi):
+#   /set nick_mode_color_op %ZF59E0B%_       (@ bursztyn)
+#   /set nick_mode_color_voice %Z79C0FF%_    (+ niebieski)
+#   /set nick_mode_color_halfop %Z3FB950%_   (% zielony)
+#   /set nick_mode_color_owner %ZFF7B72%_    (~ & czerwony)
+#   W forku y-o-o-z/erssi shellter jest motywem startowym i powyzsze
+#   wartosci sa domyslne.
 #
 # Powstal z wczesniejszego motywu v2.2; poprawki wzgledem niego:
 #   * formaty paneli i paska sa w sekcji "fe-ansi" (erssi >= 1.3.0 nie czyta
@@ -28,6 +35,8 @@
 #   symbole (bez emoji o podwojnej szerokosci); pojedyncze wciecie nicka;
 #   pasek stanu bez nawiasow. Kolumna = nick_column_width 13: zdarzenie to
 #   12 spacji + 1 znak. Inna szerokosc -> popraw spacje w abstraktach ev_*.
+#   Znak trybu nicka ($nickmode) ma kolor rangi: @ bursztyn, + niebieski,
+#   tak samo na liscie nickow - opow i voice widac od razu.
 #   Komunikaty klienta (CLIENT*) dostaja kolumne "erssi │" z line_start_irssi,
 #   wiec ich formaty (endofnames, channel_synced) nie maja wlasnego ev_*.
 
@@ -101,16 +110,16 @@ abstracts = {
 
   msgnick = "$0$1-%Z484F58 │%N%| ";
 
-  ownmsgnick = "{msgnick %Z6E7681$0%ZFCD34D%_$nicktrunc%_%N}";
+  ownmsgnick = "{msgnick $nickmode%ZFCD34D%_$nicktrunc%_%N}";
   ownnick = "%ZFCD34D%_$*%_%N";
 
-  pubmsgnick = "{msgnick %Z6E7681$0$nickcolored}";
+  pubmsgnick = "{msgnick $nickmode$nickcolored}";
   pubnick = "%ZE6EDF3$*%N";
 
-  pubmsgmenick = "{msgnick %Z6E7681$0%ZFF7B72%_$nicktrunc%_}%ZFCD34D";
+  pubmsgmenick = "{msgnick $nickmode%ZFF7B72%_$nicktrunc%_}%ZFCD34D";
   menick = "%ZFF7B72%_$*%_%N";
 
-  pubmsghinick = "{msgnick %Z6E7681$1%ZFCD34D%_$nicktrunc%_}%ZFCD34D";
+  pubmsghinick = "{msgnick $nickmode%ZFCD34D%_$nicktrunc%_}%ZFCD34D";
 
   msgchannel = "%Z6E7681:%Z79C0FF$*%N";
 
@@ -682,12 +691,14 @@ formats = {
     sidepanel_item_events = "%Z484F58$[-2]0%N %Z79C0FF$1%N";
     sidepanel_item_highlight = "%ZFF7B72$[-2]0%N %ZFF7B72$1%N";
 
-    # Lista nickow: symbol statusu ($0) i nick ($1)
-    sidepanel_nick_owner_status = "%ZFF7B72$0%N%ZE6EDF3$1%N";
-    sidepanel_nick_admin_status = "%ZFF7B72$0%N%ZE6EDF3$1%N";
-    sidepanel_nick_op_status = "%ZF59E0B$0%N%ZE6EDF3$1%N";
-    sidepanel_nick_halfop_status = "%Z3FB950$0%N%ZE6EDF3$1%N";
-    sidepanel_nick_voice_status = "%Z79C0FF$0%N%Z7D8590$1%N";
+    # Lista nickow: symbol statusu ($0) i nick ($1) w kolorze rangi - te same
+    # barwy co znak trybu w wiadomosciach (nick_mode_color_*): opy bursztyn,
+    # voice niebieski, halfop zielony, wlasciciel czerwony, reszta szara
+    sidepanel_nick_owner_status = "%ZFF7B72%_$0%_%N%ZFFA198$1%N";
+    sidepanel_nick_admin_status = "%ZFF7B72%_$0%_%N%ZFFA198$1%N";
+    sidepanel_nick_op_status = "%ZF59E0B%_$0%_%N%ZFCD34D$1%N";
+    sidepanel_nick_halfop_status = "%Z3FB950%_$0%_%N%Z7EE787$1%N";
+    sidepanel_nick_voice_status = "%Z79C0FF%_$0%_%N%ZA5D6FF$1%N";
     sidepanel_nick_normal_status = "%Z484F58$0%N%Z7D8590$1%N";
   };
 
