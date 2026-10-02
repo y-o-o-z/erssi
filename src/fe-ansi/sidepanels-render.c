@@ -631,6 +631,30 @@ static int get_window_format(WINDOW_REC *win, WINDOW_SORT_REC *sort_rec,
 	return format;
 }
 
+/* Arrows marking more entries above/below the visible part of a panel.
+ * Returns the number of cells drawn. */
+static int draw_scroll_markers(TERM_WINDOW *tw, int x, int height, gboolean more_above,
+                               gboolean more_below)
+{
+	int drawn = 0;
+
+	if (x < 0)
+		return 0;
+
+	term_set_color(tw, 6 | ATTR_BOLD); /* bright cyan */
+	if (more_above && height > 0) {
+		term_move(tw, x, 0);
+		term_add_unichar(tw, 0x2191); /* ↑ */
+		drawn++;
+	}
+	if (more_below && height > 1) {
+		term_move(tw, x, height - 1);
+		term_add_unichar(tw, 0x2193); /* ↓ */
+		drawn++;
+	}
+	return drawn;
+}
+
 void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 {
 	TERM_WINDOW *tw;
@@ -785,37 +809,8 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	 * inconsistent UI when auto-hide mode hides the right panel in non-channel windows. */
 	draw_border_vertical(tw, width, height, 1);
 
-	/* Draw scroll indicators (bright cyan = color 6 + bold) */
-	if (has_more_above && height > 0) {
-		/* Show "^" at top-right corner to indicate more content above */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, width - 2, 0);
-		term_addch(tw, '^');
-		lines_changed++;
-	}
-	if (has_more_below && height > 1) {
-		/* Show "v" at bottom-right corner to indicate more content below */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, width - 2, height - 1);
-		term_addch(tw, 'v');
-		lines_changed++;
-	}
-
-	/* Draw scroll indicators (bright cyan = color 6 + bold) */
-	if (has_more_above && height > 0) {
-		/* Show "^" at top-right corner to indicate more content above */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, width - 2, 0);
-		term_addch(tw, '^');
-		lines_changed++;
-	}
-	if (has_more_below && height > 1) {
-		/* Show "v" at bottom-right corner to indicate more content below */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, width - 2, height - 1);
-		term_addch(tw, 'v');
-		lines_changed++;
-	}
+	/* Scroll markers in the column next to the border */
+	lines_changed += draw_scroll_markers(tw, width - 2, height, has_more_above, has_more_below);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
@@ -1098,21 +1093,10 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 
 	draw_border_vertical(tw, width, height, 0);
 
-	/* Draw scroll indicators (bright cyan = color 6 + bold) */
-	if (has_more_above && height > 0) {
-		/* Show "^" at top-left (after border) to indicate more content above */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, 1, 0);
-		term_addch(tw, '^');
-		lines_changed++;
-	}
-	if (has_more_below && height > 1) {
-		/* Show "v" at bottom-left (after border) to indicate more content below */
-		term_set_color(tw, 6 | ATTR_BOLD);  /* Bright cyan */
-		term_move(tw, 1, height - 1);
-		term_addch(tw, 'v');
-		lines_changed++;
-	}
+	/* Scroll markers in the outer (right) column: column 1, right after the
+	 * border, is the nick's mode prefix - a marker there read as part of the
+	 * nick (e.g. "vKnut") */
+	lines_changed += draw_scroll_markers(tw, width - 1, height, has_more_above, has_more_below);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
