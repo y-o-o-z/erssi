@@ -122,11 +122,16 @@ void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json)
 	} else if (g_strcmp0(type, "command") == 0) {
 		char *command;
 		char *server_tag;
+		char *target;
 
 		command = fe_web_json_get_string(json, "command");
 		server_tag = fe_web_json_get_string(json, "server");
+		/* Optional: the channel/query the command was typed in. */
+		target = fe_web_json_get_string(json, "target");
 
 		if (command != NULL) {
+			WI_ITEM_REC *item = NULL;
+
 			/* If server is specified, use it for this command */
 			if (server_tag != NULL) {
 				IRC_SERVER_REC *server;
@@ -137,13 +142,21 @@ void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json)
 				}
 			}
 
-			fe_web_client_execute_command(client, command);
+			/* Run the command in that window item's context, as if typed
+			 * in its window in the terminal - without switching windows.
+			 * Commands such as /topic or /kick read the channel
+			 * from the active item. */
+			if (target != NULL && *target != '\0' && client->server != NULL)
+				item = window_item_find(SERVER(client->server), target);
+
+			fe_web_client_execute_command(client, command, item);
 			g_free(command);
 
 			if (server_tag != NULL) {
 				g_free(server_tag);
 			}
 		}
+		g_free(target);
 	} else if (g_strcmp0(type, "ping") == 0) {
 		WEB_MESSAGE_REC *msg;
 		msg = fe_web_message_new(WEB_MSG_PONG);
@@ -313,7 +326,7 @@ void fe_web_client_sync_server(WEB_CLIENT_REC *client, const char *server_tag)
 }
 
 /* Execute IRC command for client */
-void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command)
+void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, WI_ITEM_REC *item)
 {
 	if (client == NULL || command == NULL) {
 		return;
@@ -325,6 +338,6 @@ void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command)
 	 * for protocol-independent commands (protocol == -1).
 	 * Commands that require a server will emit CMDERR_NOT_CONNECTED automatically.
 	 */
-	/* Signal: "send command", cmd, SERVER_REC, active_item */
-	signal_emit("send command", 3, command, client->server, NULL);
+	/* Signal: "send command", cmd, SERVER_REC, active_item (may be NULL) */
+	signal_emit("send command", 3, command, client->server, item);
 }
