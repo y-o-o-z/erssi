@@ -1,95 +1,83 @@
-# NexusIRC dla erssi — łatki
+# Web client for erssi: NexusIRC + patches
 
-[NexusIRC](https://github.com/kofany/nexus) to webowy frontend erssi przez
-fe-web (fork The Lounge). Łatki poniżej (seria względem `kofany/nexus`
-ba3fb21, nakładane po kolei przez `git am`, 0001–0011) robią z niego web, który pokazuje
-to samo co terminal erssi, pod marką **erssi@tahio**.
+[NexusIRC](https://github.com/kofany/nexus) (a fork of The Lounge) talks to
+erssi through the fe-web module. With these patches the browser shows what the
+terminal shows: the same session, channels, queries, history and erssi's own
+windows (Notices, Mentions, script windows). The series is made against
+`kofany/nexus` **ba3fb21** and is applied as a whole, in order (`git am`).
 
-| Łatka | Co daje |
+| Patches | What they add |
 |---|---|
-| `0001-recent-mentions-for-erssi-users.patch` | Okno *Recent mentions* działa dla erssi (wcześniej zawsze puste). |
-| `0002-erssi-tahio-branding-theme-sign-in.patch` | Marka erssi@tahio, motyw `tahio` (miedź i krem, kroje Geist), nowa strona logowania po polsku. |
-| `0003-sign-in-ircnet-map-cache-busting.patch` | Strona logowania z panelem mapy IRCnetu; cache-busting z treści builda. |
-| `0004-erssi-journal-history-and-windows.patch` | Historia bez dziur i okna erssi bez kanału (Notices, Mentions, skaner, status sieci) z dziennika `webjournal.pl`. |
-| `0005-erssi-windows-ui.patch` | Okna erssi bez przycisków zamknij/dołącz; linie tekstu bez kolumny nicka. |
-| `0006-fe-web-close-handshake.patch` | Zamknięcie połączenia z fe-web z handshake, bez błędów SSL w erssi przy restarcie. |
-| `0007-erssi-journal-line-order.patch` | Linie wypisane w tej samej milisekundzie zostają w kolejności z erssi. |
-| `0008-erssi-journal-client-lines.patch` | Komunikaty skryptów w oknach kanałów (np. `[E2E] …` z `rpe2e.pl`) widoczne w webie na żywo. |
-| `0009-fe-web-command-target.patch` | Komenda wpisana w oknie kanału idzie z polem `target` — erssi wykonuje ją w kontekście tego kanału (`/e2e on`, `/topic`, `/kick`). |
-| `0010-erssi-journal-late-start.patch` | Dziennik startuje także, gdy sieci łączą się po starcie Nexusa (restart erssi, reboot) — wcześniej bez initu nie było grupy „erssi” ani taila. |
-| `0011-erssi-journal-single-setup.patch` | Dwa nakładające się uruchomienia dziennika (późny start i init) nie zostawiają osieroconego taila. |
+| 0001 | A *Recent mentions* window for erssi (fe-web `is_highlight`). |
+| 0002, 0003, 0013 | The **shellter** theme (shellter.me colors, light and dark following the system, Geist fonts) and a sign-in page with a map of IRCnet. |
+| 0004, 0005, 0007, 0008, 0010–0012 | The erssi window journal (`scripts/webjournal.pl`): history without gaps across web restarts, an “erssi” group with windows that are not channels, script messages live. |
+| 0006 | Closing the fe-web connection with a handshake (no TLS errors in erssi). |
+| 0009 | Commands typed in a channel window run in that channel. |
+| 0014 | Sender rank (`@`, `+`) on messages, plain wording of events. |
 
-## 0001 — Recent mentions
+Patches 0002 and 0003 brand the web client as **erssi@tahio** (logo, icons,
+sign-in texts in Polish). To use your own brand, edit
+`client/components/Sidebar.vue`, `client/components/Windows/SignIn.vue`,
+`client/index.html.tpl` and the icons in `client/img/`.
 
-W trybie irssi/erssi serwer nigdy nie wypełniał okna: tablica
-`IrssiClient.mentions` była pusta, a zdarzeń `mentions:get`,
-`mentions:dismiss` i `mentions:dismiss_all` nikt nie obsługiwał. Łatka
-zapamiętuje podświetlenia (bez własnych), do 100 najnowszych, jak The Lounge.
-O podświetleniu decyduje flaga fe-web `is_highlight` (reguły terminala erssi,
-poprawione w tym forku), a nick w treści służy tylko jako zapas.
+## Install
 
-## 0002, 0003 — erssi@tahio
+**1. erssi: fe-web and the journal** (y-o-o-z/erssi ≥ 1.3.0+yooz.1)
 
-- motyw `client/themes/tahio.css` w tożsamości tahio (krem `#f3ede1`, papier
-  `#fffdf8`, miedź `#b25f10`), kroje Geist i Geist Mono dołączone lokalnie
-  (OFL, `client/themes/tahio/fonts/OFL.txt`); kolumna czasu w Geist Mono,
-- strona logowania: formularz po polsku (pokaż/ukryj hasło, Caps Lock,
-  komunikat błędu z fokusem w polu hasła) i panel z mapą Europy z drzewem
-  łączy w stylu IRCnetu, wygenerowany przez `scripts/generate-ircnet-map.py`
-  z danych Natural Earth (domena publiczna); animacja wyłącza się przy
-  `prefers-reduced-motion`,
-- ikony, manifest i ekran ładowania z marką erssi@tahio,
-- cache-busting: vendor chunk nazwany hashem treści, `?v=` liczone z
-  `bundle.js`, `style.css` i arkuszy motywów zamiast z numeru wersji —
-  lokalna przebudowa bez zmiany wersji nie jest już podawana z cache CDN
-  (Cloudflare trzymał stary `bundle.vendor.js` i strona się nie ładowała).
-
-## 0004, 0005 — web pokazuje to samo co terminal
-
-fe-web przesyła tylko zdarzenia na żywo i tylko kanały oraz rozmowy. Wszystko,
-co padło, gdy Nexus nie działał (restart, przebudowa), nigdy nie trafiało do
-jego bazy, a okien bez kanału web w ogóle nie znał.
-
-Skrypt `webjournal.pl` z
-[y-o-o-z/irssi_scripts](https://github.com/y-o-o-z/irssi_scripts) zapisuje
-każde okno erssi do `~/.erssi/journal/` (JSONL). `server/erssiJournal.ts`:
-
-- przy starcie dopisuje do bazy wpisy dziennika, których w niej nie ma
-  (porównanie: rodzaj, nick, treść, ±5 s — zdarzenia na żywo mają czas
-  odbioru przez Nexusa, nie erssi),
-- czyta na żywo okna bez kanału i pokazuje je w grupie „erssi” (Notices
-  pierwsze, potem Mentions, skaner…); okno statusu sieci trafia do lobby
-  sieci; komendy wpisane w tych oknach wykonuje erssi,
-- pokazuje na żywo komunikaty klienta i skryptów z okien kanałów (wpisy
-  `text` w plikach kanałów, `webjournal.pl` ≥ 1.1.0) — fe-web przesyła tylko
-  wiadomości, a bez tego w webie nie byłoby widać np. prośby o wymianę kluczy
-  E2E (łatka 0008),
-- katalog dziennika: `ERSSI_JOURNAL_DIR`, domyślnie `~/.erssi/journal`; bez
-  dziennika Nexus działa jak dotąd.
-
-Baza Nexusa sortuje po czasie w pełnych milisekundach, więc czasy wpisów
-jednego pliku są ściśle rosnące (remis = poprzedni + 1 ms, łatka 0007) —
-inaczej np. błąd i jego dalszy ciąg zamieniały się miejscami.
-
-Testy: `test/tests/erssiJournal.ts` (kodowanie nazw jak w skrypcie,
-deduplikacja, kolejność, rotacja, linia ucięta w środku znaku UTF-8).
-
-## 0006 — zamknięcie połączenia
-
-`FeWebSocket.disconnect()` zrywał połączenie (`terminate()`) bez TLS
-close_notify, więc erssi przy każdym restarcie Nexusa wypisywało w Notices
-`fe-web-ssl: ... unexpected eof while reading` i `Connection error`. Teraz
-najpierw `close()`, `terminate()` dopiero po 1 s. Ten fork erssi i tak
-traktuje takie zerwanie jak zwykłe rozłączenie (`fix(fe-web)`).
-
-## Zastosowanie
-
-```sh
-cd ~/nexus
-git checkout -b local/tahio-theme ba3fb21
-git am /ścieżka/do/contrib/nexusirc/0*.patch
-NODE_ENV=production yarn build      # klient i serwer
+```
+/set fe_web_password <long random secret, e.g. from: openssl rand -base64 32>
+/set fe_web_bind 127.0.0.1
+/set fe_web_port 9001
+/set fe_web_enabled on
+/script load webjournal
+/save
 ```
 
-W `~/.nexusirc/config.js`: `theme: "tahio"`. Zatrzymuj Nexusa łagodnie
-(SIGTERM / Ctrl-C), nie zabijając sesji tmux.
+`webjournal.pl` is installed with erssi (`<prefix>/share/irssi/scripts`), so
+`/script load webjournal` works right away. To load it at startup:
+`ln -s <prefix>/share/irssi/scripts/webjournal.pl ~/.erssi/scripts/autorun/`.
+
+**2. NexusIRC with the patches** (Node.js ≥ 24)
+
+```sh
+git clone https://github.com/kofany/nexus.git && cd nexus
+git checkout -b local ba3fb21
+git am /path/to/erssi/contrib/nexusirc/0*.patch
+corepack enable && yarn install
+NODE_ENV=production yarn build
+```
+
+**3. Configuration** — `~/.nexusirc/config.js` (created on first start):
+
+```js
+host: "127.0.0.1",   // local only; expose it through a reverse proxy or tunnel
+port: 19000,
+reverseProxy: true,  // when a proxy or tunnel (e.g. Cloudflare) is in front
+public: false,
+theme: "shellter",
+```
+
+**4. User and the erssi connection**
+
+```sh
+node index.mjs add <user>   # sets the web sign-in password
+node index.mjs start        # http://127.0.0.1:19000
+```
+
+After signing in: *Settings → irssi connection*: host `127.0.0.1`, port
+`9001`, the `fe_web_password`, **Test**, then **Save** (Nexus stores it
+encrypted).
+
+**5. Access from outside** — a reverse proxy with TLS, or a tunnel (e.g.
+Cloudflare Tunnel: *Public hostname* → `HTTP 127.0.0.1:19000`). Nexus and
+fe-web listen on `127.0.0.1` only; the fe-web password never leaves the
+machine.
+
+## Maintenance
+
+- Stop Nexus gracefully (SIGTERM, Ctrl-C): it closes the fe-web connection
+  and flushes its message store.
+- `/webjournal` in erssi shows the journal state; files live in
+  `~/.erssi/journal` (0600, rotated at `webjournal_max_kb`). For another
+  directory set `webjournal_dir` in erssi and `ERSSI_JOURNAL_DIR` for Nexus.
+- Journal tests on the Nexus side: `test/tests/erssiJournal.ts` (mocha).

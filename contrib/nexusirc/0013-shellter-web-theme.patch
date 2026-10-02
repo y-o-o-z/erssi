@@ -1,0 +1,1289 @@
+From 32c7923d48fbc339c047858c2c40df6458d96112 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 19:15:43 +0200
+Subject: [PATCH 13/14] local: shellter web theme in the colors of shellter.me,
+ rank-colored nick modes
+
+- theme 'tahio' becomes 'shellter' (client/themes/shellter.css, assets in
+  themes/shellter/): shellter.me tokens 1:1, light (cream #faf8f4, rust
+  #b45309) and dark (#0b0d10, amber #f59e0b - the terminal shellter theme)
+  chosen by the system like shellter.me's 'system' mode
+- wordmark '$ erssi@tahio' with the prompt in the accent color, as
+  '$shellter.me'; sign-in page with the same tokens and a dark variant,
+  the IRCnet map panel in the shellter.me dark palette
+- the nick mode prefix is its own element (.user-mode[data-mode]), colored
+  by rank like $nickmode in the terminal: @ op, + voice, % halfop, ~ & owner
+- nick colors from the shellter palette (darker variants on light)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ client/components/Sidebar.vue                 |   7 +-
+ client/components/Username.vue                |   5 +-
+ client/components/Windows/SignIn.vue          |  96 ++-
+ client/index.html.tpl                         |   4 +-
+ client/nexusirc.webmanifest                   |   2 +-
+ client/themes/shellter.css                    | 571 ++++++++++++++++++
+ client/themes/{tahio => shellter}/brand.css   |  37 +-
+ .../themes/{tahio => shellter}/fonts/OFL.txt  |   0
+ .../fonts/geist-latin-400.woff2               | Bin
+ .../fonts/geist-latin-500.woff2               | Bin
+ .../fonts/geist-latin-600.woff2               | Bin
+ .../fonts/geist-latin-ext-400.woff2           | Bin
+ .../fonts/geist-latin-ext-500.woff2           | Bin
+ .../fonts/geist-latin-ext-600.woff2           | Bin
+ .../fonts/geist-mono-latin-400-normal.woff2   | Bin
+ .../fonts/geist-mono-latin-500-normal.woff2   | Bin
+ .../geist-mono-latin-ext-400-normal.woff2     | Bin
+ .../geist-mono-latin-ext-500-normal.woff2     | Bin
+ client/themes/tahio.css                       | 247 --------
+ 19 files changed, 679 insertions(+), 290 deletions(-)
+ create mode 100644 client/themes/shellter.css
+ rename client/themes/{tahio => shellter}/brand.css (87%)
+ rename client/themes/{tahio => shellter}/fonts/OFL.txt (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-400.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-500.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-600.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-ext-400.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-ext-500.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-latin-ext-600.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-mono-latin-400-normal.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-mono-latin-500-normal.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-mono-latin-ext-400-normal.woff2 (100%)
+ rename client/themes/{tahio => shellter}/fonts/geist-mono-latin-ext-500-normal.woff2 (100%)
+ delete mode 100644 client/themes/tahio.css
+
+diff --git a/client/components/Sidebar.vue b/client/components/Sidebar.vue
+index 5a638f94..97ef4b8f 100644
+--- a/client/components/Sidebar.vue
++++ b/client/components/Sidebar.vue
+@@ -2,7 +2,12 @@
+ 	<aside id="sidebar" ref="sidebar">
+ 		<div class="scrollable-area">
+ 			<div class="logo-container">
+-				<span class="tahio-wordmark">erssi<span class="tahio-wordmark-host">@tahio</span></span>
++				<span class="erssi-wordmark"
++					><span class="erssi-wordmark-prompt">$</span>erssi<span
++						class="erssi-wordmark-host"
++						>@tahio</span
++					></span
++				>
+ 				<span
+ 					v-if="isDevelopment"
+ 					title="erssi@tahio has been built in development mode"
+diff --git a/client/components/Username.vue b/client/components/Username.vue
+index 72db4e6f..d2146065 100644
+--- a/client/components/Username.vue
++++ b/client/components/Username.vue
+@@ -6,7 +6,10 @@
+ 		v-on="onHover ? {mouseenter: hover} : {}"
+ 		@click.prevent="openContextMenu"
+ 		@contextmenu.prevent="openContextMenu"
+-		><slot>{{ mode }}{{ user.nick }}</slot></span
++		><slot
++			><span v-if="mode" class="user-mode" :data-mode="mode">{{ mode }}</span
++			>{{ user.nick }}</slot
++		></span
+ 	>
+ </template>
+ 
+diff --git a/client/components/Windows/SignIn.vue b/client/components/Windows/SignIn.vue
+index 20f1e58f..ef5bb839 100644
+--- a/client/components/Windows/SignIn.vue
++++ b/client/components/Windows/SignIn.vue
+@@ -3,8 +3,11 @@
+ 		<div class="signin">
+ 			<div class="signin-panel">
+ 				<header class="signin-brand">
+-					<span class="tahio-wordmark"
+-						>erssi<span class="tahio-wordmark-host">@tahio</span></span
++					<span class="erssi-wordmark"
++						><span class="erssi-wordmark-prompt">$</span>erssi<span
++							class="erssi-wordmark-host"
++							>@tahio</span
++						></span
+ 					>
+ 				</header>
+ 
+@@ -98,7 +101,7 @@
+ /*
+  * Strona logowania erssi@tahio. Wlasne klasy (signin-*, ircmap-*), zeby nie
+  * mieszac sie z ogolnymi regulami #sign-in z client/css/style.css. Kroje i
+- * znak slowny z themes/tahio/brand.css (zawsze ladowany w index.html.tpl), a
++ * znak slowny z themes/shellter/brand.css (zawsze ladowany w index.html.tpl), a
+  * kroj ustawiony na wszystkich elementach, wiec wyglad nie zalezy od motywu
+  * wybranego w ustawieniach.
+  */
+@@ -110,17 +113,21 @@
+ }
+ 
+ #sign-in {
+-	--si-cream: #f3ede1;
+-	--si-paper: #fffdf8;
+-	--si-line: #d6cbb6;
+-	--si-ink: #1f2328;
+-	--si-ink-soft: #57606a;
+-	--si-muted: #6e7781;
+-	--si-copper: #b25f10;
+-	--si-copper-dark: #93500f;
++	/* tokeny shellter.me (jasne; ciemne nizej, wg systemu) */
++	--si-cream: #faf8f4;
++	--si-paper: #fdfbf8;
++	--si-line: #cfc4ad;
++	--si-ink: #1d1714;
++	--si-ink-soft: #5b4a36;
++	--si-muted: #8a7960;
++	--si-copper: #b45309;
++	--si-copper-dark: #92400e;
++	--si-on-copper: #faf8f4;
++	--si-focus: rgb(180 83 9 / 22%);
++	--si-hover: rgb(180 83 9 / 8%);
+ 	--si-danger: #b42318;
+ 	--si-warn: #9a6700;
+-	--si-night: #171512;
++	--si-night: #0b0d10;
+ 
+ 	padding: 0;
+ 	background: var(--si-cream);
+@@ -154,8 +161,8 @@
+ 	padding: clamp(24px, 3.4vw, 44px) clamp(24px, 4.4vw, 64px);
+ }
+ 
+-#sign-in .signin-brand .tahio-wordmark,
+-#sign-in .signin-brand .tahio-wordmark * {
++#sign-in .signin-brand .erssi-wordmark,
++#sign-in .signin-brand .erssi-wordmark * {
+ 	font-family: "Geist Mono", ui-monospace, monospace;
+ }
+ 
+@@ -216,7 +223,7 @@
+ #sign-in .signin-input:focus {
+ 	outline: none;
+ 	border-color: var(--si-copper);
+-	box-shadow: 0 0 0 3px rgb(178 95 16 / 18%);
++	box-shadow: 0 0 0 3px var(--si-focus);
+ }
+ 
+ #sign-in .signin-input[aria-invalid="true"] {
+@@ -247,7 +254,7 @@
+ }
+ 
+ #sign-in .signin-reveal:hover {
+-	background: rgb(178 95 16 / 8%);
++	background: var(--si-hover);
+ }
+ 
+ #sign-in .signin-reveal:focus-visible,
+@@ -276,7 +283,7 @@
+ 	padding: 0 22px;
+ 	font-size: 15px;
+ 	font-weight: 600;
+-	color: var(--si-paper);
++	color: var(--si-on-copper);
+ 	background: var(--si-copper);
+ 	border: 0;
+ 	border-radius: 6px;
+@@ -321,27 +328,31 @@
+ 	position: absolute;
+ 	inset: 0;
+ 	z-index: 1;
+-	background: linear-gradient(to top, rgb(23 21 18 / 92%) 0%, rgb(23 21 18 / 0%) 38%);
++	background: linear-gradient(
++		to top,
++		color-mix(in srgb, var(--si-night) 92%, transparent) 0%,
++		transparent 38%
++	);
+ 	pointer-events: none;
+ }
+ 
+ #sign-in .ircmap-dot {
+-	fill: #6a5a48;
++	fill: #30363d;
+ }
+ 
+ #sign-in .ircmap-glow-in {
+-	stop-color: #b25f10;
+-	stop-opacity: 0.3;
++	stop-color: #f59e0b;
++	stop-opacity: 0.2;
+ }
+ 
+ #sign-in .ircmap-glow-out {
+-	stop-color: #b25f10;
++	stop-color: #f59e0b;
+ 	stop-opacity: 0;
+ }
+ 
+ #sign-in .ircmap-links path {
+ 	fill: none;
+-	stroke: #b25f10;
++	stroke: #b45309;
+ 	stroke-opacity: 0.7;
+ 	stroke-width: 1.4;
+ }
+@@ -349,7 +360,7 @@
+ /* "pakiety" biegnace laczami do Warszawy */
+ #sign-in .ircmap-pulses path {
+ 	fill: none;
+-	stroke: #f5b26b;
++	stroke: #fcd34d;
+ 	stroke-width: 2.6;
+ 	stroke-linecap: round;
+ 	stroke-dasharray: 5 95;
+@@ -364,16 +375,16 @@
+ }
+ 
+ #sign-in .ircmap-nodes circle {
+-	fill: #e9dcc6;
++	fill: #e6edf3;
+ }
+ 
+ #sign-in .ircmap-core {
+-	fill: #f5b26b;
++	fill: #fcd34d;
+ }
+ 
+ #sign-in .ircmap-ring {
+ 	fill: none;
+-	stroke: #f5b26b;
++	stroke: #fcd34d;
+ 	stroke-width: 1.5;
+ 	transform-box: fill-box;
+ 	transform-origin: center;
+@@ -400,7 +411,7 @@
+ 	font-family: "Geist Mono", ui-monospace, monospace;
+ 	font-size: 17px;
+ 	font-weight: 500;
+-	fill: #f3ede1;
++	fill: #e6edf3;
+ }
+ 
+ #sign-in .signin-art-caption {
+@@ -417,14 +428,14 @@
+ 	font-weight: 600;
+ 	line-height: 0.9;
+ 	letter-spacing: -0.045em;
+-	color: #f3ede1;
++	color: #e6edf3;
+ }
+ 
+ #sign-in .signin-art-note {
+ 	margin: 14px 0 0;
+ 	font-size: 15px;
+ 	line-height: 1.5;
+-	color: #b9ad9b;
++	color: #7d8590;
+ }
+ 
+ /* ── waskie ekrany: mapa jako pas nad formularzem ───────────────── */
+@@ -461,6 +472,31 @@
+ 	}
+ }
+ 
++@media (prefers-color-scheme: dark) {
++	#sign-in {
++		--si-cream: #0b0d10;
++		--si-paper: #0e1116;
++		--si-line: #30363d;
++		--si-ink: #e6edf3;
++		--si-ink-soft: #7d8590;
++		--si-muted: #6e7681;
++		--si-copper: #f59e0b;
++		--si-copper-dark: #fcd34d;
++		--si-on-copper: #0b0d10;
++		--si-focus: rgb(245 158 11 / 25%);
++		--si-hover: rgb(245 158 11 / 10%);
++		--si-danger: #ff7b72;
++		--si-warn: #fcd34d;
++		--si-night: #0e1116;
++
++		color-scheme: dark;
++	}
++
++	#sign-in .signin-art {
++		border-left: 1px solid #1f2428;
++	}
++}
++
+ @media (prefers-reduced-motion: reduce) {
+ 	#sign-in .ircmap-pulses {
+ 		display: none;
+diff --git a/client/index.html.tpl b/client/index.html.tpl
+index 5b58acc3..8986f144 100644
+--- a/client/index.html.tpl
++++ b/client/index.html.tpl
+@@ -8,7 +8,7 @@
+     <link rel="preload" as="script" href="js/loading-error-handlers.js?v=<%- cacheBust %>">
+     <link rel="modulepreload" href="js/bundle.js?v=<%- cacheBust %>">
+ 
+-    <link rel="stylesheet" href="themes/tahio/brand.css?v=<%- cacheBust %>">
++    <link rel="stylesheet" href="themes/shellter/brand.css?v=<%- cacheBust %>">
+ 
+     <link rel="stylesheet" href="css/style.css?v=<%- cacheBust %>">
+     <link id="theme" rel="stylesheet" href="themes/<%- theme %>.css?v=<%- cacheBust %>" data-server-theme="<%- theme %>">
+@@ -50,7 +50,7 @@
+         <div id="loading">
+             <div class="window">
+                 <div id="loading-status-container">
+-                    <p class="tahio-wordmark">erssi<span class="tahio-wordmark-host">@tahio</span></p>
++                    <p class="erssi-wordmark"><span class="erssi-wordmark-prompt">$</span>erssi<span class="erssi-wordmark-host">@tahio</span></p>
+                     <p id="loading-page-message">erssi@tahio wymaga przeglądarki z włączonym JavaScriptem.</p>
+                 </div>
+                 <div id="loading-reload-container">
+diff --git a/client/nexusirc.webmanifest b/client/nexusirc.webmanifest
+index 60f488b3..22ad8271 100644
+--- a/client/nexusirc.webmanifest
++++ b/client/nexusirc.webmanifest
+@@ -1,7 +1,7 @@
+ {
+ 	"name": "erssi@tahio",
+ 	"short_name": "erssi",
+-	"description": "erssi w przeglądarce - IRCnet, tahio",
++	"description": "erssi w przeglądarce, motyw shellter",
+ 	"start_url": ".",
+ 	"display": "standalone",
+ 	"theme_color": "#f3ede1",
+diff --git a/client/themes/shellter.css b/client/themes/shellter.css
+new file mode 100644
+index 00000000..cc0ff110
+--- /dev/null
++++ b/client/themes/shellter.css
+@@ -0,0 +1,571 @@
++/*
++ * shellter - motyw erssi@tahio w barwach shellter.me ("Your shell, your shelter").
++ *
++ * Tokeny 1:1 z arkusza shellter.me: jasny (krem #faf8f4, karta #fdfbf8,
++ * rdza #b45309) i ciemny (#0b0d10, #0e1116, bursztyn #f59e0b) - ten sam co
++ * motyw shellter w terminalu erssi. Wariant wybiera system
++ * (prefers-color-scheme), jak tryb "system" na shellter.me. Kroje Geist i
++ * Geist Mono (shellter/brand.css, ladowany zawsze w index.html.tpl).
++ * Znak trybu nicka w kolorze rangi (@ op, + voice, % halfop, ~ & wlasciciel),
++ * tak samo jak $nickmode w terminalu.
++ */
++
++:root {
++	--sh-bg: #faf8f4;
++	--sh-card: #fdfbf8;
++	--sh-muted: #f3eee5;
++	--sh-line: #e8e1d3;
++	--sh-line-strong: #cfc4ad;
++	--sh-fg: #1d1714;
++	--sh-fg-muted: #5b4a36;
++	--sh-fg-subtle: #8a7960;
++	--sh-primary: #b45309;
++	--sh-primary-strong: #92400e;
++	--sh-primary-soft: rgb(180 83 9 / 8%);
++	--sh-primary-tint: #f6e9d6;
++	--sh-on-primary: #faf8f4;
++	--sh-selection: rgb(180 83 9 / 20%);
++	--sh-focus: rgb(180 83 9 / 22%);
++	--sh-danger: #b42318;
++	--sh-warn: #9a6700;
++	--sh-mode-owner: #b42318;
++	--sh-mode-op: #b45309;
++	--sh-mode-halfop: #15803d;
++	--sh-mode-voice: #1d4ed8;
++	--sh-overlay: rgb(29 23 20 / 35%);
++
++	/* zmienne bazowego arkusza (client/css/style.css) */
++	--body-color: var(--sh-fg);
++	--body-color-muted: var(--sh-fg-subtle);
++	--body-bg-color: var(--sh-bg);
++	--button-color: var(--sh-primary);
++	--button-text-color-hover: var(--sh-on-primary);
++	--overlay-bg-color: var(--sh-overlay);
++	--link-color: var(--sh-primary-strong);
++	--window-bg-color: var(--sh-card);
++	--window-heading-color: var(--sh-fg-muted);
++	--date-marker-color: var(--sh-fg-subtle);
++	--unread-marker-color: var(--sh-primary);
++	--highlight-bg-color: var(--sh-primary-tint);
++	--highlight-border-color: var(--sh-primary);
++	--upload-progressbar-color: var(--sh-primary);
++}
++
++@media (prefers-color-scheme: dark) {
++	:root {
++		--sh-bg: #0b0d10;
++		--sh-card: #0e1116;
++		--sh-muted: #161b22;
++		--sh-line: #1f2428;
++		--sh-line-strong: #30363d;
++		--sh-fg: #e6edf3;
++		--sh-fg-muted: #7d8590;
++		--sh-fg-subtle: #6e7681;
++		--sh-primary: #f59e0b;
++		--sh-primary-strong: #fcd34d;
++		--sh-primary-soft: rgb(245 158 11 / 8%);
++		--sh-primary-tint: rgb(245 158 11 / 12%);
++		--sh-on-primary: #0b0d10;
++		--sh-selection: rgb(245 158 11 / 25%);
++		--sh-focus: rgb(245 158 11 / 25%);
++		--sh-danger: #ff7b72;
++		--sh-warn: #fcd34d;
++		--sh-mode-owner: #ff7b72;
++		--sh-mode-op: #f59e0b;
++		--sh-mode-halfop: #3fb950;
++		--sh-mode-voice: #79c0ff;
++		--sh-overlay: rgb(0 0 0 / 50%);
++
++		color-scheme: dark;
++	}
++}
++
++body,
++input,
++button,
++textarea,
++select {
++	font-family: Geist, system-ui, -apple-system, "Segoe UI", sans-serif;
++}
++
++::selection {
++	background: var(--sh-selection);
++}
++
++/* ── panel kanalow ──────────────────────────────────────────────── */
++
++#sidebar {
++	background: var(--sh-bg);
++	color: var(--sh-fg-muted);
++	border-right: 1px solid var(--sh-line);
++}
++
++#sidebar .logo-container {
++	padding: 18px 16px 10px;
++	text-align: left;
++}
++
++.channel-list-item {
++	color: var(--sh-fg-muted);
++	border-radius: 0;
++}
++
++.channel-list-item:hover,
++#footer button:hover {
++	background-color: var(--sh-primary-soft);
++}
++
++.channel-list-item.active {
++	background-color: var(--sh-card);
++	color: var(--sh-fg);
++	box-shadow: inset 3px 0 0 var(--sh-primary);
++}
++
++.channel-list-item[data-type="lobby"] {
++	color: var(--sh-fg);
++	font-weight: 600;
++}
++
++.channel-list-item[data-type="lobby"].active {
++	color: var(--sh-fg);
++}
++
++.channel-list-item.not-secure,
++.channel-list-item.not-secure.active {
++	color: var(--sh-warn);
++}
++
++.channel-list-item.parted-channel,
++.channel-list-item.parted-channel.active {
++	color: var(--sh-danger);
++}
++
++.channel-list-item .badge {
++	background: var(--sh-muted);
++	color: var(--sh-fg-muted);
++}
++
++.channel-list-item .badge.highlight {
++	background: var(--sh-primary);
++	color: var(--sh-card);
++}
++
++.channel-list-item .close::before,
++.channel-list-item[data-type="lobby"] .add-channel::before,
++#sidebar .network .collapse-network-icon::before {
++	color: var(--sh-fg-muted);
++}
++
++#sidebar .erssi-wordmark {
++	color: var(--sh-fg);
++}
++
++/* "Jump to..." - bazowy arkusz zaklada ciemny panel (bialy tekst) */
++.jump-to-input .input {
++	color: var(--sh-fg);
++	background-color: var(--sh-card);
++	border: 1px solid var(--sh-line);
++}
++
++.jump-to-input .input::placeholder,
++.jump-to-input::before {
++	color: var(--sh-fg-subtle);
++}
++
++#sidebar .empty {
++	color: var(--sh-fg-subtle);
++}
++
++#footer {
++	border-top: 1px solid var(--sh-line);
++}
++
++#footer button {
++	color: var(--sh-fg-subtle);
++}
++
++.ui-sortable-dragging-touch-cue:not(.ui-sortable-dragging)::after {
++	border-color: var(--sh-line-strong);
++}
++
++/* ── okno rozmowy ───────────────────────────────────────────────── */
++
++#chat .header,
++#windows .header {
++	border-bottom: 1px solid var(--sh-line);
++}
++
++#chat .header .title {
++	font-weight: 600;
++}
++
++#chat .userlist {
++	border-left: 1px solid var(--sh-line);
++	background: var(--sh-card);
++}
++
++#chat .time,
++#chat .msg .time {
++	font-family: "Geist Mono", ui-monospace, monospace;
++	font-variant-numeric: tabular-nums;
++	color: var(--sh-fg-subtle);
++	white-space: nowrap;
++}
++
++/* Kolumna czasu w znakach kroju Geist Mono (bazowe szerokosci w px sa
++   dobrane pod Hack): [HH:MM], [HH:MM:SS], [HH:MM AM], [HH:MM:SS AM]. */
++#chat .time {
++	width: 7ch;
++}
++
++#chat.time-12h .time,
++#chat.time-seconds .time {
++	width: 10ch;
++}
++
++#chat.time-seconds.time-12h .time {
++	width: 13ch;
++}
++
++#chat .chat-view[data-type="channel"] .msg.highlight {
++	background-color: var(--sh-primary-tint);
++	border-left-color: var(--sh-primary);
++}
++
++#form {
++	border-top: 1px solid var(--sh-line);
++	background: var(--sh-card);
++}
++
++#form #nick {
++	background: var(--sh-bg);
++	color: var(--sh-fg-muted);
++}
++
++/* ── pola i przyciski ───────────────────────────────────────────── */
++
++.input {
++	background-color: var(--sh-card);
++	border: 1px solid var(--sh-line-strong);
++	border-radius: 6px;
++	color: var(--sh-fg);
++}
++
++.input:focus,
++#form #input:focus {
++	border-color: var(--sh-primary);
++	box-shadow: 0 0 0 3px var(--sh-focus);
++	outline: none;
++}
++
++.btn {
++	border-color: var(--sh-primary);
++	border-radius: 6px;
++	color: var(--sh-primary-strong);
++}
++
++.btn:hover,
++.btn:focus-visible {
++	background-color: var(--sh-primary);
++	border-color: var(--sh-primary);
++	color: var(--sh-card);
++}
++
++:focus-visible {
++	outline: 2px solid var(--sh-primary);
++	outline-offset: 2px;
++}
++
++#user-visible-error {
++	background: var(--sh-danger);
++}
++
++/* ── ekran ladowania ────────────────────────────────────────────── */
++
++#loading {
++	background: var(--sh-bg);
++	color: var(--sh-fg-muted);
++}
++
++/* ── znak trybu nicka w kolorze rangi ───────────────────────────── */
++
++.user-mode {
++	font-weight: 600;
++}
++
++.user-mode[data-mode="~"],
++.user-mode[data-mode="&"] {
++	color: var(--sh-mode-owner);
++}
++
++.user-mode[data-mode="@"] {
++	color: var(--sh-mode-op);
++}
++
++.user-mode[data-mode="%"] {
++	color: var(--sh-mode-halfop);
++}
++
++.user-mode[data-mode="+"] {
++	color: var(--sh-mode-voice);
++}
++
++/* ── kolory nickow: paleta shellter (jasna ciemniejsza, dla kontrastu) ── */
++
++.user.color-1 {
++	color: #b45309;
++}
++
++.user.color-2 {
++	color: #a16207;
++}
++
++.user.color-3 {
++	color: #c2410c;
++}
++
++.user.color-4 {
++	color: #1d4ed8;
++}
++
++.user.color-5 {
++	color: #0369a1;
++}
++
++.user.color-6 {
++	color: #7e22ce;
++}
++
++.user.color-7 {
++	color: #15803d;
++}
++
++.user.color-8 {
++	color: #047857;
++}
++
++.user.color-9 {
++	color: #b45309;
++}
++
++.user.color-10 {
++	color: #a16207;
++}
++
++.user.color-11 {
++	color: #c2410c;
++}
++
++.user.color-12 {
++	color: #1d4ed8;
++}
++
++.user.color-13 {
++	color: #0369a1;
++}
++
++.user.color-14 {
++	color: #7e22ce;
++}
++
++.user.color-15 {
++	color: #15803d;
++}
++
++.user.color-16 {
++	color: #047857;
++}
++
++.user.color-17 {
++	color: #b45309;
++}
++
++.user.color-18 {
++	color: #a16207;
++}
++
++.user.color-19 {
++	color: #c2410c;
++}
++
++.user.color-20 {
++	color: #1d4ed8;
++}
++
++.user.color-21 {
++	color: #0369a1;
++}
++
++.user.color-22 {
++	color: #7e22ce;
++}
++
++.user.color-23 {
++	color: #15803d;
++}
++
++.user.color-24 {
++	color: #047857;
++}
++
++.user.color-25 {
++	color: #b45309;
++}
++
++.user.color-26 {
++	color: #a16207;
++}
++
++.user.color-27 {
++	color: #c2410c;
++}
++
++.user.color-28 {
++	color: #1d4ed8;
++}
++
++.user.color-29 {
++	color: #0369a1;
++}
++
++.user.color-30 {
++	color: #7e22ce;
++}
++
++.user.color-31 {
++	color: #15803d;
++}
++
++.user.color-32 {
++	color: #047857;
++}
++
++@media (prefers-color-scheme: dark) {
++	.user.color-1 {
++		color: #f59e0b;
++	}
++
++	.user.color-2 {
++		color: #fcd34d;
++	}
++
++	.user.color-3 {
++		color: #fdba74;
++	}
++
++	.user.color-4 {
++		color: #79c0ff;
++	}
++
++	.user.color-5 {
++		color: #a5d6ff;
++	}
++
++	.user.color-6 {
++		color: #d2a8ff;
++	}
++
++	.user.color-7 {
++		color: #3fb950;
++	}
++
++	.user.color-8 {
++		color: #7ee787;
++	}
++
++	.user.color-9 {
++		color: #f59e0b;
++	}
++
++	.user.color-10 {
++		color: #fcd34d;
++	}
++
++	.user.color-11 {
++		color: #fdba74;
++	}
++
++	.user.color-12 {
++		color: #79c0ff;
++	}
++
++	.user.color-13 {
++		color: #a5d6ff;
++	}
++
++	.user.color-14 {
++		color: #d2a8ff;
++	}
++
++	.user.color-15 {
++		color: #3fb950;
++	}
++
++	.user.color-16 {
++		color: #7ee787;
++	}
++
++	.user.color-17 {
++		color: #f59e0b;
++	}
++
++	.user.color-18 {
++		color: #fcd34d;
++	}
++
++	.user.color-19 {
++		color: #fdba74;
++	}
++
++	.user.color-20 {
++		color: #79c0ff;
++	}
++
++	.user.color-21 {
++		color: #a5d6ff;
++	}
++
++	.user.color-22 {
++		color: #d2a8ff;
++	}
++
++	.user.color-23 {
++		color: #3fb950;
++	}
++
++	.user.color-24 {
++		color: #7ee787;
++	}
++
++	.user.color-25 {
++		color: #f59e0b;
++	}
++
++	.user.color-26 {
++		color: #fcd34d;
++	}
++
++	.user.color-27 {
++		color: #fdba74;
++	}
++
++	.user.color-28 {
++		color: #79c0ff;
++	}
++
++	.user.color-29 {
++		color: #a5d6ff;
++	}
++
++	.user.color-30 {
++		color: #d2a8ff;
++	}
++
++	.user.color-31 {
++		color: #3fb950;
++	}
++
++	.user.color-32 {
++		color: #7ee787;
++	}
++}
+diff --git a/client/themes/tahio/brand.css b/client/themes/shellter/brand.css
+similarity index 87%
+rename from client/themes/tahio/brand.css
+rename to client/themes/shellter/brand.css
+index 9da197cd..6e21ea8c 100644
+--- a/client/themes/tahio/brand.css
++++ b/client/themes/shellter/brand.css
+@@ -90,31 +90,52 @@
+ 	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+ }
+ 
+-/* Znak slowny erssi@tahio (panel kanalow, logowanie, ekran ladowania). */
+-.tahio-wordmark {
++/* Znak slowny "$ erssi@tahio" (panel kanalow, logowanie, ekran ladowania):
++   znak zachety "$" w kolorze akcentu, jak "$shellter.me". */
++.erssi-wordmark {
+ 	margin: 0;
+ 	font-family: "Geist Mono", ui-monospace, monospace;
+ 	font-size: 15px;
+ 	font-weight: 500;
+ 	letter-spacing: -0.01em;
+-	color: #1f2328;
++	color: #1d1714;
+ }
+ 
+-.tahio-wordmark-host {
+-	color: #6e7781;
++.erssi-wordmark-prompt {
++	margin-right: 0.35em;
++	font-weight: 600;
++	color: #b45309;
++}
++
++.erssi-wordmark-host {
++	color: #8a7960;
++}
++
++@media (prefers-color-scheme: dark) {
++	.erssi-wordmark {
++		color: #e6edf3;
++	}
++
++	.erssi-wordmark-prompt {
++		color: #f59e0b;
++	}
++
++	.erssi-wordmark-host {
++		color: #7d8590;
++	}
+ }
+ 
+ /* W panelu kanalow znak bierze kolor panelu, zeby byl czytelny w kazdym motywie. */
+-#sidebar .tahio-wordmark {
++#sidebar .erssi-wordmark {
+ 	color: inherit;
+ }
+ 
+-#sidebar .tahio-wordmark-host {
++#sidebar .erssi-wordmark-host {
+ 	color: inherit;
+ 	opacity: 0.6;
+ }
+ 
+-#loading .tahio-wordmark {
++#loading .erssi-wordmark {
+ 	font-size: 22px;
+ 	margin-bottom: 16px;
+ }
+diff --git a/client/themes/tahio/fonts/OFL.txt b/client/themes/shellter/fonts/OFL.txt
+similarity index 100%
+rename from client/themes/tahio/fonts/OFL.txt
+rename to client/themes/shellter/fonts/OFL.txt
+diff --git a/client/themes/tahio/fonts/geist-latin-400.woff2 b/client/themes/shellter/fonts/geist-latin-400.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-400.woff2
+rename to client/themes/shellter/fonts/geist-latin-400.woff2
+diff --git a/client/themes/tahio/fonts/geist-latin-500.woff2 b/client/themes/shellter/fonts/geist-latin-500.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-500.woff2
+rename to client/themes/shellter/fonts/geist-latin-500.woff2
+diff --git a/client/themes/tahio/fonts/geist-latin-600.woff2 b/client/themes/shellter/fonts/geist-latin-600.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-600.woff2
+rename to client/themes/shellter/fonts/geist-latin-600.woff2
+diff --git a/client/themes/tahio/fonts/geist-latin-ext-400.woff2 b/client/themes/shellter/fonts/geist-latin-ext-400.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-ext-400.woff2
+rename to client/themes/shellter/fonts/geist-latin-ext-400.woff2
+diff --git a/client/themes/tahio/fonts/geist-latin-ext-500.woff2 b/client/themes/shellter/fonts/geist-latin-ext-500.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-ext-500.woff2
+rename to client/themes/shellter/fonts/geist-latin-ext-500.woff2
+diff --git a/client/themes/tahio/fonts/geist-latin-ext-600.woff2 b/client/themes/shellter/fonts/geist-latin-ext-600.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-latin-ext-600.woff2
+rename to client/themes/shellter/fonts/geist-latin-ext-600.woff2
+diff --git a/client/themes/tahio/fonts/geist-mono-latin-400-normal.woff2 b/client/themes/shellter/fonts/geist-mono-latin-400-normal.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-mono-latin-400-normal.woff2
+rename to client/themes/shellter/fonts/geist-mono-latin-400-normal.woff2
+diff --git a/client/themes/tahio/fonts/geist-mono-latin-500-normal.woff2 b/client/themes/shellter/fonts/geist-mono-latin-500-normal.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-mono-latin-500-normal.woff2
+rename to client/themes/shellter/fonts/geist-mono-latin-500-normal.woff2
+diff --git a/client/themes/tahio/fonts/geist-mono-latin-ext-400-normal.woff2 b/client/themes/shellter/fonts/geist-mono-latin-ext-400-normal.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-mono-latin-ext-400-normal.woff2
+rename to client/themes/shellter/fonts/geist-mono-latin-ext-400-normal.woff2
+diff --git a/client/themes/tahio/fonts/geist-mono-latin-ext-500-normal.woff2 b/client/themes/shellter/fonts/geist-mono-latin-ext-500-normal.woff2
+similarity index 100%
+rename from client/themes/tahio/fonts/geist-mono-latin-ext-500-normal.woff2
+rename to client/themes/shellter/fonts/geist-mono-latin-ext-500-normal.woff2
+diff --git a/client/themes/tahio.css b/client/themes/tahio.css
+deleted file mode 100644
+index d5181125..00000000
+--- a/client/themes/tahio.css
++++ /dev/null
+@@ -1,247 +0,0 @@
+-/*
+- * tahio — motyw erssi@tahio (NexusIRC) w tozsamosci tahio: miedz i krem.
+- *
+- * Paleta i kroje te same co w motywie shellter: krem
+- * #f3ede1, papier #fffdf8, miedz #b25f10, grafit #1f2328, Geist + Geist
+- * Mono (tahio/brand.css, ladowany zawsze w index.html.tpl). Jasny panel kanalow na
+- * kremie, okno rozmowy na papierze, aktywny kanal oznaczony miedzianym
+- * paskiem. Kolory nickow zostaja z bazowego arkusza (dobrane do jasnego tla).
+- */
+-
+-:root {
+-	--tahio-cream: #f3ede1;
+-	--tahio-paper: #fffdf8;
+-	--tahio-line: #e8e0d0;
+-	--tahio-line-strong: #d6cbb6;
+-	--tahio-ink: #1f2328;
+-	--tahio-ink-soft: #57606a;
+-	--tahio-muted: #6e7781;
+-	--tahio-copper: #b25f10;
+-	--tahio-copper-dark: #93500f;
+-	--tahio-copper-tint: #f6e8d6;
+-	--tahio-danger: #b42318;
+-	--tahio-warn: #9a6700;
+-
+-	/* zmienne bazowego arkusza (client/css/style.css) */
+-	--body-color: var(--tahio-ink);
+-	--body-color-muted: var(--tahio-muted);
+-	--body-bg-color: var(--tahio-cream);
+-	--button-color: var(--tahio-copper);
+-	--button-text-color-hover: var(--tahio-paper);
+-	--overlay-bg-color: rgb(31 35 40 / 35%);
+-	--link-color: var(--tahio-copper-dark);
+-	--window-bg-color: var(--tahio-paper);
+-	--window-heading-color: var(--tahio-ink-soft);
+-	--date-marker-color: rgb(110 119 129 / 55%);
+-	--unread-marker-color: rgb(178 95 16 / 70%);
+-	--highlight-bg-color: var(--tahio-copper-tint);
+-	--highlight-border-color: var(--tahio-copper);
+-	--upload-progressbar-color: var(--tahio-copper);
+-}
+-
+-body,
+-input,
+-button,
+-textarea,
+-select {
+-	font-family: Geist, system-ui, -apple-system, "Segoe UI", sans-serif;
+-}
+-
+-::selection {
+-	background: rgb(178 95 16 / 22%);
+-}
+-
+-/* ── panel kanalow ──────────────────────────────────────────────── */
+-
+-#sidebar {
+-	background: var(--tahio-cream);
+-	color: var(--tahio-ink-soft);
+-	border-right: 1px solid var(--tahio-line);
+-}
+-
+-#sidebar .logo-container {
+-	padding: 18px 16px 10px;
+-	text-align: left;
+-}
+-
+-.channel-list-item {
+-	color: var(--tahio-ink-soft);
+-	border-radius: 0;
+-}
+-
+-.channel-list-item:hover,
+-#footer button:hover {
+-	background-color: rgb(178 95 16 / 7%);
+-}
+-
+-.channel-list-item.active {
+-	background-color: var(--tahio-paper);
+-	color: var(--tahio-ink);
+-	box-shadow: inset 3px 0 0 var(--tahio-copper);
+-}
+-
+-.channel-list-item[data-type="lobby"] {
+-	color: var(--tahio-ink);
+-	font-weight: 600;
+-}
+-
+-.channel-list-item[data-type="lobby"].active {
+-	color: var(--tahio-ink);
+-}
+-
+-.channel-list-item.not-secure,
+-.channel-list-item.not-secure.active {
+-	color: var(--tahio-warn);
+-}
+-
+-.channel-list-item.parted-channel,
+-.channel-list-item.parted-channel.active {
+-	color: var(--tahio-danger);
+-}
+-
+-.channel-list-item .badge {
+-	background: rgb(31 35 40 / 6%);
+-	color: var(--tahio-ink-soft);
+-}
+-
+-.channel-list-item .badge.highlight {
+-	background: var(--tahio-copper);
+-	color: var(--tahio-paper);
+-}
+-
+-.channel-list-item .close::before,
+-.channel-list-item[data-type="lobby"] .add-channel::before,
+-#sidebar .network .collapse-network-icon::before {
+-	color: var(--tahio-ink-soft);
+-}
+-
+-#sidebar .tahio-wordmark {
+-	color: var(--tahio-ink);
+-}
+-
+-/* "Jump to..." - bazowy arkusz zaklada ciemny panel (bialy tekst) */
+-.jump-to-input .input {
+-	color: var(--tahio-ink);
+-	background-color: var(--tahio-paper);
+-	border: 1px solid var(--tahio-line);
+-}
+-
+-.jump-to-input .input::placeholder,
+-.jump-to-input::before {
+-	color: var(--tahio-muted);
+-}
+-
+-#sidebar .empty {
+-	color: var(--tahio-muted);
+-}
+-
+-#footer {
+-	border-top: 1px solid var(--tahio-line);
+-}
+-
+-#footer button {
+-	color: var(--tahio-muted);
+-}
+-
+-.ui-sortable-dragging-touch-cue:not(.ui-sortable-dragging)::after {
+-	border-color: var(--tahio-line-strong);
+-}
+-
+-/* ── okno rozmowy ───────────────────────────────────────────────── */
+-
+-#chat .header,
+-#windows .header {
+-	border-bottom: 1px solid var(--tahio-line);
+-}
+-
+-#chat .header .title {
+-	font-weight: 600;
+-}
+-
+-#chat .userlist {
+-	border-left: 1px solid var(--tahio-line);
+-	background: var(--tahio-paper);
+-}
+-
+-#chat .time,
+-#chat .msg .time {
+-	font-family: "Geist Mono", ui-monospace, monospace;
+-	font-variant-numeric: tabular-nums;
+-	color: var(--tahio-muted);
+-	white-space: nowrap;
+-}
+-
+-/* Kolumna czasu w znakach kroju Geist Mono (bazowe szerokosci w px sa
+-   dobrane pod Hack): [HH:MM], [HH:MM:SS], [HH:MM AM], [HH:MM:SS AM]. */
+-#chat .time {
+-	width: 7ch;
+-}
+-
+-#chat.time-12h .time,
+-#chat.time-seconds .time {
+-	width: 10ch;
+-}
+-
+-#chat.time-seconds.time-12h .time {
+-	width: 13ch;
+-}
+-
+-#chat .chat-view[data-type="channel"] .msg.highlight {
+-	background-color: var(--tahio-copper-tint);
+-	border-left-color: var(--tahio-copper);
+-}
+-
+-#form {
+-	border-top: 1px solid var(--tahio-line);
+-	background: var(--tahio-paper);
+-}
+-
+-#form #nick {
+-	background: var(--tahio-cream);
+-	color: var(--tahio-ink-soft);
+-}
+-
+-/* ── pola i przyciski ───────────────────────────────────────────── */
+-
+-.input {
+-	background-color: var(--tahio-paper);
+-	border: 1px solid var(--tahio-line-strong);
+-	border-radius: 6px;
+-	color: var(--tahio-ink);
+-}
+-
+-.input:focus,
+-#form #input:focus {
+-	border-color: var(--tahio-copper);
+-	box-shadow: 0 0 0 3px rgb(178 95 16 / 18%);
+-	outline: none;
+-}
+-
+-.btn {
+-	border-color: var(--tahio-copper);
+-	border-radius: 6px;
+-	color: var(--tahio-copper-dark);
+-}
+-
+-.btn:hover,
+-.btn:focus-visible {
+-	background-color: var(--tahio-copper);
+-	border-color: var(--tahio-copper);
+-	color: var(--tahio-paper);
+-}
+-
+-:focus-visible {
+-	outline: 2px solid var(--tahio-copper);
+-	outline-offset: 2px;
+-}
+-
+-#user-visible-error {
+-	background: var(--tahio-danger);
+-}
+-
+-/* ── ekran ladowania ────────────────────────────────────────────── */
+-
+-#loading {
+-	background: var(--tahio-cream);
+-	color: var(--tahio-ink-soft);
+-}
+-- 
+2.47.3
+

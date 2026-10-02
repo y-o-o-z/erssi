@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""rpe2e-from-repartee - przenosi klucze E2E (RPE2E) z repartee do rpe2e.pl.
+
+repartee trzyma keyring w tabelach e2e_* swojej bazy (~/.repartee/logs/
+messages.db), sekrety zaszyfrowane AES-256-GCM kluczem REPARTEE_KEYRING_KEY
+z ~/.repartee/.env. rpe2e.pl (irssi/erssi) trzyma keyring w JSON-ie
+(~/.erssi/rpe2e/keyring.json) w innym ukladzie pol. To narzedzie:
+
+  * czyta baze TYLKO do odczytu (repartee moze byc wylaczone albo dzialac),
+  * odszyfrowuje sekrety przez libsodium (crypto_aead_aes256gcm),
+  * sprawdza kazdy klucz kryptograficznie: z ziarna tozsamosci wylicza klucz
+    publiczny i porownuje z zapisanym, odciski (SHA-256 "RPE2E01-FP:" + klucz)
+    porownuje z zapisanymi - niespojne dane przerywaja prace,
+  * sklada keyring.json w ukladzie rpe2e.pl: tozsamosc (ten sam odcisk,
+    peerzy nie widza "nowego klucza"), zaufani peerzy, sesje kanalowe;
+    z kilku wariantow kanalu (repartee: "#kanal" i "IRCnet\\x1f#kanal")
+    bierze najnowsza sesje - rpe2e.pl nie rozroznia sieci,
+  * zapisuje atomowo z prawami 0600; istniejacy keyring tylko z --force
+    (wtedy najpierw kopia keyring.json.bak-<czas>),
+  * z --channels-off przenosi klucze i zaufanie, ale kanaly zostawia
+    wylaczone - szyfrowanie wlacza dopiero /e2e on w oknie kanalu.
+
+Uzycie:
+  rpe2e-from-repartee [--db PLIK] [--env PLIK] [--out PLIK] [--channels-off] [--force] [--dry-run]
+
+Sekretow nigdy nie wypisuje - tylko odciski, kanaly i liczby.
+"""
+import argparse
+import base64
+import ctypes
+import ctypes.util
+import hashlib
+import json
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+import time
+
+FP_DOMAIN = b"RPE2E01-FP:"
+SECRET_BLOB_VERSION = 1
+SCOPE_SEP = "\x1f"  # repartee: "<siec>\x1f<kanal>" (scoping F3)
+
+
+class MigrationError(Exception):
+    pass
+
+
+# ── libsodium ────────────────────────────────────────────────────────
+
+def load_sodium():
+    for name in (ctypes.util.find_library("sodium"), "libsodium.so.23", "libsodium.so.26", "libsodium.so"):
+        if not name:
+            continue
+        try:
+            lib = ctypes.CDLL(name)
+        except OSError:
+            continue
+        if lib.sodium_init() < 0:
+            raise MigrationError("sodium_init() nie powiodlo sie")
+        return lib
+    raise MigrationError("nie znaleziono libsodium (pakiet libsodium23)")
+
+
+def aes_gcm_decrypt(sodium, key, blob):
+    """Format repartee (storage::crypto::encrypt_bytes): wersja | nonce(12) | szyfrogram+tag."""
+    if len(blob) < 1 + 12 + 16:
+        raise MigrationError("zaszyfrowany sekret jest za krotki")
+    if blob[0] != SECRET_BLOB_VERSION:
+        raise MigrationError(f"nieznana wersja sekretu {blob[0]}")
+    if not sodium.crypto_aead_aes256gcm_is_available():
+        raise MigrationError("procesor bez AES-NI: libsodium nie odszyfruje AES-256-GCM")
+    nonce, ct = blob[1:13], blob[13:]
+    out = ctypes.create_string_buffer(len(ct))
+    out_len = ctypes.c_ulonglong(0)
+    rc = sodium.crypto_aead_aes256gcm_decrypt(
+        out, ctypes.byref(out_len), None, ct, ctypes.c_ulonglong(len(ct)), None, ctypes.c_ulonglong(0), nonce, key
+    )
+    if rc != 0:
+        raise MigrationError("nie udalo sie odszyfrowac sekretu (zly REPARTEE_KEYRING_KEY?)")
+    return out.raw[: out_len.value]
+
+
+def secret(sodium, key, blob, size, what):
+    """Jak Keyring::decode_secret: dlugosc docelowa = surowe bajty, inaczej szyfrogram."""
+    if blob is None:
+        raise MigrationError(f"brak sekretu: {what}")
+    data = bytes(blob) if len(blob) == size else aes_gcm_decrypt(sodium, key, bytes(blob))
+    if len(data) != size:
+        raise MigrationError(f"{what}: zla dlugosc {len(data)} (oczekiwano {size})")
+    return data
+
+
+def ed25519_from_seed(sodium, seed):
+    pk = ctypes.create_string_buffer(32)
+    sk = ctypes.create_string_buffer(64)
+    if sodium.crypto_sign_seed_keypair(pk, sk, seed) != 0:
+        raise MigrationError("crypto_sign_seed_keypair nie powiodlo sie")
+    return pk.raw, sk.raw
+
+
+def fingerprint(pubkey):
+    return hashlib.sha256(FP_DOMAIN + pubkey).digest()[:16]
+
+
+def b64(data):
+    return base64.b64encode(data).decode("ascii")
+
+
+# ── wejscie ─────────────────────────────────────────────────────────
+
+def read_env_key(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("export "):
+                    line = line[7:]
+                name, sep, value = line.partition("=")
+                if sep and name.strip() == "REPARTEE_KEYRING_KEY":
+                    value = value.strip().strip("'\"")
+                    key = bytes.fromhex(value)
+                    if len(key) != 32:
+                        raise MigrationError("REPARTEE_KEYRING_KEY nie ma 32 bajtow")
+                    return key
+    except FileNotFoundError:
+        return None
+    except ValueError as exc:
+        raise MigrationError(f"REPARTEE_KEYRING_KEY nie jest szesnastkowy: {exc}") from exc
+    return None
+
+
+def unscoped(channel):
+    """'IRCnet\\x1f#kanal' -> '#kanal'; rozmowy '@handle' i kanaly bez zakresu bez zmian."""
+    return channel.split(SCOPE_SEP, 1)[1] if SCOPE_SEP in channel else channel
+
+
+def network_of(channel):
+    """'IRCnet\\x1f#kanal' -> 'IRCnet'; bez zakresu -> None."""
+    return channel.split(SCOPE_SEP, 1)[0] if SCOPE_SEP in channel else None
+
+
+def newest(rows, key, warnings):
+    """Z kilku wariantow tego samego kontekstu zostaje najnowszy (created_at);
+    przy rownym czasie wariant z zakresem sieci (repartee wybiera go zawsze,
+    stary wpis bez zakresu to tylko zapas). rpe2e.pl nie rozroznia sieci, wiec
+    ten sam kanal z dwoch roznych sieci jest zglaszany ostrzezeniem."""
+    best = {}
+    nets = {}
+    for row in rows:
+        k = key(row)
+        net = network_of(row["channel"])
+        if net:
+            nets.setdefault(k, set()).add(net)
+        rank = (row["created_at"] or 0, 1 if net else 0)
+        if k not in best or rank > best[k][0]:
+            best[k] = (rank, row)
+    for k, names in nets.items():
+        if len(names) > 1:
+            warnings.append(f"{k}: sesje z kilku sieci ({', '.join(sorted(names))}) - przeniesiona najnowsza")
+    return {k: row for k, (rank, row) in best.items()}
+
+
+def table_rows(db, table, columns="*"):
+    """Starsze bazy repartee nie maja wszystkich tabel - brak tabeli = brak wierszy."""
+    try:
+        return [dict(r) for r in db.execute(f"SELECT {columns} FROM {table}")]
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return []
+        raise
+
+
+def build_keyring(db_path, env_path, channels_off=False, warnings=None):
+    warnings = [] if warnings is None else warnings
+    sodium = load_sodium()
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    # sekrety moga byc niezaszyfrowane (starsze wpisy) - wtedy klucz niepotrzebny
+    key = read_env_key(env_path)
+
+    def need_key(blob, size):
+        if blob is not None and len(blob) != size and key is None:
+            raise MigrationError(f"sekrety sa zaszyfrowane, a w {env_path} brak REPARTEE_KEYRING_KEY")
+
+    ident = db.execute("SELECT pubkey, privkey, fingerprint, created_at FROM e2e_identity WHERE id = 1").fetchone()
+    if ident is None:
+        raise MigrationError("repartee nie ma tozsamosci E2E (tabela e2e_identity jest pusta)")
+    need_key(ident["privkey"], 32)
+    seed = secret(sodium, key, ident["privkey"], 32, "klucz prywatny tozsamosci")
+    pk, sk = ed25519_from_seed(sodium, seed)
+    if pk != bytes(ident["pubkey"]):
+        raise MigrationError("klucz publiczny tozsamosci nie pasuje do prywatnego")
+    fp = fingerprint(pk)
+    if fp != bytes(ident["fingerprint"]):
+        raise MigrationError("odcisk tozsamosci nie pasuje do klucza")
+
+    keyring = {
+        "identity": {"pk": b64(pk), "sk": b64(sk), "fp": fp.hex(), "created_at": ident["created_at"]},
+        "peers": {},
+        "outgoing": {},
+        "incoming": {},
+        "channels": {},
+        "pending": {},
+        "autotrust": [],
+        "outgoing_recipients": {},
+        "pending_inbound": {},
+        "pending_trust_change": [],
+    }
+
+    for row in table_rows(db, "e2e_peers"):
+        peer_pk = bytes(row["pubkey"])
+        peer_fp = fingerprint(peer_pk)
+        if peer_fp != bytes(row["fingerprint"]):
+            raise MigrationError(f"odcisk peera {row['last_nick']} nie pasuje do jego klucza")
+        entry = {
+            "pk": b64(peer_pk),
+            "first_seen": row["first_seen"],
+            "last_seen": row["last_seen"],
+            "status": row["global_status"],
+        }
+        if row["last_handle"]:
+            entry["last_handle"] = row["last_handle"]
+        if row["last_nick"]:
+            entry["last_nick"] = row["last_nick"]
+        keyring["peers"][peer_fp.hex()] = entry
+
+    out_rows = table_rows(db, "e2e_outgoing_sessions")
+    for ctx, row in newest(out_rows, lambda r: unscoped(r["channel"]), warnings).items():
+        need_key(row["sk"], 32)
+        keyring["outgoing"][ctx] = {
+            "sk": b64(secret(sodium, key, row["sk"], 32, f"klucz wychodzacy {ctx}")),
+            "created_at": row["created_at"],
+            "pending_rotation": 1 if row["pending_rotation"] else 0,
+        }
+
+    in_rows = table_rows(db, "e2e_incoming_sessions")
+    for (handle, ctx), row in newest(in_rows, lambda r: (r["handle"], unscoped(r["channel"])), []).items():
+        peer_fp = bytes(row["fingerprint"]).hex()
+        if peer_fp not in keyring["peers"]:
+            raise MigrationError(f"sesja {handle} na {ctx} wskazuje nieznanego peera {peer_fp}")
+        need_key(row["sk"], 32)
+        keyring["incoming"][f"{handle}|{ctx}"] = {
+            "fp": peer_fp,
+            "sk": b64(secret(sodium, key, row["sk"], 32, f"klucz przychodzacy {handle} {ctx}")),
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+
+    cfg_rows = table_rows(db, "e2e_channel_config", "channel, enabled, mode")
+    for row in cfg_rows:
+        ctx = unscoped(row["channel"])
+        current = keyring["channels"].get(ctx)
+        enabled = 1 if row["enabled"] and not channels_off else 0
+        # wlaczony w ktorymkolwiek wariancie = wlaczony
+        if current is None or enabled > current["enabled"]:
+            keyring["channels"][ctx] = {"enabled": enabled, "mode": row["mode"] or "normal"}
+
+    rec_rows = table_rows(db, "e2e_outgoing_recipients")
+    for row in rec_rows:
+        ctx = unscoped(row["channel"])
+        keyring["outgoing_recipients"][f"{ctx}|{row['handle']}"] = {
+            "channel": ctx,
+            "handle": row["handle"],
+            "fingerprint": bytes(row["fingerprint"]).hex() if isinstance(row["fingerprint"], (bytes, memoryview)) else row["fingerprint"],
+            "first_sent_at": row["first_sent_at"],
+        }
+
+    for row in table_rows(db, "e2e_autotrust", "scope, handle_pattern"):
+        keyring["autotrust"].append({"scope": row["scope"], "handle_pattern": row["handle_pattern"]})
+
+    db.close()
+    return keyring
+
+
+# ── zapis ────────────────────────────────────────────────────────────
+
+def write_keyring(keyring, out_path, force):
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    if not os.path.isdir(out_dir):
+        # tylko katalog, ktory tworzymy sami - cudzego (np. $HOME) nie ruszamy
+        os.makedirs(out_dir, mode=0o700)
+        os.chmod(out_dir, 0o700)
+    backup = None
+    if os.path.exists(out_path):
+        if not force:
+            raise MigrationError(
+                f"{out_path} juz istnieje (rpe2e.pl utworzyl nowa tozsamosc?) - "
+                "uruchom z --force, zostanie zrobiona kopia"
+            )
+        backup = f"{out_path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(out_path, backup)
+        os.chmod(backup, 0o600)
+    fd, tmp = tempfile.mkstemp(prefix=".keyring-", dir=out_dir)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(keyring, fh, indent=3, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, out_path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return backup
+
+
+def summary(keyring):
+    lines = [f"tozsamosc: odcisk {keyring['identity']['fp']}"]
+    for fp, peer in sorted(keyring["peers"].items()):
+        lines.append(f"peer: {peer.get('last_nick', '?')} ({peer.get('last_handle', '?')}) {fp} [{peer['status']}]")
+    for ctx, cfg in sorted(keyring["channels"].items()):
+        lines.append(f"kanal: {ctx} {'wlaczony' if cfg['enabled'] else 'wylaczony'}, tryb {cfg['mode']}")
+    lines.append(
+        f"sesje: wychodzace {len(keyring['outgoing'])}, przychodzace {len(keyring['incoming'])}, "
+        f"odbiorcy {len(keyring['outgoing_recipients'])}"
+    )
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    home = os.path.expanduser("~")
+    parser = argparse.ArgumentParser(description="Przenosi klucze E2E (RPE2E) z repartee do rpe2e.pl (irssi/erssi).")
+    parser.add_argument("--db", default=os.path.join(home, ".repartee", "logs", "messages.db"))
+    parser.add_argument("--env", default=os.path.join(home, ".repartee", ".env"))
+    parser.add_argument("--out", default=os.path.join(home, ".erssi", "rpe2e", "keyring.json"))
+    parser.add_argument("--channels-off", action="store_true", help="kanaly wylaczone - wlacza je /e2e on")
+    parser.add_argument("--force", action="store_true", help="nadpisz istniejacy keyring (z kopia)")
+    parser.add_argument("--dry-run", action="store_true", help="tylko sprawdz i pokaz podsumowanie")
+    args = parser.parse_args(argv)
+    try:
+        if not os.path.exists(args.db):
+            raise MigrationError(f"brak bazy repartee: {args.db}")
+        warnings = []
+        keyring = build_keyring(args.db, args.env, args.channels_off, warnings)
+        print(summary(keyring))
+        for warning in warnings:
+            print(f"uwaga: {warning}")
+        if args.dry_run:
+            print("dry-run: nic nie zapisano")
+            return 0
+        backup = write_keyring(keyring, args.out, args.force)
+        if backup:
+            print(f"poprzedni keyring: {backup}")
+        print(f"zapisano: {args.out} (0600)")
+        return 0
+    except MigrationError as exc:
+        print(f"rpe2e-from-repartee: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
