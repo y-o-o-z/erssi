@@ -1,0 +1,682 @@
+# shellter v1.0 — motyw erssi w barwach shellter.me ("Your shell, your shelter")
+#
+# Paleta z arkusza stylow shellter.me (ciemny wariant, GitHub Primer):
+#   tlo #0b0d10 · karta #0e1116 · muted #161b22 · ramka #30363d
+#   tekst #e6edf3 · tekst przygaszony #7d8590 · subtelny #6e7681 / #484f58
+#   akcent bursztyn #f59e0b · jasny bursztyn #fcd34d · czerwien #ff7b72
+#   uzupelnienia Primer: zielen #3fb950 · niebieski #79c0ff · fiolet #d2a8ff
+#
+# Wymaga terminala z 24-bitowym kolorem (%Z/%z). Zalecane ustawienia:
+#   /set sidepanel_left_width 22        (pelne nazwy kanalow, np. #bash.org.pl)
+#   /set nick_column_width 13           (1 znak trybu + 12 znakow nicka)
+#   /set nick_hash_color_enabled on
+#   /set nick_hash_colors #f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787
+#        (kolory 24-bit w nick_hash_colors: erssi z forka y-o-o-z/erssi)
+#
+# Powstal z wczesniejszego motywu v2.2; poprawki wzgledem niego:
+#   * formaty paneli i paska sa w sekcji "fe-ansi" (erssi >= 1.3.0 nie czyta
+#     juz "fe-text", wiec stary motyw tych formatow w ogole nie stosowal),
+#   * abstrakty paska stanu (sb, sbmode, prompt, ...) sa wewnatrz abstracts{},
+#   * wyrownana kolumna nickow ($nickalign + $nickcolored/$nicktrunc),
+#   * wpisy paneli bez kropki i z numerem wyrownanym do prawej (dluzsze nazwy
+#     kanalow, np. #bash.org.pl, mieszcza sie w calosci).
+
+default_color = "-1";
+info_eol = "false";
+
+replaces = { "[]=" = "%w$*%N"; };
+
+abstracts = {
+
+  ##
+  ## generic
+  ##
+
+  line_start = "%N";
+
+  timestamp = "%Z6E7681$*%N";
+
+  hilight = "%ZFCD34D%_$*%_%N";
+
+  error = "%ZFF7B72$*%N";
+
+  channel = "%ZF59E0B%_$*%_%N";
+
+  nick = "%_$*%_%N";
+
+  nickhost = "%Z6E7681⟨%N$*%Z6E7681⟩%N";
+
+  server = "%Z3FB950%_$*%_%N";
+
+  comment = "%Z6E7681⟨%N$*%Z6E7681⟩%N";
+
+  reason = "%Z7D8590⟨%N$*%Z7D8590⟩%N";
+
+  mode = "%ZD2A8FF%_$*%_%N";
+
+  ##
+  ## channel specific messages
+  ##
+
+  channick_hilight = "%Z3FB950%_$*%_%N";
+  chanhost_hilight = "{nickhost %Z7D8590$*%N}";
+
+  channick = "%Z7D8590$*%N";
+  chanhost = "{nickhost %Z6E7681$*%N}";
+
+  channick_hilight2 = "%ZFCD34D$*%N";
+
+  channelhilight = "%ZF59E0B$*%N";
+
+  ban = "%Z79C0FF$*%N";
+
+  ##
+  ## messages
+  ##
+
+  msgnick = "$0$1-%Z484F58 │%N%| ";
+
+  ownmsgnick = "{msgnick $nickalign%Z6E7681$0%ZFCD34D%_$nicktrunc%_%N}";
+  ownnick = "%ZFCD34D%_$*%_%N";
+
+  pubmsgnick = "{msgnick $nickalign%Z6E7681$0$nickcolored}";
+  pubnick = "%ZE6EDF3$*%N";
+
+  pubmsgmenick = "{msgnick $nickalign%Z6E7681$0%ZFF7B72%_$nicktrunc%_}%ZFCD34D";
+  menick = "%ZFF7B72%_$*%_%N";
+
+  pubmsghinick = "{msgnick $nickalign%Z6E7681$1%ZFCD34D%_$nicktrunc%_}%ZFCD34D";
+
+  msgchannel = "%Z6E7681:%Z79C0FF$*%N";
+
+  privmsg = "%ZD2A8FF⟪%ZFF7B72$0%Z6E7681(%Z7D8590$1-%Z6E7681)%ZD2A8FF⟫%N ";
+
+  ownprivmsg = "%ZD2A8FF⟪%Z3FB950$0%Z6E7681(%ZF59E0B$1-%Z6E7681)%ZD2A8FF⟫%N ";
+
+  ownprivmsgnick = "{msgnick $*}";
+  ownprivnick = "%ZFCD34D%_$[-13]0%_%N";
+
+  privmsgnick = "{msgnick %ZD2A8FF$[-13]0%N}";
+
+  ##
+  ## actions (/ME)
+  ##
+
+  action_core = "%ZD2A8FF★%N $*";
+
+  action = "{action_core $*} ";
+
+  ownaction = "{action $*}";
+
+  ownaction_target = "{action_core $0}%Z6E7681:%Z79C0FF$1%N ";
+
+  pvtaction = "%ZD2A8FF[%ZF59E0Bquery%ZD2A8FF]%Z6E7681(%N$0%Z6E7681)%N {action} $1-";
+  pvtaction_query = "{action $*}";
+
+  pubaction = "{action $*}";
+
+  ##
+  ## other IRC events
+  ##
+
+  whois = "%ZF59E0B◆%N $[8]0 %Z79C0FF⟫%N $1-";
+
+  ownnotice = "%ZD2A8FF⟨%Z3FB950$0%Z6E7681→%ZF59E0B$1-%ZD2A8FF⟩%N ";
+  notice = "%Z79C0FF⬢%N %ZF59E0B$*%Z79C0FF ⟫%N ";
+  pubnotice_channel = "%Z6E7681:%Z79C0FF$*";
+  pvtnotice_host = "%Z6E7681⟨%Z7D8590$*%Z6E7681⟩%N";
+  servernotice = "%Z3FB950⚙%N $* ⟫ ";
+
+  ownctcp = "%ZD2A8FF[%Z3FB950$0%Z6E7681(%ZF59E0B$1-%Z6E7681)%ZD2A8FF]%N ";
+  ctcp = "%Z79C0FF$*%N";
+
+  wallop = "%ZFCD34D⚡%N %_$*%N: ";
+  wallop_nick = "%ZFCD34D$*%N";
+  wallop_action = "%ZD2A8FF★ $*%N ";
+
+  netsplit = "%ZFF7B72⚠ $*%N";
+  netjoin = "%Z3FB950⚡ $*%N";
+
+  names_prefix = "";
+  names_nick = "%Z6E7681$0%Z7D8590$[12]1%N ";
+  names_nick_op = "%ZFCD34D⚡%ZF59E0B%_$[12]1%_%N ";
+  names_nick_halfop = "%Z3FB950◆%Z79C0FF$[12]1%N ";
+  names_nick_voice = "%Z3FB950◆%Z7D8590$[12]1%N ";
+  names_users = "%Z6E7681⟨%Z79C0FF$0 %Z6E7681nicks%Z6E7681⟩%N";
+  names_channel = "%ZF59E0B$*%N";
+
+  dcc = "%Z79C0FF$*%N";
+  dccfile = "%_$*%_%N";
+
+  dccownmsg = "%ZD2A8FF[%Z3FB950$0%Z6E7681($1-%Z6E7681)%ZD2A8FF]%N ";
+  dccownnick = "%Z3FB950$*%N";
+  dccownquerynick = "%_$*%N";
+  dccownaction = "{action $*}";
+  dccownaction_target = "{action_core $0}%Z6E7681:%Z79C0FF$1%N ";
+
+  dccmsg = "%ZD2A8FF[%ZF59E0B$1-%Z6E7681(%Z79C0FF$0%Z6E7681)%ZD2A8FF]%N ";
+  dccquerynick = "%ZF59E0B$*%N";
+  dccaction = "%ZD2A8FF* ($*) %N%|";
+
+  ##
+  ## statusbar
+  ##
+
+  sb_background = "%z161B22";
+  window_border = "%ZF59E0B│%N";
+  sb_topic_bg = "%z0E1116%ZE6EDF3";
+  sb = " %Z484F58[%ZE6EDF3$*%Z484F58]%N";
+  sbmode = "%Z6E7681(%ZF59E0B+%Z7D8590$*%Z6E7681)%N";
+  sbservertag = ":$0 (change with ^X)";
+  sbmore = " %Z484F58── %Z7D8590wiecej %Z484F58── ";
+  sblag = "%ZFF7B72lag%N %Z7D8590$0-%N s";
+  sb_default_bg = "%z161B22";
+  sb_act_sep = "%Z484F58,%N";
+  sb_act_text = "%Z7D8590$*";
+  sb_act_msg = "%ZE6EDF3$*";
+  sb_act_hilight = "%ZFF7B72%_$*%_";
+  sb_act_hilight_color = "%ZFCD34D%_$0$1-%_%N";
+  sb_info1_bg = "%z161B22";
+  sb_window_bg = "%z161B22%ZE6EDF3";
+  sb_window2_bg = "%z161B22%ZE6EDF3";
+  sb_info2_bg = "%z161B22";
+
+  sbstart = "";
+  sbend = " ";
+  topicsbstart = "{sbstart $*}";
+  topicsbend = "{sbend $*}";
+
+  prompt = "%ZF59E0B$$%N %Z7D8590$*%N %Z484F58❯%N ";
+
+  sbaway = " %ZFCD34Daway%N";
+  sbnickmode = "$0";
+};
+
+##############################################################################
+# EVENT FORMATS
+##############################################################################
+
+formats = {
+  "fe-common/core" = {
+    line_start = "{line_start}";
+    line_start_irssi = "{line_start}{hilight erssi:} ";
+    timestamp = "{timestamp $Z} ";
+    servertag = "%Z6E7681[%ZF59E0B$0%Z6E7681]%N ";
+    daychange = "%Z6E7681───── %Z79C0FF%%d %%b %%Y %Z6E7681─────%N";
+    talking_with = "%Z3FB950⟫%N You are now talking with {nick $0}";
+    refnum_too_low = "Window number must be greater than 1";
+    error_server_sticky = "Window's server is sticky and it cannot be changed without -unsticky option";
+    set_server_sticky = "Window's server set sticky";
+    unset_server_sticky = "Window's server isn't sticky anymore";
+    window_name_not_unique = "Window names must be unique";
+    window_level = "Window level is now $0";
+    window_set_immortal = "Window is now immortal";
+    window_unset_immortal = "Window isn't immortal anymore";
+    window_immortal_error = "Window is immortal, if you really want to close it, say /WINDOW IMMORTAL OFF";
+    windowlist_header = "%#%ZF59E0BRef%N %Z79C0FFName                 Active item     Server          Level%N";
+    windowlist_line = "%#%ZF59E0B$[3]0%N %|%W$[20]1%N %Z79C0FF$[15]2%N %Z3FB950$[15]3%N %Z6E7681$4%N";
+    windowlist_footer = "";
+    windows_layout_saved = "Layout of windows is now remembered";
+    windows_layout_reset = "Layout of windows reset to defaults";
+
+    looking_up = "%ZF59E0B⚙%N Looking up {server $0}";
+    connecting = "%Z3FB950⚡%N Connecting to {server $0} %Z6E7681⟨%N$1%Z6E7681⟩%N port {hilight $2}";
+    reconnecting = "%ZFCD34D⚡%N Reconnecting to {server $0} %Z6E7681⟨%N$1%Z6E7681⟩%N port {hilight $2} - use /RMRECONNS to abort";
+    connection_established = "%Z3FB950✓%N Connection to {server $0} established";
+    cant_connect = "%ZFF7B72✗%N Unable to connect server {server $0} port {hilight $1} {reason $2}";
+    connection_lost = "%ZFF7B72✗%N Connection lost to {server $0}";
+    lag_disconnected = "%ZFF7B72✗%N No PONG reply from server {server $0} in $1 seconds, disconnecting";
+    disconnected = "%ZFF7B72✗%N Disconnected from {server $0} {reason $1}";
+    server_quit = "%ZFCD34D⏻%N Disconnecting from server {server $0}: {reason $1}";
+    server_changed = "%Z3FB950⟫%N Changed to {hilight $2} server {server $1}";
+    unknown_server_tag = "%ZFF7B72✗%N Unknown server tag {server $0}";
+    no_connected_servers = "%ZFF7B72✗%N Not connected to any servers";
+    server_list = "{server $0}: $1:$2 ($3)";
+    server_lookup_list = "{server $0}: $1:$2 ($3) (connecting...)";
+    server_reconnect_list = "{server $0}: $1:$2 ($3) ($5 left before reconnecting)";
+    server_reconnect_removed = "%Z3FB950✓%N Removed reconnection to server {server $0} port {hilight $1}";
+    server_reconnect_not_found = "%ZFF7B72✗%N Reconnection tag {server $0} not found";
+    setupserver_added = "%Z3FB950✓%N Server {server $0} saved";
+    setupserver_removed = "%Z3FB950✓%N Server {server $0} removed";
+    setupserver_not_found = "%ZFF7B72✗%N Server {server $0} not found";
+    your_nick = "%Z3FB950⟫%N Your nickname is {nick $0}";
+
+    join = "%Z3FB950⥤%N {channick_hilight $0} {chanhost_hilight $1} %Z3FB950has joined%N {channel $2}";
+    part = "%ZFCD34D⥢%N {channick $0} {chanhost $1} %ZFCD34Dhas left%N {channel $2} {reason $3}";
+    kick = "%ZFF7B72⚡ {channick_hilight $0} %ZFF7B72kicked%N from {channel $1} %Z6E7681by%N {nick $2} {reason $3}";
+    quit = "%ZFF7B72⏻%N {channick $0} {chanhost $1} %ZFF7B72has quit%N {reason $2}";
+    quit_once = "{channel $3} {channick $0} {chanhost $1} {reason $2}";
+    invite = "%ZD2A8FF✉%N {nick $0} %ZD2A8FFinvites you to%N {channel $1}";
+    new_topic = "%Z79C0FF📌%N {nick $0} %Z6E7681changed topic of%N {channel $1}%Z6E7681:%N $2";
+    topic_unset = "%Z79C0FF📌%N Topic %Z6E7681unset by%N {nick $0} %Z6E7681on%N {channel $1}";
+    your_nick_changed = "%ZD2A8FF⇶%N %ZD2A8FFYou%N are now known as {nick $1}";
+    nick_changed = "%ZD2A8FF⬢%N {channick $0} %Z6E7681is now known as%N {channick_hilight $1}";
+    talking_in = "%Z3FB950⟫%N You are now talking in {channel $0}";
+    not_in_channels = "%ZFF7B72✗%N You are not on any channels";
+    current_channel = "%Z3FB950⟫%N Current channel {channel $0}";
+    names = "%ZF59E0B⟫%N Users on {channel $0}: $1";
+    names_prefix = "%#{names_prefix $0}";
+    names_nick_op = "{names_nick_op $0 $1}";
+    names_nick_halfop = "{names_nick_halfop $0 $1}";
+    names_nick_voice = "{names_nick_voice $0 $1}";
+    names_nick = "{names_nick $0 $1}";
+    endofnames = "%ZF59E0B✓%N {channel $0}: {hilight $1} nicks %Z6E7681⟨%ZFCD34D⚡$2%N %Z79C0FF◆$3%N %Z3FB950◆$4%N %Z7D8590·$5%Z6E7681⟩%N";
+
+    chanlist_header = "%#%ZF59E0B⟫%N You are on the following channels:";
+    chanlist_line = "%#  {channel $[-10]0} %|%ZD2A8FF+$1%N %Z6E7681(%Z79C0FF$2%Z6E7681):%N $3";
+    chansetup_not_found = "%ZFF7B72✗%N Channel {channel $0} not found";
+    chansetup_added = "%Z3FB950✓%N Channel {channel $0} saved";
+    chansetup_removed = "%Z3FB950✓%N Channel {channel $0} removed";
+    chansetup_header = "%#%ZF59E0B⟫%N Channel         Network    Password   Settings";
+    chansetup_line = "%#  {channel $[15]0} %|%Z3FB950$[10]1%N %Z7D8590$[10]2%N $3";
+    chansetup_footer = "";
+
+    own_msg = "{ownmsgnick $2 {ownnick $0}}$1";
+    own_msg_channel = "{ownmsgnick $3 {ownnick $0}{msgchannel $1}}$2";
+    own_msg_private = "{ownprivmsg msg $0}$1";
+    own_msg_private_query = "{ownprivmsgnick {ownprivnick $2}}$1";
+    pubmsg_me = "{pubmsgmenick $2 {menick $0}}$1";
+    pubmsg_me_channel = "{pubmsgmenick $3 {menick $0}{msgchannel $1}}$2";
+    pubmsg_hilight = "{pubmsghinick $0 $3 $1}$2%N";
+    pubmsg_hilight_channel = "{pubmsghinick $0 $4 $1{msgchannel $2}}$3%N";
+    pubmsg = "{pubmsgnick $2 {pubnick $0}}$1";
+    pubmsg_channel = "{pubmsgnick $3 {pubnick $0}{msgchannel $1}}$2";
+    msg_private = "{privmsg $0 $1}$2";
+    msg_private_query = "{privmsgnick $0}$2";
+    no_msgs_got = "%ZFF7B72✗%N You have not received a message from anyone yet";
+    no_msgs_sent = "%ZFF7B72✗%N You have not sent a message to anyone yet";
+
+    query_start = "%Z3FB950⟫%N Starting query with {nick $0} on {server $1}";
+    query_stop = "%ZFCD34D⟪%N Closing query with {nick $0}";
+    no_query = "%ZFF7B72✗%N No query with {nick $0}";
+    query_server_changed = "%Z3FB950⟫%N Query with {nick $0} changed to server {server $1}";
+
+    hilight_header = "%#%ZFCD34D⟫%N Highlights:";
+    hilight_line = "%#  %ZFCD34D$[-4]0%N $1 $2 $3$4";
+    hilight_footer = "";
+    hilight_not_found = "%ZFF7B72✗%N Highlight not found: $0";
+    hilight_removed = "%Z3FB950✓%N Highlight removed: $0";
+
+    alias_added = "%Z3FB950✓%N Alias $0 added";
+    alias_removed = "%Z3FB950✓%N Alias $0 removed";
+    alias_not_found = "%ZFF7B72✗%N No such alias: $0";
+    aliaslist_header = "%#%Z79C0FF⟫%N Aliases:";
+    aliaslist_line = "%#  %Z79C0FF◆%N $[10]0 %Z6E7681⟫%N $1";
+    aliaslist_footer = "";
+
+    log_opened = "%Z3FB950📋%N Log file {hilight $0} opened";
+    log_closed = "%Z6E7681📋%N Log file {hilight $0} closed";
+    log_create_failed = "%ZFF7B72✗%N Couldn't create log file {hilight $0}: $1";
+    log_locked = "%ZFF7B72🔒%N Log file {hilight $0} is locked, probably by another running erssi";
+    log_not_open = "%ZFF7B72✗%N Log file {hilight $0} not open";
+    log_started = "%Z3FB950📋%N Started logging to file {hilight $0}";
+    log_stopped = "%Z6E7681📋%N Stopped logging to file {hilight $0}";
+    log_list_header = "%#Logs:";
+    log_list = "%#$0 $1: $2 $3$4$5";
+    log_list_footer = "";
+    windowlog_file = "%Z3FB950📋%N Window LOGFILE set to $0";
+    windowlog_file_logging = "%ZFF7B72✗%N Can't change window's logfile while log is on";
+
+    no_away_msgs = "%Z3FB950◆%N No new messages in awaylog";
+    away_msgs = "%ZFCD34D◇%N {hilight $1} new messages in awaylog:";
+    away = "%ZFCD34D◇%N You have been marked as being away";
+    unaway = "%Z3FB950◆%N You are no longer marked as being away";
+
+    module_header = "%#%ZF59E0B⚙%N Module               Type    Submodules";
+    module_line = "%#  %Z79C0FF◆%N $[!20]0 %ZD2A8FF$[7]1%N $2";
+    module_footer = "";
+    module_already_loaded = "%ZFCD34D⚠%N Module {hilight $0/$1} already loaded";
+    module_not_loaded = "%ZFF7B72✗%N Module {hilight $0/$1} is not loaded";
+    module_load_error = "%ZFF7B72✗%N Error loading module {hilight $0/$1}: $2";
+    module_invalid = "%ZFF7B72✗%N {hilight $0/$1} isn't erssi module";
+    module_loaded = "%Z3FB950⚙%N Loaded module {hilight $0/$1}";
+    module_unloaded = "%Z6E7681⚙%N Unloaded module {hilight $0/$1}";
+
+    command_unknown = "%ZFF7B72✗%N Unknown command: $0";
+    command_ambiguous = "%ZFCD34D⚠%N Ambiguous command: $0";
+    option_unknown = "%ZFF7B72✗%N Unknown option: $0";
+    option_ambiguous = "%ZFCD34D⚠%N Ambiguous option: $0";
+    option_missing_arg = "%ZFF7B72✗%N Missing required argument for: $0";
+    not_enough_params = "%ZFF7B72✗%N Not enough parameters given";
+    not_connected = "%ZFF7B72✗%N Not connected to server";
+    not_joined = "%ZFF7B72✗%N Not joined to any channel";
+    chan_not_found = "%ZFF7B72✗%N Not joined to such channel";
+    chan_not_synced = "%ZFCD34D⚠%N Channel not fully synchronized yet, try again after a while";
+    illegal_proto = "%ZFF7B72✗%N Command isn't designed for the chat protocol of the active server";
+    not_good_idea = "%ZFCD34D⚠%N Doing this is not a good idea. Add -YES option to command if you really mean it";
+    invalid_number = "%ZFF7B72✗%N Invalid number";
+    invalid_time = "%ZFF7B72✗%N Invalid timestamp";
+    invalid_level = "%ZFF7B72✗%N Invalid message level";
+    invalid_size = "%ZFF7B72✗%N Invalid size";
+    invalid_charset = "%ZFF7B72✗%N Invalid charset: $0";
+    eval_max_recurse = "%ZFF7B72✗%N /eval hit maximum recursion limit";
+    program_not_found = "%ZFF7B72✗%N Could not find file or file is not executable";
+
+    theme_saved = "%Z3FB950✓%N Theme saved to $0";
+    theme_save_failed = "%ZFF7B72✗%N Error saving theme to $0: $1";
+    theme_not_found = "%ZFF7B72✗%N Theme {hilight $0} not found";
+    theme_changed = "%Z3FB950✓%N Now using theme {hilight $0} ($1)";
+    window_theme = "%Z3FB950⟫%N Using theme {hilight $0} in this window";
+    window_theme_default = "%Z7D8590⟫%N No theme is set for this window";
+    window_theme_changed = "%Z3FB950✓%N Now using theme {hilight $0} ($1) in this window";
+    window_theme_removed = "%Z3FB950✓%N Removed theme from this window";
+
+    format_title = "%:[{hilight $0}] - [{hilight $1}]%:";
+    format_subtitle = "[{hilight $0}]";
+    format_item = "$0 = $1";
+
+    ignored = "%ZFF7B72⛔%N Ignoring {hilight $1} from {nick $0}";
+    ignored_options = "%ZFF7B72⛔%N Ignoring {hilight $1} from {nick $0} {comment $2}";
+    unignored = "%Z3FB950✓%N Unignored {nick $0}";
+    ignore_not_found = "%ZFF7B72✗%N {nick $0} is not being ignored";
+    ignore_no_ignores = "%Z3FB950✓%N There are no ignores";
+    ignore_header = "%#%ZFF7B72⛔%N Ignore List:";
+    ignore_line = "%#  %Z6E7681$[-4]0%N $1: %Z79C0FF$2%N $3 $4";
+    ignore_footer = "";
+    not_channel_or_query = "%ZFF7B72✗%N The current window is not a channel or query window";
+
+    conversion_added = "%Z3FB950✓%N Added {hilight $0}/{hilight $1} to conversion database";
+    conversion_removed = "%Z3FB950✓%N Removed {hilight $0} from conversion database";
+    conversion_not_found = "%ZFF7B72✗%N {hilight $0} not found in conversion database";
+    conversion_no_translits = "%ZFF7B72✗%N Transliterations not supported in this system";
+    recode_header = "%#%Z79C0FF⟫%N Target                         Character set";
+    recode_line = "%#  %|%Z79C0FF$[!30]0%N $1";
+
+    unknown_chat_protocol = "%ZFF7B72✗%N Unknown chat protocol: $0";
+    unknown_chatnet = "%ZFF7B72✗%N Unknown chat network: $0 (create it with /NETWORK ADD)";
+    not_toggle = "%ZFF7B72✗%N Value must be either ON, OFF or TOGGLE";
+    perl_error = "%ZFF7B72⚠%N Perl error: $0";
+
+    bind_header = "%#%ZF59E0B⟫%N Key                  Action";
+    bind_list = "%#  %Z79C0FF$[!20]0%N $1 $2";
+    bind_command_list = "%ZF59E0B$[!30]0%N $1";
+    bind_footer = "";
+    bind_unknown_id = "%ZFF7B72✗%N Unknown bind action: $0";
+
+    config_saved = "%Z3FB950✓%N Saved configuration to file $0";
+    config_reloaded = "%Z3FB950✓%N Reloaded configuration";
+    config_modified = "%ZFCD34D⚠%N Configuration file was modified since erssi was last started - do you want to overwrite the possible changes?";
+    glib_error = "%ZFF7B72✗%N {error $0} $1";
+    overwrite_config = "%ZFCD34D⚠%N Overwrite config (y/N)?";
+
+    set_title = "%ZF59E0B⟫%N [{hilight $0}]";
+    set_item = "%Z79C0FF$0%N = %ZE6EDF3$1%N";
+    set_unknown = "%ZFF7B72✗%N Unknown setting $0";
+    set_not_boolean = "%ZFF7B72✗%N Setting {hilight $0} isn't boolean, use /SET";
+
+    no_completions = "%ZFF7B72✗%N There's no completions";
+    completion_removed = "%Z3FB950✓%N Removed completion $0";
+    completion_header = "%#%Z79C0FF⟫%N Key        Value                                    Auto";
+    completion_line = "%#  %Z79C0FF$[10]0%N %Z7D8590$[!40]1%N $2";
+    completion_footer = "";
+  };
+
+  "fe-common/irc" = {
+    netsplit = "%ZFF7B72── ⚠ Netsplit ──%N {server $0} %ZFF7B72⇄%N {server $1} quits: $2";
+    netsplit_more = "%ZFF7B72── ⚠ Netsplit ──%N {server $0} %ZFF7B72⇄%N {server $1} quits: $2 (+$3 more, use /NETSPLIT to show all of them)";
+    netsplit_join = "%Z3FB950── ⚡ Netsplit over ──%N joins: $0";
+    netsplit_join_more = "%Z3FB950── ⚡ Netsplit over ──%N joins: $0 (+$1 more)";
+    no_netsplits = "%Z3FB950✓%N There are no net splits";
+    netsplits_header = "%#%ZFF7B72⚠%N Nick      Channel    Server               Split server";
+    netsplits_line = "%#$[9]0 $[10]1 $[20]2 $3";
+    netsplits_footer = "";
+
+    network_added = "%Z3FB950✓%N Network $0 saved";
+    network_removed = "%Z3FB950✓%N Network $0 removed";
+    network_not_found = "%ZFF7B72✗%N Network $0 not found";
+    network_header = "%#%ZF59E0B⟫%N Networks:";
+    network_line = "%#  %ZF59E0B$0%N: $1";
+    network_footer = "";
+    setupserver_header = "%#Server               Port  Network    Settings";
+    setupserver_line = "%#%|$[!20]0 $[5]1 $[10]2 $3";
+    setupserver_footer = "";
+
+    joinerror_toomany = "%ZFF7B72✗%N Cannot join channel {channel $0} (You have joined too many channels)";
+    joinerror_full = "%ZFF7B72✗%N Cannot join channel {channel $0} (Channel is full)";
+    joinerror_invite = "%ZFF7B72✗%N Cannot join channel {channel $0} (You must be invited)";
+    joinerror_banned = "%ZFF7B72⛔%N Cannot join channel {channel $0} (You are banned)";
+    joinerror_bad_key = "%ZFF7B72✗%N Cannot join channel {channel $0} (Bad channel key)";
+    joinerror_bad_mask = "%ZFF7B72✗%N Cannot join channel {channel $0} (Bad channel mask)";
+    joinerror_unavail = "%ZFF7B72✗%N Cannot join channel {channel $0} (Channel is temporarily unavailable)";
+    joinerror_duplicate = "%ZFF7B72✗%N Channel {channel $0} already exists - cannot create it";
+    channel_rejoin = "%ZFCD34D⚠%N Channel {channel $0} is temporarily unavailable. erssi will automatically try to rejoin. Use /RMREJOINS to abort.";
+
+    inviting = "%Z3FB950✉%N Inviting {nick $0} to {channel $1}";
+    channel_created = "%Z3FB950✓%N Channel {channelhilight $0} created $1";
+    url = "%ZF59E0B🔗%N Home page for {channelhilight $0}: $1";
+    topic = "%Z79C0FF📌%N Topic for {channelhilight $0}: $1";
+    no_topic = "%Z7D8590📌%N No topic set for {channelhilight $0}";
+    topic_info = "%Z79C0FF📌%N Topic set by {channick $0} {comment $1}";
+    chanmode_change = "%ZD2A8FF⛈%N {nick $2} %Z6E7681sets%N {mode $1} %Z6E7681on%N {channelhilight $0}";
+    server_chanmode_change = "%ZD2A8FF⛈%N {server $2} %Z6E7681sets%N {mode $1} %Z6E7681on%N {channelhilight $0}";
+    channel_mode = "%ZD2A8FF⛈%N Mode {mode $1} %Z6E7681for%N {channelhilight $0}";
+    bantype = "%Z3FB950✓%N Ban type changed to {channel $0}";
+
+    no_bans = "%Z3FB950✓%N No bans in channel {channel $0}";
+    banlist = "%ZFF7B72⛔%N {channel $1}: {ban $2}";
+    banlist_long = "%ZFF7B72⛔%N {channel $1}: {ban $2} %Z6E7681⟨by {nick $3}, $4s ago⟩%N";
+    ebanlist = "%Z3FB950✓%N {channel $0}: exception {ban $1}";
+    ebanlist_long = "%Z3FB950✓%N {channel $0}: exception {ban $1} %Z6E7681⟨by {nick $2}, $3s ago⟩%N";
+    no_invitelist = "%Z3FB950✓%N Invite list is empty in channel {channel $0}";
+    invitelist = "%ZD2A8FF✉%N {channel $0}: invite {ban $1}";
+    invitelist_long = "%ZD2A8FF✉%N {channel $0}: invite {ban $1} %Z6E7681⟨by {nick $2}, $3s ago⟩%N";
+
+    no_such_channel = "%ZFF7B72✗%N {channel $0}: No such channel";
+    channel_synced = "%Z3FB950✓%N Join to {channel $0} synced in {hilight $1}s %Z6E7681⏱%N";
+
+    usermode_change = "%ZD2A8FF⛈%N Mode change {mode $0} %Z6E7681for%N {nick $1}";
+    user_mode = "%ZD2A8FF⛈%N Your user mode is {mode $0}";
+
+    away = "%ZFCD34D◇%N You have been marked as being away";
+    unaway = "%Z3FB950◆%N You are no longer marked as being away";
+    nick_away = "%ZFCD34D◇%N {nick $0} is away: $1";
+
+    no_such_nick = "%ZFF7B72✗%N {nick $0}: No such nick/channel";
+    nick_in_use = "%ZFF7B72✗%N Nick {nick $0} is already in use";
+    nick_unavailable = "%ZFF7B72✗%N Nick {nick $0} is temporarily unavailable";
+    your_nick_owned = "%ZFCD34D⚠%N Your nick is owned by {nick $3} {comment $1@$2}";
+
+    whois = "%ZF59E0B◆%N %ZF59E0B%_$0%_%N %Z6E7681⟨%ZFCD34D$1%Z6E7681@%ZFCD34D$2%Z6E7681⟩%N %Z79C0FF⟫%N %Z79C0FF$3%N";
+    whowas = "%Z7D8590◇%N %Z7D8590%_$0%_%N %Z6E7681⟨%ZFCD34D$1%Z6E7681@%ZFCD34D$2%Z6E7681⟩%N %Z79C0FF⟫%N %Z79C0FF$3%N";
+    whois_idle = "%ZF59E0B %N %Z6E7681  idle  ⟫%N %Z79C0FF$1%Z6E7681d %Z79C0FF$2%Z6E7681h %Z79C0FF$3%Z6E7681m %Z79C0FF$4%Z6E7681s %Z6E7681⏱%N";
+    whois_idle_signon = "%ZF59E0B %N %Z6E7681  idle  ⟫%N %Z79C0FF$1%Z6E7681d %Z79C0FF$2%Z6E7681h %Z79C0FF$3%Z6E7681m %Z79C0FF$4%Z6E7681s %Z6E7681⟨signon: %ZFCD34D$5%Z6E7681⟩%N";
+    whois_server = "%ZF59E0B %N %Z6E7681  node  ⟫%N %Z3FB950$1%N %Z6E7681⟨%Z79C0FF$2%Z6E7681⟩%N";
+    whois_oper = "%ZF59E0B %N %Z6E7681  oper  ⟫%N %ZFCD34D$1%N";
+    whois_registered = "%ZF59E0B %N %Z6E7681  auth  ⟫%N %Z3FB950verified%N";
+    whois_help = "%ZF59E0B %N %Z6E7681  help  ⟫%N %Z3FB950available%N";
+    whois_modes = "%ZF59E0B %N %Z6E7681  modes ⟫%N %ZD2A8FF$1%N";
+    whois_realhost = "%ZF59E0B %N %Z6E7681  host  ⟫%N %Z79C0FF$1-%N";
+    whois_usermode = "%ZF59E0B %N %Z6E7681  umode ⟫%N %ZD2A8FF$1%N";
+    whois_channels = "%ZF59E0B %N %Z6E7681  chans ⟫%N %ZF59E0B$1%N";
+    whois_away = "%ZF59E0B %N %Z6E7681  away  ⟫%N %ZFCD34D$1%N";
+    whois_special = "%ZF59E0B %N %Z6E7681  extra ⟫%N %ZFCD34D$1%N";
+    whois_extra = "%ZF59E0B %N %Z6E7681  info  ⟫%N %Z79C0FF$1%N";
+    end_of_whois = "%ZF59E0B %N %Z6E7681        ⟫%N %Z3FB950end of whois%N";
+    end_of_whowas = "%ZF59E0B %N %Z6E7681        ⟫%N %Z3FB950end of whowas%N";
+    whois_not_found = "%ZFF7B72✗%N %ZFF7B72$0%N %Z6E7681⟫%N not found";
+
+    who = "%ZF59E0B$[!10]0%N %|{nick $[!9]1} %ZD2A8FF$[!3]2%N %Z6E7681$[!2]3%N %Z79C0FF$4%Z6E7681@%Z79C0FF$5%N %Z6E7681⟫%N $6";
+    end_of_who = "%Z3FB950✓%N End of /WHO list";
+
+    own_notice = "{ownnotice notice $0}$1";
+    own_action = "{ownaction $0}$1";
+    own_action_target = "{ownaction_target $0 $2}$1";
+    own_ctcp = "{ownctcp ctcp $0}$1 $2";
+
+    notice_server = "{servernotice $0}$1";
+    notice_public = "{notice $0{pubnotice_channel $1}}$2";
+    notice_private = "{notice $0{pvtnotice_host $1}}$2";
+
+    action_private = "{pvtaction $0}$2";
+    action_private_query = "{pvtaction_query $0}$2";
+    action_public = "{pubaction $0}$1";
+    action_public_channel = "{pubaction $0{msgchannel $1}}$2";
+
+    ctcp_reply = "%Z79C0FF◆%N CTCP {hilight $0} reply from {nick $1}: $2";
+    ctcp_reply_channel = "%Z79C0FF◆%N CTCP {hilight $0} reply from {nick $1} in channel {channel $3}: $2";
+    ctcp_ping_reply = "%Z79C0FF◆%N CTCP {hilight PING} reply from {nick $0}: $1.$[-3.0]2 seconds";
+    ctcp_requested = "{ctcp {hilight $0} {comment $1} requested CTCP {hilight $2} from {nick $4}}: $3";
+    ctcp_requested_unknown = "{ctcp {hilight $0} {comment $1} requested unknown CTCP {hilight $2} from {nick $4}}: $3";
+
+    online = "%Z3FB950✓%N Users online: {hilight $0}";
+    pong = "%Z3FB950✓%N PONG received from $0: $1";
+    wallops = "{wallop WALLOP {wallop_nick $0}} $1";
+    action_wallops = "{wallop WALLOP {wallop_action $0}} $1";
+    kill = "%ZFF7B72💀%N You were {error killed} by {nick $0} {nickhost $1} {reason $2} {comment Path: $3}";
+    kill_server = "%ZFF7B72💀%N You were {error killed} by {server $0} {reason $1} {comment Path: $2}";
+    error = "%ZFF7B72✗%N {error ERROR} $0";
+    unknown_mode = "%ZFF7B72✗%N Unknown mode character $0";
+    default_event = "$1";
+    default_event_server = "%Z6E7681[%ZF59E0B$0%Z6E7681]%N $1";
+
+    silenced = "%Z3FB950⛔%N Silenced {nick $0}";
+    unsilenced = "%Z3FB950✓%N Unsilenced {nick $0}";
+    silence_line = "%Z79C0FF◆%N {nick $0}: silence {ban $1}";
+    ask_oper_pass = "%ZFCD34D🔒%N Operator password:";
+    accept_list = "%Z3FB950✓%N Accepted users: {hilight $0}";
+  };
+
+  "fe-common/irc/dcc" = {
+    own_dcc = "{dccownmsg {dccownnick $1}}$2";
+    own_dcc_action = "{dccownaction_target $0 $1}$2";
+    own_dcc_action_query = "{dccownaction $0}$2";
+    own_dcc_ctcp = "{ownctcp ctcp $0}$1 $2";
+    dcc_msg = "{dccmsg $0}$1";
+    action_dcc = "{dccaction $0}$1";
+    action_dcc_query = "{dccaction $0}$1";
+    own_dcc_query = "{dccownmsg {dccownnick $0}}$2";
+    dcc_msg_query = "{dccmsg $0}$1";
+    dcc_ctcp = "{dcc DCC CTCP {hilight $1} received from {hilight $0}: $2}";
+    dcc_chat = "%ZF59E0B⟫%N DCC CHAT from {nick $0} [$1 port $2]";
+    dcc_chat_channel = "%ZF59E0B⟫%N DCC CHAT from {nick $0} [$1 port $2] requested in channel {channel $3}";
+    dcc_chat_not_found = "%ZFF7B72✗%N No DCC CHAT connection open to {nick $0}";
+    dcc_chat_connected = "%Z3FB950✓%N DCC CHAT connection with {nick $0} [$1 port $2] established";
+    dcc_chat_disconnected = "%ZFF7B72✗%N DCC lost chat to {nick $0}";
+    dcc_send = "%ZF59E0B↑%N DCC SEND from {nick $0} [$1 port $2]: $3 [$4]";
+    dcc_send_channel = "%ZF59E0B↑%N DCC SEND from {nick $0} [$1 port $2]: $3 [$4 bytes] requested in channel {channel $5}";
+    dcc_send_exists = "%ZFF7B72↑%N DCC already sending file {dccfile $0} for {nick $1}";
+    dcc_send_no_route = "%ZFF7B72↑%N DCC route lost to nick {nick $0} when trying to send file {dccfile $1}";
+    dcc_send_not_found = "%ZFF7B72↑%N DCC not sending file {dccfile $1} to {nick $0}";
+    dcc_send_file_open_error = "%ZFF7B72↑%N DCC can't open file {dccfile $0}: $1";
+    dcc_send_connected = "%Z3FB950↑%N DCC sending file {dccfile $0} for {nick $1} [$2 port $3]";
+    dcc_send_complete = "%Z3FB950↑%N DCC sent file {dccfile $0} [{hilight $1}] for {nick $2} in {hilight $3} [{hilight $4kB/s}]";
+    dcc_send_aborted = "%ZFF7B72↑%N DCC aborted sending file {dccfile $0} for {nick $1}";
+    dcc_get_not_found = "%ZFF7B72↓%N DCC no file offered by {nick $0}";
+    dcc_get_connected = "%Z3FB950↓%N DCC receiving file {dccfile $0} from {nick $1} [$2 port $3]";
+    dcc_get_complete = "%Z3FB950↓%N DCC received file {dccfile $0} [$1] from {nick $2} in {hilight $3} [$4kB/s]";
+    dcc_get_aborted = "%ZFF7B72↓%N DCC aborted receiving file {dccfile $0} from {nick $1}";
+    dcc_get_write_error = "%ZFF7B72✗%N DCC error writing to file {dccfile $0}: {comment $1}";
+    dcc_unknown_ctcp = "%ZFF7B72✗%N DCC unknown ctcp {hilight $0} from {nick $1} [$2]";
+    dcc_unknown_reply = "%ZFF7B72✗%N DCC unknown reply {hilight $0} from {nick $1} [$2]";
+    dcc_unknown_type = "%ZFF7B72✗%N DCC unknown type {hilight $0}";
+    dcc_invalid_ctcp = "%ZFF7B72✗%N DCC received CTCP {hilight $0} with invalid parameters from {nick $1}";
+    dcc_connect_error = "%ZFF7B72✗%N DCC can't connect to {hilight $0} port {hilight $1}";
+    dcc_cant_create = "%ZFF7B72✗%N DCC can't create file {dccfile $0}: $1";
+    dcc_rejected = "%ZFF7B72✗%N DCC $0 was rejected by {nick $1} [{hilight $2}]";
+    dcc_request_send = "%ZF59E0B↑%N DCC $0 request sent to {nick $1}: $2";
+    dcc_close = "%Z3FB950✓%N DCC $0 close for {nick $1} [{hilight $2}]";
+    dcc_lowport = "%ZFCD34D⚠%N Warning: Port sent with DCC request is a lowport ({hilight $0, $1}) - this isn't normal.";
+    dcc_list_header = "%ZF59E0B⟫%N DCC connections:";
+    dcc_list_line_chat = "  %Z79C0FF◆%N $0 $1";
+    dcc_list_line_file = "  %Z79C0FF◆%N $0 $1: %|$2 of $3 ($4%%) - $5kB/s - ETA $7 - $6";
+    dcc_list_line_queued_send = "  %ZFCD34D◇%N $0 $2 (queued)";
+    dcc_list_footer = "";
+    dcc_list_line_server = "  %ZF59E0B◆%N $0: Port($1) - Send($2) - Chat($3) - Fserve($4)";
+    dcc_server_started = "%Z3FB950✓%N DCC SERVER started on port {hilight $0}";
+    dcc_server_closed = "%Z3FB950✓%N DCC SERVER on port {hilight $0} closed";
+  };
+
+  "fe-common/irc/notifylist" = {
+    notify_join = "%Z3FB950⥤%N {nick $0} [$1@$2] [{hilight $3}] has joined to $4";
+    notify_part = "%ZFCD34D⥢%N {nick $0} has left $4";
+    notify_away = "%ZFCD34D◇%N {nick $0} [$5] [$1@$2] [{hilight $3}] is now away: $4";
+    notify_unaway = "%Z3FB950◆%N {nick $0} [$4] [$1@$2] [{hilight $3}] is now unaway";
+    notify_online = "%Z3FB950✓%N On $0: {hilight $1}";
+    notify_offline = "%ZFF7B72✗%N Offline: $0";
+    notify_list = "%Z79C0FF◆%N $0: $1 $2";
+    notify_list_empty = "%Z3FB950✓%N The notify list is empty";
+  };
+
+  "fe-ansi" = {
+    # Suppress default erssi banner
+    irssi_banner = "";
+    # Lastlog
+    lastlog_too_long = "%Y⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
+    lastlog_count = "%B⚡%N {hilight Lastlog}: $0 lines";
+    lastlog_start = "%B⚡%N {hilight Lastlog}:";
+    lastlog_end = "%B⚡%N {hilight End of Lastlog}";
+    lastlog_separator = "%Z6E7681──%N";
+    refnum_not_found = "%R⚠%N Window number $0 not found";
+
+    # Window management
+    window_too_small = "%R⚠%N Not enough room to resize this window";
+    cant_hide_last = "%R⚠%N You can't hide the last window";
+    cant_hide_sticky_windows = "%R⚠%N You can't hide sticky windows (use /WINDOW STICK OFF)";
+    cant_show_sticky_windows = "%R⚠%N You can't show sticky windows (use /WINDOW STICK OFF)";
+    window_not_sticky = "%G✓%N Window is not sticky";
+    window_set_sticky = "%G✓%N Window set sticky";
+    window_unset_sticky = "%G✓%N Window is not sticky anymore";
+    window_info_sticky = "%#Sticky  : $0";
+    window_info_scroll = "%#Scroll  : $0";
+    window_scroll = "%G✓%N Window scroll mode is now $0";
+    window_scroll_unknown = "%R⚠%N Unknown scroll mode $0, must be ON, OFF or DEFAULT";
+
+    # Statusbar management
+    statusbar_list_header = "%#Name                           Type   Placement Position Visible";
+    statusbar_list_footer = "";
+    statusbar_list = "%#$[30]0 $[6]1 $[9]2 $[8]3 $4";
+    statusbar_info_name = "%#Statusbar: {hilight $0}";
+    statusbar_info_type = "%#Type     : $0";
+    statusbar_info_placement = "%#Placement: $0";
+    statusbar_info_position = "%#Position : $0";
+    statusbar_info_visible = "%#Visible  : $0";
+    statusbar_info_item_header = "%#Items    : Name                                Priority  Alignment";
+    statusbar_info_item_footer = "";
+    statusbar_info_item_name = "%#         : $[35]0 $[9]1 $2";
+    statusbar_not_found = "%R⚠%N Statusbar doesn't exist: $0";
+    statusbar_item_not_found = "%R⚠%N Statusbar item doesn't exist: $0";
+    statusbar_unknown_command = "%R⚠%N Unknown statusbar command: $0";
+    statusbar_unknown_type = "%R⚠%N Statusbar type must be 'window' or 'root'";
+    statusbar_unknown_placement = "%R⚠%N Statusbar placement must be 'top' or 'bottom'";
+    statusbar_unknown_visibility = "%R⚠%N Statusbar visibility must be 'always', 'active' or 'inactive'";
+
+    # Paste warning
+    paste_warning = "%Y⚠%N Pasting $0 lines to $1. Press Ctrl-K if you wish to do this or Ctrl-C to cancel.";
+    paste_prompt = "%Y⚠%N Hit Ctrl-K to paste, Ctrl-C to abort?";
+
+    # === ENHANCED SIDEPANEL THEME ===
+    # Format: $0 = window number, $1 = window name
+    sidepanel_header = "%Z484F58$[-2]0%N %ZF59E0B%_$1%_%N";
+    sidepanel_item = "%Z484F58$[-2]0%N %Z7D8590$1%N";
+    sidepanel_item_selected = "%ZF59E0B$[-2]0%N %ZFCD34D%_$1%_%N";
+
+    # === ACTIVITY HIERARCHY (by priority) ===
+    sidepanel_item_nick_mention = "%ZFF7B72$[-2]0%N %ZFF7B72%_$1%_%N";
+    sidepanel_item_query_msg = "%ZD2A8FF$[-2]0%N %ZD2A8FF%_$1%_%N";
+    sidepanel_item_activity = "%Z484F58$[-2]0%N %ZE6EDF3$1%N";
+    sidepanel_item_events = "%Z484F58$[-2]0%N %Z79C0FF$1%N";
+    sidepanel_item_highlight = "%ZFF7B72$[-2]0%N %ZFF7B72$1%N";
+
+    # Lista nickow: symbol statusu ($0) i nick ($1)
+    sidepanel_nick_owner_status = "%ZFF7B72$0%N%ZE6EDF3$1%N";
+    sidepanel_nick_admin_status = "%ZFF7B72$0%N%ZE6EDF3$1%N";
+    sidepanel_nick_op_status = "%ZF59E0B$0%N%ZE6EDF3$1%N";
+    sidepanel_nick_halfop_status = "%Z3FB950$0%N%ZE6EDF3$1%N";
+    sidepanel_nick_voice_status = "%Z79C0FF$0%N%Z7D8590$1%N";
+    sidepanel_nick_normal_status = "%Z484F58$0%N%Z7D8590$1%N";
+  };
+
+  "fe-common/perl" = {
+    script_not_found = "%ZFF7B72✗%N Script {hilight $0} not found";
+    script_not_loaded = "%ZFF7B72✗%N Script {hilight $0} is not loaded";
+    script_loaded = "%Z3FB950⚙%N Loaded script {hilight $0}";
+    script_unloaded = "%Z6E7681⚙%N Unloaded script {hilight $0}";
+    no_scripts_loaded = "%Z7D8590⚙%N No scripts are loaded";
+    script_list_header = "%#%ZF59E0B⚙%N Loaded scripts:";
+    script_list_line = "%#  %Z79C0FF◆%N $[!15]0 %Z6E7681⟫%N $1";
+    script_list_footer = "";
+    script_error = "%ZFF7B72⚠%N {error Error in script {hilight $0}:}";
+  };
+};
+
+# End of shellter v1.0
