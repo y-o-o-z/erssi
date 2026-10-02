@@ -24,10 +24,12 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 
 	+ Terminal
 	  - 24-bit theme colors fall back to the nearest 256-color palette entry
-	    where the terminal cannot show them, as irssi 1.4.5 does: GNU Screen
-	    4 and 5, terminals without COLORTERM=truecolor. colors_ansi_24bit
-	    (now on by default) uses 24-bit colors where they are detected;
-	    term_force_colors trusts the terminal (screen 5 "truecolor on")
+	    where the terminal is known not to show them, as irssi 1.4.5 does:
+	    GNU Screen 4 and 5, the Linux console, 8/16-color and mono
+	    terminals, Apple Terminal without COLORTERM. Everywhere else 24-bit
+	    colors stay (ssh does not forward COLORTERM). colors_ansi_24bit is
+	    on by default; term_truecolor auto|on|off overrides the detection
+	    (on: screen 5 with "truecolor on")
 
 	+ Core / UI
 	  - WHOIS and WHOWAS in the network's status window
