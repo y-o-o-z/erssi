@@ -1,0 +1,62 @@
+From 34d2e8047c1d256163c37c250ee59c2814420429 Mon Sep 17 00:00:00 2001
+From: yooz <136268860+y-o-o-z@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 19:17:38 +0200
+Subject: [PATCH 14/14] local: sender's channel mode in messages, plain event
+ wording by default
+
+- messages from fe-web carry the sender's channel mode (from the channel's
+  nick list), so @ and + show in messages like in erssi
+- nexusStyleMessages defaults to off: 'has joined the channel', 'has quit',
+  'sets mode' instead of 'has breached', 'has been deprecated', 'has
+  executed protocol' (still selectable in the settings)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ client/js/settings.ts              |  3 ++-
+ server/feWebClient/feWebAdapter.ts | 11 ++++++++++-
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/client/js/settings.ts b/client/js/settings.ts
+index 0d6ec96b..5c22fb9d 100644
+--- a/client/js/settings.ts
++++ b/client/js/settings.ts
+@@ -82,8 +82,9 @@ const defaultConfig = {
+ 	statusMessages: {
+ 		default: "shown",
+ 	},
++	// erssi@tahio: plain wording by default ("has joined", "sets mode")
+ 	nexusStyleMessages: {
+-		default: true,
++		default: false,
+ 	},
+ 	theme: {
+ 		default: document.getElementById("theme")?.dataset.serverTheme,
+diff --git a/server/feWebClient/feWebAdapter.ts b/server/feWebClient/feWebAdapter.ts
+index 064ffff0..eaa49d8e 100644
+--- a/server/feWebClient/feWebAdapter.ts
++++ b/server/feWebClient/feWebAdapter.ts
+@@ -222,11 +222,20 @@ export class FeWebAdapter {
+ 		const messageType =
+ 			msg.level === MSGLEVEL_ACTIONS ? MessageType.ACTION : MessageType.MESSAGE;
+ 
++		// The sender with their channel mode (@, +, ...) as erssi shows it;
++		// channel.users already holds mode symbols, so they are copied as is.
++		const from = new User({nick: msg.nick!});
++		const member = channel.users.get((msg.nick || "").toLowerCase());
++
++		if (member) {
++			from.modes = [...member.modes];
++		}
++
+ 		// Convert to NexusIRC message format
+ 		const loungeMsg = new Msg({
+ 			type: messageType,
+ 			time: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+-			from: new User({nick: msg.nick!}),
++			from,
+ 			text: msg.text!,
+ 			self: msg.is_own || false,
+ 			highlight: msg.is_highlight || false,
+-- 
+2.47.3
+
