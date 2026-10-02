@@ -1,7 +1,8 @@
 # erssi — y-o-o-z fork
 
-[![Version](https://img.shields.io/badge/version-1.3.0%2Byooz.1-f59e0b.svg)](NEWS)
-[![Upstream](https://img.shields.io/badge/upstream-erssi%201.3.0%20(2026--03--24)-30363d.svg)](https://github.com/erssi-org/erssi)
+[![Version](https://img.shields.io/badge/version-1.3.2-f59e0b.svg)](NEWS)
+[![Upstream](https://img.shields.io/badge/erssi-1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
+[![irssi](https://img.shields.io/badge/irssi-1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
 
 A fork of [erssi](https://github.com/erssi-org/erssi), the next-generation
@@ -19,11 +20,14 @@ compatibility — comes from erssi unchanged; see the
 
 ```
 $ erssi --version
-erssi 1.3.0+yooz.1 (20261002 ...)
+erssi 1.3.2 (20261002 1302)
 ```
 
-`1.3.0` is the erssi release this fork is based on; `+yooz.N` counts fork
-releases. The release notes are at the top of [NEWS](NEWS).
+| | |
+|---|---|
+| **erssi 1.3.2** | This fork: all of erssi 1.3.1 (erssi-org, 2026-04-06) plus the changes below. Release notes at the top of [NEWS](NEWS). |
+| **irssi base** | irssi 1.4.5, the latest irssi release (2023-10-03), plus irssi `master` up to 2025-07-26 as merged by erssi-org. |
+| **Perl scripts** | `Irssi::version()` returns the release date (`20261002`), so scripts that require irssi 1.4.5 or newer by date load. `$J` is erssi's own version (`1.3.2`): a script that compares `$J` with `1.4` needs a patch, as the bundled `rpe2e.pl` has. |
 
 ## What the fork changes
 
