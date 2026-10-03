@@ -110,7 +110,9 @@ static void sig_channel_joined(CHANNEL_REC *channel)
 	if (settings_get_bool("show_names_on_join") && !channel->session_rejoin) {
 		int limit = settings_get_int("show_names_on_join_limit");
 		int flags = CHANNEL_NICKLIST_FLAG_ALL;
-		if (limit > 0 && g_hash_table_size(channel->nicks) > limit) {
+		int size = g_hash_table_size(channel->nicks);
+		/* alone on the channel: a table with only your nick says nothing */
+		if ((limit > 0 && size > limit) || size <= 1) {
 			flags |= CHANNEL_NICKLIST_FLAG_COUNT;
 		}
 		fe_channels_nicklist(channel, flags);

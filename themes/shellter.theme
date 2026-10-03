@@ -294,7 +294,7 @@ formats = {
     names_nick_halfop = "{names_nick_halfop $0 $1}";
     names_nick_voice = "{names_nick_voice $0 $1}";
     names_nick = "{names_nick $0 $1}";
-    endofnames = "{channel $0}%Z6E7681:%N {hilight $1} %Z6E7681nicks ·%N %ZF59E0B$2%Z6E7681 ops ·%N %Z79C0FF$4%Z6E7681 voiced ·%N %Z7D8590$5%Z6E7681 regular%N";
+    endofnames = "{channel $0}%Z6E7681: nicks%N {hilight $1} %Z6E7681· ops%N %ZF59E0B$2%Z6E7681 · voiced%N %Z79C0FF$4%Z6E7681 · regular%N %Z7D8590$5%N";
 
     chanlist_header = "%#%ZF59E0B⟫%N You are on the following channels:";
     chanlist_line = "%#  {channel $[-10]0} %|%ZD2A8FF+$1%N %Z6E7681(%Z79C0FF$2%Z6E7681):%N $3";
