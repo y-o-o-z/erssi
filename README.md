@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-1.3.2-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-1.3.3-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -65,9 +65,9 @@ and used when present. For a system-wide install use
 
 | | |
 |---|---|
-| **erssi Shellter Edition 1.3.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 1.3.3** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus irssi `master` up to 2025-07-26, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.2`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.3`). |
 
 ## What this edition adds
 
@@ -133,9 +133,13 @@ messages and help are in Polish.
 
 The network-facing parts were reviewed for this release.
 
-- **Web frontend (fe-web)** — built for a shared shell box: one password
-  guess per connection, compared in constant time; 16 KB and 10 seconds to
-  log in; at most 16 clients; oversized frames refused. The TLS certificate
+- **Web frontend (fe-web)** — built for a shared shell box: the password
+  travels in an `Authorization` header, never in a URL; one guess per
+  connection, compared in constant time; after 5 wrong passwords in a
+  minute one login is checked every 2 s (a pace, not a lockout someone
+  else on the box could use against you); 16 KB and 10 seconds to log in,
+  with a separate limit for connections still logging in; at most 16
+  clients; oversized frames refused. The TLS certificate
   is kept in `~/.erssi/fe-web-cert.pem` and the web client trusts exactly that
   certificate, so nothing else listening on the port can receive the
   password.

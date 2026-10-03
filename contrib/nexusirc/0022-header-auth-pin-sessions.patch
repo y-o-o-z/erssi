@@ -1,0 +1,932 @@
+From 9144648e59c3624843c6d2baf8b6ef65f9b39555 Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 15:28:59 +0200
+Subject: [PATCH] local: fe-web password in a header, safer pin, sessions that
+ expire
+
+fe-web password: it went in the WebSocket URL (?password=...), and the URL
+was written to the debug log. erssi now takes "Authorization: Bearer
+<password>" on the upgrade request (and after 5 failures in a minute
+checks one login every 2 s), so the password goes only in that header, as UTF-8
+bytes, and the URL no longer carries it. The settings handlers
+(irssi:config:save, irssi:config:test) logged the whole request, plaintext
+fe-web password included; the password is now masked there.
+
+Certificate pin: the connection test in the settings connected without
+the pin (any certificate), handing the typed password to whatever answered
+on the port. The pin logic now lives in one helper (feWebPin.ts) used by
+the real connection and the test. It is also stricter: a caFile the user
+set that cannot be read stops the connection (with an error in the log)
+instead of silently trusting any certificate; the default
+~/.erssi/fe-web-cert.pem is used only for an erssi on this machine
+(127.0.0.1, ::1, localhost), as a remote erssi's certificate is not ours;
+and the certificate is read again on every (re)connect, so one that erssi
+writes after Nexus started, or regenerates, is picked up. A local erssi
+without the file yet (first run) still connects unpinned, with a warning.
+
+Sign-out: the browser emitted "sign-out" and reloaded at once, so the
+request could die with the page and the token keep working. It now waits
+for the server's acknowledgement (sent once the session is removed from
+the user file), at most 3 s.
+
+Session expiry: the 30-day expiry ran only when Nexus started, and
+lastUse changed only at sign-in, so a session used every day through one
+long-open tab could expire right after it closed, and old ones lived on
+while Nexus ran. lastUse is now updated when a browser leaves, and the
+expiry runs daily and at every sign-in.
+
+Sign-in races: a token sign-in updated its session with
+_.assign(sessions[token] || {}, ...), which brought back a session signed
+out between the token check and that point; a token sign-in now only
+updates an existing session and fails (auth:failed) when it is gone. A
+browser that disconnected while its new token was being made still got a
+session and a browserTokens entry that nothing removed; it no longer does.
+
+Password change: the other sessions stayed signed in after the Nexus
+password changed; they are signed out now (as "sign out other sessions").
+
+erssi journal: a late journal start (networks that connected after Nexus)
+kept going after the fe-web connection dropped or a new init set the
+journal up again while it loaded history, and could put a stale "erssi"
+window group back. It now stops when superseded, and does not clear the
+"setup running" mark of the setup that superseded it.
+
+server_status "disconnected" for a server that never registered (a failed
+/connect) created and announced an empty network; it is ignored now.
+
+The journal directory was one for the whole process (ERSSI_JOURNAL_DIR or
+~/.erssi/journal), so every user, whatever erssi they connect to, would
+see the history of the erssi on this machine. irssiConnection.journalDir
+sets it per user; without it the default is used only when the user's
+erssi is on this machine, otherwise there is no journal.
+---
+ client/components/Session.vue      |   3 +-
+ client/components/Sidebar.vue      |   4 +-
+ client/js/auth.ts                  |  21 +++++
+ server/erssiJournal.ts             |  17 ++++
+ server/feWebClient/feWebAdapter.ts |  18 +++-
+ server/feWebClient/feWebPin.ts     |  81 +++++++++++++++++
+ server/feWebClient/feWebSocket.ts  |  65 +++++++++++---
+ server/irssiClient.ts              | 136 ++++++++++++++++++++---------
+ server/server.ts                   |  63 +++++++++++--
+ shared/types/socket-events.d.ts    |   3 +-
+ 10 files changed, 340 insertions(+), 71 deletions(-)
+ create mode 100644 server/feWebClient/feWebPin.ts
+
+diff --git a/client/components/Session.vue b/client/components/Session.vue
+index 752856e..1768183 100644
+--- a/client/components/Session.vue
++++ b/client/components/Session.vue
+@@ -69,8 +69,7 @@ export default defineComponent({
+ 			if (!props.session.current) {
+ 				socket.emit("sign-out", props.session.token);
+ 			} else {
+-				socket.emit("sign-out");
+-				Auth.signout();
++				Auth.signoutSession();
+ 			}
+ 		};
+ 
+diff --git a/client/components/Sidebar.vue b/client/components/Sidebar.vue
+index 1f1b2dd..f20d842 100644
+--- a/client/components/Sidebar.vue
++++ b/client/components/Sidebar.vue
+@@ -94,7 +94,6 @@ import {defineComponent, nextTick, onMounted, onUnmounted, PropType, ref} from "
+ import {useRoute} from "vue-router";
+ import {useStore} from "../js/store";
+ import NetworkList from "./NetworkList.vue";
+-import socket from "../js/socket";
+ import Auth from "../js/auth";
+ 
+ export default defineComponent({
+@@ -257,8 +256,7 @@ export default defineComponent({
+ 
+ 		// wylogowanie tej przegladarki: serwer uniewaznia jej sesje
+ 		const signOut = () => {
+-			socket.emit("sign-out");
+-			Auth.signout();
++			Auth.signoutSession();
+ 		};
+ 
+ 		return {
+diff --git a/client/js/auth.ts b/client/js/auth.ts
+index 5a764f8..d251836 100644
+--- a/client/js/auth.ts
++++ b/client/js/auth.ts
+@@ -1,9 +1,30 @@
+ import storage from "./localStorage";
+ import location from "./location";
++import socket from "./socket";
+ 
+ export default class Auth {
+ 	static signout() {
+ 		storage.clear();
+ 		location.reload();
+ 	}
++
++	/**
++	 * Sign this browser out: the server revokes its session first, then the
++	 * stored token goes. Leaving at once could drop the request with the
++	 * page, and the token would keep working. No answer in 3 s (server
++	 * unreachable): leave anyway.
++	 */
++	static signoutSession() {
++		let done = false;
++
++		const leave = () => {
++			if (!done) {
++				done = true;
++				Auth.signout();
++			}
++		};
++
++		socket.emit("sign-out", null, leave);
++		setTimeout(leave, 3000);
++	}
+ }
+diff --git a/server/erssiJournal.ts b/server/erssiJournal.ts
+index 87f9c21..bc655f1 100644
+--- a/server/erssiJournal.ts
++++ b/server/erssiJournal.ts
+@@ -24,6 +24,7 @@ import path from "path";
+ import Msg from "./models/msg.js";
+ import User from "./models/user.js";
+ import {MessageType} from "../shared/types/msg.js";
++import {isLocalHost} from "./feWebClient/feWebPin.js";
+ 
+ export type JournalEntry = {
+ 	t: number; // unix time, seconds with a fraction
+@@ -52,6 +53,22 @@ export function journalDir(): string {
+ 	return process.env.ERSSI_JOURNAL_DIR || path.join(os.homedir(), ".erssi", "journal");
+ }
+ 
++/**
++ * Journal directory of one user's erssi, or null for none. The process
++ * default (ERSSI_JOURNAL_DIR or ~/.erssi/journal) is the journal of an erssi
++ * on this machine, so it is used only when the user's fe-web host is local;
++ * a remote erssi needs irssiConnection.journalDir, otherwise there is no
++ * journal (the history of another erssi must never show up). Several users,
++ * each with an erssi on this machine, set journalDir each.
++ */
++export function userJournalDir(conn: {host: string; journalDir?: string}): string | null {
++	if (conn.journalDir) {
++		return conn.journalDir;
++	}
++
++	return isLocalHost(conn.host) ? journalDir() : null;
++}
++
+ /** Lowercase ASCII, bytes outside [a-z0-9#&+!._-] as %XX - like webjournal.pl. */
+ export function encodeName(name: string): string {
+ 	let out = "";
+diff --git a/server/feWebClient/feWebAdapter.ts b/server/feWebClient/feWebAdapter.ts
+index bfac65e..34afc60 100644
+--- a/server/feWebClient/feWebAdapter.ts
++++ b/server/feWebClient/feWebAdapter.ts
+@@ -252,10 +252,24 @@ export class FeWebAdapter {
+ 	private handleServerStatus(msg: FeWebMessage): void {
+ 		// PRIVACY: msg.text here is just "connected"/"disconnected" but we sanitize anyway
+ 		logger.info(`[FeWebAdapter] Server status update for ${msg.server}`);
+-		const network = this.getOrCreateNetwork(msg.server!);
++
++		if (!msg.server) {
++			return;
++		}
++
++		const connected = msg.text === "connected";
++
++		// "disconnected" of a server that has no network here (it never
++		// registered, e.g. a failed /connect): nothing to show or announce
++		if (!connected && !this.serverTagToNetworkMap.has(msg.server)) {
++			logger.debug(`[FeWebAdapter] Ignoring disconnect of unknown server ${msg.server}`);
++			return;
++		}
++
++		const network = this.getOrCreateNetwork(msg.server);
+ 		if (!network) return;
+ 
+-		network.connected = msg.text === "connected";
++		network.connected = connected;
+ 		this.callbacks.onNetworkUpdate(network);
+ 	}
+ 
+diff --git a/server/feWebClient/feWebPin.ts b/server/feWebClient/feWebPin.ts
+new file mode 100644
+index 0000000..4d4cd14
+--- /dev/null
++++ b/server/feWebClient/feWebPin.ts
+@@ -0,0 +1,81 @@
++/**
++ * Certificate pin of the fe-web connection to erssi.
++ *
++ * erssi keeps its fe-web certificate in ~/.erssi/fe-web-cert.pem. With it,
++ * only that erssi is trusted - not whatever else listens on the port while
++ * erssi restarts (it would get the password).
++ */
++import fs from "fs";
++import os from "os";
++import path from "path";
++import {log} from "../logger.js";
++
++export type FeWebTls = {
++	rejectUnauthorized: boolean;
++	ca?: Buffer;
++};
++
++/** The pinned certificate cannot be used: do not connect at all. */
++export class FeWebPinError extends Error {}
++
++/** erssi on this machine (only then is its ~/.erssi ours to read). */
++export function isLocalHost(host: string): boolean {
++	const name = String(host || "")
++		.trim()
++		.toLowerCase()
++		.replace(/^\[(.*)\]$/, "$1");
++	return name === "localhost" || name === "127.0.0.1" || name === "::1";
++}
++
++export function defaultCertFile(): string {
++	return path.join(os.homedir(), ".erssi", "fe-web-cert.pem");
++}
++
++/**
++ * TLS options for one connection attempt. Called on every (re)connect, so a
++ * certificate erssi writes (or regenerates) later is picked up.
++ *  - caFile set by the user: it must be readable, otherwise no connection
++ *    (falling back to "any certificate" would silently drop the pin);
++ *  - else erssi's own certificate, but only for an erssi on this machine -
++ *    a remote erssi's certificate is not in our home directory;
++ *  - no certificate (a local erssi's first run, or a remote erssi without
++ *    caFile): the "verify" setting of the user, with a warning when off.
++ */
++export function feWebTls(
++	conn: {host: string; port: number; caFile?: string; rejectUnauthorized?: boolean},
++	who: string
++): FeWebTls {
++	const where = `${conn.host}:${conn.port}`;
++
++	if (conn.caFile) {
++		try {
++			return {rejectUnauthorized: true, ca: fs.readFileSync(conn.caFile)};
++		} catch (error) {
++			throw new FeWebPinError(
++				`${who}: cannot read the fe-web certificate ${conn.caFile} (${
++					(error as NodeJS.ErrnoException).code || String(error)
++				}) - not connecting to ${where}`
++			);
++		}
++	}
++
++	if (isLocalHost(conn.host)) {
++		const file = defaultCertFile();
++
++		try {
++			return {rejectUnauthorized: true, ca: fs.readFileSync(file)};
++		} catch {
++			// first run: erssi has not written it yet
++		}
++
++		if (!conn.rejectUnauthorized) {
++			log.warn(
++				`${who}: no fe-web certificate in ${file} - accepting any certificate from ${where}`
++			);
++		}
++	} else if (!conn.rejectUnauthorized) {
++		log.warn(`${who}: no caFile for the erssi at ${where} - accepting any certificate`);
++	}
++
++	return {rejectUnauthorized: Boolean(conn.rejectUnauthorized)};
++}
+diff --git a/server/feWebClient/feWebSocket.ts b/server/feWebClient/feWebSocket.ts
+index d19fefd..8c3ae55 100644
+--- a/server/feWebClient/feWebSocket.ts
++++ b/server/feWebClient/feWebSocket.ts
+@@ -10,6 +10,7 @@
+ import WebSocket from "ws";
+ import {EventEmitter} from "events";
+ import {FeWebEncryption} from "./feWebEncryption.js";
++import {FeWebPinError, FeWebTls} from "./feWebPin.js";
+ import {log as logger, redactMessage, sanitize} from "../logger.js";
+ 
+ // Message types from CLIENT-SPEC.md
+@@ -93,6 +94,10 @@ export interface FeWebConfig {
+ 	ca?: Buffer; // CA certificate for self-signed cert verification
+ 	cert?: Buffer; // Client certificate (optional)
+ 	key?: Buffer; // Client key (optional)
++	// TLS options for each connection attempt (certificate pin), asked again
++	// on every reconnect; overrides rejectUnauthorized/ca. Throws
++	// FeWebPinError when the pinned certificate cannot be used.
++	tls?: () => FeWebTls;
+ 
+ 	autoConnect?: boolean;
+ 	defaultServer?: string;
+@@ -108,10 +113,13 @@ export interface FeWebConfig {
+ type MessageHandler = (message: FeWebMessage) => void;
+ 
+ // Internal config type with all required fields
+-type InternalFeWebConfig = Required<Omit<FeWebConfig, "ca" | "cert" | "key" | "onDisconnect">> & {
++type InternalFeWebConfig = Required<
++	Omit<FeWebConfig, "ca" | "cert" | "key" | "tls" | "onDisconnect">
++> & {
+ 	ca?: Buffer;
+ 	cert?: Buffer;
+ 	key?: Buffer;
++	tls?: () => FeWebTls;
+ 	onDisconnect?: (code: number, reason: string) => void;
+ };
+ 
+@@ -148,6 +156,7 @@ export class FeWebSocket extends EventEmitter {
+ 			ca: config.ca,
+ 			cert: config.cert,
+ 			key: config.key,
++			tls: config.tls,
+ 
+ 			autoConnect: config.autoConnect ?? true,
+ 			defaultServer: config.defaultServer ?? "*",
+@@ -185,15 +194,28 @@ export class FeWebSocket extends EventEmitter {
+ 			await this.encryption.deriveKey();
+ 		}
+ 
++		// Certificate pin, read for this attempt. When it cannot be used, no
++		// connection at all (never a silent fallback to any certificate);
++		// keep retrying, the file may come back.
++		let pin: FeWebTls | null = null;
++
++		if (this.config.useTLS && this.config.tls) {
++			try {
++				pin = this.config.tls();
++			} catch (error) {
++				if (error instanceof FeWebPinError && this.config.reconnect) {
++					this.scheduleReconnect();
++				}
++
++				throw error;
++			}
++		}
++
+ 		return new Promise((resolve, reject) => {
+ 			// fe-web v1.5 REQUIRES wss:// (dual-layer security)
+ 			const protocol = this.config.useTLS ? "wss" : "ws";
+-			let url = `${protocol}://${this.config.host}:${this.config.port}/`;
+-
+-			// Add password as query parameter if provided
+-			if (this.config.password && this.config.password.length > 0) {
+-				url += `?password=${encodeURIComponent(this.config.password)}`;
+-			}
++			// no password here: URLs end up in logs and process listings
++			const url = `${protocol}://${this.config.host}:${this.config.port}/`;
+ 
+ 			const encStatus = this.encryption ? "AES-256-GCM" : "plain";
+ 			const tlsStatus = this.config.useTLS ? "TLS" : "plain";
+@@ -204,14 +226,31 @@ export class FeWebSocket extends EventEmitter {
+ 			// Prepare WebSocket options for SSL/TLS
+ 			const wsOptions: any = {};
+ 
++			// fe-web password in the upgrade request header (after repeated
++			// failures erssi checks one login every 2 s). Node sends header strings
++			// as latin1, so the UTF-8 bytes go as they are - erssi compares
++			// bytes. Never logged.
++			if (this.config.password && this.config.password.length > 0) {
++				const password = Buffer.from(this.config.password, "utf8").toString("latin1");
++				wsOptions.headers = {Authorization: `Bearer ${password}`};
++			}
++
+ 			if (this.config.useTLS) {
+ 				// SSL/TLS options for self-signed certificates
+-				if (this.config.rejectUnauthorized !== undefined) {
+-					wsOptions.rejectUnauthorized = this.config.rejectUnauthorized;
+-				}
++				if (pin) {
++					wsOptions.rejectUnauthorized = pin.rejectUnauthorized;
+ 
+-				if (this.config.ca) {
+-					wsOptions.ca = this.config.ca;
++					if (pin.ca) {
++						wsOptions.ca = pin.ca;
++					}
++				} else {
++					if (this.config.rejectUnauthorized !== undefined) {
++						wsOptions.rejectUnauthorized = this.config.rejectUnauthorized;
++					}
++
++					if (this.config.ca) {
++						wsOptions.ca = this.config.ca;
++					}
+ 				}
+ 
+ 				if (this.config.cert) {
+@@ -228,7 +267,7 @@ export class FeWebSocket extends EventEmitter {
+ 				wsOptions.maxVersion = "TLSv1.3";
+ 
+ 				logger.debug(
+-					`[FeWebSocket] SSL/TLS options: rejectUnauthorized=${wsOptions.rejectUnauthorized}, minVersion=TLSv1.2, maxVersion=TLSv1.3`
++					`[FeWebSocket] SSL/TLS options: rejectUnauthorized=${wsOptions.rejectUnauthorized}, pinned=${Boolean(wsOptions.ca)}, minVersion=TLSv1.2, maxVersion=TLSv1.3`
+ 				);
+ 			}
+ 
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index f3e7e2d..463be87 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -15,7 +15,6 @@ import {v4 as uuidv4} from "uuid";
+ import crypto from "crypto";
+ import chalk from "chalk";
+ import fs from "fs";
+-import os from "os";
+ import path from "path";
+ import type {Socket} from "socket.io";
+ 
+@@ -32,6 +31,7 @@ import {ServerToClientEvents} from "../shared/types/socket-events.js";
+ import {FeWebSocket, FeWebConfig, FeWebMessage} from "./feWebClient/feWebSocket.js";
+ import {FeWebEncryption} from "./feWebClient/feWebEncryption.js";
+ import {FeWebAdapter, FeWebAdapterCallbacks, NetworkData} from "./feWebClient/feWebAdapter.js";
++import {feWebTls} from "./feWebClient/feWebPin.js";
+ import {
+ 	IrssiNetwork,
+ 	IrssiServer,
+@@ -53,12 +53,12 @@ import {
+ 	dedupSince,
+ 	encodeName,
+ 	entryToMsg,
+-	journalDir,
+ 	missingMessages,
+ 	journalWindowName,
+ 	readEntries,
+ 	statusFile,
+ 	targetFile,
++	userJournalDir,
+ 	windowFile,
+ } from "./erssiJournal.js";
+ 
+@@ -176,7 +176,8 @@ export type IrssiConnectionConfig = {
+ 	encryption: boolean;
+ 	useTLS: boolean; // Use wss:// (required for fe-web v1.5)
+ 	rejectUnauthorized: boolean; // Accept self-signed certificates
+-	caFile?: string; // erssi's fe-web certificate (default ~/.erssi/fe-web-cert.pem)
++	caFile?: string; // erssi's fe-web certificate (default ~/.erssi/fe-web-cert.pem, local erssi only)
++	journalDir?: string; // webjournal.pl directory of this erssi (default only for a local erssi)
+ };
+ 
+ // WeeChat Relay config (per-user, stored in user.json)
+@@ -267,13 +268,15 @@ export class IrssiClient {
+ 	attachedBrowsers: Map<string, BrowserSession> = new Map();
+ 	// socket.id -> hash tokenu sesji, z ktorej przegladarka jest zalogowana
+ 	browserTokens: Map<string, string> = new Map();
++	private sessionExpiryTimer: ReturnType<typeof setInterval> | null = null;
+ 
+ 	// erssi journal (webjournal.pl): history while Nexus was down and the
+ 	// erssi windows without a channel (Notices, Mentions, script windows)
+ 	private journalTail: JournalTail | null = null;
+ 	private journalNetwork: NetworkData | null = null;
++	private journalDirInUse: string | null = null; // directory of the running setup
+ 	private journalBackfilled = new Set<string>(); // replaced (not cleared) per setup
+-	private journalStarting = false;
++	private journalStarting = 0; // setups running (handleInit, late start)
+ 	private journalLateTimer: ReturnType<typeof setTimeout> | null = null;
+ 	private journalGeneration = 0; // a newer setup or a stop supersedes a running one
+ 
+@@ -349,13 +352,16 @@ export class IrssiClient {
+ 			this.config.sessions = {};
+ 		}
+ 
+-		// Sesje nieuzywane od 30 dni wygasaja (token na zawsze to zbyt dlugo)
+-		const expiry = Date.now() - 30 * 24 * 3600 * 1000;
+-		for (const [hash, session] of Object.entries(this.config.sessions)) {
+-			if (((session as any).lastUse || 0) < expiry) {
+-				delete this.config.sessions[hash];
++		// Sesje nieuzywane od 30 dni wygasaja (token na zawsze to zbyt dlugo):
++		// przy starcie, raz dziennie i przy kazdym logowaniu
++		this.expireSessions();
++		const day = 24 * 3600 * 1000;
++		this.sessionExpiryTimer = setInterval(() => {
++			if (this.expireSessions()) {
++				this.save();
+ 			}
+-		}
++		}, day);
++		this.sessionExpiryTimer.unref();
+ 
+ 		if (!_.isPlainObject(this.config.clientSettings)) {
+ 			this.config.clientSettings = {};
+@@ -531,23 +537,6 @@ export class IrssiClient {
+ 			throw new Error("Cannot connect to irssi: irssi password not decrypted");
+ 		}
+ 
+-		// erssi keeps its fe-web certificate in ~/.erssi/fe-web-cert.pem.
+-		// With it, only that erssi is trusted - not whatever else listens on
+-		// the port while erssi restarts (it would get the password).
+-		const caFile =
+-			this.config.irssiConnection.caFile ||
+-			path.join(os.homedir(), ".erssi", "fe-web-cert.pem");
+-		let ca: Buffer | undefined;
+-
+-		try {
+-			ca = fs.readFileSync(caFile);
+-		} catch {
+-			ca = undefined;
+-			log.warn(
+-				`${this.name}: no fe-web certificate in ${caFile} - accepting any certificate from ${this.config.irssiConnection.host}:${this.config.irssiConnection.port}`
+-			);
+-		}
+-
+ 		const feWebConfig: FeWebConfig = {
+ 			host: this.config.irssiConnection.host,
+ 			port: this.config.irssiConnection.port,
+@@ -556,8 +545,8 @@ export class IrssiClient {
+ 
+ 			// SSL/TLS options (fe-web v1.5 REQUIRES wss://)
+ 			useTLS: true, // ALWAYS true for fe-web v1.5
+-			rejectUnauthorized: ca !== undefined, // pinned certificate, else any
+-			ca,
++			// erssi's certificate, read again on every (re)connect
++			tls: () => feWebTls(this.config.irssiConnection, this.name),
+ 
+ 			reconnect: true,
+ 			reconnectDelay: 1000,
+@@ -1357,11 +1346,22 @@ export class IrssiClient {
+ 	 */
+ 	detachBrowser(socketId: string): void {
+ 		const session = this.attachedBrowsers.get(socketId);
++		const tokenHash = this.browserTokens.get(socketId);
+ 
+ 		if (session) {
+ 			// LEAVE Socket.IO room
+ 			session.socket.leave(this.socketIoRoomName);
+ 			this.attachedBrowsers.delete(socketId);
++
++			// last use = when the browser left, not when it signed in: a tab
++			// open for weeks must not expire the moment it closes
++			if (
++				tokenHash &&
++				Object.prototype.hasOwnProperty.call(this.config.sessions, tokenHash)
++			) {
++				this.config.sessions[tokenHash].lastUse = Date.now();
++				this.save();
++			}
+ 		}
+ 
+ 		this.browserTokens.delete(socketId);
+@@ -1711,6 +1711,11 @@ export class IrssiClient {
+ 		this.attachedBrowsers.clear();
+ 		this.stopErssiJournal();
+ 
++		if (this.sessionExpiryTimer) {
++			clearInterval(this.sessionExpiryTimer);
++			this.sessionExpiryTimer = null;
++		}
++
+ 		// Stop WeeChat Relay server
+ 		if (this.weechatRelayServer) {
+ 			await this.stopWeeChatRelay();
+@@ -1783,9 +1788,21 @@ export class IrssiClient {
+ 	}
+ 
+ 	/**
+-	 * Update session information
++	 * Update session information. With create=false (token sign-in) only an
++	 * existing session is updated - false when it is gone (signed out or
++	 * expired meanwhile). A password sign-in creates it.
+ 	 */
+-	updateSession(token: string, ip: string, request: any): void {
++	updateSession(token: string, ip: string, request: any, create: boolean): boolean {
++		const expired = this.expireSessions();
++
++		if (!create && !Object.prototype.hasOwnProperty.call(this.config.sessions, token)) {
++			if (expired) {
++				this.save();
++			}
++
++			return false;
++		}
++
+ 		const agent = UAParser(request.headers["user-agent"] || "");
+ 		let friendlyAgent = "";
+ 
+@@ -1810,6 +1827,22 @@ export class IrssiClient {
+ 		});
+ 
+ 		this.save();
++		return true;
++	}
++
++	/** Drop sessions unused for 30 days; true when any was dropped. */
++	expireSessions(): boolean {
++		const expiry = Date.now() - 30 * 24 * 3600 * 1000;
++		let expired = false;
++
++		for (const [hash, session] of Object.entries(this.config.sessions)) {
++			if (((session as any).lastUse || 0) < expiry) {
++				delete this.config.sessions[hash];
++				expired = true;
++			}
++		}
++
++		return expired;
+ 	}
+ 
+ 	/**
+@@ -1836,15 +1869,18 @@ export class IrssiClient {
+ 	/**
+ 	 * Sign a session out: its token stops working and every browser using it
+ 	 * is sent back to the sign-in page. Without a token: the asking browser.
++	 * ack (if any) is called once the session is gone from the user file,
++	 * before the browsers are disconnected (else it would not arrive).
+ 	 */
+-	signOut(socket: Socket, tokenHash?: string): void {
++	signOut(socket: Socket, tokenHash?: string, ack?: () => void): void {
+ 		const target = tokenHash || this.browserTokens.get(socket.id);
+ 
+ 		if (!target || !Object.prototype.hasOwnProperty.call(this.config.sessions, target)) {
++			ack?.(); // nothing (left) to revoke
+ 			return;
+ 		}
+ 
+-		this.revokeSessions([target]);
++		this.revokeSessions([target], ack);
+ 	}
+ 
+ 	/** Sign out every session except the asking browser's own. */
+@@ -1853,8 +1889,9 @@ export class IrssiClient {
+ 		this.revokeSessions(Object.keys(this.config.sessions).filter((hash) => hash !== mine));
+ 	}
+ 
+-	private revokeSessions(hashes: string[]): void {
++	private revokeSessions(hashes: string[], ack?: () => void): void {
+ 		if (hashes.length === 0) {
++			ack?.();
+ 			return;
+ 		}
+ 
+@@ -1863,6 +1900,7 @@ export class IrssiClient {
+ 		}
+ 
+ 		this.save();
++		ack?.();
+ 
+ 		for (const [socketId, hash] of [...this.browserTokens]) {
+ 			if (!hashes.includes(hash)) {
+@@ -2401,9 +2439,9 @@ export class IrssiClient {
+ 		this.stopErssiJournal();
+ 		const generation = this.journalGeneration;
+ 		const superseded = () => generation !== this.journalGeneration;
+-		const dir = journalDir();
++		const dir = userJournalDir(this.config.irssiConnection);
+ 
+-		if (!this.messageStorage || !fs.existsSync(dir)) {
++		if (!dir || !this.messageStorage || !fs.existsSync(dir)) {
+ 			return null;
+ 		}
+ 
+@@ -2419,6 +2457,7 @@ export class IrssiClient {
+ 		}
+ 
+ 		this.journalNetwork = windows;
++		this.journalDirInUse = dir;
+ 		// set before the backfill: channels joining meanwhile backfill
+ 		// themselves (handleChannelJoin), the backfilled set prevents doubles
+ 		this.journalTail = tail;
+@@ -2470,11 +2509,11 @@ export class IrssiClient {
+ 	 * the attached browsers.
+ 	 */
+ 	private async startErssiJournalLate(): Promise<void> {
+-		if (this.journalStarting || this.journalTail) {
++		if (this.journalStarting > 0 || this.journalTail) {
+ 			return;
+ 		}
+ 
+-		this.journalStarting = true;
++		this.journalStarting++;
+ 
+ 		try {
+ 			const real = this.networks.filter((n) => n.uuid !== IrssiClient.JOURNAL_NETWORK_UUID);
+@@ -2484,9 +2523,17 @@ export class IrssiClient {
+ 				return;
+ 			}
+ 
++			// fe-web dropped or handleInit set the journal up again while the
++			// history loaded: that setup (or none) is the current one
++			const generation = this.journalGeneration;
++
+ 			for (const channel of windows.channels) {
+ 				if (channel.type !== ChanType.LOBBY) {
+ 					await this.loadChannelHistory(windows, channel);
++
++					if (generation !== this.journalGeneration) {
++						return;
++					}
+ 				}
+ 			}
+ 
+@@ -2507,7 +2554,7 @@ export class IrssiClient {
+ 		} catch (err) {
+ 			logger.error(`[IrssiClient] erssi journal start failed: ${err}`);
+ 		} finally {
+-			this.journalStarting = false;
++			this.journalStarting--;
+ 		}
+ 	}
+ 
+@@ -2517,6 +2564,7 @@ export class IrssiClient {
+ 		this.journalTail?.stop();
+ 		this.journalTail = null;
+ 		this.journalNetwork = null;
++		this.journalDirInUse = null;
+ 		this.journalBackfilled = new Set();
+ 	}
+ 
+@@ -2585,7 +2633,11 @@ export class IrssiClient {
+ 	}
+ 
+ 	private journalFile(network: NetworkData, channel: Chan): string | null {
+-		const dir = journalDir();
++		const dir = this.journalDirInUse;
++
++		if (!dir) {
++			return null;
++		}
+ 
+ 		if (network.uuid === IrssiClient.JOURNAL_NETWORK_UUID) {
+ 			return channel.type === ChanType.LOBBY ? null : windowFile(dir, channel.name);
+@@ -3110,7 +3162,7 @@ export class IrssiClient {
+ 		// (marked as starting, so a network arriving meanwhile does not start
+ 		// a second, competing setup through startErssiJournalLate)
+ 		this.cancelLateJournal();
+-		this.journalStarting = true;
++		this.journalStarting++;
+ 		let journalNetwork: NetworkData | null = null;
+ 
+ 		try {
+@@ -3119,7 +3171,7 @@ export class IrssiClient {
+ 			// a storage error must not take init (and the server) down
+ 			logger.error(`[IrssiClient] erssi journal setup failed: ${err}`);
+ 		} finally {
+-			this.journalStarting = false;
++			this.journalStarting--;
+ 		}
+ 
+ 		if (journalNetwork) {
+diff --git a/server/server.ts b/server/server.ts
+index ce0a945..cf004f7 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -11,6 +11,7 @@ import net from "net";
+ 
+ import logger, {log} from "./logger.js";
+ import {IrssiClient} from "./irssiClient.js";
++import {feWebTls} from "./feWebClient/feWebPin.js";
+ import ClientManager from "./clientManager.js";
+ import Uploader from "./plugins/uploader.js";
+ import Helper from "./helper.js";
+@@ -759,6 +760,16 @@ function getClientConfiguration(): SharedConfiguration | LockedSharedConfigurati
+ 	return result;
+ }
+ 
++/** Request data for the log: the fe-web password is never written out. */
++function withoutPassword(data: unknown) {
++	if (!_.isPlainObject(data)) {
++		return data;
++	}
++
++	const record = data as Record<string, unknown>;
++	return {...record, password: record.password ? "***" : undefined};
++}
++
+ function getServerConfiguration(): ServerConfiguration {
+ 	return {...Config.values, ...{stylesheets: packages.getStylesheets()}};
+ }
+@@ -773,6 +784,14 @@ function initializeIrssiClient(
+ 	lastMessage: number,
+ 	openChannel: number
+ ) {
++	// A token sign-in refreshes its session only while it still exists: one
++	// signed out between the token check and here must not come back.
++	if (token && !client.updateSession(token, getClientIp(socket), socket.request, false)) {
++		log.warn(`Session of user ${chalk.bold(client.name)} was signed out meanwhile`);
++		socket.emit("auth:failed");
++		return;
++	}
++
+ 	socket.removeAllListeners("auth:perform"); // Remove all auth:perform listeners (wrapped version was registered)
+ 	socket.emit("auth:success");
+ 
+@@ -803,13 +822,17 @@ function initializeIrssiClient(
+ 	// password sign-in makes a new one. (Every reload used to add a session whose
+ 	// token stayed valid forever.)
+ 	if (token) {
+-		client.updateSession(token, getClientIp(socket), socket.request);
+ 		client.browserTokens.set(socket.id, token);
+ 		continueInit();
+ 	} else {
+ 		client.generateToken((newToken) => {
++			// the browser left while the token was made: no session for it
++			if (!socket.connected) {
++				return;
++			}
++
+ 			const tokenHash = client.calculateTokenHash(newToken);
+-			client.updateSession(tokenHash, getClientIp(socket), socket.request);
++			client.updateSession(tokenHash, getClientIp(socket), socket.request, true);
+ 			client.browserTokens.set(socket.id, tokenHash);
+ 			// Continue with init, passing token to attachBrowser
+ 			continueInit(newToken);
+@@ -817,7 +840,15 @@ function initializeIrssiClient(
+ 	}
+ 
+ 	socket.on("sessions:get", () => client.sendSessionList(socket));
+-	socket.on("sign-out", (tokenToSignOut?: string) => client.signOut(socket, tokenToSignOut));
++	// the acknowledgement tells the browser its session is revoked, so it can
++	// leave without its token still working on the server
++	socket.on("sign-out", (tokenToSignOut?: string | null, ack?: () => void) =>
++		client.signOut(
++			socket,
++			typeof tokenToSignOut === "string" ? tokenToSignOut : undefined,
++			typeof ack === "function" ? ack : undefined
++		)
++	);
+ 	socket.on("sessions:signout_others", () => client.signOutOthers(socket));
+ 
+ 	// Handle disconnect
+@@ -951,6 +982,12 @@ function initializeIrssiClient(
+ 						const hash = Helper.password.hash(p1);
+ 
+ 						client.setPassword(hash, (success: boolean) => {
++							// a new password ends the other sessions (someone
++							// who knew the old one may still be signed in)
++							if (success) {
++								client.signOutOthers(socket);
++							}
++
+ 							socket.emit("change-password", {
+ 								success: success,
+ 								error: success ? undefined : "update_failed",
+@@ -981,7 +1018,7 @@ function initializeIrssiClient(
+ 	});
+ 
+ 	(socket as any).on("irssi:config:save", async (data: any) => {
+-		log.info(`[irssi:config:save] Request from ${socket.id}:`, data);
++		log.info(`[irssi:config:save] Request from ${socket.id}:`, withoutPassword(data));
+ 
+ 		if (!_.isPlainObject(data)) {
+ 			log.error(`[irssi:config:save] Invalid data type`);
+@@ -1068,7 +1105,7 @@ function initializeIrssiClient(
+ 	});
+ 
+ 	(socket as any).on("irssi:config:test", async (data: any) => {
+-		log.info(`[irssi:config:test] Request from ${socket.id}:`, data);
++		log.info(`[irssi:config:test] Request from ${socket.id}:`, withoutPassword(data));
+ 
+ 		if (!_.isPlainObject(data)) {
+ 			log.error(`[irssi:config:test] Invalid data type`);
+@@ -1091,14 +1128,24 @@ function initializeIrssiClient(
+ 			// Import FeWebSocket
+ 			const {FeWebSocket} = await import("./feWebClient/feWebSocket.js");
+ 
+-			// Create temporary connection for testing
++			// Create temporary connection for testing, with the same certificate
++			// pin as the real one (the password must not go to just anyone)
+ 			const testSocket = new FeWebSocket({
+ 				host,
+ 				port,
+ 				password: irssiWebSocketPassword, // irssi WebSocket password (NOT The Lounge password!)
+ 				encryption: true,
+ 				useTLS: true,
+-				rejectUnauthorized: rejectUnauthorized ?? false,
++				tls: () =>
++					feWebTls(
++						{
++							host,
++							port,
++							caFile: client.config.irssiConnection.caFile,
++							rejectUnauthorized: rejectUnauthorized ?? false,
++						},
++						client.name
++					),
+ 				reconnect: false, // Don't auto-reconnect for test
+ 			});
+ 
+@@ -1409,7 +1456,7 @@ async function performAuthentication(this: Socket, data: AuthPerformData) {
+ 
+ 			socket.emit(
+ 				"push:issubscribed",
+-				token && (client.config.sessions[token] as any).pushSubscription ? true : false
++				token && (client.config.sessions[token] as any)?.pushSubscription ? true : false
+ 			);
+ 		}
+ 
+diff --git a/shared/types/socket-events.d.ts b/shared/types/socket-events.d.ts
+index 1178af6..c9cdffd 100644
+--- a/shared/types/socket-events.d.ts
++++ b/shared/types/socket-events.d.ts
+@@ -182,7 +182,8 @@ interface ClientToServerEvents {
+ 	"network:edit": (data: Record<string, any>) => void;
+ 	"network:new": (data: Record<string, any>) => void;
+ 
+-	"sign-out": (token?: string) => void;
++	// ack: called by the server once the session is revoked
++	"sign-out": (token?: string | null, ack?: () => void) => void;
+ 
+ 	"history:clear": EventHandler<{target: number}>;
+ 
+-- 
+2.47.3
+
