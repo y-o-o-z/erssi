@@ -18,6 +18,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0016 | The message view follows the terminal: sender column as wide as the longest nick in the window, time without brackets, erssi lines with their source in the sender column; shellter polish (readable hover, dark inputs, sentence-case buttons, mIRC colors readable on both backgrounds). |
 | 0017 | Page head: document language, pinch zoom on phones, font preload. |
 | 0018 | The whole interface in Polish (chat, events with Polish plural forms, settings, network manager, help, menus, notifications, server feedback, dates) and one brand, erssi@tahio. |
+| 0019 | Trust only erssi's own fe-web certificate (`~/.erssi/fe-web-cert.pem`, kept by erssi since 1.3.2) instead of any certificate on the port. |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in

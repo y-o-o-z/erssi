@@ -1,0 +1,72 @@
+From bda8056f9788aa32833c6dd345a21d79161d4dbd Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 09:44:05 +0200
+Subject: [PATCH] local: pin erssi's fe-web certificate
+
+erssi now keeps its fe-web key and self-signed certificate in
+~/.erssi (fe-web-key.pem, fe-web-cert.pem) instead of making a new one at
+every start. Trust exactly that certificate (irssiConnection.caFile,
+default ~/.erssi/fe-web-cert.pem) instead of any: while erssi restarts,
+another local user could listen on the port and receive the password.
+Without the file the old behaviour stays, with a warning in the log.
+---
+ server/irssiClient.ts | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index 2b8e2256..27e3ae8b 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -15,6 +15,7 @@ import {v4 as uuidv4} from "uuid";
+ import crypto from "crypto";
+ import chalk from "chalk";
+ import fs from "fs";
++import os from "os";
+ import path from "path";
+ import type {Socket} from "socket.io";
+ 
+@@ -175,6 +176,7 @@ export type IrssiConnectionConfig = {
+ 	encryption: boolean;
+ 	useTLS: boolean; // Use wss:// (required for fe-web v1.5)
+ 	rejectUnauthorized: boolean; // Accept self-signed certificates
++	caFile?: string; // erssi's fe-web certificate (default ~/.erssi/fe-web-cert.pem)
+ };
+ 
+ // WeeChat Relay config (per-user, stored in user.json)
+@@ -519,6 +521,23 @@ export class IrssiClient {
+ 			throw new Error("Cannot connect to irssi: irssi password not decrypted");
+ 		}
+ 
++		// erssi keeps its fe-web certificate in ~/.erssi/fe-web-cert.pem.
++		// With it, only that erssi is trusted - not whatever else listens on
++		// the port while erssi restarts (it would get the password).
++		const caFile =
++			this.config.irssiConnection.caFile ||
++			path.join(os.homedir(), ".erssi", "fe-web-cert.pem");
++		let ca: Buffer | undefined;
++
++		try {
++			ca = fs.readFileSync(caFile);
++		} catch {
++			ca = undefined;
++			log.warn(
++				`${this.name}: no fe-web certificate in ${caFile} - accepting any certificate from ${this.config.irssiConnection.host}:${this.config.irssiConnection.port}`
++			);
++		}
++
+ 		const feWebConfig: FeWebConfig = {
+ 			host: this.config.irssiConnection.host,
+ 			port: this.config.irssiConnection.port,
+@@ -527,7 +546,8 @@ export class IrssiClient {
+ 
+ 			// SSL/TLS options (fe-web v1.5 REQUIRES wss://)
+ 			useTLS: true, // ALWAYS true for fe-web v1.5
+-			rejectUnauthorized: false, // Accept self-signed certificates
++			rejectUnauthorized: ca !== undefined, // pinned certificate, else any
++			ca,
+ 
+ 			reconnect: true,
+ 			reconnectDelay: 1000,
+-- 
+2.47.3
+
