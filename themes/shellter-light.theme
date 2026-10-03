@@ -225,6 +225,20 @@ abstracts = {
 
   sbaway = " %Z7D4E00away%N";
   sbnickmode = "$0";
+
+  # contents of the statusbar items of the default config (see
+  # default.theme): clock, nick, window item, modes, lag, activity, "more",
+  # prompt ($0 tag, $1- item) and prompt without an item ($1 window name);
+  # at least 4.5:1 on the statusbar background #eff2f5
+  sb_time = "%Z59636E$*%N";
+  sb_nick = "%Z0969DA$*";
+  sb_item = "%Z0969DA$*";
+  sb_mode = "%Z59636E(%Z0969DA$*%Z59636E)%N";
+  sb_lag = "%Z59636ELag:%N %Z1F2328$*%N";
+  sb_act = "%Z59636EAct:%N $*";
+  sb_more = "%Z59636E-- %Z1F2328more %Z59636E--";
+  sb_prompt = "%Z59636E[%Z0969DA$0%Z59636E❱%N $1-%Z59636E]%N ";
+  sb_prompt_empty = "%Z59636E[%Z0969DA$1%Z59636E]%N ";
 };
 
 ##############################################################################
