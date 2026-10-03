@@ -183,6 +183,17 @@ and erssi's own windows — with every command executed by erssi.
 /save
 ```
 
+On a shared box, listen on a Unix socket instead of the loopback port,
+which every user of the box can connect to:
+
+```
+/set fe_web_socket ~/.erssi/fe-web.sock
+```
+
+The socket is readable and writable only by you (0600, in a directory only
+you can write to) and connections from other users' processes are refused;
+TLS and the password work as on TCP. `/help fe_web` has the details.
+
 [contrib/nexusirc](contrib/nexusirc/README.md) holds the NexusIRC patch series
 (Polish interface, terminal-like view, certificate pinning) with build steps
 and reverse-proxy notes. Keep fe-web on `127.0.0.1`; expose only the web
