@@ -1059,10 +1059,11 @@ static void event_whois_idle(IRC_SERVER_REC *server, const char *data)
 	rec = whois_get_or_create(server, nick);
 	if (rec != NULL) {
 		g_free(rec->idle);
-		g_free(rec->signon);
 		rec->idle = g_strdup(secstr);
-		/* Only set signon if "signon time" is in rest */
+		/* Only set signon if "signon time" is in rest - and only then
+		 * free the old one, which would otherwise stay dangling */
 		if (strstr(rest, "signon time") != NULL) {
+			g_free(rec->signon);
 			rec->signon = g_strdup(signonstr);
 		}
 	}
