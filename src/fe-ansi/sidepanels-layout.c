@@ -214,13 +214,21 @@ void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		x = 0;
 		w = ctx->left_w;
 		if (ctx->left_tw) {
-			/* Panel already exists, just move to correct position */
+			/* Panel already exists, just move to correct position. A moved
+			   panel (e.g. a topic bar appeared above it) has nothing of its
+			   cached lines at the new rows - forget them, or the old rows
+			   stay on screen shifted by one. */
+			if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h)
+				sp_cache_clear(ctx->left_cache);
 			term_window_move(ctx->left_tw, x, y, w, h);
 		} else {
 			/* Reserve space for left panel - this shifts main window right */
 			mainwindows_reserve_columns(ctx->left_w, 0);
 			/* Use explicit left panel creation - handles ncplane properly */
 			ctx->left_tw = term_window_create_left_panel(w);
+			/* the panel window is created at row 0 with the full terminal
+			   height; put it where it belongs before anything is drawn in it */
+			term_window_move(ctx->left_tw, x, y, w, h);
 			/* Force statusbar redraw to fix input box positioning */
 			signal_emit("mainwindow resized", 1, mw);
 		}
@@ -277,6 +285,8 @@ void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		if (ctx->right_tw) {
 			/* Panel already exists, space already reserved, use current last_column */
 			x = mw->last_column + 1;
+			if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h)
+				sp_cache_clear(ctx->right_cache);
 			term_window_move(ctx->right_tw, x, y, w, h);
 		} else {
 			/* Reserve space for right panel - this shrinks main window */
@@ -285,6 +295,10 @@ void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 			x = mw->last_column + 1;
 			/* Use explicit right panel creation - handles ncplane properly */
 			ctx->right_tw = term_window_create_right_panel(w);
+			/* created at row 0 with the full terminal height: drawn there,
+			   then moved under the topic bar, its first nick stayed hidden
+			   and the rest shifted by one row (the cache saw no change) */
+			term_window_move(ctx->right_tw, x, y, w, h);
 			/* Force statusbar redraw to fix input box positioning */
 			signal_emit("mainwindow resized", 1, mw);
 		}
