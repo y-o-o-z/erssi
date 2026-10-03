@@ -727,6 +727,10 @@ formats = {
     sidepanel_nick_halfop_status = " %Z3FB950%_$0%_%N%Z7EE787$1%N";
     sidepanel_nick_voice_status = " %Z79C0FF%_$0%_%N%ZA5D6FF$1%N";
     sidepanel_nick_normal_status = " %Z484F58$0%N%Z7D8590$1%N";
+
+    # Arrows at the top/bottom of a panel with more entries than fit
+    # ($0 is the arrow), on the panel background
+    sidepanel_scroll_arrow = "%ZF59E0B$0%N";
   };
 
   "fe-common/perl" = {
