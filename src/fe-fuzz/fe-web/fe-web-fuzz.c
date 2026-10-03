@@ -139,6 +139,9 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 
 /* browser end of the socketpair of the current client */
 static int peer_fd = -1;
+/* what it got and did not show yet, and whether the HTTP part is over */
+static GByteArray *sent = NULL;
+static gboolean sent_http_done;
 
 WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
 {
@@ -150,6 +153,10 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
 	fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
 	fcntl(sv[1], F_SETFL, fcntl(sv[1], F_GETFL) | O_NONBLOCK);
 	peer_fd = sv[1];
+	if (sent == NULL)
+		sent = g_byte_array_new();
+	g_byte_array_set_size(sent, 0);
+	sent_http_done = logged_in;
 
 	client = fe_web_client_create(sv[0], "fuzz:0");
 	client->handle = net_sendbuffer_create(i_io_channel_new(sv[0]), 0);
@@ -168,7 +175,53 @@ gboolean fe_web_fuzz_client_alive(WEB_CLIENT_REC *client)
 	return g_slist_find(web_clients, client) != NULL;
 }
 
-/* drop what fe-web sent to the browser (FE_WEB_FUZZ_VERBOSE: print it) */
+/* FE_WEB_FUZZ_VERBOSE: what the browser got, the HTTP response and then
+ * each frame, encrypted ones decrypted */
+static void show_sent(void)
+{
+	for (;;) {
+		int fin, opcode, masked, ret, len;
+		guint64 payload_len;
+		guchar mask_key[4];
+		const guchar *payload;
+		char *text;
+
+		if (!sent_http_done) {
+			const guchar *end = memmem(sent->data, sent->len, "\r\n\r\n", 4);
+
+			if (end == NULL)
+				return;
+			len = end + 4 - sent->data;
+			fprintf(stderr, "fe-web sent: %.*s", len, (const char *) sent->data);
+			g_byte_array_remove_range(sent, 0, len);
+			sent_http_done = TRUE;
+			continue;
+		}
+		ret = fe_web_websocket_parse_frame(sent->data, sent->len, &fin, &opcode, &masked,
+		                                   &payload_len, mask_key, &payload);
+		if (ret <= 0)
+			return;
+		len = payload - sent->data + payload_len;
+		if (opcode == WS_OPCODE_BINARY) {
+			guchar *plain = g_malloc(payload_len + 1);
+			int plain_len = 0;
+
+			if (fe_web_crypto_decrypt(payload, payload_len, fe_web_crypto_get_key(),
+			                          plain, &plain_len))
+				fprintf(stderr, "fe-web sent: %.*s\n", plain_len, (char *) plain);
+			else
+				fprintf(stderr, "fe-web sent: undecryptable frame\n");
+			g_free(plain);
+		} else {
+			text = g_strndup((const char *) payload, payload_len);
+			fprintf(stderr, "fe-web sent opcode %d: %s\n", opcode, text);
+			g_free(text);
+		}
+		g_byte_array_remove_range(sent, 0, len);
+	}
+}
+
+/* drop what fe-web sent to the browser */
 static void drain_peer(void)
 {
 	char buf[16384];
@@ -176,11 +229,8 @@ static void drain_peer(void)
 
 	while ((n = read(peer_fd, buf, sizeof(buf))) > 0) {
 		if (verbose) {
-			char *raw = g_strndup(buf, n);
-			char *shown = g_strescape(raw, NULL);
-			fprintf(stderr, "fe-web sent %zd bytes: %.200s\n", n, shown);
-			g_free(shown);
-			g_free(raw);
+			g_byte_array_append(sent, (const guchar *) buf, n);
+			show_sent();
 		}
 	}
 }
@@ -231,6 +281,7 @@ void fe_web_fuzz_client_send_split(WEB_CLIENT_REC *client, const guchar *data, g
 
 void fe_web_fuzz_client_free(WEB_CLIENT_REC *client)
 {
+	drain_peer();
 	if (fe_web_fuzz_client_alive(client))
 		fe_web_close_client(client);
 	if (peer_fd != -1) {
