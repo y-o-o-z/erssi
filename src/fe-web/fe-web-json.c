@@ -15,6 +15,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 /* Value of the 4 hex digits at p, or -1 */
 static int json_hex4(const char *p)
@@ -142,7 +144,7 @@ char *fe_web_json_get_string(const char *json, const char *key)
 	pos++;
 
 	/* Skip whitespace */
-	while (*pos != '\0' && isspace(*pos)) {
+	while (*pos != '\0' && isspace((unsigned char) *pos)) {
 		pos++;
 	}
 
@@ -185,7 +187,8 @@ int fe_web_json_get_int(const char *json, const char *key, int default_value)
 {
 	char *search_str;
 	char *pos;
-	int value;
+	char *end;
+	long value;
 
 	if (json == NULL || key == NULL) {
 		return default_value;
@@ -208,16 +211,23 @@ int fe_web_json_get_int(const char *json, const char *key, int default_value)
 	pos++;
 
 	/* Skip whitespace */
-	while (*pos != '\0' && isspace(*pos)) {
+	while (*pos != '\0' && isspace((unsigned char) *pos)) {
 		pos++;
 	}
 
-	/* Parse integer */
-	if (sscanf(pos, "%d", &value) == 1) {
-		return value;
-	}
+	/* JSON booleans, as server_list sends them (use_tls, autoconnect) */
+	if (strncmp(pos, "true", 4) == 0)
+		return 1;
+	if (strncmp(pos, "false", 5) == 0)
+		return 0;
 
-	return default_value;
+	/* Parse integer: one that does not fit an int is not taken
+	 * (sscanf("%d") is undefined for it) */
+	errno = 0;
+	value = strtol(pos, &end, 10);
+	if (end == pos || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+		return default_value;
+	return (int) value;
 }
 
 /* Check if JSON has a key */
