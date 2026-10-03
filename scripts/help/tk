@@ -1,75 +1,75 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
-TK %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [<czas>] <powód>
+TK %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [<time>] <reason>
 TK HELP%|
 TK MASK %|[-server <tag>] [-mask ident|host|domain] <nick>
 TK PENDING%|
 TK RECENT%|
 TK YES%|
 TK NO%|
-TK LIST %|[<maska>]
-TK KLIST %|[<maska>]
+TK LIST %|[<mask>]
+TK KLIST %|[<mask>]
 
-%9Parametry:%9
+%9Parameters:%9
 
-    HELP:        Skrócona pomoc skryptu (to samo co /TKHELP), z listą
-                 ustawień i ścieżką dziennika.
-    MASK:        Robi WHOIS nicka i pokazuje ident@host oraz maski, które
-                 zbudowałby skrypt (ident, host, domain). Nic nie wysyła
-                 i nie wymaga statusu IRC operatora.
-    PENDING:     Zlecenia czekające na odpowiedź WHOIS i czas oczekiwania.
-    RECENT:      Ostatnie 20 komend TKLINE/UNTKLINE wysłanych w tej sesji:
-                 godzina, tag, maska, czas i powód.
-    YES:         Wysyła TKLINE czekające na potwierdzenie (tk_confirm).
-    NO:          Anuluje TKLINE czekające na potwierdzenie.
-    LIST:        To samo co /TKLIST (STATS k).
-    KLIST:       To samo co /KLIST (STATS K).
+    HELP:        Short built-in help of the script (same as /TKHELP), with
+                 the list of settings and the audit log path.
+    MASK:        Runs WHOIS on the nick and shows its ident@host and the
+                 masks the script would build (ident, host, domain). Sends
+                 nothing and does not require IRC operator status.
+    PENDING:     Requests waiting for a WHOIS reply, with waiting time.
+    RECENT:      The last 20 TKLINE/UNTKLINE commands sent in this
+                 session: time, tag, mask, duration and reason.
+    YES:         Sends the TKLINE waiting for confirmation (tk_confirm).
+    NO:          Cancels the TKLINE waiting for confirmation.
+    LIST:        Same as /TKLIST (STATS k).
+    KLIST:       Same as /KLIST (STATS K).
 
-    Bez podkomendy /TK działa dokładnie jak /TKL i przyjmuje te same opcje
-    i argumenty.
+    Without a subcommand /TK works exactly like /TKL and takes the same
+    options and arguments.
 
-%9Opis:%9
+%9Description:%9
 
-    Główna komenda skryptu tk.pl - czasowe K-linie (TKLINE) dla ircd 2.11
-    (IRCnet). Szczegóły nakładania K-linii opisuje /HELP TKL.
+    The main command of the tk.pl script - temporary K-lines (TKLINE) for
+    ircd 2.11 (IRCnet). See /HELP TKL for how K-lines are set.
 
-    Potwierdzenia (tk_confirm = ON) są przechowywane osobno dla każdego
-    serwera: YES i NO dotyczą serwera aktywnego okna, a na serwerze czeka
-    najwyżej jedno TKLINE - nowe zastępuje poprzednie. Po 60 sekundach
-    YES odpowiada „nie ma nic do potwierdzenia”.
+    Confirmations (tk_confirm = ON) are kept separately for each server:
+    YES and NO apply to the server of the active window, and at most one
+    TKLINE waits per server - a new one replaces the previous one. After
+    60 seconds YES replies "nothing to confirm".
 
-    Nick o nazwie podkomendy (np. „yes”, „list”) trzeba podawać przez
-    /TKL - /TK potraktuje go jako podkomendę.
+    A nick that equals a subcommand name (e.g. "yes", "list") must be
+    given with /TKL - /TK would treat it as the subcommand.
 
-%9Ustawienia:%9
+%9Settings:%9
 
     tk_mask_type = ident
-        Domyślny rodzaj maski: ident, host albo domain.
+        Default mask type: ident, host or domain.
     tk_default_time = 30m
-        Czas K-linii, gdy nie podano go w komendzie.
+        K-line duration when none is given in the command.
     tk_max_time = 30d
-        Najdłuższy dozwolony czas; 0 albo pusty = bez limitu.
+        Longest allowed duration; 0 or empty = no limit.
     tk_whois_timeout_ms = 10000
-        Czas oczekiwania na WHOIS (przycinany do 2000-60000 ms).
+        How long to wait for WHOIS (clamped to 2000-60000 ms).
     tk_reason_max = 0
-        Limit długości powodu; 0 = TOPICLEN serwera, a bez niego 160.
+        Maximum reason length; 0 = the server's TOPICLEN, or 160 without it.
     tk_require_oper = ON
-        Bez +o (/OPER) komendy TKL i UNTKL odmawiają działania.
+        Without +o (/OPER) the TKL and UNTKL commands refuse to work.
     tk_allow_broad = OFF
-        ON pozwala na szerokie maski bez -force.
+        ON allows broad masks without -force.
     tk_confirm = OFF
-        ON = każde TKLINE wymaga potwierdzenia /TK YES.
+        ON = every TKLINE requires confirmation with /TK YES.
     tk_audit = ON
-        Zapis zdarzeń w ~/.erssi/tk_audit.jsonl (JSON, prawa 0600).
+        Log events to ~/.erssi/tk_audit.jsonl (JSON, mode 0600).
 
-%9Przykłady:%9
+%9Examples:%9
 
-    /TK spammer 30m flood reklamowy
+    /TK spammer 30m advertising flood
     /TK MASK spammer
-    /TK -mask host -dry spammer 1h klony
+    /TK -mask host -dry spammer 1h clones
     /TK YES
     /TK RECENT
 
-%9Zobacz też:%9 KLIST, TKHELP, TKL, TKLIST, UNTKL
+%9See also:%9 KLIST, TKHELP, TKL, TKLIST, UNTKL
 

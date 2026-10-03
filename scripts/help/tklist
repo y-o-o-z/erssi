@@ -1,26 +1,28 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
-TKLIST %|[<maska>]
+TKLIST %|[<mask>]
 
-%9Parametry:%9
+%9Parameters:%9
 
-    Opcjonalna maska przekazywana serwerowi jako argument STATS.
+    An optional mask passed to the server as the STATS argument.
 
-%9Opis:%9
+%9Description:%9
 
-    Wysyła STATS k do serwera aktywnego okna, czyli prosi o listę czasowych
-    K-linii (tklinii) na ircd 2.11. Odpowiedź serwera erssi wyświetla jak
-    każdą inną. Komenda skryptu tk.pl; to samo robi /TK LIST.
+    Sends STATS k to the server of the active window, asking for the list
+    of temporary K-lines (tklines) on ircd 2.11. erssi shows the server's
+    reply like any other. A command of the tk.pl script; /TK LIST does the
+    same.
 
-    Argument musi być jednym słowem (do 64 znaków) - inny jest pomijany
-    i idzie samo STATS k. Skrypt nie sprawdza uprawnień; to serwer decyduje,
-    czy pokaże listę osobie bez statusu IRC operatora.
+    The argument must be a single word (up to 64 characters) - anything
+    else is ignored and a plain STATS k is sent. The script does not check
+    privileges; the server decides whether to show the list to someone
+    without IRC operator status.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /TKLIST
     /TKLIST *@*.example.org
 
-%9Zobacz też:%9 KLIST, STATS, TK, TKL, UNTKL
+%9See also:%9 KLIST, STATS, TK, TKL, UNTKL
 

@@ -1,44 +1,44 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
 WEBJOURNAL%|
 
-%9Opis:%9
+%9Description:%9
 
-    Pokazuje stan dziennika okien: czy jest włączony, katalog, liczbę
-    zapisanych wpisów, rotacji plików i błędów (z ostatnim błędem).
-    Liczniki są liczone od załadowania skryptu. Argumenty są ignorowane;
-    włącza się i wyłącza przez /SET webjournal. Komenda skryptu
-    webjournal.pl.
+    Shows the state of the window journal: whether it is enabled, the
+    directory, and the number of entries written, file rotations and
+    errors (with the last error). The counters start when the script is
+    loaded. Arguments are ignored; the journal is turned on and off with
+    /SET webjournal. A command of the webjournal.pl script.
 
-    Skrypt zapisuje na dysk wszystko, co widać w oknach erssi, żeby klient
-    web po restarcie uzupełnił luki:
-      <katalog>/<tag>/<kanał|nick>.jsonl  wiadomości kanałów i rozmów
-                                          (wpisy JSON: czas, rodzaj, nick,
-                                          treść), plus komunikaty klienta
-                                          i skryptów z tych okien,
-      <katalog>/<tag>/%%status.jsonl       okno statusu sieci <tag>,
-      <katalog>/%%windows/<nazwa>.jsonl    inne nazwane okna (Notices,
-                                          Mentions, skaner...).
+    The script writes to disk everything visible in erssi windows, so that
+    the web client can fill in gaps after a restart:
+      <dir>/<tag>/<channel|nick>.jsonl   channel and query messages (JSON
+                                         entries: time, kind, nick, text),
+                                         plus client and script messages
+                                         shown in those windows,
+      <dir>/<tag>/%%status.jsonl          the status window of network <tag>,
+      <dir>/%%windows/<name>.jsonl        other named windows (Notices,
+                                         Mentions, skaner...).
 
-    Nazwy są zapisywane małymi literami, znaki spoza [a-z0-9#&+!._-] jako
-    %%XX. Wiadomości ignorowane przez /IGNORE nie są zapisywane. Plik większy
-    niż webjournal_max_kb przechodzi w <plik>.1 (poprzedni .1 znika).
-    Pliki mają prawa 0600, katalogi 0700.
+    Names are stored in lower case, characters outside [a-z0-9#&+!._-] as
+    %%XX. Messages ignored with /IGNORE are not written. A file larger than
+    webjournal_max_kb is renamed to <file>.1 (the previous .1 is removed).
+    Files have mode 0600, directories 0700.
 
-%9Ustawienia:%9
+%9Settings:%9
 
     webjournal = ON
-        Zapis dziennika.
+        Write the journal.
     webjournal_dir = ~/.erssi/journal
-        Katalog dziennika.
+        The journal directory.
     webjournal_max_kb = 2048
-        Rozmiar pliku, po którym następuje rotacja (0 lub mniej = 2048).
+        File size that triggers rotation (0 or less = 2048).
 
-%9Przykłady:%9
+%9Examples:%9
 
     /WEBJOURNAL
     /SET webjournal OFF
 
-%9Zobacz też:%9 LOG, SET
+%9See also:%9 LOG, SET
 

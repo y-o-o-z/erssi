@@ -58,12 +58,12 @@ use warnings;
 use Irssi;
 use Irssi::TextUI;
 
-our $VERSION = '1.2.3';
+our $VERSION = '1.2.4';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
     name        => 'botnet',
-    description => 'Partyline botnetow: jedno polaczenie i jedno okno na botnet, zamkniecie okna = rozlaczenie',
+    description => 'Botnet partylines: one connection and one window per botnet; closing the window disconnects',
     license     => 'MIT',
     url         => 'https://github.com/y-o-o-z/irssi_scripts',
 );
@@ -139,6 +139,12 @@ sub botnet_of_address {
     return undef;
 }
 
+# "1 attempt" / "3 attempts"
+sub plural {
+    my ($n, $one, $many) = @_;
+    return "$n " . ($n == 1 ? $one : ($many // "${one}s"));
+}
+
 sub display_name {
     my ($botnet) = @_;
     my %set = botnets();
@@ -208,6 +214,18 @@ sub pl_window {
     return $win // Irssi::window_find_name(pl_window_name($server));
 }
 
+# Okno po wskazniku (_irssi), pobrane od nowa. Obiekt okna nie przezywa
+# query->destroy() ani "window item move": erssi samo zamyka puste okno
+# (autoclose_windows), a stary obiekt Perla wskazuje wtedy zwolniona pamiec
+# (ASan: heap-use-after-free w Irssi::UI::Window::items). Porownanie wskaznika
+# nie dotyka pamieci okna; undef = okna juz nie ma.
+sub window_by_ptr {
+    my ($ptr) = @_;
+    return undef unless $ptr;
+    my ($win) = grep { $_->{_irssi} == $ptr } Irssi::windows();
+    return $win;
+}
+
 # okno, do ktorego przechodzi /bot i /connect: partyline, bez niej okno sieci
 sub window_of {
     my ($server) = @_;
@@ -225,6 +243,7 @@ sub ensure_window {
     my $query = find_query($server);
     my $win = Irssi::window_find_name($name);
     my $prev = Irssi::active_win();
+    my $prev_ptr = $prev ? $prev->{_irssi} : 0;
 
     if (!$win && $query) {
         # rozmowa sama w swoim oknie (nie w oknie sieci): to okno partyline
@@ -245,18 +264,24 @@ sub ensure_window {
         my $qwin = $query->window();
         if ($qwin && $qwin->{refnum} != $win->{refnum}) {
             # np. stary uklad: rozmowa w oknie sieci - przenies ja
+            my $qptr = $qwin->{_irssi};
             $query->set_active();
             $qwin->command("window item move $win->{refnum}");
-            $qwin->destroy() if !$qwin->items() && !length($qwin->{name} // '');
+            # po przeniesieniu erssi moglo juz zamknac puste okno - od nowa
+            $qwin = window_by_ptr($qptr);
+            $qwin->destroy() if $qwin && !$qwin->items() && !length($qwin->{name} // '');
         }
     } else {
         $win->command("query -window -$server->{tag} $nick");
     }
-    # tuz pod oknem sieci, jak kanaly pod swoja siecia
+    # tuz pod oknem sieci, jak kanaly pod swoja siecia (okno sieci od nowa:
+    # moglo zniknac przy przenoszeniu rozmowy)
+    $net = net_window($server);
     if ($net && $win->{refnum} != $net->{refnum} + 1) {
         my $target = $net->{refnum} + ($win->{refnum} < $net->{refnum} ? 0 : 1);
         $win->command("window move $target");
     }
+    $prev = window_by_ptr($prev_ptr);
     $prev->set_active() if $prev && $prev->{refnum} != $win->{refnum}
         && Irssi::active_win()->{refnum} != $prev->{refnum};
     sb_redraw();
@@ -281,8 +306,11 @@ sub disconnect {
     # rozmowa partyline zostaje bez serwera - zamknij ja i jej okno
     for my $q (Irssi::queries()) {
         next unless lc($q->{name}) eq lc partyline_nick() && ($q->{server_tag} // '') eq $tag;
-        my $w = $q->window();
+        my $wq = $q->window();
+        my $wptr = $wq ? $wq->{_irssi} : 0;
         $q->destroy();
+        # okno moglo zniknac razem z rozmowa (autoclose_windows) - od nowa
+        my $w = window_by_ptr($wptr);
         $w->destroy() if $w && !$w->items() && (!length($w->{name} // '') || $w->{name} =~ /^partyline:/);
     }
     my $named = Irssi::window_find_name($plname);
@@ -309,9 +337,11 @@ sub cleanup {
         my @srv = @$srv;
         if (@srv > 1) {
             my ($keep, @extra) = @srv;
+            # tagi przed rozlaczeniem: po nim obiekty serwerow sa nieaktualne
+            my @tags = map { $_->{tag} } @extra;
             disconnect($_) for @extra;
-            say_info(sprintf('%s: zamknieto %d nadmiarowe polaczenie(a) (%s), zostaje %s',
-                display_name($botnet), scalar @extra, join(', ', map { $_->{tag} } @extra), $keep->{tag}));
+            say_info(sprintf('%s: closed %s (%s), keeping %s',
+                display_name($botnet), plural(scalar @tags, 'extra connection'), join(', ', @tags), $keep->{tag}));
             $changed = 1;
         }
         ensure_window($srv[0]) if @srv;
@@ -320,7 +350,7 @@ sub cleanup {
         my @drop = (@srv || @$pending) ? @rec : @rec[1 .. $#rec];
         if (@drop) {
             remove_reconnect($_) for @drop;
-            say_info(sprintf('%s: usunieto %d zdublowane ponowienie(a)', display_name($botnet), scalar @drop))
+            say_info(sprintf('%s: removed %s', display_name($botnet), plural(scalar @drop, 'duplicate reconnect')))
                 unless $quiet;
             $changed = 1;
         }
@@ -344,12 +374,12 @@ sub cmd_connect {
         ensure_window($srv->[0]);
         my $win = window_of($srv->[0]);
         $win->set_active() if $win;
-        say_here(display_name($botnet) . " jest juz polaczony ($srv->[0]{tag}) - bez drugiego polaczenia");
+        say_here(display_name($botnet) . " is already connected ($srv->[0]{tag}) - not opening a second connection");
         return;
     }
     if (@$pending) {
         Irssi::signal_stop();
-        say_here(display_name($botnet) . ' juz sie laczy - poczekaj');
+        say_here(display_name($botnet) . ' is already connecting - please wait');
         return;
     }
     # reczne polaczenie zastepuje czekajace ponowienia
@@ -373,7 +403,7 @@ sub sig_server_connected {
     my @older = grep { $_->{tag} ne $server->{tag} } @$srv;
     if (@older) {
         # drugie polaczenie (np. ponowienie, gdy pierwsze jeszcze zylo) - zbedne
-        say_info(display_name($botnet) . ": juz polaczony jako $older[0]{tag}, zamykam $server->{tag}");
+        say_info(display_name($botnet) . ": already connected as $older[0]{tag}, closing $server->{tag}");
         disconnect($server);
         return;
     }
@@ -398,8 +428,8 @@ sub sig_connect_failed {
         my @rec = reconnects_of($botnet);
         if ($tries > 0 && $failures{$botnet} >= $tries) {
             remove_reconnect($_) for @rec;
-            say_info(sprintf('%s nie odpowiada (%d proby) - wstrzymano ponawianie; /bot %s, aby sprobowac znow',
-                display_name($botnet), $failures{$botnet}, display_name($botnet))) if @rec;
+            say_info(sprintf('%s is not responding (%s) - reconnecting stopped; /bot %s to try again',
+                display_name($botnet), plural($failures{$botnet}, 'attempt'), display_name($botnet))) if @rec;
             return;
         }
         remove_reconnect($_) for @rec[1 .. $#rec];
@@ -426,7 +456,7 @@ sub sig_query_destroyed {
         my $s = Irssi::server_find_tag($server->{tag}) or return;
         disconnect($s);
         remove_reconnect($_) for reconnects_of($botnet);
-        say_info(display_name($botnet) . ' rozlaczony (zamknieto okno partyline)');
+        say_info(display_name($botnet) . ' disconnected (partyline window closed)');
     }, '');
 }
 
@@ -441,17 +471,17 @@ sub status_line {
         my $s = $srv->[0];
         my $win = window_of($s);
         my $since = int((time - ($s->{connect_time} || time)) / 60);
-        return sprintf('%-11s polaczony jako %s od %d min%s%s', $name, $s->{tag}, $since,
-            $win ? ", okno $win->{refnum}" : '', @$srv > 1 ? sprintf(' (+%d nadmiarowe!)', @$srv - 1) : '');
+        return sprintf('%-11s connected as %s for %d min%s%s', $name, $s->{tag}, $since,
+            $win ? ", window $win->{refnum}" : '', @$srv > 1 ? sprintf(' (+%d extra!)', @$srv - 1) : '');
     }
-    return sprintf('%-11s laczy sie', $name) if @$pending;
+    return sprintf('%-11s connecting', $name) if @$pending;
     if (@rec) {
-        return sprintf('%-11s ponowi za %ds%s', $name, ($rec[0]{next_connect} // time) - time,
-            @rec > 1 ? sprintf(' (zdublowane: %d)', scalar @rec) : '');
+        return sprintf('%-11s reconnecting in %ds%s', $name, ($rec[0]{next_connect} // time) - time,
+            @rec > 1 ? sprintf(' (duplicates: %d)', scalar @rec) : '');
     }
     my $f = $failures{$botnet};
-    return sprintf('%-11s nie odpowiada (%d proby), ponawianie wstrzymane', $name, $f) if $f;
-    return sprintf('%-11s rozlaczony', $name);
+    return sprintf('%-11s not responding (%s), reconnecting stopped', $name, plural($f, 'attempt')) if $f;
+    return sprintf('%-11s disconnected', $name);
 }
 
 sub find_botnet_arg {
@@ -465,29 +495,30 @@ sub find_botnet_arg {
 sub help {
     my $nets = join(' ', map { display_name($_) } sort keys %{ { botnets() } });
     say_plain($_) for (
-        "%_botnet.pl $VERSION%_ - partyline botnetow: jedno polaczenie i jedno okno na botnet",
+        "%_botnet.pl $VERSION%_ - botnet partylines: one connection and one window per botnet",
         '',
-        '%_Komendy%_',
-        '  /bot                    stan wszystkich botnetow (polaczony / laczy sie /',
-        '                          ponowi za Ns / nie odpowiada / rozlaczony)',
-        '  /bot <botnet>           polacz albo przejdz do jego okna; wystarczy poczatek',
-        '                          nazwy (/bot irc = /bot IRCnetBot)',
-        '  /bot close <botnet>     rozlacz bez ponawiania i zamknij okno partyline',
-        '  /bot cleanup            zamknij nadmiarowe polaczenia, usun zdublowane ponowienia',
-        '  /bot help, /help bot    ta pomoc',
+        '%_Commands%_',
+        '  /bot                    status of all botnets (connected / connecting /',
+        '                          reconnecting in Ns / not responding / disconnected)',
+        '  /bot <botnet>           connect or go to its window; a unique prefix of the',
+        '                          name is enough (/bot irc = /bot IRCnetBot)',
+        '  /bot close <botnet>     disconnect without reconnecting, close the partyline window',
+        '  /bot cleanup            close extra connections, remove duplicate reconnects',
+        '  /bot help, /help bot    this help',
         '',
-        '%_Jak dziala%_',
-        '  * /connect <botnet>, ktory juz dziala, przelacza na jego okno - bez drugiego',
-        '    polaczenia; rozmowa partyline jest od razu w oknie sieci botnetu',
-        '  * zamkniecie okna partyline (/wc, krzyzyk w webie) rozlacza botnet',
-        '  * po zerwaniu: jedno ponowienie, po botnet_reconnect_tries nieudanych probach',
-        '    ponawianie jest wstrzymywane (komunikat w Notices)',
+        '%_How it works%_',
+        '  * /connect to a botnet that is already up switches to its window instead of',
+        '    opening a second connection; the partyline query is ready in its own window',
+        '  * closing the partyline window (/wc, the close button in the web UI)',
+        '    disconnects the botnet',
+        '  * after a drop: one pending reconnect; after botnet_reconnect_tries failed',
+        '    attempts reconnecting is stopped (message in the Notices window)',
         '',
-        '%_Ustawienia%_',
-        "  botnet_chatnets          botnety (teraz: $nets)",
-        '  botnet_partyline_nick    nick partyline w hubie (' . partyline_nick() . ')',
-        '  botnet_reconnect_tries   limit prob ponowienia (' . Irssi::settings_get_int('botnet_reconnect_tries') . ', 0 = bez limitu)',
-        '  botnet_quit_message      powod przy rozlaczaniu',
+        '%_Settings%_',
+        "  botnet_chatnets          botnets (now: $nets)",
+        '  botnet_partyline_nick    partyline nick on the hub (' . partyline_nick() . ')',
+        '  botnet_reconnect_tries   reconnect attempt limit (' . Irssi::settings_get_int('botnet_reconnect_tries') . ', 0 = unlimited)',
+        '  botnet_quit_message      quit message used when disconnecting',
     );
 }
 
@@ -516,29 +547,29 @@ sub cmd_bot {
     my %set = botnets();
 
     if (!@a) {
-        say_here('stan botnetow (/bot help - komendy):');
+        say_here('botnet status (/bot help for commands):');
         say_here(status_line($_)) for sort keys %set;
         return;
     }
     my $sub = lc $a[0];
     if ($sub eq 'help') { help_file('bot') ? Irssi::command('help bot') : help(); return }
     if ($sub eq 'cleanup') {
-        say_here('botnet: wszystko w porzadku - nic do sprzatania') unless cleanup(0);
+        say_here('botnet: everything is in order - nothing to clean up') unless cleanup(0);
         return;
     }
     if ($sub eq 'close' || $sub eq 'zamknij') {
         my $botnet = find_botnet_arg($a[1] // '');
-        unless ($botnet) { say_here('botnet: ktory botnet? /bot close <botnet>'); return }
+        unless ($botnet) { say_here('botnet: which botnet? /bot close <botnet>'); return }
         my ($srv) = live_servers($botnet);
         remove_reconnect($_) for reconnects_of($botnet);
         delete $failures{$botnet};
         disconnect($_) for @$srv;
-        say_here('botnet: ' . display_name($botnet) . (@$srv ? ' rozlaczony' : ' nie byl polaczony - ponowienia usuniete'));
+        say_here('botnet: ' . display_name($botnet) . (@$srv ? ' disconnected' : ' was not connected - pending reconnects removed'));
         return;
     }
     my $botnet = find_botnet_arg($a[0]);
     unless ($botnet) {
-        say_here("botnet: nie znam botnetu '$a[0]' - /bot pokazuje liste");
+        say_here("botnet: unknown botnet '$a[0]' - /bot shows the list");
         return;
     }
     Irssi::command('connect ' . display_name($botnet));

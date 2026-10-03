@@ -1,5 +1,5 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
 BOT%|
 BOT %|<botnet>
@@ -7,81 +7,83 @@ BOT CLOSE %|<botnet>
 BOT CLEANUP%|
 BOT HELP%|
 
-%9Parametry:%9
+%9Parameters:%9
 
-    CLOSE:       Rozłącza botnet bez ponawiania: usuwa czekające ponowienia,
-                 zamyka rozmowę partyline i okno sieci. Alias: ZAMKNIJ.
-    CLEANUP:     Zamyka nadmiarowe połączenia z tym samym botnetem (zostaje
-                 najstarsze) i usuwa zdublowane ponowienia.
-    HELP:        Pomoc: ten plik (przez /HELP BOT), a gdy go nie ma -
-                 pomoc wbudowana w skrypt.
+    CLOSE:       Disconnects the botnet without reconnecting: removes
+                 pending reconnects, closes the partyline query and the
+                 network window. Alias: ZAMKNIJ.
+    CLEANUP:     Closes extra connections to the same botnet (the oldest
+                 one stays) and removes duplicate reconnects.
+    HELP:        Shows this file (via /HELP BOT) or, when it is missing,
+                 the help built into the script.
 
-    <botnet>:    Chatnet z listy botnet_chatnets. Wielkość liter nie ma
-                 znaczenia; wystarczy jednoznaczny początek nazwy.
+    <botnet>:    A chatnet from the botnet_chatnets list. Case does not
+                 matter; a unique prefix of the name is enough.
 
-    Bez argumentów wypisuje stan każdego botnetu: połączony (tag, od ilu
-    minut, numer okna), łączy się, ponowi za N s, nie odpowiada
-    (ponawianie wstrzymane) albo rozłączony.
+    Without arguments, prints the state of each botnet: connected (tag,
+    minutes since connecting, window number), connecting, reconnecting in
+    N s, not responding (reconnecting stopped) or disconnected.
 
-%9Opis:%9
+%9Description:%9
 
-    Porządkuje połączenia z partyline botnetów (psotnic, eggdrop
-    i podobne boty z interfejsem IRC). Botnet to zwykły chatnet w
-    konfiguracji erssi; partyline przychodzi jako rozmowa z nickiem
-    botnet_partyline_nick. Komenda skryptu botnet.pl.
+    Keeps connections to botnet partylines in order (psotnic, eggdrop and
+    similar bots with an IRC interface). A botnet is an ordinary chatnet
+    in the erssi configuration; the partyline arrives as a query with the
+    nick botnet_partyline_nick. A command of the botnet.pl script.
 
-    /BOT <botnet> wykonuje /CONNECT <botnet>. Gdy botnet jest już
-    połączony, /CONNECT (także z adresem serwera z konfiguracji) nie
-    otwiera drugiego połączenia, tylko przełącza na jego okno; gdy właśnie
-    się łączy - wypisuje „już się łączy”. Połączenie, które mimo to
-    powstanie drugie, jest od razu zamykane. Ręczne połączenie usuwa
-    czekające ponowienia.
+    /BOT <botnet> runs /CONNECT <botnet>. When the botnet is already
+    connected, /CONNECT (also with a server address from the config) does
+    not open a second connection but switches to its window; while it is
+    still connecting, "is already connecting" is printed. A second
+    connection that comes up anyway is closed immediately. A manual
+    connect removes pending reconnects.
 
-    Jak każda sieć, botnet ma okno sieci (komunikaty serwera, nazwa okna =
-    tag), a tuż pod nim jedno okno partyline („partyline:<botnet>”).
-    Rozmowa jest w nim gotowa, zanim bot cokolwiek napisze, więc linie od
-    bota nie otwierają nowych okien; po ponownym połączeniu wracają do tego
-    samego okna. Zamknięcie okna partyline (/WC, krzyżyk w webie) rozłącza
-    botnet bez ponawiania.
+    Like any network, a botnet has a network window (server messages,
+    window name = tag) and, right below it, a single partyline window
+    ("partyline:<botnet>"). The query is in place before the bot writes
+    anything, so lines from the bot never open new windows; after a
+    reconnect they go to the same window. Closing the partyline window
+    (/WC, the close button in the web UI) disconnects the botnet without
+    reconnecting.
 
-    Po zerwaniu połączenia zostaje najwyżej jedno ponowienie. Po
-    botnet_reconnect_tries nieudanych próbach z rzędu ponawianie jest
-    wstrzymywane z komunikatem w oknie Notices; wznawia je /BOT <botnet>.
-    Po załadowaniu skrypt sam robi porządek tak jak CLEANUP.
+    After a dropped connection at most one reconnect is kept. After
+    botnet_reconnect_tries failed attempts in a row reconnecting is
+    stopped and a message is printed in the Notices window; /BOT <botnet>
+    resumes it. When loaded, the script tidies up just like CLEANUP.
 
-%9Pasek stanu:%9
+%9Statusbar:%9
 
-    Element „botnet” pokazuje każdy botnet: ● połączony, ◌ łączy się,
-    ↻ ponowi za N s, ✕ ponawianie wstrzymane, ○ rozłączony. Przy
-    połączonym liczba linii partyline, których jeszcze nie widziałeś -
-    na czerwono, gdy ktoś napisał twój nick; znika po wejściu do okna.
-    Dodanie (pasek okna w erssi to „info”, w wielu konfiguracjach
-    „window”):
+    The "botnet" item shows each botnet: ● connected, ◌ connecting,
+    ↻ reconnecting in N s, ✕ reconnecting stopped, ○ disconnected. Next
+    to a connected botnet, the number of partyline lines you have not
+    seen yet - in red when someone mentioned your nick; it disappears
+    when you enter the window. To add it (the window bar is "info" in
+    erssi, "window" in many configurations):
 
         /STATUSBAR info ADD -after act botnet
 
-    Wygląd zmienia /FORMAT botnet_sb_up, _unread, _hilight, _connecting,
-    _retry, _stopped, _down i _label.
+    The look is set with /FORMAT botnet_sb_up, _unread, _hilight,
+    _connecting, _retry, _stopped, _down and _label.
 
-%9Ustawienia:%9
+%9Settings:%9
 
-    botnet_chatnets = (lista wpisana w skrypt)
-        Chatnety traktowane jako botnety, oddzielone spacją lub przecinkiem.
+    botnet_chatnets = (built-in list)
+        Chatnets treated as botnets, separated by spaces or commas.
     botnet_partyline_nick = partyline
-        Nick, jako który hub przysyła partyline.
+        The nick the hub uses for the partyline.
     botnet_reconnect_tries = 3
-        Ile nieudanych ponowień z rzędu; 0 = bez limitu.
+        Failed reconnects in a row before giving up; 0 = no limit.
     botnet_quit_message =
-        Powód przy rozłączaniu; pusty = domyślny powód erssi.
+        Quit message when disconnecting; empty = erssi's default.
     botnet_statusbar_all = ON
-        Pasek pokazuje także rozłączone botnety.
+        Also show disconnected botnets in the statusbar.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /BOT
     /BOT hub
     /BOT CLOSE hub
     /BOT CLEANUP
 
-%9Zobacz też:%9 CONNECT, DISCONNECT, FORMAT, NETWORK, QUERY, RECONNECT, STATUSBAR
+%9See also:%9 CONNECT, DISCONNECT, FORMAT, NETWORK, QUERY, RECONNECT, STATUSBAR
 

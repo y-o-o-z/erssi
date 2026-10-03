@@ -25,12 +25,12 @@ use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 use File::Path qw(make_path);
 use POSIX qw(strftime);
 
-our $VERSION = '2.1.1';
+our $VERSION = '2.1.2';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
     name        => 'mentions',
-    description => 'Okno Mentions: podswietlenia (takze nick w srodku zdania), PM, NOTICE, DCC + dziennik w pliku',
+    description => 'Mentions window: hilights (also a nick mid-sentence), PMs, NOTICEs and DCC, plus a log file',
     license     => 'MIT',
     url         => 'https://github.com/y-o-o-z/irssi_scripts',
 );

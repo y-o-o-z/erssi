@@ -43,12 +43,12 @@ use Time::HiRes ();
 use File::Path qw(make_path);
 use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
-our $VERSION = '1.2.3';
+our $VERSION = '1.2.4';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
     name        => 'webjournal',
-    description => 'Dziennik okien erssi (kanaly, rozmowy, Notices, Mentions, status) dla klienta web',
+    description => 'Journal of erssi windows (channels, queries, Notices, Mentions, status) for the web client',
     license     => 'MIT',
     url         => 'https://github.com/y-o-o-z/irssi_scripts',
 );
@@ -388,10 +388,10 @@ sub sig_print_text {
 # ── komenda ──────────────────────────────────────────────────────────
 
 sub cmd_webjournal {
-    my $state = Irssi::settings_get_bool('webjournal') ? 'wlaczony' : 'WYLACZONY (/set webjournal on)';
-    Irssi::print("webjournal $VERSION: $state, katalog " . base_dir()
-        . ", zapisanych wpisow $stats{written}, rotacji $stats{rotated}, bledow $stats{errors}"
-        . ($stats{errors} ? " (ostatni: $stats{last_error})" : ''), MSGLEVEL_CLIENTCRAP);
+    my $state = Irssi::settings_get_bool('webjournal') ? 'enabled' : 'DISABLED (/set webjournal on)';
+    Irssi::print("webjournal $VERSION: $state, directory " . base_dir()
+        . ", entries written: $stats{written}, rotations: $stats{rotated}, errors: $stats{errors}"
+        . ($stats{errors} ? " (last: $stats{last_error})" : ''), MSGLEVEL_CLIENTCRAP);
 }
 
 Irssi::signal_add('message public',        \&sig_public);
