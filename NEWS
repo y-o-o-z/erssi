@@ -1,4 +1,4 @@
-erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
+erssi-v1.3.2 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition: erssi 1.3.1 (erssi-org, 2026-04-06) with the
 	changes below, on the irssi 1.4.5 code base (details: README.md).
 
@@ -55,6 +55,54 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    operators on a channel), mentions.pl (Mentions window and log),
 	    webjournal.pl (journal of every window for a web client),
 	    botnet.pl (botnet partylines: one connection and one window each)
+	  - /HELP for each script command (Polish, like the scripts)
+
+	+ Help
+	  - /HELP for the erssi commands that had none: CREDENTIAL, FE_WEB,
+	    FLOODNET, FOREACH, IMAGE, IRCNET, NICKHASH, REDRAW, RESIZE,
+	    SETHOST, SETNAME, WCALL
+	  - help files are read from ~/.erssi/help first: help for your own
+	    scripts, or your own text for any command
+
+	+ Security
+	  - fe-web: one password guess per connection (the connection stayed
+	    open after a wrong password), compared in constant time; at most
+	    16 KB and 10 seconds to log in, at most 16 clients; frames over
+	    16 MB are refused (a 64-bit length overflowed the size check);
+	    refused connections are reported once a minute at most
+	  - fe-web: the TLS key and certificate are kept in ~/.erssi
+	    (fe-web-key.pem, fe-web-cert.pem), so the web client can trust
+	    exactly that certificate (NexusIRC patch 0019); a /SET of an
+	    fe-web setting from the web client no longer frees that client
+	    while its command runs
+	  - image preview: only http and https, only public addresses (also
+	    after redirects), the size limit counts the bytes that arrive,
+	    huge images are refused before decoding; the debug log (every
+	    clicked URL) is off by default and readable only by you
+	  - ~/.erssi/config is written readable only by you (0600)
+	  - credential encryption is refused until it is rewritten: it never
+	    encrypted the configuration file and a wrong master password
+	    could delete stored credentials (see /HELP CREDENTIAL)
+
+	+ Fixes
+	  - anti-floodnet: counts different senders (one person pasting
+	    lines or repeating a line is not a flood), never checks people
+	    you have a query with, ends protection on a timer, bounded
+	    memory; a private message from a server crashed erssi; state is
+	    per network and dropped on disconnect
+	  - a quit or nick change marks only the windows where that nick is
+	  - $nickcolored / $nicktrunc: messages to @#channel and own messages
+	    showed the nick of the previous line; a shorter nick_hash_colors
+	    palette could read past its end
+	  - sidepanels: a width change or turning a panel off gives back the
+	    right columns; a terminal narrower than the panels shows the
+	    whole window again (it stayed one line high); stale scroll
+	    arrows, nick clicks right after a quit, panels over 256 rows, a
+	    leak at every panel hide; nick names leave room for the arrows
+	  - scrolling back without sidepanels moved lines the wrong way
+	  - control characters (^B, ^C, ...) in the input line are shown, and
+	    the cursor stays on the text
+	  - a network window named like the network is reused at reconnect
 
 erssi-v1.3.0 2026-03-24  erssi-org team <https://github.com/erssi-org>
 	Lead Developer: Jerzy (kofany) Dąbrowski <https://github.com/kofany>
