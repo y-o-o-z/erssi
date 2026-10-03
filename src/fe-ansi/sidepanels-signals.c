@@ -306,7 +306,7 @@ void sig_nicklist_changed(CHANNEL_REC *channel, NICK_REC *nick, const char *old_
 	 * message_nick handles both activity updates + redraw,
 	 * so batching here would cause duplicate/conflicting redraws.
 	 *
-	 * See WEECHAT-ANALYSIS.md for details on proper batching architecture.
+	 * (Batching follows WeeChat: one redraw for a burst of nicklist changes.)
 	 */
 	(void) channel;
 	(void) nick;
