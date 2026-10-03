@@ -750,6 +750,9 @@ static void theme_set_format(THEME_REC *theme, MODULE_THEME_REC *rec,
 
         num = format_find_tag(module, key);
 	if (num != -1) {
+		/* a theme may set a format twice (fe-text and fe-ansi section) */
+		g_free(rec->formats[num]);
+		g_free(rec->expanded_formats[num]);
 		rec->formats[num] = g_strdup(value);
 		rec->expanded_formats[num] = theme_format_expand(theme, value);
 	}
