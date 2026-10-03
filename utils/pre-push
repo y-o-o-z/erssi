@@ -3,8 +3,9 @@
 #   ln -sf ../../utils/pre-push .git/hooks/pre-push
 #
 # 1. the build works and `meson test` passes (when Build/ exists)
-# 2. every pushed commit is authored and committed by y-o-o-z (noreply
-#    address) and carries no AI attribution trailer
+# 2. every pushed commit (branches and tags) is authored and committed by
+#    y-o-o-z (noreply address) and carries no AI attribution trailer;
+#    annotated tags are tagged by y-o-o-z
 # 3. no line added by the pushed commits matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line; the file
 #    stays on your machine, so the patterns themselves are never published)
@@ -17,14 +18,27 @@ ZERO=0000000000000000000000000000000000000000
 fail=0
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
 
+if [ -r "$PATTERNS" ]; then
+    grep -Eq -f "$PATTERNS" </dev/null 2>/dev/null; [ $? -le 1 ] ||
+        { echo "pre-push: $PATTERNS has an invalid pattern (grep -E): push refused" >&2; exit 1; }
+else
+    echo "pre-push: warning: $PATTERNS missing - private data check skipped" >&2
+fi
+
+pushed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
-    [ "$local_sha" = "$ZERO" ] && continue          # branch deletion
-    case "$local_ref" in refs/tags/*) continue ;; esac
-    if [ "$remote_sha" = "$ZERO" ]; then
-        range=$(git rev-list "$local_sha" --not --remotes 2>/dev/null)
+    [ "$local_sha" = "$ZERO" ] && continue          # deletion
+    # tags too: a tag can carry commits that no branch on GitHub has
+    tip=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
+    pushed="$pushed $tip"
+    # what GitHub does not have yet; when the remote tip is unknown here
+    # (force push without fetching), everything not on a known remote
+    if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+        range=$(git rev-list "$tip" --not "$remote_sha" --remotes) || range=FAIL
     else
-        range=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null)
+        range=$(git rev-list "$tip" --not --remotes) || range=FAIL
     fi
+    [ "$range" = FAIL ] && { bad "$local_ref: cannot list the pushed commits"; continue; }
     for c in $range; do
         who=$(git log -1 --format='%ae %ce' "$c")
         [ "$who" = "$EMAIL $EMAIL" ] || bad "$(git log -1 --format='%h %s' "$c"): author/committer $who"
@@ -32,10 +46,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             bad "$(git log -1 --format='%h %s' "$c"): AI attribution trailer"
         fi
         if [ -r "$PATTERNS" ]; then
-            hits=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++' | grep -iEf "$PATTERNS" | head -3)
+            hits=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++ \(b/\|/dev/null\)' | grep -iEf "$PATTERNS" | head -3)
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data: $hits"
         fi
     done
+    # an annotated tag has its own author line and message
+    if [ "$(git cat-file -t "$local_sha")" = tag ]; then
+        tagger=$(git cat-file -p "$local_sha" | sed -n 's/^tagger .*<\(.*\)>.*/\1/p')
+        [ "$tagger" = "$EMAIL" ] || bad "$local_ref: tagger $tagger"
+    fi
 done
 
 [ "$fail" = 0 ] || { echo "pre-push: push refused" >&2; exit 1; }
@@ -43,6 +62,10 @@ done
 if [ -f "$ROOT/Build/build.ninja" ]; then
     ninja -C "$ROOT/Build" >/dev/null 2>&1 || { echo "pre-push: build failed (ninja -C Build)" >&2; exit 1; }
     meson test -C "$ROOT/Build" >/dev/null 2>&1 || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }
+    # the build uses the working tree; say so when that is not what is pushed
+    head=$(git rev-parse HEAD)
+    case " $pushed " in *" $head "*) ;; *) [ -n "$pushed" ] && echo "pre-push: note: tested HEAD, which is not the pushed commit" >&2 ;; esac
+    git diff --quiet HEAD -- 2>/dev/null || echo "pre-push: note: tested the working tree, which has uncommitted changes" >&2
     echo "pre-push: build and tests ok"
 fi
 exit 0
