@@ -138,6 +138,40 @@ void initialize_notices_window(void)
 	        window1->immortal ? "yes" : "no");
 }
 
+/* A window named after the network may become the network window when it
+ * is empty or already was that network's window */
+static gboolean network_window_ok(WINDOW_REC *window, const char *server_tag)
+{
+	return window->items == NULL ||
+	       (window->servertag != NULL && g_ascii_strcasecmp(window->servertag, server_tag) == 0);
+}
+
+static WINDOW_REC *find_unnamed_network_window(const char *server_tag)
+{
+	GSList *tmp;
+
+	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
+		WINDOW_REC *rec = tmp->data;
+
+		if ((rec->name == NULL || *rec->name == '\0') && rec->items == NULL &&
+		    rec->servertag != NULL && g_ascii_strcasecmp(rec->servertag, server_tag) == 0)
+			return rec;
+	}
+	return NULL;
+}
+
+static WINDOW_REC *create_network_window(const char *name)
+{
+	WINDOW_REC *window;
+
+	/* the same as /WINDOW NEW HIDE */
+	signal_emit("gui window create override", 1, GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
+	window = window_create(NULL, FALSE);
+	if (name != NULL)
+		window_set_name(window, name);
+	return window;
+}
+
 /* Helper function to create server separator window.
    Through the window API, not /WINDOW commands: each of those printed a
    line into the new window at every connect ("Window level is now ...",
@@ -160,12 +194,15 @@ static void create_server_separator_window(const char *server_tag)
 	 * server) becomes the network window again - window names are unique,
 	 * and a new unnamed window would never be found at the next connect. */
 	window = window_find_name(server_tag);
-	if (window == NULL) {
-		/* the same as /WINDOW NEW HIDE */
-		signal_emit("gui window create override", 1,
-		            GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
-		window = window_create(NULL, FALSE);
-		window_set_name(window, server_tag);
+	if (window != NULL && !network_window_ok(window, server_tag)) {
+		/* the user's own window that only shares the name (it has
+		 * channels or queries of something else): leave it alone and
+		 * use an unnamed network window, found by its server tag */
+		window = find_unnamed_network_window(server_tag);
+		if (window == NULL)
+			window = create_network_window(NULL);
+	} else if (window == NULL) {
+		window = create_network_window(server_tag);
 	}
 	window_change_server(window, server);
 	/* everything except client messages and notices (the Notices window has those) */
