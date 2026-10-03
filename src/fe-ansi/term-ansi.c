@@ -246,7 +246,7 @@ void ansi_scroll(ANSI_TERM *term, int y1, int y2, int count)
 		/* Scroll down */
 		ansi_move(term, 0, y1);
 		for (i = 0; i < -count; i++)
-			fputs(CSI "M", term->out); /* Reverse index */
+			fputs("\033M", term->out); /* Reverse index (ESC M; CSI M deletes a line) */
 	}
 
 	/* Reset scroll region to full screen */
