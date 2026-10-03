@@ -1,0 +1,69 @@
+
+%9Składnia:%9
+
+BOT%|
+BOT %|<botnet>
+BOT CLOSE %|<botnet>
+BOT CLEANUP%|
+BOT HELP%|
+
+%9Parametry:%9
+
+    CLOSE:       Rozłącza botnet bez ponawiania: usuwa czekające ponowienia,
+                 zamyka rozmowę partyline i okno sieci. Alias: ZAMKNIJ.
+    CLEANUP:     Zamyka nadmiarowe połączenia z tym samym botnetem (zostaje
+                 najstarsze) i usuwa zdublowane ponowienia.
+    HELP:        Pomoc: ten plik (przez /HELP BOT), a gdy go nie ma -
+                 pomoc wbudowana w skrypt.
+
+    <botnet>:    Chatnet z listy botnet_chatnets. Wielkość liter nie ma
+                 znaczenia; wystarczy jednoznaczny początek nazwy.
+
+    Bez argumentów wypisuje stan każdego botnetu: połączony (tag, od ilu
+    minut, numer okna), łączy się, ponowi za N s, nie odpowiada
+    (ponawianie wstrzymane) albo rozłączony.
+
+%9Opis:%9
+
+    Porządkuje połączenia z partyline botnetów (psotnic, eggdrop
+    i podobne boty z interfejsem IRC). Botnet to zwykły chatnet w
+    konfiguracji erssi; partyline przychodzi jako rozmowa z nickiem
+    botnet_partyline_nick. Komenda skryptu botnet.pl.
+
+    /BOT <botnet> wykonuje /CONNECT <botnet>. Gdy botnet jest już
+    połączony, /CONNECT (także z adresem serwera z konfiguracji) nie
+    otwiera drugiego połączenia, tylko przełącza na jego okno; gdy właśnie
+    się łączy - wypisuje „już się łączy”. Połączenie, które mimo to
+    powstanie drugie, jest od razu zamykane. Ręczne połączenie usuwa
+    czekające ponowienia.
+
+    Rozmowa partyline jest otwierana od razu w oknie sieci (nazwa okna =
+    tag), a bez niego w nowym oknie nazwanym jak botnet, więc linie od bota
+    nie tworzą nowych okien. Zamknięcie rozmowy partyline (/WC, krzyżyk
+    w webie) rozłącza botnet bez ponawiania.
+
+    Po zerwaniu połączenia zostaje najwyżej jedno ponowienie. Po
+    botnet_reconnect_tries nieudanych próbach z rzędu ponawianie jest
+    wstrzymywane z komunikatem w oknie Notices; wznawia je /BOT <botnet>.
+    Po załadowaniu skrypt sam robi porządek tak jak CLEANUP.
+
+%9Ustawienia:%9
+
+    botnet_chatnets = (lista wpisana w skrypt)
+        Chatnety traktowane jako botnety, oddzielone spacją lub przecinkiem.
+    botnet_partyline_nick = partyline
+        Nick, jako który hub przysyła partyline.
+    botnet_reconnect_tries = 3
+        Ile nieudanych ponowień z rzędu; 0 = bez limitu.
+    botnet_quit_message =
+        Powód przy rozłączaniu; pusty = domyślny powód erssi.
+
+%9Przykłady:%9
+
+    /BOT
+    /BOT hub
+    /BOT CLOSE hub
+    /BOT CLEANUP
+
+%9Zobacz też:%9 CONNECT, DISCONNECT, NETWORK, QUERY, RECONNECT
+

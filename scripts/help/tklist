@@ -1,0 +1,26 @@
+
+%9Składnia:%9
+
+TKLIST %|[<maska>]
+
+%9Parametry:%9
+
+    Opcjonalna maska przekazywana serwerowi jako argument STATS.
+
+%9Opis:%9
+
+    Wysyła STATS k do serwera aktywnego okna, czyli prosi o listę czasowych
+    K-linii (tklinii) na ircd 2.11. Odpowiedź serwera erssi wyświetla jak
+    każdą inną. Komenda skryptu tk.pl; to samo robi /TK LIST.
+
+    Argument musi być jednym słowem (do 64 znaków) - inny jest pomijany
+    i idzie samo STATS k. Skrypt nie sprawdza uprawnień; to serwer decyduje,
+    czy pokaże listę osobie bez statusu IRC operatora.
+
+%9Przykłady:%9
+
+    /TKLIST
+    /TKLIST *@*.example.org
+
+%9Zobacz też:%9 KLIST, STATS, TK, TKL, UNTKL
+

@@ -1,0 +1,85 @@
+
+%9Składnia:%9
+
+TKL %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [<czas>] <powód>
+
+%9Parametry:%9
+
+    -server:     Tag połączenia, na które idzie TKLINE; domyślnie serwer
+                 aktywnego okna.
+    -mask:       Rodzaj maski budowanej z odpowiedzi WHOIS (domyślnie
+                 tk_mask_type):
+                   ident   ident@host, „~ident” zamieniany na „*ident”,
+                   host    *@pełny.host,
+                   domain  *@*.domena.tld, dla IPv4 *@a.b.c.*, dla IPv6
+                           pierwsze cztery grupy adresu i „:*”.
+    -force:      Pozwala wysłać maskę uznaną za zbyt szeroką.
+    -dry:        Podgląd: pokazuje gotową linię TKLINE i nic nie wysyła.
+
+    <nick|user@host>: Nick (skrypt robi WHOIS i sam buduje maskę) albo
+                 gotowa maska user@host, wysyłana dosłownie.
+    <czas>:      Czas trwania: 30s, 10m, 2h, 1d, 1w lub złożenie typu 1d12h;
+                 sama liczba to minuty. Bez czasu obowiązuje tk_default_time.
+    <powód>:     Powód K-linii, obowiązkowy.
+
+%9Opis:%9
+
+    Nakłada czasową K-linię (TKLINE) na serwerze ircd 2.11 (IRCnet).
+    Komenda skryptu tk.pl; /TK bez podkomendy działa tak samo.
+
+    Dla nicka skrypt wysyła WHOIS (odpowiedź jest wyciszona) i dopiero po
+    otrzymaniu ident@host wysyła TKLINE. Gdy nicka nie ma albo WHOIS nie
+    odpowie w tk_whois_timeout_ms, nic nie zostaje wysłane. Własnego nicka
+    podać się nie da.
+
+    Drugie słowo jest czasem tylko wtedy, gdy da się je odczytać jako czas;
+    inaczej cała reszta linii jest powodem. Sam czas bez powodu to błąd.
+    Do serwera idzie postać kanoniczna (np. 90 -> 1h30m), nie dłuższa niż
+    tk_max_time.
+
+    Przed wysłaniem skrypt sprawdza maskę tak jak ircd (user do 10 znaków,
+    host do 63, poprawny zapis ip/prefiks) i odrzuca maskę, która pasuje do
+    Ciebie, oraz maskę zbyt szeroką (np. *@*, *@*.pl), chyba że podano
+    -force albo tk_allow_broad = ON. Powód jest czyszczony ze znaków
+    sterujących i przycinany do tk_reason_max albo TOPICLEN serwera.
+
+    Wymaga statusu IRC operatora, chyba że tk_require_oper = OFF; dotyczy
+    to także -dry. Przy tk_confirm = ON TKLINE czeka 60 sekund na /TK YES.
+    Odpowiedzi serwera „Incorrect format”, 481 i 421 są tłumaczone na
+    czytelne komunikaty. Wysłane komendy trafiają do dziennika
+    ~/.erssi/tk_audit.jsonl (tk_audit).
+
+    Uwaga: dla adresu IPv6 zapisanego skrótem „::” maska domain nie
+    odpowiada sieci /64 - sprawdź ją przez -dry albo /TK MASK.
+
+%9Ustawienia:%9
+
+    tk_mask_type = ident
+        Domyślny rodzaj maski: ident, host albo domain.
+    tk_default_time = 30m
+        Czas K-linii, gdy nie podano go w komendzie.
+    tk_max_time = 30d
+        Najdłuższy dozwolony czas; 0 albo pusty = bez limitu.
+    tk_whois_timeout_ms = 10000
+        Czas oczekiwania na WHOIS (przycinany do 2000-60000 ms).
+    tk_reason_max = 0
+        Limit długości powodu; 0 = TOPICLEN serwera, a bez niego 160.
+    tk_require_oper = ON
+        Bez +o (/OPER) komendy TKL i UNTKL odmawiają działania.
+    tk_allow_broad = OFF
+        ON pozwala na szerokie maski bez -force.
+    tk_confirm = OFF
+        ON = każde TKLINE wymaga potwierdzenia /TK YES.
+    tk_audit = ON
+        Zapis zdarzeń w ~/.erssi/tk_audit.jsonl (JSON, prawa 0600).
+
+%9Przykłady:%9
+
+    /TKL spammer flood reklamowy
+    /TKL spammer 2h flood reklamowy
+    /TKL -mask domain -dry spammer 1d proxy
+    /TKL *bot@*.example.org 1w zainfekowane hosty
+    /TKL -server ircnet -force *@203.0.113.* 30m atak z podsieci
+
+%9Zobacz też:%9 KLIST, TK, TKHELP, TKLIST, UNTKL
+

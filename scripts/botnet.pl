@@ -49,7 +49,7 @@ use warnings;
 
 use Irssi;
 
-our $VERSION = '1.1.0';
+our $VERSION = '1.1.1';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -421,10 +421,21 @@ sub help {
     );
 }
 
-# /help bot - wbudowana pomoc erssi nie zna komend skryptow
+# plik pomocy (~/.erssi/help albo help_path): jest = /help pokazuje go jak
+# kazda inna komende; brak (zwykle irssi) = pomoc wbudowana w skrypt
+sub help_file {
+    my ($name) = @_;
+    for my $dir (Irssi::get_irssi_dir() . '/help', split /:/, Irssi::settings_get_str('help_path')) {
+        return 1 if -f "$dir/" . lc $name;
+    }
+    return 0;
+}
+
+# /help bot bez pliku pomocy: pomoc wbudowana
 sub cmd_help {
     my ($args) = @_;
     return unless ($args // '') =~ /^\s*bot\s*$/i;
+    return if help_file('bot');
     help();
     Irssi::signal_stop();
 }
@@ -440,7 +451,7 @@ sub cmd_bot {
         return;
     }
     my $sub = lc $a[0];
-    if ($sub eq 'help') { help(); return }
+    if ($sub eq 'help') { help_file('bot') ? Irssi::command('help bot') : help(); return }
     if ($sub eq 'cleanup') {
         say_here('botnet: wszystko w porzadku - nic do sprzatania') unless cleanup(0);
         return;

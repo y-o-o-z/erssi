@@ -1,0 +1,75 @@
+
+%9Składnia:%9
+
+TK %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [<czas>] <powód>
+TK HELP%|
+TK MASK %|[-server <tag>] [-mask ident|host|domain] <nick>
+TK PENDING%|
+TK RECENT%|
+TK YES%|
+TK NO%|
+TK LIST %|[<maska>]
+TK KLIST %|[<maska>]
+
+%9Parametry:%9
+
+    HELP:        Skrócona pomoc skryptu (to samo co /TKHELP), z listą
+                 ustawień i ścieżką dziennika.
+    MASK:        Robi WHOIS nicka i pokazuje ident@host oraz maski, które
+                 zbudowałby skrypt (ident, host, domain). Nic nie wysyła
+                 i nie wymaga statusu IRC operatora.
+    PENDING:     Zlecenia czekające na odpowiedź WHOIS i czas oczekiwania.
+    RECENT:      Ostatnie 20 komend TKLINE/UNTKLINE wysłanych w tej sesji:
+                 godzina, tag, maska, czas i powód.
+    YES:         Wysyła TKLINE czekające na potwierdzenie (tk_confirm).
+    NO:          Anuluje TKLINE czekające na potwierdzenie.
+    LIST:        To samo co /TKLIST (STATS k).
+    KLIST:       To samo co /KLIST (STATS K).
+
+    Bez podkomendy /TK działa dokładnie jak /TKL i przyjmuje te same opcje
+    i argumenty.
+
+%9Opis:%9
+
+    Główna komenda skryptu tk.pl - czasowe K-linie (TKLINE) dla ircd 2.11
+    (IRCnet). Szczegóły nakładania K-linii opisuje /HELP TKL.
+
+    Potwierdzenia (tk_confirm = ON) są przechowywane osobno dla każdego
+    serwera: YES i NO dotyczą serwera aktywnego okna, a na serwerze czeka
+    najwyżej jedno TKLINE - nowe zastępuje poprzednie. Po 60 sekundach
+    YES odpowiada „nie ma nic do potwierdzenia”.
+
+    Nick o nazwie podkomendy (np. „yes”, „list”) trzeba podawać przez
+    /TKL - /TK potraktuje go jako podkomendę.
+
+%9Ustawienia:%9
+
+    tk_mask_type = ident
+        Domyślny rodzaj maski: ident, host albo domain.
+    tk_default_time = 30m
+        Czas K-linii, gdy nie podano go w komendzie.
+    tk_max_time = 30d
+        Najdłuższy dozwolony czas; 0 albo pusty = bez limitu.
+    tk_whois_timeout_ms = 10000
+        Czas oczekiwania na WHOIS (przycinany do 2000-60000 ms).
+    tk_reason_max = 0
+        Limit długości powodu; 0 = TOPICLEN serwera, a bez niego 160.
+    tk_require_oper = ON
+        Bez +o (/OPER) komendy TKL i UNTKL odmawiają działania.
+    tk_allow_broad = OFF
+        ON pozwala na szerokie maski bez -force.
+    tk_confirm = OFF
+        ON = każde TKLINE wymaga potwierdzenia /TK YES.
+    tk_audit = ON
+        Zapis zdarzeń w ~/.erssi/tk_audit.jsonl (JSON, prawa 0600).
+
+%9Przykłady:%9
+
+    /TK spammer 30m flood reklamowy
+    /TK MASK spammer
+    /TK -mask host -dry spammer 1h klony
+    /TK YES
+    /TK RECENT
+
+%9Zobacz też:%9 KLIST, TKHELP, TKL, TKLIST, UNTKL
+

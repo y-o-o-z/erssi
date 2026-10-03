@@ -7,7 +7,7 @@ use Irssi;    # Irssi::Irc nie jest wymagane - obiekty serwera i tak sa Irssi::I
 
 use vars qw($VERSION %IRSSI);
 
-$VERSION = '2.1.0';
+$VERSION = '2.1.1';
 %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -838,7 +838,23 @@ sub usage_tkl {
     return;
 }
 
+# plik pomocy (~/.erssi/help albo help_path): jest = /help pokazuje go jak
+# kazda inna komende; brak (zwykle irssi) = pomoc wbudowana w skrypt
+sub help_file {
+    my ($name) = @_;
+    for my $dir (Irssi::get_irssi_dir() . '/help', split /:/, Irssi::settings_get_str('help_path')) {
+        return 1 if -f "$dir/" . lc $name;
+    }
+    return 0;
+}
+
 sub cmd_tk_help {
+    if (help_file('tk')) { Irssi::command('help tk'); return }
+    tk_help_text();
+    return;
+}
+
+sub tk_help_text {
     say_info("tk.pl v$VERSION - czasowe K-linie (TKLINE) dla ircd 2.11 / IRCnet");
     say_info(' ');
     usage_tkl();
@@ -876,8 +892,9 @@ sub cmd_tk {
 
 sub cmd_help {
     my ($data) = @_;
-    return unless ($data // '') =~ /\A\s*(?:tk|tkl|untkl|tklist|klist)\s*\z/i;
-    cmd_tk_help();
+    return unless ($data // '') =~ /\A\s*(tk|tkl|untkl|tklist|klist)\s*\z/i;
+    return if help_file($1);
+    tk_help_text();
     Irssi::signal_stop();
     return;
 }

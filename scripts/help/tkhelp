@@ -1,0 +1,17 @@
+
+%9Składnia:%9
+
+TKHELP%|
+
+%9Opis:%9
+
+    Wypisuje wbudowaną, skróconą pomoc skryptu tk.pl (to samo co
+    /TK HELP): składnię /TKL, opcje, pozostałe komendy, listę ustawień
+    i ścieżkę dziennika. Pełny opis: /HELP TK i /HELP TKL.
+
+%9Przykłady:%9
+
+    /TKHELP
+
+%9Zobacz też:%9 KLIST, TK, TKL, TKLIST, UNTKL
+

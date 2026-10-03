@@ -1,0 +1,28 @@
+
+%9Składnia:%9
+
+KLIST %|[<maska>]
+
+%9Parametry:%9
+
+    Opcjonalna maska przekazywana serwerowi jako argument STATS.
+
+%9Opis:%9
+
+    Wysyła STATS K do serwera aktywnego okna, czyli prosi o listę stałych
+    K-linii z konfiguracji ircd 2.11. Odpowiedź serwera erssi wyświetla jak
+    każdą inną. Komenda skryptu tk.pl; to samo robi /TK KLIST.
+
+    Argument musi być jednym słowem (do 64 znaków) - inny jest pomijany
+    i idzie samo STATS K. O tym, kto zobaczy listę, decyduje serwer.
+
+    Stałych K-linii nie da się zdjąć przez /UNTKL - ta komenda dotyczy
+    tylko tklinii z /TKLIST.
+
+%9Przykłady:%9
+
+    /KLIST
+    /KLIST *@*.example.org
+
+%9Zobacz też:%9 STATS, TK, TKL, TKLIST, UNTKL
+
