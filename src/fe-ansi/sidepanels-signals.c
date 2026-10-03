@@ -61,13 +61,14 @@ static WINDOW_REC *find_server_separator_window(const char *server_tag)
 		
 	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
 		WINDOW_REC *win = tmp->data;
-		const char *win_name = window_get_active_name(win);
-		
-		/* Check if this is a server separator window:
-		 * - Has server tag but no active channel/query
-		 * - Window name matches server tag */
-		if (win->servertag && g_ascii_strcasecmp(win->servertag, server_tag) == 0 && 
-		    !win->active && win_name && g_ascii_strcasecmp(win_name, server_tag) == 0) {
+
+		/* A server separator window: the window itself is named after the
+		 * server tag and is sticky to that server. Its items do not matter -
+		 * a script may keep one there (e.g. a query); judging
+		 * by the active item's name created a second network window on every
+		 * reconnect. */
+		if (win->servertag != NULL && g_ascii_strcasecmp(win->servertag, server_tag) == 0 &&
+		    win->name != NULL && g_ascii_strcasecmp(win->name, server_tag) == 0) {
 			return win;
 		}
 	}
