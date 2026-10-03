@@ -7,6 +7,14 @@
 [![irssi](https://img.shields.io/badge/irssi-1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
 
+![erssi Shellter Edition: window list, channel with the shellter theme, nick list by rank](docs/images/erssi-shellter.png)
+
+```sh
+git clone https://github.com/y-o-o-z/erssi.git && cd erssi
+meson setup Build -Dprefix="$HOME/.local/opt/erssi" && ninja -C Build install
+~/.local/opt/erssi/bin/erssi          # no root, keeps its own ~/.erssi
+```
+
 erssi Shellter Edition is a fork of [erssi](https://github.com/erssi-org/erssi),
 the next-generation irssi, tuned for daily use on IRCnet: a polished start theme, rank-colored
 nicks, WHOIS that stays out of your channels, a fe-web server that a browser
@@ -14,22 +22,22 @@ client can drive exactly like the terminal, and scripts for IRC operators.
 
 `main` is upstream erssi plus the changes below, one commit per change, each
 explaining the problem it solves. Everything else — sidepanels, mouse
-gestures, credential encryption, image preview, full irssi Perl script
-compatibility — comes from erssi unchanged; see the
-[upstream README](docs/ERSSI-UPSTREAM-README.md).
+gestures, image preview, full irssi Perl script compatibility — comes from
+erssi; see the [upstream README](docs/ERSSI-UPSTREAM-README.md). Credential
+encryption is switched off until it is rewritten (see *Security*).
 
 ## Version
 
 ```
 $ erssi --version
-erssi 1.3.2 (20261002 1302)
+erssi 1.3.2 (20261003 1302)
 ```
 
 | | |
 |---|---|
 | **erssi 1.3.2** | erssi Shellter Edition: all of erssi 1.3.1 (erssi-org, 2026-04-06) plus the changes below. Release notes at the top of [NEWS](NEWS). |
 | **irssi base** | irssi 1.4.5, the latest irssi release (2023-10-03), plus irssi `master` up to 2025-07-26 as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date (`20261002`), so scripts that require irssi 1.4.5 or newer by date load. `$J` is erssi's own version (`1.3.2`): a script that compares `$J` with `1.4` needs a patch, as the bundled `rpe2e.pl` has. |
+| **Perl scripts** | `Irssi::version()` returns the release date (`20261003`), so scripts that require irssi 1.4.5 or newer by date load. `$J` is erssi's own version (`1.3.2`): a script that compares `$J` with `1.4` needs a patch, as the bundled `rpe2e.pl` has. |
 
 ## What the fork changes
 
@@ -52,6 +60,9 @@ erssi 1.3.2 (20261002 1302)
 | WHOIS/WHOWAS in the network window (`print_whois_rpl_in_server_window`, on) | Replies go to the status window of the network that asked (IRCnet, IRCnet2), not into the channel you are reading. |
 | `anti_floodnet_notices` | Anti-Floodnet messages are local prints that `/ignore` cannot hide; this setting can. |
 | No `g_debug` in recode | Every sent line used to show up as `GLib default debug: recode_out: …` in Notices. |
+| `/HELP` for every command | The erssi commands that had no help (`/help credential`, `fe_web`, `floodnet`, `foreach`, `image`, `nickhash`, …) have it, and so does every bundled script command. Help files in `~/.erssi/help/` come first: drop in help for your own scripts. |
+| Anti-floodnet that does not eat private messages | It counted messages, so one friend without identd pasting five lines blocked every `~ident` sender on all networks, silently, until the next message. It now counts different senders, skips people you have a query with, ends protection on a timer, and a message from a server no longer crashes erssi. |
+| Activity that means something | A quit or nick change marked every window of the network; now only the windows where that nick is. |
 | 256-color fallback for 24-bit colors | erssi's new terminal backend always sent 24-bit color codes; GNU Screen and terminals without truecolor showed the theme without colors. Now, as in irssi 1.4.5, they get the nearest 256-color palette entry. |
 
 **fe-web** (WebSocket server for browser clients)
@@ -75,6 +86,25 @@ by default (`/script load <name>`; autoload: symlink into
 | `mentions.pl` | One *Mentions* window for highlights (also nick mid-sentence), private messages, notices and DCC, mirrored to `~/.erssi/logs/mentions.log`. |
 | `webjournal.pl` | Journals every window to `~/.erssi/journal` (JSONL, 0600, rotated) so a web client can show the same history and windows as the terminal. `/webjournal`. |
 | `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop with an IRC interface): one connection and one window per botnet; a second `/connect` switches to it, closing the partyline window disconnects, at most one reconnect with a retry limit, cleanup of duplicates on load. `/bot [botnet\|close <botnet>\|cleanup]`, `botnet_chatnets`. |
+
+## Security
+
+Reviewed for this release; the details are in [NEWS](NEWS).
+
+- **fe-web** gives a browser full control of erssi, so it is built for a
+  shared shell box: one password guess per connection, compared in constant
+  time; 16 KB and 10 seconds to log in; at most 16 clients; oversized frames
+  refused. The TLS certificate is kept in `~/.erssi/fe-web-cert.pem`, so the
+  web client trusts that certificate only — not whatever else listens on the
+  port while erssi restarts.
+- **Image preview** fetches only over http/https, only from public
+  addresses (also after redirects), stops at the size limit even when the
+  server lies about it, and refuses images too large to decode safely.
+- **`~/.erssi/config`** is written readable only by you (0600).
+- **Credential encryption** (`/credential encrypt`, external file) is
+  refused: in erssi 1.3.1 it never encrypted the configuration file, and a
+  wrong master password could delete stored credentials. Existing setups
+  keep working; `/help credential` explains how to go back to plain storage.
 
 ## Build and install (no root needed)
 
