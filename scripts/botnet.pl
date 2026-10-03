@@ -58,7 +58,7 @@ use warnings;
 use Irssi;
 use Irssi::TextUI;
 
-our $VERSION = '1.2.1';
+our $VERSION = '1.2.2';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -84,6 +84,8 @@ Irssi::theme_register([
     'botnet_sb_retry',      '%ZF59E0B↻%n %Z8B949E$0 $1s%n',
     'botnet_sb_stopped',    '%ZFF7B72✕%n %Z8B949E$0%n',
     'botnet_sb_down',       '%Z484F58○ $0%n',
+    # komunikaty skryptu; motyw moze je wyrownac do kolumny (shellter)
+    'botnet_info',          '{line_start}{hilight botnet} $0',
 ]);
 
 my %failures;      # lc chatnet -> nieudane proby z rzedu
@@ -159,13 +161,23 @@ sub reconnects_of {
 }
 
 # zdarzenia w tle (rozlaczenia, wstrzymane ponowienia) - okno Notices
+# zdarzenia w tle - do okna komunikatow klienta (Notices); poziom CLIENTCRAP,
+# bo przy CLIENTNOTICE erssi dokleja przed linia wlasna etykiete
 sub say_info {
     my ($text) = @_;
-    Irssi::print("botnet: $text", MSGLEVEL_CLIENTNOTICE);
+    my $win = Irssi::window_find_level(MSGLEVEL_CLIENTNOTICE) || Irssi::active_win();
+    $win->printformat(MSGLEVEL_CLIENTCRAP, 'botnet_info', ($text));
 }
 
 # odpowiedzi na komendy - tam, gdzie je wpisano
 sub say_here {
+    my ($text) = @_;
+    $text =~ s/^botnet: //;
+    Irssi::active_win()->printformat(MSGLEVEL_CLIENTCRAP, 'botnet_info', ($text));
+}
+
+# pomoc wbudowana (gdy brak pliku pomocy) - zwykly tekst z kodami %_
+sub say_plain {
     my ($text) = @_;
     Irssi::active_win()->print($text, MSGLEVEL_CLIENTCRAP);
 }
@@ -452,7 +464,7 @@ sub find_botnet_arg {
 
 sub help {
     my $nets = join(' ', map { display_name($_) } sort keys %{ { botnets() } });
-    say_here($_) for (
+    say_plain($_) for (
         "%_botnet.pl $VERSION%_ - partyline botnetow: jedno polaczenie i jedno okno na botnet",
         '',
         '%_Komendy%_',
@@ -504,8 +516,8 @@ sub cmd_bot {
     my %set = botnets();
 
     if (!@a) {
-        say_here('%_botnety%_ (/bot help - komendy):');
-        say_here('  ' . status_line($_)) for sort keys %set;
+        say_here('stan botnetow (/bot help - komendy):');
+        say_here(status_line($_)) for sort keys %set;
         return;
     }
     my $sub = lc $a[0];

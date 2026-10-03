@@ -1,0 +1,289 @@
+From e618a46a140a8d3eaba322bf98a40c3f13e0a110 Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 14:31:51 +0200
+Subject: [PATCH] local: sessions and sign-out work with erssi
+
+The server in erssi mode never answered "sessions:get", "sign-out" or
+anything about sessions: the settings page showed an empty session list,
+there was no way to sign out, and every page load - also a reload with the
+stored token - created a new session whose token stayed valid forever
+(93 sessions on one account in two days).
+
+- A browser that signs in with its stored token keeps that session; only
+  a password sign-in creates a new one.
+- sessions:get lists the sessions (current, active browsers, last use);
+  sign-out ends the asking browser's session or a chosen one, and every
+  browser using it goes back to the sign-in page.
+- "Sign out all other sessions" on the account page.
+- Sessions unused for 30 days expire.
+- A sign-out button in the sidebar footer.
+---
+ client/components/Settings/Account.vue | 13 ++++
+ client/components/Sidebar.vue          | 17 ++++++
+ client/css/style.css                   |  1 +
+ server/irssiClient.ts                  | 83 ++++++++++++++++++++++++++
+ server/server.ts                       | 27 ++++++---
+ shared/types/socket-events.d.ts        |  1 +
+ 6 files changed, 135 insertions(+), 7 deletions(-)
+
+diff --git a/client/components/Settings/Account.vue b/client/components/Settings/Account.vue
+index ee709d05..c682f44b 100644
+--- a/client/components/Settings/Account.vue
++++ b/client/components/Settings/Account.vue
+@@ -97,6 +97,12 @@
+ 				:key="session.token"
+ 				:session="session"
+ 			/>
++
++			<p v-if="store.state.sessions.length > 1" class="sessions-signout-others">
++				<button class="btn" @click.prevent="signOutOthers">
++					Wyloguj wszystkie inne sesje ({{ store.state.sessions.length - 1 }})
++				</button>
++			</p>
+ 		</div>
+ 	</div>
+ </template>
+@@ -149,6 +155,12 @@ export default defineComponent({
+ 			socket.emit("sessions:get");
+ 		});
+ 
++		const signOutOthers = () => {
++			if (window.confirm("Wylogować wszystkie inne przeglądarki i urządzenia?")) {
++				socket.emit("sessions:signout_others");
++			}
++		};
++
+ 		const changePassword = () => {
+ 			const data = {
+ 				old_password: old_password.value,
+@@ -181,6 +193,7 @@ export default defineComponent({
+ 		};
+ 
+ 		return {
++			signOutOthers,
+ 			store,
+ 			passwordChangeStatus,
+ 			passwordErrors,
+diff --git a/client/components/Sidebar.vue b/client/components/Sidebar.vue
+index 0cb7133a..1f1b2dde 100644
+--- a/client/components/Sidebar.vue
++++ b/client/components/Sidebar.vue
+@@ -77,6 +77,14 @@
+ 						@keypress.enter="navigate"
+ 					></button> </router-link
+ 			></span>
++			<span class="tooltipped tooltipped-n tooltipped-no-touch" aria-label="Wyloguj"
++				><button
++					class="icon sign-out"
++					aria-label="Wyloguj"
++					@click="signOut"
++					@keypress.enter="signOut"
++				></button
++			></span>
+ 		</footer>
+ 	</aside>
+ </template>
+@@ -86,6 +94,8 @@ import {defineComponent, nextTick, onMounted, onUnmounted, PropType, ref} from "
+ import {useRoute} from "vue-router";
+ import {useStore} from "../js/store";
+ import NetworkList from "./NetworkList.vue";
++import socket from "../js/socket";
++import Auth from "../js/auth";
+ 
+ export default defineComponent({
+ 	name: "Sidebar",
+@@ -245,7 +255,14 @@ export default defineComponent({
+ 
+ 		const isPublic = () => document.body.classList.contains("public");
+ 
++		// wylogowanie tej przegladarki: serwer uniewaznia jej sesje
++		const signOut = () => {
++			socket.emit("sign-out");
++			Auth.signout();
++		};
++
+ 		return {
++			signOut,
+ 			isDevelopment,
+ 			store,
+ 			route,
+diff --git a/client/css/style.css b/client/css/style.css
+index 339c3cc0..d3d43a83 100644
+--- a/client/css/style.css
++++ b/client/css/style.css
+@@ -403,6 +403,7 @@ p {
+ #footer .settings::before { content: "\f013"; /* http://fontawesome.io/icon/cog/ */ }
+ 
+ #footer .help::before { content: "\f059"; /* http://fontawesome.io/icon/question/ */ }
++#footer .sign-out::before { content: "\f2f5"; /* https://fontawesome.com/icons/sign-out-alt?style=solid */ }
+ 
+ #form #upload::before { content: "\f0c6"; /* https://fontawesome.com/icons/paperclip?style=solid */ }
+ #form #submit::before { content: "\f1d8"; /* http://fontawesome.io/icon/paper-plane/ */ }
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index 27e3ae8b..f3e7e2d3 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -265,6 +265,8 @@ export class IrssiClient {
+ 
+ 	// Browser sessions (multiple browsers per user)
+ 	attachedBrowsers: Map<string, BrowserSession> = new Map();
++	// socket.id -> hash tokenu sesji, z ktorej przegladarka jest zalogowana
++	browserTokens: Map<string, string> = new Map();
+ 
+ 	// erssi journal (webjournal.pl): history while Nexus was down and the
+ 	// erssi windows without a channel (Notices, Mentions, script windows)
+@@ -347,6 +349,14 @@ export class IrssiClient {
+ 			this.config.sessions = {};
+ 		}
+ 
++		// Sesje nieuzywane od 30 dni wygasaja (token na zawsze to zbyt dlugo)
++		const expiry = Date.now() - 30 * 24 * 3600 * 1000;
++		for (const [hash, session] of Object.entries(this.config.sessions)) {
++			if (((session as any).lastUse || 0) < expiry) {
++				delete this.config.sessions[hash];
++			}
++		}
++
+ 		if (!_.isPlainObject(this.config.clientSettings)) {
+ 			this.config.clientSettings = {};
+ 		}
+@@ -1354,6 +1364,8 @@ export class IrssiClient {
+ 			this.attachedBrowsers.delete(socketId);
+ 		}
+ 
++		this.browserTokens.delete(socketId);
++
+ 		logger.info(
+ 			`User ${chalk.bold(this.name)}: browser detached (${socketId}), remaining: ${
+ 				this.attachedBrowsers.size
+@@ -1800,6 +1812,77 @@ export class IrssiClient {
+ 		this.save();
+ 	}
+ 
++	/**
++	 * Sessions of this user for the settings page; "current" is the session
++	 * of the asking browser, "active" counts browsers attached with it.
++	 */
++	sessionList(socketId: string) {
++		const mine = this.browserTokens.get(socketId);
++		const tokens = [...this.browserTokens.values()];
++		return Object.entries(this.config.sessions).map(([hash, session]: [string, any]) => ({
++			current: hash === mine,
++			active: tokens.filter((t) => t === hash).length,
++			lastUse: session.lastUse || 0,
++			ip: session.ip || "",
++			agent: session.agent || "",
++			token: hash,
++		}));
++	}
++
++	sendSessionList(socket: Socket): void {
++		socket.emit("sessions:list", this.sessionList(socket.id));
++	}
++
++	/**
++	 * Sign a session out: its token stops working and every browser using it
++	 * is sent back to the sign-in page. Without a token: the asking browser.
++	 */
++	signOut(socket: Socket, tokenHash?: string): void {
++		const target = tokenHash || this.browserTokens.get(socket.id);
++
++		if (!target || !Object.prototype.hasOwnProperty.call(this.config.sessions, target)) {
++			return;
++		}
++
++		this.revokeSessions([target]);
++	}
++
++	/** Sign out every session except the asking browser's own. */
++	signOutOthers(socket: Socket): void {
++		const mine = this.browserTokens.get(socket.id);
++		this.revokeSessions(Object.keys(this.config.sessions).filter((hash) => hash !== mine));
++	}
++
++	private revokeSessions(hashes: string[]): void {
++		if (hashes.length === 0) {
++			return;
++		}
++
++		for (const hash of hashes) {
++			delete this.config.sessions[hash];
++		}
++
++		this.save();
++
++		for (const [socketId, hash] of [...this.browserTokens]) {
++			if (!hashes.includes(hash)) {
++				continue;
++			}
++
++			const browser = this.attachedBrowsers.get(socketId);
++			browser?.socket.emit("sign-out");
++			browser?.socket.disconnect(true);
++		}
++
++		for (const [socketId, browser] of this.attachedBrowsers) {
++			if (!hashes.includes(this.browserTokens.get(socketId) || "")) {
++				this.sendSessionList(browser.socket);
++			}
++		}
++
++		logger.info(`User ${chalk.bold(this.name)}: signed out ${hashes.length} session(s)`);
++	}
++
+ 	/**
+ 	 * Save user config to disk
+ 	 */
+diff --git a/server/server.ts b/server/server.ts
+index d18d69ea..ce0a9457 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -799,13 +799,26 @@ function initializeIrssiClient(
+ 		}
+ 	};
+ 
+-	// Handle token generation (always required in private mode)
+-	client.generateToken((newToken) => {
+-		const tokenHash = client.calculateTokenHash(newToken);
+-		client.updateSession(tokenHash, getClientIp(socket), socket.request);
+-		// Continue with init, passing token to attachBrowser
+-		continueInit(newToken);
+-	});
++	// A browser that signed in with its stored token keeps that session; only a
++	// password sign-in makes a new one. (Every reload used to add a session whose
++	// token stayed valid forever.)
++	if (token) {
++		client.updateSession(token, getClientIp(socket), socket.request);
++		client.browserTokens.set(socket.id, token);
++		continueInit();
++	} else {
++		client.generateToken((newToken) => {
++			const tokenHash = client.calculateTokenHash(newToken);
++			client.updateSession(tokenHash, getClientIp(socket), socket.request);
++			client.browserTokens.set(socket.id, tokenHash);
++			// Continue with init, passing token to attachBrowser
++			continueInit(newToken);
++		});
++	}
++
++	socket.on("sessions:get", () => client.sendSessionList(socket));
++	socket.on("sign-out", (tokenToSignOut?: string) => client.signOut(socket, tokenToSignOut));
++	socket.on("sessions:signout_others", () => client.signOutOthers(socket));
+ 
+ 	// Handle disconnect
+ 	socket.on("disconnect", function () {
+diff --git a/shared/types/socket-events.d.ts b/shared/types/socket-events.d.ts
+index 3ffe005c..1178af61 100644
+--- a/shared/types/socket-events.d.ts
++++ b/shared/types/socket-events.d.ts
+@@ -155,6 +155,7 @@ interface ClientToServerEvents {
+ 	"setting:set": EventHandler<{name: string; value: any}>;
+ 
+ 	"sessions:get": NoPayloadEventHandler;
++	"sessions:signout_others": NoPayloadEventHandler;
+ 
+ 	"sort:networks": EventHandler<{order: SharedNetwork["uuid"][]}>;
+ 	"sort:channels": EventHandler<{
+-- 
+2.47.3
+
