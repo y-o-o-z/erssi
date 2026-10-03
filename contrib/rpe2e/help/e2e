@@ -1,7 +1,7 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
-E2E %|[help]
+E2E %|[HELP]
 E2E ON%|
 E2E OFF%|
 E2E MODE %|[normal|auto-accept|auto|quiet]
@@ -17,95 +17,99 @@ E2E FORGET %|[-all] <nick|ident@host>
 E2E VERIFY %|<nick>
 E2E REVERIFY %|<nick>
 E2E ROTATE%|
-E2E EXPORT %|<plik>
-E2E IMPORT %|<plik>
-E2E AUTOTRUST %|[list]
-E2E AUTOTRUST ADD %|<zakres> <wzorzec>
-E2E AUTOTRUST REMOVE %|<wzorzec>
+E2E EXPORT %|<file>
+E2E IMPORT %|<file>
+E2E AUTOTRUST %|[LIST]
+E2E AUTOTRUST ADD %|<scope> <pattern>
+E2E AUTOTRUST REMOVE %|<pattern>
 
-%9Parametry:%9
+%9Parameters:%9
 
-    HELP:        Przewodnik po polsku ze stanem bieżącego okna i lista
-                 podkomend (to samo co /E2E bez argumentów).
-    ON:          Włącza szyfrowanie w bieżącym kanale lub rozmowie (tryb
-                 normal).
-    OFF:         Wyłącza szyfrowanie; tryb zostaje zapamiętany.
-    MODE:        Ustawia tryb i zarazem WŁĄCZA szyfrowanie. Bez argumentu
-                 normal; „auto” = auto-accept.
-                   normal       prośba o klucz od nowej osoby czeka na
+    HELP:        A guide with the state of the current window and the list
+                 of subcommands (same as /E2E without arguments).
+    ON:          Turns encryption on in the current channel or query
+                 (normal mode).
+    OFF:         Turns encryption off; the mode is remembered.
+    MODE:        Sets the mode and also turns encryption ON. Without an
+                 argument: normal; "auto" = auto-accept.
+                   normal       a key request from a new person waits for
                                 /E2E ACCEPT,
-                   auto-accept  klucz jest odsyłany automatycznie,
-                   quiet        prośby od niezaufanych są pomijane bez
-                                komunikatu.
-    FINGERPRINT: Pełny odcisk Twojego klucza (tworzy klucz, jeśli go nie
-                 ma).
-    STATUS:      Odcisk, liczba sesji przychodzących i liczba kanałów lub
-                 rozmów z włączonym szyfrowaniem.
-    LIST:        Sesje w bieżącym kanale lub rozmowie: ident@host, kanał,
-                 początek odcisku, status (trusted, pending, revoked).
-                 -all: cały keyring - znane osoby i wszystkie sesje.
-    HANDSHAKE:   Wysyła osobie prośbę o klucz (KEYREQ) dla bieżącego
-                 kanału lub rozmowy; szyfrowanie musi być tu włączone.
-    ACCEPT:      Akceptuje oczekującą wymianę kluczy: odsyła klucz (KEYRSP)
-                 i prosi o klucz w drugą stronę. Bez oczekującej wymiany
-                 oznacza istniejącą sesję jako zaufaną.
-    DECLINE:     Odrzuca oczekującą wymianę; istniejąca sesja dostaje
-                 status revoked.
-    REVOKE:      Odbiera zaufanie w bieżącym kanale lub rozmowie i planuje
-                 wymianę Twojego klucza, żeby ta osoba nie czytała dalej.
-    UNREVOKE:    Przywraca zaufanie.
-    FORGET:      Usuwa sesje osoby w bieżącym kanale lub rozmowie; z -all
-                 (na początku lub na końcu) - wszystko o niej z keyringu.
-    VERIFY:      Pokazuje początek Twojego odcisku i odcisku osoby - do
-                 porównania innym kanałem (np. telefonicznie).
-    REVERIFY:    Po zmianie klucza osoby (wymiana jest wtedy blokowana)
-                 przyjmuje nowy klucz; bez zarejestrowanej zmiany czyści
-                 stare dane i trzeba zrobić nową wymianę.
-    ROTATE:      Planuje wymianę Twojego klucza w bieżącym kanale lub
-                 rozmowie; nowy powstaje przy następnej wiadomości i trafia
-                 do zaufanych osób.
-    EXPORT:      Zapisuje cały keyring, łącznie z kluczami prywatnymi, do
-                 pliku JSON (prawa 0600).
-    IMPORT:      ZASTĘPUJE cały keyring zawartością pliku (bez scalania).
-    AUTOTRUST:   Bez argumentu lub z list - lista reguł. ADD dodaje regułę:
-                 zakres to „global” albo dokładna nazwa kanału, wzorzec to
-                 ident@host z * i ? (wielkość liter bez znaczenia); pasujące
-                 osoby są akceptowane automatycznie. REMOVE usuwa reguły
-                 o danym wzorcu.
+                   auto-accept  the key is sent back automatically,
+                   quiet        requests from untrusted people are
+                                dropped silently.
+    FINGERPRINT: The full fingerprint of your key (creates the key if it
+                 does not exist).
+    STATUS:      Fingerprint, number of incoming sessions and number of
+                 channels or queries with encryption on.
+    LIST:        Sessions in the current channel or query: ident@host,
+                 channel, start of the fingerprint, status (trusted,
+                 pending, revoked). -all: the whole keyring - known people
+                 and all sessions.
+    HANDSHAKE:   Sends the person a key request (KEYREQ) for the current
+                 channel or query; encryption must be on here.
+    ACCEPT:      Accepts a pending key exchange: sends your key back
+                 (KEYRSP) and requests theirs in return. Without a pending
+                 exchange, marks an existing session as trusted.
+    DECLINE:     Declines a pending exchange; an existing session gets the
+                 revoked status.
+    REVOKE:      Withdraws trust in the current channel or query and
+                 schedules a rotation of your key, so that person can no
+                 longer read along.
+    UNREVOKE:    Restores trust.
+    FORGET:      Removes the person's sessions in the current channel or
+                 query; with -all (at the start or at the end) - everything
+                 about them from the keyring.
+    VERIFY:      Shows the start of your fingerprint and of the person's -
+                 to compare over another channel (e.g. by phone).
+    REVERIFY:    After the person's key has changed (the exchange is then
+                 blocked), accepts the new key; without a recorded change
+                 it clears the old data and a new exchange is needed.
+    ROTATE:      Schedules a rotation of your key in the current channel
+                 or query; the new key is created with the next message and
+                 sent to trusted people.
+    EXPORT:      Writes the whole keyring, including private keys, to a
+                 JSON file (mode 0600).
+    IMPORT:      REPLACES the whole keyring with the file's contents (no
+                 merging).
+    AUTOTRUST:   Without an argument or with LIST - the list of rules. ADD
+                 adds a rule: the scope is "global" or an exact channel
+                 name, the pattern is ident@host with * and ?
+                 (case-insensitive); matching people are accepted
+                 automatically. REMOVE removes the rules with that pattern.
 
-%9Opis:%9
+%9Description:%9
 
-    Szyfrowanie end-to-end RPE2E, zgodne z repartee i skryptem dla
-    weechat. Komenda skryptu rpe2e.pl (contrib/rpe2e). Wymaga modułów
-    Perla Crypt::NaCl::Sodium i FFI::Platypus oraz biblioteki libsodium.
-    Klucze leżą w ~/.erssi/rpe2e/keyring.json.
+    RPE2E end-to-end encryption, compatible with repartee and the weechat
+    script. A command of the rpe2e.pl script (contrib/rpe2e). Requires the
+    Perl modules Crypt::NaCl::Sodium and FFI::Platypus and the libsodium
+    library. Keys are stored in ~/.erssi/rpe2e/keyring.json.
 
-    Podkomendy działają w kontekście aktywnego okna: w oknie kanału to
-    kanał, w oknie rozmowy - osoba rozpoznana po ident@host. Szyfrowanie
-    w rozmowie wymaga znanego ident@host rozmówcy (otwarta rozmowa, wspólny
-    kanał albo wcześniejsza wymiana) oraz Twojego własnego, ustalanego po
-    połączeniu przez WHOIS - do tego czasu część komend prosi o ponowienie.
-    Nicki w ACCEPT, DECLINE, REVOKE, VERIFY itd. są rozpoznawane po danych
-    zapamiętanych w keyringu.
+    Subcommands work in the context of the active window: in a channel
+    window it is the channel, in a query window - the person identified by
+    ident@host. Encryption in a query requires the other side's ident@host
+    to be known (an open query, a common channel or an earlier exchange)
+    and your own, which is learned via WHOIS after connecting - until then
+    some commands ask you to retry. Nicks in ACCEPT, DECLINE, REVOKE,
+    VERIFY etc. are resolved using the data stored in the keyring.
 
-    Po włączeniu każdy PRIVMSG do kanału lub rozmowy (zwykły tekst, /ME,
-    /MSG, /SAY, skrypty) jest szyfrowany. Gdy zaszyfrować się nie da,
-    wiadomość NIE jest wysyłana, choć widać ją lokalnie, i pojawia się
-    komunikat [E2E]. Wyjątki: na kanale linie zaczynające się od „.” lub
-    „!” idą jawnym tekstem (komendy botów, z ostrzeżeniem), a CTCP inne
-    niż ACTION zawsze jawnie.
+    Once enabled, every PRIVMSG to the channel or query (plain text, /ME,
+    /MSG, /SAY, scripts) is encrypted. When encryption is not possible,
+    the message is NOT sent, although it is shown locally, and an [E2E]
+    message is printed. Exceptions: on a channel, lines starting with '.'
+    or '!' are sent in plain text (bot commands, with a warning), and CTCPs
+    other than ACTION are always sent in plain text.
 
-    Zaszyfrowana wiadomość od osoby bez zaufanej sesji jest ukrywana,
-    a skrypt sam wysyła jej prośbę o klucz (najwyżej co 30 s), jeśli
-    szyfrowanie jest tu włączone. Gdy to Ty dostajesz prośbę o klucz,
-    w trybie normal pojawia się „Pending key exchange from <nick>” -
-    odpowiedz /E2E ACCEPT albo /E2E DECLINE. Prośby dotyczące kanału lub
-    rozmowy, gdzie szyfrowanie jest wyłączone, są pomijane. Komunikaty
-    skryptu są po angielsku, z prefiksem [E2E].
+    An encrypted message from a person without a trusted session is
+    hidden, and the script sends them a key request itself (at most every
+    30 s) if encryption is on here. When you receive a key request, in
+    normal mode "Pending key exchange from <nick>" is printed - reply with
+    /E2E ACCEPT or /E2E DECLINE. Requests for a channel or query where
+    encryption is off are ignored. Script messages are prefixed with
+    [E2E].
 
-    EXPORT i IMPORT nie rozwijają „~” - podawaj pełną ścieżkę.
+    EXPORT and IMPORT do not expand '~' - give a full path.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /E2E
     /E2E ON
@@ -117,5 +121,5 @@ E2E AUTOTRUST REMOVE %|<wzorzec>
     /E2E AUTOTRUST ADD global *@*.example.org
     /E2E EXPORT /home/alice/e2e-keyring.json
 
-%9Zobacz też:%9 MSG, QUERY
+%9See also:%9 MSG, QUERY
 

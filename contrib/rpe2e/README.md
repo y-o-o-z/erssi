@@ -7,7 +7,7 @@ MIT, repartee authors), byte-compatible with repartee and the WeeChat
 `erssi/y-o-o-z` and described in the file header: Perl modules from
 `~/perl5`, a version gate that understands erssi's own version numbers,
 libsodium found as a versioned soname (`libsodium.so.23`) without the `-dev`
-package, a regex fix for a Perl warning, and a step-by-step guide (in Polish)
+package, a regex fix for a Perl warning, and a step-by-step guide
 under `/e2e`. The protocol code is untouched.
 
 ## Use
@@ -42,7 +42,7 @@ private conversations.
 /e2e help               all commands
 ```
 
-`/help e2e` describes every subcommand once `help/e2e` (Polish) is copied
+`/help e2e` describes every subcommand once `help/e2e` is copied
 to `~/.erssi/help/`.
 
 Once on, every message to the channel leaves as `+RPE2E01 …`
