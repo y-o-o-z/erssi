@@ -27,7 +27,7 @@ use warnings;
 use Irssi;
 use Irssi::Irc;
 
-our $VERSION = '1.0.0';
+our $VERSION = '1.0.1';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -184,28 +184,115 @@ sub report {
     out('skaner_no_host', $result->{no_host}, $result->{total}) if $result->{no_host};
 }
 
+# ── indeks hostow ────────────────────────────────────────────────────
+
+# Alert przy wejsciu pyta "kto jeszcze ma ten host". Przegladanie calej
+# listy nickow przy kazdym JOIN (zalew wejsc na duzym kanale = tysiace
+# porownan na kazde wejscie) zastepuje indeks na kanal: host -> nicki,
+# budowany przy synchronizacji (albo przy pierwszym wejsciu po /script
+# load). Poprawiaja go sygnaly listy nickow erssi (nicklist new / remove /
+# changed / host changed), a nie "message part/quit/nick" - te /ignore
+# zatrzymuje przed skryptami i indeks rozjechalby sie z kanalem.
+# Przy wylaczonym skanerze indeksu nie ma - powstaje od nowa po wlaczeniu.
+my %index;    # "tag\0kanal" => { hosts => { host_lc => { nick_lc => nick } }, nicks => { nick_lc => host_lc } }
+
+sub index_key { ($_[0] // '') . "\0" . irc_lc($_[1]) }
+
+sub index_remove {
+    my ($idx, $nick) = @_;
+    my $n = irc_lc($nick);
+    my $host = delete $idx->{nicks}{$n} // return;
+    delete $idx->{hosts}{$host}{$n};
+    delete $idx->{hosts}{$host} unless %{ $idx->{hosts}{$host} };
+}
+
+sub index_add {
+    my ($idx, $nick, $address) = @_;
+    index_remove($idx, $nick);
+    my $host = host_part($address) // return;
+    my ($n, $h) = (irc_lc($nick), irc_lc($host));
+    $idx->{hosts}{$h}{$n} = $nick;
+    $idx->{nicks}{$n} = $h;
+}
+
+sub index_build {
+    my ($channel) = @_;
+    my $idx = { hosts => {}, nicks => {} };
+    index_add($idx, $_->{nick}, $_->{host}) for $channel->nicks();
+    return $index{ index_key($channel->{server}{tag}, $channel->{name}) } = $idx;
+}
+
+sub index_find {
+    my ($server, $channel_name) = @_;
+    return $index{ index_key($server->{tag}, $channel_name) };
+}
+
+sub enabled {
+    return 1 if Irssi::settings_get_bool('skaner_enabled');
+    %index = ();
+    return 0;
+}
+
 # ── sygnaly ──────────────────────────────────────────────────────────
 
 # Koniec synchronizacji kanalu po naszym wejsciu: hosty i flagi z WHO sa juz.
 sub sig_channel_sync {
     my ($channel) = @_;
-    return unless Irssi::settings_get_bool('skaner_enabled');
+    return unless enabled();
+    index_build($channel);
     report($channel, 1);
 }
 
 sub sig_message_join {
     my ($server, $channel_name, $nick, $address) = @_;
-    return unless Irssi::settings_get_bool('skaner_enabled');
+    return unless enabled();
     return if irc_lc($nick) eq irc_lc($server->{nick});
     my $channel = $server->channel_find($channel_name) or return;
     return unless $channel->{synced};
-    my $host = host_part($address) // return;
-    my $key = irc_lc($host);
+    my $idx = index_find($server, $channel_name) // index_build($channel);
+    my $host = host_part($address);
+    my %same = defined $host ? %{ $idx->{hosts}{ irc_lc($host) } || {} } : ();
+    delete $same{ irc_lc($nick) };
+    index_add($idx, $nick, $address);
+    return unless %same;
+    # obiekty nickow (prefiksy @ % +) tylko dla tych kilku z tym samym hostem
     my @same = sort { irc_lc($a->{nick}) cmp irc_lc($b->{nick}) }
-        grep { irc_lc($_->{nick}) ne irc_lc($nick) && irc_lc(host_part($_->{host}) // '') eq $key }
-        $channel->nicks();
+        grep { defined } map { $channel->nick_find($_) } values %same;
     return unless @same;
     alert($channel->{name}, $nick, $address, nick_list(@same));
+}
+
+# Sygnaly listy nickow: (kanal, nick[, stary nick]). Indeks istnieje tylko
+# dla zsynchronizowanych kanalow - w trakcie WHO nic nie robimy.
+sub channel_index {
+    my ($channel) = @_;
+    return unless $channel && $channel->{server};
+    return index_find($channel->{server}, $channel->{name});
+}
+
+sub sig_nicklist_new {
+    my ($channel, $nick) = @_;
+    my $idx = channel_index($channel) or return;
+    index_add($idx, $nick->{nick}, $nick->{host});
+}
+
+sub sig_nicklist_remove {
+    my ($channel, $nick) = @_;
+    my $idx = channel_index($channel) or return;
+    index_remove($idx, $nick->{nick});
+}
+
+sub sig_nicklist_changed {
+    my ($channel, $nick, $oldnick) = @_;
+    my $idx = channel_index($channel) or return;
+    index_remove($idx, $oldnick);
+    index_add($idx, $nick->{nick}, $nick->{host});
+}
+
+sub sig_channel_destroyed {
+    my ($channel) = @_;
+    return unless $channel && $channel->{server};
+    delete $index{ index_key($channel->{server}{tag}, $channel->{name}) };
 }
 
 # ── komenda ──────────────────────────────────────────────────────────
@@ -272,6 +359,11 @@ sub cmd_skaner {
 
 Irssi::signal_add_last('channel sync', \&sig_channel_sync);
 Irssi::signal_add_last('message join', \&sig_message_join);
+Irssi::signal_add('nicklist new', \&sig_nicklist_new);
+Irssi::signal_add('nicklist host changed', \&sig_nicklist_new);
+Irssi::signal_add('nicklist remove', \&sig_nicklist_remove);
+Irssi::signal_add('nicklist changed', \&sig_nicklist_changed);
+Irssi::signal_add('channel destroyed', \&sig_channel_destroyed);
 Irssi::command_bind('skaner', \&cmd_skaner);
 
 # Okno tworzymy dopiero po starcie erssi: przy "irssi init finished" erssi

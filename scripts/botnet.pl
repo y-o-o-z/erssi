@@ -58,7 +58,7 @@ use warnings;
 use Irssi;
 use Irssi::TextUI;
 
-our $VERSION = '1.2.2';
+our $VERSION = '1.2.3';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -230,7 +230,7 @@ sub ensure_window {
         # rozmowa sama w swoim oknie (nie w oknie sieci): to okno partyline
         my $qwin = $query->window();
         if ($qwin && (!$net || $qwin->{refnum} != $net->{refnum})
-            && $qwin->items() == 1 && !defined $qwin->{name}) {
+            && $qwin->items() == 1 && !length($qwin->{name} // '')) {
             $win = $qwin;
             $win->set_name($name);
         }
@@ -247,7 +247,7 @@ sub ensure_window {
             # np. stary uklad: rozmowa w oknie sieci - przenies ja
             $query->set_active();
             $qwin->command("window item move $win->{refnum}");
-            $qwin->destroy() if !$qwin->items() && !defined $qwin->{name};
+            $qwin->destroy() if !$qwin->items() && !length($qwin->{name} // '');
         }
     } else {
         $win->command("query -window -$server->{tag} $nick");
@@ -283,7 +283,7 @@ sub disconnect {
         next unless lc($q->{name}) eq lc partyline_nick() && ($q->{server_tag} // '') eq $tag;
         my $w = $q->window();
         $q->destroy();
-        $w->destroy() if $w && !$w->items() && (!defined $w->{name} || $w->{name} =~ /^partyline:/);
+        $w->destroy() if $w && !$w->items() && (!length($w->{name} // '') || $w->{name} =~ /^partyline:/);
     }
     my $named = Irssi::window_find_name($plname);
     $named->destroy() if $named && !$named->items();
