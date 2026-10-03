@@ -459,7 +459,7 @@ Evolved Irssi maintains the legendary performance of classic irssi:
 We welcome contributions from the community! erssi uses **Conventional Commits** for changelog generation and automated releases.
 
 - **📋 Contributing Guide**: [CONTRIBUTING.md](CONTRIBUTING.md) - Learn about our development workflow, commit message format, and how to submit pull requests
-- **🚀 Release Process**: [RELEASE.md](RELEASE.md) - For maintainers: how to create releases
+- **🚀 Release Process**: RELEASE.md in [erssi-org/erssi](https://github.com/erssi-org/erssi) - for maintainers
 - **📝 Changelog**: [CHANGELOG.md](CHANGELOG.md) - See what's new in each version
 - **🏗️ Architecture**: [CLAUDE.md](CLAUDE.md) - Detailed architecture and development guide
 
