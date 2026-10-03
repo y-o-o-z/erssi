@@ -855,6 +855,20 @@ static void sig_server_disconnected(IRC_SERVER_REC *server)
 	fe_web_message_free(web_msg);
 }
 
+/* Signal: "server destroyed" - web clients must not keep pointing at it
+ * (a command with a target but no server tag would use freed memory) */
+static void sig_server_destroyed(SERVER_REC *server)
+{
+	GSList *tmp;
+
+	for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *client = tmp->data;
+
+		if ((SERVER_REC *) client->server == server)
+			client->server = NULL;
+	}
+}
+
 /* Signal: "channel joined" - YOU joined a channel */
 static void sig_channel_joined(IRC_CHANNEL_REC *channel)
 {
@@ -1565,6 +1579,7 @@ void fe_web_signals_init(void)
 	/* Server events */
 	signal_add("server connected", (SIGNAL_FUNC) sig_server_connected);
 	signal_add("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
+	signal_add("server destroyed", (SIGNAL_FUNC) sig_server_destroyed);
 
 	/* Channel lifecycle (YOU joined/parted) */
 	/* Use signal_add_last to run AFTER fe-common activates the window */
@@ -1637,6 +1652,7 @@ void fe_web_signals_deinit(void)
 	/* Server events */
 	signal_remove("server connected", (SIGNAL_FUNC) sig_server_connected);
 	signal_remove("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
+	signal_remove("server destroyed", (SIGNAL_FUNC) sig_server_destroyed);
 
 	/* Channel lifecycle */
 	signal_remove("channel joined", (SIGNAL_FUNC) sig_channel_joined);
