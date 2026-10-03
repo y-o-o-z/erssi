@@ -735,6 +735,26 @@ formats = {
     translate_error = "    %Z8B949Etranslate{col}%ZFF7B72$0%N";
     translate_line = "            %Z484F58↳{col}%Z6E7681$0%N $1";
   };
+  "Irssi::Script::backlog" = {
+    backlog_header = "      %Z8B949Ebacklog{col}%Z484F58── %Z8B949E$0 %Z484F58·%Z8B949E $1 %Z484F58──%N";
+    backlog_footer = "      %Z8B949Ebacklog{col}%Z484F58── %Z6E7681$0 %Z484F58──%N";
+    backlog_day = "            %Z484F58◷{col}%Z6E7681$0%N";
+    backlog_msg = "%Z6E7681$[-13]0{col}%Z8B949E$1%N";
+    backlog_msg_own = "%Z8B949E%_$[-13]0%_{col}%Z8B949E$1%N";
+    backlog_msg_hilight = "%ZB08A3E$[-13]0{col}%Z8B949E$1%N";
+    backlog_action = "            %Z6E7681*{col}%Z6E7681$0%N %Z8B949E$1%N";
+    backlog_notice = "%Z6E7681$[-13]0{col}%Z484F58notice%N %Z8B949E$1%N";
+    backlog_join = "            %Z484F58→{col}%Z6E7681$0%N";
+    backlog_part = "            %Z484F58←{col}%Z6E7681$0%N";
+    backlog_quit = "            %Z484F58←{col}%Z6E7681$0%N";
+    backlog_kick = "            %Z484F58⊘{col}%Z6E7681$0%N";
+    backlog_nick = "            %Z484F58⇄{col}%Z6E7681$0%N";
+    backlog_topic = "            %Z484F58¶{col}%Z6E7681$0%N";
+    backlog_mode = "            %Z484F58±{col}%Z6E7681$0%N";
+    backlog_match = "%Z6E7681$[-13]0{col}%Z8B949E$1%ZF59E0B$2%Z8B949E$3%N";
+    backlog_info = "      %Z8B949Ebacklog{col}$0";
+    backlog_error = "      %Z8B949Ebacklog{col}%ZFF7B72$0%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z8B949Ebotnet{col}$0";
   };
