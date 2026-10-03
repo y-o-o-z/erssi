@@ -49,7 +49,7 @@ use warnings;
 
 use Irssi;
 
-our $VERSION = '1.0.0';
+our $VERSION = '1.1.0';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -393,15 +393,40 @@ sub find_botnet_arg {
 }
 
 sub help {
+    my $nets = join(' ', map { display_name($_) } sort keys %{ { botnets() } });
     say_here($_) for (
-        "botnet.pl $VERSION - partyline botnetow, jedno polaczenie i jedno okno na botnet",
-        '  /bot                 stan botnetow',
-        '  /bot <botnet>        polacz albo przejdz do okna',
-        '  /bot close <botnet>  rozlacz bez ponawiania, zamknij okno',
-        '  /bot cleanup         uporzadkuj polaczenia i ponowienia teraz',
-        '  zamkniecie okna partyline (/wc) tez rozlacza botnet',
-        '  botnety: ' . join(' ', map { display_name($_) } sort keys %{ { botnets() } }) . '  (/set botnet_chatnets)',
+        "%_botnet.pl $VERSION%_ - partyline botnetow: jedno polaczenie i jedno okno na botnet",
+        '',
+        '%_Komendy%_',
+        '  /bot                    stan wszystkich botnetow (polaczony / laczy sie /',
+        '                          ponowi za Ns / nie odpowiada / rozlaczony)',
+        '  /bot <botnet>           polacz albo przejdz do jego okna; wystarczy poczatek',
+        '                          nazwy (/bot irc = /bot IRCnetBot)',
+        '  /bot close <botnet>     rozlacz bez ponawiania i zamknij okno partyline',
+        '  /bot cleanup            zamknij nadmiarowe polaczenia, usun zdublowane ponowienia',
+        '  /bot help, /help bot    ta pomoc',
+        '',
+        '%_Jak dziala%_',
+        '  * /connect <botnet>, ktory juz dziala, przelacza na jego okno - bez drugiego',
+        '    polaczenia; rozmowa partyline jest od razu w oknie sieci botnetu',
+        '  * zamkniecie okna partyline (/wc, krzyzyk w webie) rozlacza botnet',
+        '  * po zerwaniu: jedno ponowienie, po botnet_reconnect_tries nieudanych probach',
+        '    ponawianie jest wstrzymywane (komunikat w Notices)',
+        '',
+        '%_Ustawienia%_',
+        "  botnet_chatnets          botnety (teraz: $nets)",
+        '  botnet_partyline_nick    nick partyline w hubie (' . partyline_nick() . ')',
+        '  botnet_reconnect_tries   limit prob ponowienia (' . Irssi::settings_get_int('botnet_reconnect_tries') . ', 0 = bez limitu)',
+        '  botnet_quit_message      powod przy rozlaczaniu',
     );
+}
+
+# /help bot - wbudowana pomoc erssi nie zna komend skryptow
+sub cmd_help {
+    my ($args) = @_;
+    return unless ($args // '') =~ /^\s*bot\s*$/i;
+    help();
+    Irssi::signal_stop();
 }
 
 sub cmd_bot {
@@ -410,7 +435,7 @@ sub cmd_bot {
     my %set = botnets();
 
     if (!@a) {
-        say_here('botnety:');
+        say_here('%_botnety%_ (/bot help - komendy):');
         say_here('  ' . status_line($_)) for sort keys %set;
         return;
     }
@@ -449,6 +474,7 @@ Irssi::signal_add_last('server connect failed', \&sig_connect_failed);
 Irssi::signal_add_last('server disconnected', \&sig_server_disconnected);
 Irssi::signal_add('query destroyed', \&sig_query_destroyed);
 Irssi::command_bind('bot', \&cmd_bot);
+Irssi::signal_add_first('command help', \&cmd_help);
 
 # po zaladowaniu: porzadek w tym, co juz jest (po starcie erssi - z timera)
 Irssi::timeout_add_once(500, sub { cleanup(0) }, undef);
