@@ -635,7 +635,9 @@ void fe_channels_init(void)
 {
 	settings_add_bool("lookandfeel", "autoclose_windows", TRUE);
 	settings_add_bool("lookandfeel", "show_names_on_join", TRUE);
-	settings_add_int("lookandfeel", "show_names_on_join_limit", 18);
+	/* erssi: the nick list is in the right sidepanel, so a join prints the
+	   count line only ("12 nicks · 2 ops · ..."); /NAMES prints the table */
+	settings_add_int("lookandfeel", "show_names_on_join_limit", 1);
 	settings_add_int("lookandfeel", "names_max_columns", 6);
 	settings_add_int("lookandfeel", "names_max_width", 0);
 
