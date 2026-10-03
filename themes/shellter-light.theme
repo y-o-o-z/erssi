@@ -782,6 +782,51 @@ formats = {
     backlog_info = "      %Z59636Ebacklog{col}$0";
     backlog_error = "      %Z59636Ebacklog{col}%ZCF222E$0%N";
   };
+  "Irssi::Script::away" = {
+    away_info = "         %Z59636Eaway{col}$0";
+    away_error = "         %Z59636Eaway{col}%ZCF222E$0%N";
+    away_window = "         %Z59636Eaway{col}  %Z9A6700$0%N%Z1F2328$1%N";
+  };
+  "Irssi::Script::notify_push" = {
+    notify_push_info = "         %Z59636Epush{col}$0";
+    notify_push_error = "         %Z59636Epush{col}%ZCF222E$0%N";
+  };
+  "Irssi::Script::urlgrab" = {
+    urlgrab_line = "%Z687079$[-13]0{col}%Z59636E$1%N %Z9A6700$2%N %Z0969DA$3%N %Z1F2328$4%N";
+    urlgrab_full = "$0";
+    urlgrab_short = "      %Z59636Eurlgrab{col}%Z687079$0%N %Z1F2328$1%N %Z687079$2%N";
+    urlgrab_info = "      %Z59636Eurlgrab{col}$0";
+    urlgrab_error = "      %Z59636Eurlgrab{col}%ZCF222E$0%N";
+  };
+  "Irssi::Script::erssi_status" = {
+    erssi_status_head = "        %Z59636Eerssi{col}%Z9A6700$0%N %Z59636E$1%N";
+    erssi_status_row = "%Z687079$[-13]0{col}%Z1F2328$1%N";
+    erssi_status_ok = "%Z687079$[-13]0{col}%Z1A7F37$1%N %Z1F2328$2%N";
+    erssi_status_warn = "%Z687079$[-13]0{col}%Z9A6700$1%N %Z1F2328$2%N";
+    erssi_status_bad = "%Z687079$[-13]0{col}%ZCF222E$1%N %Z1F2328$2%N";
+    erssi_status_dim = "%Z687079$[-13]0{col}%Z687079$1%N";
+    erssi_status_error = "        %Z59636Eerssi{col}%ZCF222E$0%N";
+  };
+  "Irssi::Script::opguard" = {
+    opguard_info = "      %Z59636Eopguard{col}$0";
+    opguard_warn = "      %Z59636Eopguard{col}%Z9A6700warning%N $0";
+    opguard_alert = "      %Z59636Eopguard{col}%ZCF222E%_alert%_%N %ZCF222E$0%N";
+    opguard_dry = "      %Z59636Eopguard{col}%Z9A6700dry-run%N %Z59636Ewould send:%N $0";
+    opguard_sent = "      %Z59636Eopguard{col}%Z1A7F37>>%N $0";
+    opguard_error = "      %Z59636Eopguard{col}%ZCF222E$0%N";
+  };
+  "Irssi::Script::seen" = {
+    seen_head = "         %Z59636Eseen{col}%Z7D4E00%_$0%_%N %Z818B98·%N %Z9A6700$1%N";
+    seen_line = "         %Z59636Eseen{col}%Z687079$[10]0%N $1";
+    seen_info = "         %Z59636Eseen{col}$0";
+    seen_error = "         %Z59636Eseen{col}%ZCF222E$0%N";
+  };
+  "Irssi::Script::chanstats" = {
+    chanstats_head = "    %Z59636Echanstats{col}%Z9A6700$0%N %Z59636E$1%N";
+    chanstats_row = "%Z687079$[-13]0{col}%Z1F2328$1%N";
+    chanstats_bars = "%Z687079$[-13]0{col}%Z0969DA$1%N";
+    chanstats_error = "    %Z59636Echanstats{col}%ZCF222E$0%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z59636Ebotnet{col}$0";
     botnet_sb_label = "%Z59636Ebot%n";

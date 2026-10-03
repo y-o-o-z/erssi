@@ -20,6 +20,17 @@ erssi-v1.3.4 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - messages and /help of all bundled scripts in English;
 	    botnet.pl 1.2.4 no longer uses a window freed by autoclose
 	    (found with AddressSanitizer)
+	+ Fuzzing (libFuzzer with ASan/UBSan, five targets for everything
+	  fe-web reads from the network; seeds and every finding replayed by
+	  meson test)
+	  - a second 317 in one WHOIS freed a field still in use (any IRC
+	    server could trigger it); WHOIS records that never ended leaked
+	  - server_add for a new server from a web client crashed erssi
+	  - \u escapes in web client JSON: surrogate pairs became invalid
+	    UTF-8, \u0000 cut the string; JSON numbers parsed without overflow
+	    checks and true/false read as 0 (server_add turned TLS off)
+	  - leaks: server_add password, JSON strings, channel notice nick
+	    mode, reconnect address, 344 params
 	+ Quality
 	  - no undefined behaviour in the config checksum (found with UBSan)
 	  - Shellter CI: hardened and ASan/UBSan builds, installer checks
