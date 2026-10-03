@@ -1242,6 +1242,24 @@ void redraw_left_panels_only(const char *event_name)
 	term_refresh_thaw();
 }
 
+/* Forget what the panels drew: after the screen was cleared (full redraw,
+   /REDRAW) the cached lines no longer exist on the terminal, and comparing
+   against them skipped every line - the panels stayed blank, or kept an old
+   line (a nick that had already left). */
+void sidepanels_invalidate_caches(void)
+{
+	GSList *t;
+
+	for (t = mainwindows; t != NULL; t = t->next) {
+		SP_MAINWIN_CTX *ctx = get_ctx(t->data, FALSE);
+
+		if (ctx == NULL)
+			continue;
+		sp_cache_clear(ctx->left_cache);
+		sp_cache_clear(ctx->right_cache);
+	}
+}
+
 void redraw_both_panels_only(const char *event_name)
 {
 	/* Redraw both left and right panels efficiently in all main windows */

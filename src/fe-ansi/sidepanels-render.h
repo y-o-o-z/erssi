@@ -59,6 +59,7 @@ void redraw_all(void);
 void redraw_right_panels_only(const char *event_name);
 void redraw_left_panels_only(const char *event_name);
 void redraw_both_panels_only(const char *event_name);
+void sidepanels_invalidate_caches(void);
 
 /* Batching system */
 void schedule_batched_redraw(const char *event_name);
