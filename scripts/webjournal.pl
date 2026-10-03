@@ -43,7 +43,7 @@ use Time::HiRes ();
 use File::Path qw(make_path);
 use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
-our $VERSION = '1.2.2';
+our $VERSION = '1.2.3';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -131,7 +131,16 @@ sub append {
 sub handle_for {
     my ($file) = @_;
     $fh_used{$file} = ++$fh_clock;
-    return $fh{$file} if $fh{$file};
+    if (my $open = $fh{$file}) {
+        # Plik skasowany albo podmieniony z zewnatrz (rm, logrotate) przy
+        # otwartym uchwycie: zapis szedlby do niewidocznego juz pliku.
+        # Ten sam plik = to samo urzadzenie i i-wezel; inaczej otwieramy od nowa.
+        my @disk = stat $file;
+        my @fd   = stat $open;
+        return $open if @disk && @fd && $disk[0] == $fd[0] && $disk[1] == $fd[1];
+        close_handle($file);
+        $fh_used{$file} = $fh_clock;
+    }
     my ($dir) = $file =~ m{^(.*)/};
     make_path($dir, { mode => 0700 }) unless -d $dir;
     sysopen(my $fh, $file, O_WRONLY | O_APPEND | O_CREAT, 0600) or die "$file: $!\n";

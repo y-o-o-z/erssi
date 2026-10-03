@@ -4,7 +4,8 @@
 #   * wiadomosci i /me na kanalach, ktore erssi oznaczylo jako podswietlenie
 #     (Twoj nick gdziekolwiek w zdaniu przy hilight_nick_matches_everywhere ON,
 #     albo dowolna regula /hilight),
-#   * wiadomosci prywatne, prywatne NOTICE od ludzi, wiadomosci DCC CHAT.
+#   * wiadomosci prywatne, prywatne NOTICE od ludzi, wiadomosci DCC CHAT
+#     (bez partyline botnetow z botnet.pl i bez tego, co lapie /ignore).
 # Kazdy wpis jest tez dopisywany do pliku (mentions_log_file), wiec to, co
 # pisano do Ciebie pod Twoja nieobecnosc, przetrwa restart erssi.
 #
@@ -20,9 +21,11 @@ use strict;
 use warnings;
 
 use Irssi;
+use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
+use File::Path qw(make_path);
 use POSIX qw(strftime);
 
-our $VERSION = '2.1.0';
+our $VERSION = '2.1.1';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -98,10 +101,15 @@ sub to_log {
     my ($tag, $where, $nick, $text) = @_;
     return unless Irssi::settings_get_bool('mentions_log');
     my $path = log_file();
+    # katalog 0700 i plik od razu 0600 (sysopen) - bez chwili, w ktorej
+    # dziennik prywatnych wiadomosci jest czytelny dla innych
+    my ($dir) = $path =~ m{\A(.*)/};
+    make_path($dir, { mode => 0700 }) if defined $dir && length $dir && !-d $dir;
+    sysopen(my $fh, $path, O_WRONLY | O_APPEND | O_CREAT, 0600) or return;
+    chmod 0600, $path;
     # irssi oddaje skryptom bajty UTF-8 - zapis bez warstwy kodowania,
     # inaczej polskie znaki bylyby zakodowane drugi raz.
-    open(my $fh, '>>:raw', $path) or return;
-    chmod 0600, $path;
+    binmode($fh, ':raw');
     printf {$fh} "%s [%s] %s <%s> %s\n", strftime('%Y-%m-%d %H:%M:%S', localtime), $tag // '-',
         $where // '-', $nick // '?', $text // '';
     close $fh;
@@ -134,13 +142,32 @@ sub remember {
     };
 }
 
-# Wiadomosc z kolejki, ktorej tresc jest w wypisanej linii (najstarsza pasujaca).
+# Nick w czesci linii przed trescia: caly albo przyciety przez kolumne
+# nickow erssi (nick_column_width: poczatek nicka + "+").
+sub nick_in_prefix {
+    my ($prefix, $nick) = @_;
+    return 0 unless defined $nick && length $nick;
+    return 1 if index($prefix, $nick) >= 0;
+    for my $keep (reverse 1 .. length($nick) - 1) {
+        return 1 if index($prefix, substr($nick, 0, $keep) . '+') >= 0;
+    }
+    return 0;
+}
+
+# Wiadomosc z kolejki, ktora jest KONCEM wypisanej linii, a jej nadawca
+# stoi w linii przed trescia. Od najnowszej: tresc zawarta w srodku
+# linii albo taka sama tresc od kogos innego nie przypisze zdania
+# niewlasciwej osobie.
 sub take_recent {
     my ($tag, $target, $line) = @_;
     my $queue = $recent{ recent_key($tag, $target) } or return;
-    for my $i (0 .. $#$queue) {
+    $line =~ s/\s+\z//;
+    for my $i (reverse 0 .. $#$queue) {
         my $plain = Irssi::strip_codes($queue->[$i]{msg} // '');
-        next unless length $plain && index($line, $plain) >= 0;
+        $plain =~ s/\s+\z//;
+        next unless length $plain && length($line) >= length($plain);
+        next unless substr($line, -length $plain) eq $plain;
+        next unless nick_in_prefix(substr($line, 0, length($line) - length($plain)), $queue->[$i]{nick});
         return splice(@$queue, $i, 1);
     }
     return;
@@ -168,8 +195,29 @@ sub sig_print_text {
     record('mentions_public', $tag, $target, '?', $line);
 }
 
+# Partyline botnetu (botnet.pl): hub mowi jak serwer IRC, a cala
+# partyline przychodzi jako rozmowa - to nie sa wzmianki. Botnety bierzemy
+# z ustawien botnet.pl tylko, gdy jest zaladowany (odczyt ustawienia,
+# ktorego nikt nie zarejestrowal, erssi zglasza jako blad).
+sub is_botnet {
+    my ($server) = @_;
+    return 0 unless $server && Irssi::Script::botnet->can('partyline_nick');
+    my $chatnet = lc($server->{chatnet} // '');
+    return 0 unless length $chatnet;
+    return (grep { lc $_ eq $chatnet } split /[\s,]+/, Irssi::settings_get_str('botnet_chatnets')) ? 1 : 0;
+}
+
+# /ignore: PRIVMSG filtruje samo erssi (zatrzymuje "message private" przed
+# skryptami), NOTICE i /me - nie, wiec sprawdzamy sami.
+sub ignored {
+    my ($server, $nick, $address, $target, $msg, $level) = @_;
+    my $hit = eval { $server->ignore_check($nick // '', $address // '', $target // '', $msg // '', $level) };
+    return $hit ? 1 : 0;
+}
+
 sub sig_private {
     my ($server, $msg, $nick, $address) = @_;
+    return if is_botnet($server);
     record('mentions_private', $server->{tag}, 'PM', $nick, $msg);
 }
 
@@ -177,6 +225,8 @@ sub sig_private {
 sub sig_private_action {
     my ($server, $msg, $nick, $address, $target) = @_;
     return unless $server && defined $target && lc $target eq lc($server->{nick} // '');
+    return if is_botnet($server);
+    return if ignored($server, $nick, $address, $target, $msg, MSGLEVEL_ACTIONS);
     record('mentions_action', $server->{tag}, 'PM', $nick, $msg);
 }
 
@@ -184,6 +234,8 @@ sub sig_notice {
     my ($server, $msg, $nick, $address, $target) = @_;
     return if !defined $nick || !length $nick || index($nick, '.') >= 0;   # serwery
     return if defined $target && $target =~ /\A[#&!+]/;                     # NOTICE na kanal
+    return if is_botnet($server);
+    return if ignored($server, $nick, $address, $target, $msg, MSGLEVEL_NOTICES);
     record('mentions_notice', $server->{tag}, 'NOTICE', $nick, $msg);
 }
 
