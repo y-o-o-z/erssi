@@ -41,6 +41,7 @@ GSList *web_clients = NULL;
 static gboolean applied_enabled = FALSE;
 static int applied_port = -1;
 static char *applied_bind = NULL;
+static char *applied_socket = NULL;
 static char *applied_password = NULL;
 
 static gboolean fe_web_settings_differ(void)
@@ -48,6 +49,7 @@ static gboolean fe_web_settings_differ(void)
 	return settings_get_bool("fe_web_enabled") != applied_enabled ||
 	       settings_get_int("fe_web_port") != applied_port ||
 	       g_strcmp0(settings_get_str("fe_web_bind"), applied_bind) != 0 ||
+	       g_strcmp0(settings_get_str("fe_web_socket"), applied_socket) != 0 ||
 	       g_strcmp0(settings_get_str("fe_web_password"), applied_password) != 0;
 }
 
@@ -55,6 +57,8 @@ static void fe_web_settings_forget(void)
 {
 	g_free(applied_bind);
 	applied_bind = NULL;
+	g_free(applied_socket);
+	applied_socket = NULL;
 	if (applied_password != NULL)
 		memset(applied_password, 0, strlen(applied_password));
 	g_free(applied_password);
@@ -72,6 +76,7 @@ static void fe_web_apply_settings(void)
 	applied_enabled = settings_get_bool("fe_web_enabled");
 	applied_port = settings_get_int("fe_web_port");
 	applied_bind = g_strdup(settings_get_str("fe_web_bind"));
+	applied_socket = g_strdup(settings_get_str("fe_web_socket"));
 	applied_password = g_strdup(settings_get_str("fe_web_password"));
 
 	if (applied_enabled) {
@@ -158,6 +163,8 @@ void fe_web_init(void)
 	settings_add_bool("lookandfeel", "fe_web_enabled", FALSE);
 	settings_add_int("lookandfeel", "fe_web_port", 9001);
 	settings_add_str("lookandfeel", "fe_web_bind", "127.0.0.1");
+	/* a Unix socket path; when set it is used instead of fe_web_bind/port */
+	settings_add_str("lookandfeel", "fe_web_socket", "");
 	settings_add_str("lookandfeel", "fe_web_password", "");
 
 	/* Register commands */

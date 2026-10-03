@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 
 /*
- fe-web-server.c : TCP/WebSocket server for fe-web
+ fe-web-server.c : TCP / Unix socket WebSocket server for fe-web
 
     Copyright (C) 2025
 
@@ -21,15 +21,28 @@
 #include <irssi/src/core/net-sendbuffer.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/levels.h>
+#include <irssi/src/core/misc.h>
 #include <irssi/src/fe-common/core/printtext.h>
 
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 
 static GIOChannel *listen_channel = NULL;
 static int listen_port = -1;
 static int listen_tag = -1;
+
+/* Unix socket mode (fe_web_socket): the path listened on, and the device
+ * and inode of the socket file made there - only that file is removed when
+ * the server stops, never one something else has put in its place. */
+static char *listen_path = NULL;
+static dev_t listen_dev;
+static ino_t listen_ino;
 
 /* Limits for clients that have not logged in yet: one password guess per
  * connection, a few KB of request and a few seconds to send it. */
@@ -60,6 +73,7 @@ static int refused_unlogged = 0;
 static void sig_listen(void);
 static void client_input(WEB_CLIENT_REC *client);
 static void log_refused(WEB_CLIENT_REC *client, const char *reason);
+static void log_refused_addr(const char *addr, const char *reason);
 
 /* Close client connection */
 static void fe_web_close_client(WEB_CLIENT_REC *client)
@@ -574,6 +588,11 @@ static void client_input_once(WEB_CLIENT_REC *client)
  * guessing passwords or a port scan cannot flood the windows. */
 static void log_refused(WEB_CLIENT_REC *client, const char *reason)
 {
+	log_refused_addr(client->addr, reason);
+}
+
+static void log_refused_addr(const char *addr, const char *reason)
+{
 	if (time(NULL) - refused_logged < 60) {
 		refused_unlogged++;
 		return;
@@ -582,7 +601,7 @@ static void log_refused(WEB_CLIENT_REC *client, const char *reason)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: %d more connections refused", refused_unlogged);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-	          "fe-web: connection from %s refused: %s", client->addr, reason);
+	          "fe-web: connection from %s refused: %s", addr, reason);
 	refused_logged = time(NULL);
 	refused_unlogged = 0;
 }
@@ -606,6 +625,45 @@ static gboolean relisten(gpointer data)
 	return FALSE;
 }
 
+/* The uid of the process at the other end of a Unix socket connection.
+ * Returns 1 when known, 0 when it could not be read and -1 when this system
+ * has no way to tell (then the socket file's 0600 mode is the only guard). */
+static int socket_peer_uid(int fd, uid_t *uid)
+{
+#if defined(__linux__) && defined(SO_PEERCRED)
+	struct ucred cred;
+	socklen_t len = sizeof(cred);
+
+	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0 || len != sizeof(cred))
+		return 0;
+	*uid = cred.uid;
+	return 1;
+#elif defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
+    defined(__NetBSD__) || defined(__APPLE__)
+	gid_t gid;
+
+	return getpeereid(fd, uid, &gid) == 0 ? 1 : 0;
+#else
+	(void) fd;
+	(void) uid;
+	return -1;
+#endif
+}
+
+/* Accept a connection on the Unix socket */
+static GIOChannel *socket_accept(GIOChannel *channel)
+{
+	struct sockaddr_un sa;
+	socklen_t len = sizeof(sa);
+	int fd;
+
+	fd = accept(g_io_channel_unix_get_fd(channel), (struct sockaddr *) &sa, &len);
+	if (fd < 0)
+		return NULL;
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+	return i_io_channel_new(fd);
+}
+
 /* Accept new connection */
 static void sig_listen(void)
 {
@@ -618,7 +676,10 @@ static void sig_listen(void)
 	NET_SENDBUF_REC *sendbuf;
 
 	/* Accept connection */
-	handle = net_accept(listen_channel, &ip, &port);
+	if (listen_path != NULL)
+		handle = socket_accept(listen_channel);
+	else
+		handle = net_accept(listen_channel, &ip, &port);
 	if (handle == NULL) {
 		/* Out of file descriptors: the connection stays queued and the
 		 * socket stays readable - pause instead of spinning. */
@@ -628,6 +689,29 @@ static void sig_listen(void)
 			relisten_tag = g_timeout_add_seconds(1, relisten, NULL);
 		}
 		return;
+	}
+
+	if (listen_path != NULL) {
+		uid_t uid = 0;
+		int known;
+
+		addr = g_strdup_printf("unix:%s", listen_path);
+		/* only processes of the user running erssi */
+		known = socket_peer_uid(g_io_channel_unix_get_fd(handle), &uid);
+		if (known == 0 || (known > 0 && uid != getuid())) {
+			char *reason = known == 0 ?
+			    g_strdup_printf("cannot read peer credentials: %s", g_strerror(errno)) :
+			    g_strdup_printf("process of uid %lu, not ours", (unsigned long) uid);
+
+			log_refused_addr(addr, reason);
+			g_free(reason);
+			g_free(addr);
+			net_disconnect(handle);
+			return;
+		}
+	} else {
+		net_ip2host(&ip, host);
+		addr = g_strdup_printf("%s:%d", host, port);
 	}
 
 	{
@@ -646,6 +730,7 @@ static void sig_listen(void)
 			}
 		}
 		if (logged_in >= FE_WEB_MAX_CLIENTS) {
+			g_free(addr);
 			net_disconnect(handle);
 			return;
 		}
@@ -655,7 +740,7 @@ static void sig_listen(void)
 		}
 	}
 
-	/* Increase TCP send buffer to 2MB for large state dumps */
+	/* Increase the send buffer to 2MB for large state dumps */
 	{
 		int fd = g_io_channel_unix_get_fd(handle);
 		int bufsize = 2 * 1024 * 1024; /* 2MB */
@@ -665,10 +750,6 @@ static void sig_listen(void)
 			          bufsize, strerror(errno));
 		}
 	}
-
-	/* Get address string */
-	net_ip2host(&ip, host);
-	addr = g_strdup_printf("%s:%d", host, port);
 
 	/* Create client record */
 	client = fe_web_client_create(g_io_channel_unix_get_fd(handle), addr);
@@ -693,12 +774,222 @@ static void sig_listen(void)
 	g_free(addr);
 }
 
+/* fe_web_socket: "~/" is the home directory, a relative path is relative
+ * to the irssi directory */
+static char *socket_path_expand(const char *value)
+{
+	char *path, *full;
+
+	path = convert_home(value);
+	if (!g_path_is_absolute(path)) {
+		full = g_build_filename(get_irssi_dir(), path, NULL);
+		g_free(path);
+		path = full;
+	}
+	return path;
+}
+
+/* The socket's directory must be the user's own and writable only by the
+ * user - otherwise someone else could replace the socket with their own and
+ * receive the web client's password. A missing directory is made 0700. */
+static gboolean socket_dir_check(const char *path)
+{
+	struct stat st;
+	char *dir;
+	gboolean ok = FALSE;
+
+	dir = g_path_get_dirname(path);
+	if (stat(dir, &st) < 0) {
+		if (errno != ENOENT || g_mkdir_with_parents(dir, 0700) < 0 ||
+		    chmod(dir, 0700) < 0 || stat(dir, &st) < 0) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: Not starting: directory %s of fe_web_socket: %s", dir,
+			          g_strerror(errno));
+			g_free(dir);
+			return FALSE;
+		}
+	}
+
+	if (!S_ISDIR(st.st_mode)) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: %s is not a directory", dir);
+	} else if (st.st_uid != getuid()) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: directory %s of fe_web_socket is not owned by you",
+		          dir);
+	} else if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		/* printtext() knows no %o */
+		char *mode = g_strdup_printf("%04o", (unsigned int) (st.st_mode & 07777));
+
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: directory %s of fe_web_socket is writable by "
+		          "others (mode %s) - use a directory only you can write to, "
+		          "e.g. chmod 700 %s",
+		          dir, mode, dir);
+		g_free(mode);
+	} else {
+		ok = TRUE;
+	}
+	g_free(dir);
+	return ok;
+}
+
+static void socket_addr_set(struct sockaddr_un *sa, const char *path)
+{
+	memset(sa, 0, sizeof(*sa));
+	sa->sun_family = AF_UNIX;
+	strncpy(sa->sun_path, path, sizeof(sa->sun_path) - 1);
+}
+
+/* A socket file left by an erssi that did not stop cleanly is removed - but
+ * only a socket of the user's own that nothing listens on any more. */
+static gboolean socket_stale_remove(const char *path)
+{
+	struct sockaddr_un sa;
+	struct stat st;
+	int fd, ret, err;
+
+	if (lstat(path, &st) < 0) {
+		if (errno == ENOENT)
+			return TRUE;
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Cannot use %s: %s", path, g_strerror(errno));
+		return FALSE;
+	}
+	if (!S_ISSOCK(st.st_mode) || st.st_uid != getuid()) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: %s exists and is not a socket of yours - "
+		          "remove it or choose another fe_web_socket",
+		          path);
+		return FALSE;
+	}
+
+	/* non-blocking: a listener with a full queue must not hang erssi */
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Cannot create a socket: %s", g_strerror(errno));
+		return FALSE;
+	}
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+	socket_addr_set(&sa, path);
+	ret = connect(fd, (struct sockaddr *) &sa, sizeof(sa));
+	err = errno;
+	close(fd);
+
+	if (ret == 0 || err == EAGAIN || err == EINPROGRESS) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: another program is listening on unix:%s", path);
+		return FALSE;
+	}
+	if (err != ECONNREFUSED) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: cannot check the old socket %s: %s", path,
+		          g_strerror(err));
+		return FALSE;
+	}
+	if (unlink(path) < 0 && errno != ENOENT) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Cannot remove the old socket %s: %s", path, g_strerror(errno));
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* Bind and listen. The socket file is made 0600 from the start (umask), so
+ * there is no moment in which another user could connect. */
+static GIOChannel *socket_listen(const char *path)
+{
+	struct sockaddr_un sa;
+	struct stat st;
+	mode_t old_umask;
+	int fd, ret, err;
+
+	if (strlen(path) >= sizeof(sa.sun_path)) {
+		errno = ENAMETOOLONG;
+		return NULL;
+	}
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0)
+		return NULL;
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
+
+	socket_addr_set(&sa, path);
+	old_umask = umask(077);
+	ret = bind(fd, (struct sockaddr *) &sa, sizeof(sa));
+	err = errno;
+	umask(old_umask);
+	if (ret < 0) {
+		close(fd);
+		errno = err;
+		return NULL;
+	}
+
+	if (chmod(path, 0600) < 0 || lstat(path, &st) < 0 ||
+	    listen(fd, FE_WEB_MAX_CLIENTS) < 0) {
+		err = errno;
+		unlink(path);
+		close(fd);
+		errno = err;
+		return NULL;
+	}
+	listen_dev = st.st_dev;
+	listen_ino = st.st_ino;
+	return i_io_channel_new(fd);
+}
+
+/* Remove the socket file - if it still is the one this server made */
+static void socket_remove(void)
+{
+	struct stat st;
+
+	if (listen_path == NULL)
+		return;
+	if (lstat(listen_path, &st) == 0 && S_ISSOCK(st.st_mode) && st.st_dev == listen_dev &&
+	    st.st_ino == listen_ino)
+		unlink(listen_path);
+	g_free(listen_path);
+	listen_path = NULL;
+}
+
+static void server_listen_unix(const char *value)
+{
+	char *path;
+
+	path = socket_path_expand(value);
+	if (!socket_dir_check(path) || !socket_stale_remove(path)) {
+		g_free(path);
+		return;
+	}
+
+	listen_channel = socket_listen(path);
+	if (listen_channel == NULL) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Failed to listen on unix:%s: %s", path, g_strerror(errno));
+		g_free(path);
+		return;
+	}
+	listen_path = path;
+
+	listen_tag = i_input_add(listen_channel, I_INPUT_READ,
+	                         (GInputFunction) sig_listen, NULL);
+
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web: WebSocket server listening on unix:%s (SSL + AES-256-GCM)", path);
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled, "
+	          "socket 0600, only your own processes");
+}
+
 /* Initialize server */
 void fe_web_server_init(void)
 {
 	IPADDR *bind_ip;
 	const char *bind_addr;
 	const char *password;
+	const char *socket_path;
 	int port;
 
 	/* Check if already running */
@@ -733,6 +1024,13 @@ void fe_web_server_init(void)
 		          "fe-web: FATAL: Encryption not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Encryption key derivation failed. Check password setting.");
+		return;
+	}
+
+	/* A Unix socket instead of TCP */
+	socket_path = settings_get_str("fe_web_socket");
+	if (socket_path != NULL && *socket_path != '\0') {
+		server_listen_unix(socket_path);
 		return;
 	}
 
@@ -801,6 +1099,7 @@ void fe_web_server_deinit(void)
 		net_disconnect(listen_channel);
 		listen_channel = NULL;
 	}
+	socket_remove();
 
 	listen_port = -1;
 
