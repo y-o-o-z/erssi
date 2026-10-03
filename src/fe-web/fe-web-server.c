@@ -69,6 +69,15 @@ static time_t login_last_check = 0;
 #define FE_WEB_MAX_PENDING 8
 static int refused_unlogged = 0;
 
+/* Output a client does not take yet is queued up to this much; a client
+ * that stops reading for longer is closed instead of eating memory. */
+#ifndef FE_WEB_MAX_OUTPUT
+#define FE_WEB_MAX_OUTPUT (32 * 1024 * 1024)
+#endif
+/* How long a client being closed gets to take its last frame (a close
+ * frame, a 401 or 429) */
+#define FE_WEB_LINGER_TIMEOUT 5
+
 /* Forward declarations */
 static void sig_listen(void);
 static void client_input(WEB_CLIENT_REC *client);
@@ -87,14 +96,26 @@ static void fe_web_close_client(WEB_CLIENT_REC *client)
 		client->handshake_tag = 0;
 	}
 
-	/* Remove input handler */
+	if (client->close_tag != 0) {
+		g_source_remove(client->close_tag);
+		client->close_tag = 0;
+	}
+
+	/* Remove input and output handlers */
 	if (client->recv_tag != -1) {
 		g_source_remove(client->recv_tag);
 		client->recv_tag = -1;
 	}
+	if (client->send_tag != -1) {
+		g_source_remove(client->send_tag);
+		client->send_tag = -1;
+	}
 
-	/* Free SSL channel if exists */
+	/* Free SSL channel if exists. With output still queued a TLS write
+	 * may be half done: no close_notify then. */
 	if (client->ssl_channel != NULL) {
+		if (client->output_buffer->len > client->output_pos)
+			client->ssl_channel->failed = 1;
 		fe_web_ssl_channel_free(client->ssl_channel);
 		client->ssl_channel = NULL;
 	}
@@ -107,6 +128,208 @@ static void fe_web_close_client(WEB_CLIENT_REC *client)
 
 	/* Destroy client record */
 	fe_web_client_destroy(client);
+}
+
+/* Output: every byte for a client goes through fe_web_client_send_raw().
+ * The socket is non-blocking and a client may read slowly (a phone on
+ * mobile data, a large state dump), so what the socket does not take is
+ * queued in order and written when the socket is writable again. */
+
+static gsize output_pending(WEB_CLIENT_REC *client)
+{
+	return client->output_buffer->len - client->output_pos;
+}
+
+/* One write to the socket: bytes written, 0 when the socket is full,
+ * FE_WEB_SSL_WANT_READ when TLS has to read first, -1 on error. */
+static int output_write(WEB_CLIENT_REC *client, const guchar *data, gsize len)
+{
+	int n = len > G_MAXINT ? G_MAXINT : (int) len;
+	int ret;
+
+	if (client->use_ssl) {
+		if (client->ssl_channel == NULL)
+			return -1;
+		ret = fe_web_ssl_write(client->ssl_channel, (const char *) data, n);
+		return ret == FE_WEB_SSL_WANT_WRITE ? 0 : ret;
+	}
+	if (client->handle == NULL)
+		return -1;
+	return net_transmit(net_sendbuffer_handle(client->handle), (const char *) data, n);
+}
+
+static void output_ready(WEB_CLIENT_REC *client);
+
+/* A writable watch exactly while there is output the socket can take -
+ * not while TLS waits for a read: the socket is writable then and the
+ * watch would spin; client_input() retries after reading. */
+static void output_watch_update(WEB_CLIENT_REC *client)
+{
+	gboolean want = output_pending(client) > 0 && !client->output_want_read &&
+	                !client->output_failed && client->handle != NULL;
+
+	if (want && client->send_tag == -1) {
+		client->send_tag = i_input_add(net_sendbuffer_handle(client->handle),
+		                               I_INPUT_WRITE, (GInputFunction) output_ready,
+		                               client);
+	} else if (!want && client->send_tag != -1) {
+		g_source_remove(client->send_tag);
+		client->send_tag = -1;
+	}
+}
+
+/* Write what is queued, as far as the socket takes it. FALSE on a write
+ * error. */
+static gboolean output_flush(WEB_CLIENT_REC *client)
+{
+	GByteArray *buf = client->output_buffer;
+	int ret;
+
+	client->output_want_read = FALSE;
+	while (output_pending(client) > 0) {
+		ret = output_write(client, buf->data + client->output_pos, output_pending(client));
+		if (ret > 0) {
+			client->output_pos += ret;
+		} else if (ret == 0) {
+			break;
+		} else if (ret == FE_WEB_SSL_WANT_READ) {
+			client->output_want_read = TRUE;
+			break;
+		} else {
+			return FALSE;
+		}
+	}
+
+	if (output_pending(client) == 0) {
+		g_byte_array_set_size(buf, 0);
+		client->output_pos = 0;
+	} else if (client->output_pos >= 65536 && client->output_pos >= buf->len / 2) {
+		/* the written part is dropped once it is most of the buffer, not
+		 * after every write. The unwritten bytes keep their contents,
+		 * which is all a TLS retry needs. */
+		g_byte_array_remove_range(buf, 0, client->output_pos);
+		client->output_pos = 0;
+	}
+	output_watch_update(client);
+	return TRUE;
+}
+
+static gboolean close_later(gpointer data)
+{
+	WEB_CLIENT_REC *client = data;
+
+	client->close_tag = 0;
+	fe_web_close_client(client);
+	return FALSE;
+}
+
+/* Output to this client failed or overflowed: nothing more is sent to it
+ * and it is closed from the main loop - not here, where the caller may be
+ * walking web_clients or still using the client. */
+static void output_fail(WEB_CLIENT_REC *client)
+{
+	if (client->ssl_channel != NULL && output_pending(client) > 0)
+		client->ssl_channel->failed = 1; /* no close_notify after a cut record */
+	client->output_failed = TRUE;
+	g_byte_array_set_size(client->output_buffer, 0);
+	client->output_pos = 0;
+	output_watch_update(client);
+	if (client->close_tag != 0)
+		g_source_remove(client->close_tag);
+	/* a timeout, not an idle: it has the priority of the input watches,
+	 * so a busy socket cannot keep it from running */
+	client->close_tag = g_timeout_add(0, close_later, client);
+}
+
+/* Writable watch */
+static void output_ready(WEB_CLIENT_REC *client)
+{
+	if (!output_flush(client)) {
+		fe_web_close_client(client);
+		return;
+	}
+	if (client->closing && output_pending(client) == 0)
+		fe_web_close_client(client);
+}
+
+/* Send bytes to a client, in order after everything sent before. What the
+ * socket does not take now is queued. Never closes the client itself:
+ * FALSE when it can no longer be sent to (it is closed shortly). */
+gboolean fe_web_client_send_raw(WEB_CLIENT_REC *client, const void *data, gsize len)
+{
+	const guchar *p = data;
+	gboolean queued_before;
+	int ret;
+
+	if (client == NULL || client->output_failed || client->closing)
+		return FALSE;
+	if (len == 0)
+		return TRUE;
+
+	queued_before = output_pending(client) > 0;
+	if (!queued_before && !client->output_want_read) {
+		/* nothing queued: straight to the socket */
+		while (len > 0) {
+			ret = output_write(client, p, len);
+			if (ret > 0) {
+				p += ret;
+				len -= ret;
+			} else if (ret == 0) {
+				break;
+			} else if (ret == FE_WEB_SSL_WANT_READ) {
+				client->output_want_read = TRUE;
+				break;
+			} else {
+				output_fail(client);
+				return FALSE;
+			}
+		}
+		if (len == 0)
+			return TRUE;
+	}
+
+	if (output_pending(client) + len > FE_WEB_MAX_OUTPUT) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: [%s] %s does not read what is sent to it "
+		          "(over %d MB queued) - disconnected",
+		          client->id, client->addr, FE_WEB_MAX_OUTPUT >> 20);
+		output_fail(client);
+		return FALSE;
+	}
+	g_byte_array_append(client->output_buffer, p, len);
+
+	/* with output queued before, the socket may have room again by now */
+	if (queued_before && !client->output_want_read && !output_flush(client)) {
+		output_fail(client);
+		return FALSE;
+	}
+	output_watch_update(client);
+	return TRUE;
+}
+
+/* Close the client once its queued output (a last frame, an HTTP error)
+ * is written, or after FE_WEB_LINGER_TIMEOUT. Nothing is read from it or
+ * sent to it any more. */
+static void fe_web_close_client_flushed(WEB_CLIENT_REC *client)
+{
+	if (output_pending(client) == 0 || client->output_failed || client->handle == NULL) {
+		fe_web_close_client(client);
+		return;
+	}
+
+	client->closing = TRUE;
+	if (client->recv_tag != -1) {
+		g_source_remove(client->recv_tag);
+		client->recv_tag = -1;
+	}
+	if (client->handshake_tag != 0) {
+		g_source_remove(client->handshake_tag);
+		client->handshake_tag = 0;
+	}
+	if (client->close_tag != 0)
+		g_source_remove(client->close_tag);
+	client->close_tag = g_timeout_add_seconds(FE_WEB_LINGER_TIMEOUT, close_later, client);
+	output_watch_update(client);
 }
 
 /* Verify password from handshake request
@@ -219,8 +442,7 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
 		                           "Retry-After: " G_STRINGIFY(FE_WEB_CHECK_INTERVAL) "\r\n"
 		                           "Content-Length: 0\r\n\r\n";
-		if (client->use_ssl && client->ssl_channel != NULL)
-			fe_web_ssl_write(client->ssl_channel, busy, sizeof(busy) - 1);
+		fe_web_client_send_raw(client, busy, sizeof(busy) - 1);
 		log_refused(client, "too many wrong passwords, logins paced");
 		return -1;
 	}
@@ -237,22 +459,14 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		}
 		log_refused(client, "wrong or missing password");
 
-		/* Send 401 Unauthorized response - MUST use SSL if enabled! */
+		/* 401 Unauthorized; the caller closes once it is written */
 		response = g_string_new("");
 		g_string_append(response, "HTTP/1.1 401 Unauthorized\r\n");
 		g_string_append(response, "Content-Type: text/plain\r\n");
 		g_string_append(response, "Content-Length: 13\r\n");
 		g_string_append(response, "\r\n");
 		g_string_append(response, "Unauthorized\n");
-
-		if (client->use_ssl && client->ssl_channel != NULL) {
-			/* Send through SSL */
-			fe_web_ssl_write(client->ssl_channel, response->str, response->len);
-		} else if (client->handle != NULL) {
-			/* Plain connection (should never happen - SSL is mandatory) */
-			net_sendbuffer_send(client->handle, response->str, response->len);
-		}
-
+		fe_web_client_send_raw(client, response->str, response->len);
 		g_string_free(response, TRUE);
 		return -1; /* Authentication failed */
 	}
@@ -292,25 +506,8 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	g_string_append_printf(response, "Sec-WebSocket-Accept: %s\r\n", accept_key);
 	g_string_append(response, "\r\n");
 
-	/* Send response - MUST use SSL if enabled! */
-	if (client->use_ssl && client->ssl_channel != NULL) {
-		int ssl_ret;
-		ssl_ret = fe_web_ssl_write(client->ssl_channel, response->str, response->len);
-		if (ssl_ret < 0) {
-			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: [%s] SSL write failed for handshake response",
-			          client->id);
-			g_free(accept_key);
-			g_string_free(response, TRUE);
-			return -1;
-		}
-	} else if (client->handle != NULL) {
-		/* Plain connection (should never happen - SSL is mandatory) */
-		net_sendbuffer_send(client->handle, response->str, response->len);
-	} else {
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: [%s] ERROR: Cannot send handshake - no handle!",
-		          client->id);
+	/* Send response (queued if the socket is full) */
+	if (!fe_web_client_send_raw(client, response->str, response->len)) {
 		g_free(accept_key);
 		g_string_free(response, TRUE);
 		return -1;
@@ -336,7 +533,9 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 	guchar *unmasked_payload;
 	gsize frame_total_len;
 
-	while (client->input_buffer->len > 0) {
+	/* output_failed: the client is closed shortly, nothing it asks for
+	 * can be answered */
+	while (client->input_buffer->len > 0 && !client->output_failed) {
 		/* Try to parse frame */
 		ret = fe_web_websocket_parse_frame(client->input_buffer->data,
 		                                    client->input_buffer->len,
@@ -428,16 +627,14 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 				status[1] = payload[1] ^ (masked ? mask_key[1] : 0);
 			}
 			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
-			if (client->use_ssl && client->ssl_channel != NULL)
-				fe_web_ssl_write(client->ssl_channel, (const char *)close_frame, close_len);
-			else
-				net_sendbuffer_send(client->handle, (const char *)close_frame, close_len);
+			fe_web_client_send_raw(client, close_frame, close_len);
 			g_free(close_frame);
 
-			fe_web_close_client(client);
+			/* after what is queued before it, the close frame too */
+			fe_web_close_client_flushed(client);
 			return;
 		} else if (opcode == WS_OPCODE_PING) {
-			/* Send pong - MUST use SSL if enabled! */
+			/* Send pong, in order behind what is queued */
 			guchar *pong_frame;
 			guchar *pong_data;
 			gsize pong_len;
@@ -450,14 +647,7 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			pong_frame = fe_web_websocket_create_frame(WS_OPCODE_PONG, pong_data, payload_len, &pong_len);
 			g_free(pong_data);
 
-			if (client->use_ssl && client->ssl_channel != NULL) {
-				/* Send through SSL */
-				fe_web_ssl_write(client->ssl_channel, (const char *)pong_frame, pong_len);
-			} else {
-				/* Plain connection (should never happen - SSL is mandatory) */
-				net_sendbuffer_send(client->handle, (const char *)pong_frame, pong_len);
-			}
-
+			fe_web_client_send_raw(client, pong_frame, pong_len);
 			g_free(pong_frame);
 		}
 		/* WS_OPCODE_PONG - nothing to do */
@@ -480,10 +670,23 @@ static void client_input(WEB_CLIENT_REC *client)
 
 	do {
 		client_input_once(client);
-	} while (g_slist_find(web_clients, client) != NULL && client->use_ssl &&
+	} while (g_slist_find(web_clients, client) != NULL && !client->closing &&
+	         !client->output_failed && client->use_ssl &&
 	         client->ssl_channel != NULL && client->ssl_channel->ssl != NULL &&
 	         client->ssl_channel->handshake_done &&
 	         SSL_pending(client->ssl_channel->ssl) > 0 && ++rounds < 1024);
+
+	if (g_slist_find(web_clients, client) == NULL)
+		return;
+	if (client->output_failed) {
+		/* top level here: no need to wait for close_later() */
+		fe_web_close_client(client);
+	} else if (client->output_want_read && !client->closing) {
+		/* TLS has read what it waited for (renegotiation, key update):
+		 * the queued output can go on */
+		if (!output_flush(client))
+			fe_web_close_client(client);
+	}
 }
 
 static void client_input_once(WEB_CLIENT_REC *client)
@@ -492,7 +695,11 @@ static void client_input_once(WEB_CLIENT_REC *client)
 	int ret;
 	GIOChannel *channel;
 
-	if (client == NULL || client->handle == NULL) {
+	if (client == NULL || client->handle == NULL || client->closing) {
+		return;
+	}
+	if (client->output_failed) {
+		fe_web_close_client(client);
 		return;
 	}
 
@@ -550,8 +757,9 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 		ret = fe_web_handle_handshake(client, (const char *)client->input_buffer->data);
 		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
-			/* wrong password, failed write or an endless request */
-			fe_web_close_client(client);
+			/* wrong password (after the 401 or 429 is written), failed
+			 * write or an endless request */
+			fe_web_close_client_flushed(client);
 			return;
 		}
 		if (ret > 0) {
@@ -761,6 +969,12 @@ static void sig_listen(void)
 	/* SSL is ALWAYS enabled - no option to disable */
 	client->ssl_channel = fe_web_ssl_channel_create(handle);
 	client->use_ssl = TRUE;
+	if (client->ssl_channel == NULL) {
+		/* never a plain text connection instead */
+		fe_web_close_client(client);
+		g_free(addr);
+		return;
+	}
 
 	/* Encryption is ALWAYS enabled - no option to disable */
 	client->encryption_enabled = TRUE;
