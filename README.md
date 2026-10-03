@@ -78,7 +78,7 @@ and used when present. For a system-wide install use
   WHOIS, notices and private messages share one column and one separator,
   so text always starts in the same place and wrapped lines continue under
   it. Joining a channel prints one summary line
-  (`#chan: 70 nicks · 29 ops · 4 voiced · 37 regular`) instead of a nick table.
+  (`#chan: nicks 70 · ops 29 · voiced 4 · regular 37`) instead of a nick table.
 - **Rank colours** — `$nickmode` and `nick_mode_color_*` draw `@`, `+`, `%`
   and `~`/`&` in their own colours in messages and in the nick list;
   `nick_hash_colors` accepts 24-bit colours.
