@@ -201,23 +201,40 @@ static gboolean address_is_public(const struct sockaddr *sa)
 		         (a >> 20) == 0xAC1 ||             /* 172.16/12 */
 		         (a >> 16) == 0xC0A8 ||            /* 192.168/16 */
 		         (a >> 22) == (0x64400000 >> 22) || /* 100.64/10 CGNAT */
+		         (a >> 8) == 0xC00000 ||           /* 192.0.0/24 IETF */
+		         (a >> 17) == (0xC6120000 >> 17) || /* 198.18/15 benchmarking */
 		         (a >> 28) >= 0xE);                /* multicast, reserved */
 	}
 	if (sa->sa_family == AF_INET6) {
 		const struct in6_addr *a6 = &((const struct sockaddr_in6 *)sa)->sin6_addr;
 		const guint8 *b = a6->s6_addr;
 
-		if (IN6_IS_ADDR_V4MAPPED(a6) || IN6_IS_ADDR_V4COMPAT(a6)) {
+		/* IPv6 addresses that carry an IPv4 one lead to that one:
+		 * mapped/compatible, NAT64 64:ff9b::/96 (and the local-use
+		 * 64:ff9b:1::/48) and 6to4 2002::/16 */
+		static const guint8 nat64[12] = { 0x00, 0x64, 0xff, 0x9b };
+		const guint8 *v4addr = NULL;
+
+		if (IN6_IS_ADDR_V4MAPPED(a6) || IN6_IS_ADDR_V4COMPAT(a6) ||
+		    memcmp(b, nat64, 12) == 0)
+			v4addr = b + 12;
+		else if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b &&
+		         b[4] == 0x00 && b[5] == 0x01)
+			return FALSE;   /* local-use NAT64: may embed anything */
+		else if (b[0] == 0x20 && b[1] == 0x02)
+			v4addr = b + 2;
+		if (v4addr != NULL) {
 			struct sockaddr_in v4;
 
 			memset(&v4, 0, sizeof(v4));
 			v4.sin_family = AF_INET;
-			memcpy(&v4.sin_addr, b + 12, 4);
+			memcpy(&v4.sin_addr, v4addr, 4);
 			return address_is_public((struct sockaddr *)&v4);
 		}
 		return !(IN6_IS_ADDR_UNSPECIFIED(a6) || IN6_IS_ADDR_LOOPBACK(a6) ||
 		         (b[0] & 0xFE) == 0xFC ||                   /* fc00::/7 ULA */
 		         (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) || /* fe80::/10 */
+		         (b[0] == 0xFE && (b[1] & 0xC0) == 0xC0) || /* fec0::/10 site-local */
 		         b[0] == 0xFF);                             /* multicast */
 	}
 	return FALSE;
@@ -245,6 +262,9 @@ static void set_safe_options(CURL *curl)
 	curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
 #endif
 	curl_easy_setopt(curl, CURLOPT_OPENSOCKETFUNCTION, open_public_socket);
+	/* direct connections only: through http(s)_proxy the check above would
+	 * see the proxy, not the server, and the proxy would reach the LAN */
+	curl_easy_setopt(curl, CURLOPT_PROXY, "");
 	curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE,
 	                 (curl_off_t)settings_get_int(IMAGE_PREVIEW_MAX_FILE_SIZE) * 1024 * 1024);
 	/* a server sending 1 KB/s must not hold the download for a minute */

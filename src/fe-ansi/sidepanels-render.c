@@ -659,12 +659,14 @@ static int draw_scroll_markers(TERM_WINDOW *tw, int x, int height, gboolean more
 	term_set_color(tw, 6 | ATTR_BOLD); /* bright cyan */
 	if (more_above && height > 0) {
 		term_move(tw, x, 0);
-		term_add_unichar(tw, 0x2191); /* ↑ */
+		/* ASCII outside UTF-8: a non-UTF-8 terminal would get a C1
+		 * control byte instead of the arrow */
+		term_add_unichar(tw, term_type == TERM_TYPE_UTF8 ? 0x2191 : '^'); /* ↑ */
 		drawn++;
 	}
 	if (more_below && height > 1) {
 		term_move(tw, x, height - 1);
-		term_add_unichar(tw, 0x2193); /* ↓ */
+		term_add_unichar(tw, term_type == TERM_TYPE_UTF8 ? 0x2193 : 'v'); /* ↓ */
 		drawn++;
 	}
 	return drawn;

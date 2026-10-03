@@ -439,6 +439,10 @@ static int ansi_term_lacks_truecolor(const char *term, const char *program)
 	    g_str_has_suffix(term, "-16color") || g_str_has_suffix(term, "-mono") ||
 	    g_str_has_suffix(term, "-m"))
 		return TRUE;
+	/* rxvt-unicode draws 24-bit codes as wrong colours unless built
+	 * with 24-bit support, which it announces as rxvt-unicode-24bit */
+	if (g_str_has_prefix(term, "rxvt") && !g_str_has_suffix(term, "-24bit"))
+		return TRUE;
 	return g_strcmp0(program, "Apple_Terminal") == 0;
 }
 
@@ -516,7 +520,7 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 	 * 24-bit color: GNU Screen anywhere in between (screen 4 drops the
 	 * codes, screen 5 passes them only with "truecolor on", which cannot
 	 * be detected), the Linux console, 8/16-color or mono terminals,
-	 * Apple Terminal without COLORTERM. term_truecolor overrides this. */
+	 * rxvt-unicode, Apple Terminal without COLORTERM. term_truecolor overrides this. */
 	if (term->caps.max_colors <= 256 &&
 	    !ansi_term_lacks_truecolor(env_term, env_term_program)) {
 		term->caps.max_colors = 16777216;
