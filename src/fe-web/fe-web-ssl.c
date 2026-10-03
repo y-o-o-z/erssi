@@ -14,6 +14,7 @@
 
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
 #include <openssl/bn.h>
@@ -23,6 +24,8 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* Global SSL context */
 SSL_CTX *fe_web_ssl_ctx = NULL;
@@ -113,6 +116,22 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	/* Self-signed: issuer = subject */
 	X509_set_issuer_name(x509, name);
 
+	/* Names a client checks when it pins this certificate (the web
+	 * client connects to 127.0.0.1) */
+	{
+		X509V3_CTX v3ctx;
+		X509_EXTENSION *ext;
+
+		X509V3_set_ctx_nodb(&v3ctx);
+		X509V3_set_ctx(&v3ctx, x509, x509, NULL, NULL, 0);
+		ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
+		                          "IP:127.0.0.1,IP:::1,DNS:localhost");
+		if (ext != NULL) {
+			X509_add_ext(x509, ext, -1);
+			X509_EXTENSION_free(ext);
+		}
+	}
+
 	/* Sign certificate with our key */
 	if (!X509_sign(x509, pkey, EVP_sha256())) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
@@ -124,6 +143,96 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	return x509;
 }
 
+/* The key and certificate are kept in the irssi directory, so the
+ * certificate stays the same across restarts and a web client can pin it
+ * instead of accepting any certificate from whatever listens on the port. */
+#define FE_WEB_KEY_FILE "fe-web-key.pem"
+#define FE_WEB_CERT_FILE "fe-web-cert.pem"
+
+static char *ssl_file_path(const char *name)
+{
+	return g_strdup_printf("%s/%s", get_irssi_dir(), name);
+}
+
+static gboolean load_key_and_cert(void)
+{
+	char *key_path, *cert_path;
+	FILE *f;
+	EVP_PKEY *pkey = NULL;
+	X509 *x509 = NULL;
+	time_t tomorrow;
+
+	key_path = ssl_file_path(FE_WEB_KEY_FILE);
+	cert_path = ssl_file_path(FE_WEB_CERT_FILE);
+
+	if ((f = fopen(key_path, "r")) != NULL) {
+		pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+		fclose(f);
+	}
+	if ((f = fopen(cert_path, "r")) != NULL) {
+		x509 = PEM_read_X509(f, NULL, NULL, NULL);
+		fclose(f);
+	}
+	g_free(key_path);
+	g_free(cert_path);
+
+	/* unusable (missing, damaged, other key, expiring within a day):
+	 * a new pair is generated */
+	tomorrow = time(NULL) + 86400;
+	if (pkey == NULL || x509 == NULL || !X509_check_private_key(x509, pkey) ||
+	    X509_cmp_time(X509_get0_notAfter(x509), &tomorrow) <= 0) {
+		EVP_PKEY_free(pkey);
+		X509_free(x509);
+		ERR_clear_error();
+		return FALSE;
+	}
+
+	server_key = pkey;
+	server_cert = x509;
+	return TRUE;
+}
+
+static gboolean write_pem_file(const char *name, EVP_PKEY *pkey, X509 *x509)
+{
+	char *path, *tmp_path;
+	FILE *f;
+	int fd, ok;
+
+	path = ssl_file_path(name);
+	tmp_path = g_strconcat(path, ".tmp", NULL);
+	unlink(tmp_path);
+	fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	f = fd < 0 ? NULL : fdopen(fd, "w");
+	if (f == NULL) {
+		if (fd >= 0)
+			close(fd);
+		g_free(path);
+		g_free(tmp_path);
+		return FALSE;
+	}
+	ok = pkey != NULL ? PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL) :
+	                    PEM_write_X509(f, x509);
+	ok = fclose(f) == 0 && ok;
+	if (ok)
+		ok = rename(tmp_path, path) == 0;
+	else
+		unlink(tmp_path);
+	g_free(path);
+	g_free(tmp_path);
+	return ok;
+}
+
+static void save_key_and_cert(void)
+{
+	if (!write_pem_file(FE_WEB_KEY_FILE, server_key, NULL) ||
+	    !write_pem_file(FE_WEB_CERT_FILE, NULL, server_cert)) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web-ssl: Could not save the certificate in %s: %s - "
+		          "a new one is made at every start", get_irssi_dir(),
+		          g_strerror(errno));
+	}
+}
+
 /* Initialize SSL subsystem */
 void fe_web_ssl_init(void)
 {
@@ -131,6 +240,9 @@ void fe_web_ssl_init(void)
 	SSL_library_init();
 	SSL_load_error_strings();
 	OpenSSL_add_all_algorithms();
+
+	if (load_key_and_cert())
+		goto have_cert;
 
 	/* Generate RSA key */
 	server_key = generate_rsa_key();
@@ -149,7 +261,9 @@ void fe_web_ssl_init(void)
 		server_key = NULL;
 		return;
 	}
+	save_key_and_cert();
 
+have_cert:
 	/* Create SSL context */
 	fe_web_ssl_ctx = SSL_CTX_new(TLS_server_method());
 	if (!fe_web_ssl_ctx) {
@@ -331,9 +445,8 @@ int fe_web_ssl_accept(FE_WEB_SSL_CHANNEL *ssl_chan)
 		return 0;
 	}
 
-	/* Real error */
-	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-	          "fe-web-ssl: SSL_accept failed: %d", ssl_err);
+	/* Real error - reported by the caller */
+	ERR_clear_error();
 	return -1;
 }
 
