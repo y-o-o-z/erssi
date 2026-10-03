@@ -31,15 +31,30 @@ static GIOChannel *listen_channel = NULL;
 static int listen_port = -1;
 static int listen_tag = -1;
 
+/* Limits for clients that have not logged in yet: one password guess per
+ * connection, a few KB of request and a few seconds to send it. */
+#define FE_WEB_MAX_CLIENTS 16
+#define FE_WEB_MAX_REQUEST 16384
+#define FE_WEB_HANDSHAKE_TIMEOUT 10
+static guint relisten_tag = 0;
+static time_t refused_logged = 0;
+static int refused_unlogged = 0;
+
 /* Forward declarations */
 static void sig_listen(void);
 static void client_input(WEB_CLIENT_REC *client);
+static void log_refused(WEB_CLIENT_REC *client, const char *reason);
 
 /* Close client connection */
 static void fe_web_close_client(WEB_CLIENT_REC *client)
 {
 	if (client == NULL) {
 		return;
+	}
+
+	if (client->handshake_tag != 0) {
+		g_source_remove(client->handshake_tag);
+		client->handshake_tag = 0;
 	}
 
 	/* Remove input handler */
@@ -97,18 +112,22 @@ static int fe_web_verify_password(const char *data)
 		}
 	}
 
-	/* Verify password */
+	/* Verify password: compare digests, in time independent of where
+	 * the first difference is */
 	if (password != NULL) {
-		if (g_strcmp0(configured_password, password) == 0) {
-			result = 1;
-		} else {
-			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: Invalid password!");
-		}
+		char *want, *got;
+		unsigned char diff = 0;
+		int i;
+
+		want = g_compute_checksum_for_string(G_CHECKSUM_SHA256, configured_password, -1);
+		got = g_compute_checksum_for_string(G_CHECKSUM_SHA256, password, -1);
+		for (i = 0; want[i] != '\0'; i++)
+			diff |= want[i] ^ got[i];
+		result = diff == 0;
+		memset(password, 0, strlen(password));
 		g_free(password);
-	} else {
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: No password provided in request");
+		g_free(want);
+		g_free(got);
 	}
 
 	return result;
@@ -140,9 +159,7 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 
 	/* Verify password */
 	if (!fe_web_verify_password(data)) {
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: [%s] Authentication failed - closing connection",
-		          client->id);
+		log_refused(client, "wrong or missing password");
 
 		/* Send 401 Unauthorized response - MUST use SSL if enabled! */
 		response = g_string_new("");
@@ -346,8 +363,16 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 		} else if (opcode == WS_OPCODE_PING) {
 			/* Send pong - MUST use SSL if enabled! */
 			guchar *pong_frame;
+			guchar *pong_data;
 			gsize pong_len;
-			pong_frame = fe_web_websocket_create_frame(WS_OPCODE_PONG, payload, payload_len, &pong_len);
+
+			/* the pong carries the ping's data, unmasked */
+			pong_data = g_malloc(payload_len + 1);
+			memcpy(pong_data, payload, payload_len);
+			if (masked)
+				fe_web_websocket_unmask(pong_data, payload_len, mask_key);
+			pong_frame = fe_web_websocket_create_frame(WS_OPCODE_PONG, pong_data, payload_len, &pong_len);
+			g_free(pong_data);
 
 			if (client->use_ssl && client->ssl_channel != NULL) {
 				/* Send through SSL */
@@ -385,9 +410,8 @@ static void client_input(WEB_CLIENT_REC *client)
 			/* Need more data */
 			return;
 		} else if (ret < 0) {
-			/* Handshake failed */
-			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: [%s] SSL handshake failed", client->id);
+			/* Handshake failed: not TLS, a port scan, an old client */
+			log_refused(client, "TLS handshake failed");
 			fe_web_close_client(client);
 			return;
 		}
@@ -430,9 +454,20 @@ static void client_input(WEB_CLIENT_REC *client)
 		/* Null-terminate for string operations */
 		g_byte_array_append(client->input_buffer, (guchar *)"\0", 1);
 
-		if (fe_web_handle_handshake(client, (const char *)client->input_buffer->data)) {
+		ret = fe_web_handle_handshake(client, (const char *)client->input_buffer->data);
+		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
+			/* wrong password, failed write or an endless request */
+			fe_web_close_client(client);
+			return;
+		}
+		if (ret > 0) {
 			/* Handshake complete - send auth_ok */
 			WEB_MESSAGE_REC *msg;
+
+			if (client->handshake_tag != 0) {
+				g_source_remove(client->handshake_tag);
+				client->handshake_tag = 0;
+			}
 
 			msg = fe_web_message_new(WEB_MSG_AUTH_OK);
 			msg->id = fe_web_generate_message_id();
@@ -454,6 +489,42 @@ static void client_input(WEB_CLIENT_REC *client)
 	fe_web_handle_websocket_data(client);
 }
 
+/* Refused connections are reported once a minute at most, so a client
+ * guessing passwords or a port scan cannot flood the windows. */
+static void log_refused(WEB_CLIENT_REC *client, const char *reason)
+{
+	if (time(NULL) - refused_logged < 60) {
+		refused_unlogged++;
+		return;
+	}
+	if (refused_unlogged > 0)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: %d more connections refused", refused_unlogged);
+	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+	          "fe-web: connection from %s refused: %s", client->addr, reason);
+	refused_logged = time(NULL);
+	refused_unlogged = 0;
+}
+
+static gboolean handshake_timeout(gpointer data)
+{
+	WEB_CLIENT_REC *client = data;
+
+	client->handshake_tag = 0;
+	if (!client->handshake_done)
+		fe_web_close_client(client);
+	return FALSE;
+}
+
+static gboolean relisten(gpointer data)
+{
+	relisten_tag = 0;
+	if (listen_channel != NULL && listen_tag == -1)
+		listen_tag = i_input_add(listen_channel, I_INPUT_READ,
+		                         (GInputFunction) sig_listen, NULL);
+	return FALSE;
+}
+
 /* Accept new connection */
 static void sig_listen(void)
 {
@@ -468,6 +539,18 @@ static void sig_listen(void)
 	/* Accept connection */
 	handle = net_accept(listen_channel, &ip, &port);
 	if (handle == NULL) {
+		/* Out of file descriptors: the connection stays queued and the
+		 * socket stays readable - pause instead of spinning. */
+		if ((errno == EMFILE || errno == ENFILE) && listen_tag != -1) {
+			g_source_remove(listen_tag);
+			listen_tag = -1;
+			relisten_tag = g_timeout_add_seconds(1, relisten, NULL);
+		}
+		return;
+	}
+
+	if (g_slist_length(web_clients) >= FE_WEB_MAX_CLIENTS) {
+		net_disconnect(handle);
 		return;
 	}
 
@@ -503,6 +586,8 @@ static void sig_listen(void)
 	/* Add input handler */
 	client->recv_tag = i_input_add(handle, I_INPUT_READ,
 	                               (GInputFunction) client_input, client);
+	client->handshake_tag = g_timeout_add_seconds(FE_WEB_HANDSHAKE_TIMEOUT,
+	                                              handshake_timeout, client);
 
 	g_free(addr);
 }
@@ -528,7 +613,7 @@ void fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Please set password: /SET fe_web_password <strong-password>");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: Example: /SET fe_web_password $(openssl rand -base64 32)");
+		          "fe-web: Use a long random secret, e.g. the output of: openssl rand -base64 32");
 		return;
 	}
 
@@ -598,6 +683,11 @@ void fe_web_server_deinit(void)
 		WEB_CLIENT_REC *client = tmp->data;
 		next = tmp->next;
 		fe_web_close_client(client);
+	}
+
+	if (relisten_tag != 0) {
+		g_source_remove(relisten_tag);
+		relisten_tag = 0;
 	}
 
 	/* Close listening socket */
