@@ -9,7 +9,7 @@
 # erssi/y-o-o-z: copy of scripts/irssi/rpe2e.pl from repartee (commit
 # 45a5bba, https://github.com/outragedevs/repartee) with five changes, each
 # marked "erssi/y-o-o-z", so it loads on erssi installed without root
-# (4 is an upstream fix, 5 a Polish guide):
+# (4 is an upstream fix, 5 a usage guide):
 #   1. modules from ~/perl5 (cpanm -l ~/perl5 Crypt::NaCl::Sodium FFI::Platypus),
 #   2. version gate: for erssi (binary named erssi*) the ABI date decides -
 #      erssi numbers its releases itself ($J is "1.3.x" on a codebase newer
@@ -18,8 +18,10 @@
 #      unversioned libsodium.so from the -dev package is missing,
 #   4. RPL_HOSTHIDDEN sanity check: "@:" in /^[@:\-]/ was interpolated as an
 #      array (perl warned on every load), so "@"/":" hosts were not rejected,
-#   5. "/e2e" without arguments prints a step-by-step guide in Polish with the
-#      state of the current window (help text only, no protocol change).
+#   5. "/e2e" without arguments prints a step-by-step guide with the state
+#      of the current window (help text only, no protocol change).
+# Version 0.2.1 (erssi/y-o-o-z): the guide (5) is in English, like the rest
+# of the script; 0.2.0 is the repartee version this copy is based on.
 # The protocol code is untouched. Install and migration from repartee:
 # https://github.com/y-o-o-z/erssi/tree/main/contrib/rpe2e (README.md).
 #
@@ -39,7 +41,7 @@ use DynaLoader ();
 use FFI::Platypus 2.00;
 use FFI::Platypus::Buffer qw(scalar_to_buffer grow);
 
-our $VERSION = '0.2.0';
+our $VERSION = '0.2.1';
 our %IRSSI = (
     authors     => 'repartee',
     contact     => 'https://repart.ee',
@@ -1683,33 +1685,33 @@ sub cmd_autotrust {
 
 # erssi/y-o-o-z (5): "/e2e" with no arguments explains how to start an
 # encrypted conversation in the current window, with its current state.
-sub _cmd_guide_pl {
+sub _cmd_guide {
     my ($witem) = @_;
     my $kr = load_keyring();
-    my $fp = $kr->{identity} ? $kr->{identity}{fp} : '(brak - zostanie utworzony)';
+    my $fp = $kr->{identity} ? $kr->{identity}{fp} : '(none yet - created on first use)';
     my $ctx = $witem ? _resolve_ctx_for_command($kr, $witem, undef) : undef;
-    _prnt_ok($witem, 'Szyfrowanie end-to-end (RPE2E, zgodne z repartee)');
-    _prnt_ok($witem, "Twoj odcisk klucza: $fp");
+    _prnt_ok($witem, 'End-to-end encryption (RPE2E, compatible with repartee)');
+    _prnt_ok($witem, "Your key fingerprint: $fp");
     if (defined $ctx) {
         my $cfg = $kr->{channels}{$ctx};
         my @trusted = sort map { (split /\|/, $_, 2)[0] }
             grep { (split /\|/, $_, 2)[1] eq $ctx && ($kr->{incoming}{$_}{status} // '') eq 'trusted' }
             keys %{ $kr->{incoming} || {} };
-        _prnt_ok($witem, "Tutaj ($ctx): " . ($cfg && $cfg->{enabled}
-            ? 'szyfrowanie WLACZONE, tryb ' . ($cfg->{mode} // 'normal')
-            : 'szyfrowanie wylaczone'));
-        _prnt_ok($witem, 'Klucze od: ' . (@trusted ? join(', ', @trusted) : 'nikogo jeszcze'));
+        _prnt_ok($witem, "Here ($ctx): " . ($cfg && $cfg->{enabled}
+            ? 'encryption ON, mode ' . ($cfg->{mode} // 'normal')
+            : 'encryption off'));
+        _prnt_ok($witem, 'Keys from: ' . (@trusted ? join(', ', @trusted) : 'nobody yet'));
     } else {
-        _prnt_ok($witem, 'Wpisz /e2e w oknie kanalu albo rozmowy, zeby zobaczyc jego stan.');
+        _prnt_ok($witem, 'Run /e2e in a channel or query window to see its state.');
     }
-    _prnt_ok($witem, 'Jak zaczac na kanale:');
-    _prnt_ok($witem, '  1. w oknie kanalu: /e2e on');
-    _prnt_ok($witem, '  2. rozmowca robi to samo u siebie (repartee, irssi, weechat: /e2e on)');
-    _prnt_ok($witem, '  3. klucze wymieniaja sie przy pierwszej wiadomosci; przy "Pending key exchange from <nick>"');
-    _prnt_ok($witem, '     potwierdz: /e2e accept <nick>  (albo zacznij sam: /e2e handshake <nick>)');
-    _prnt_ok($witem, '  4. sprawdz: /e2e list - rozmowca ma status [trusted]');
-    _prnt_ok($witem, '  5. porownaj odciski innym kanalem (np. telefon): /e2e verify <nick>');
-    _prnt_ok($witem, 'Wylaczenie: /e2e off. Tryby: /e2e mode normal (pyta o zgode) | auto-accept | quiet.');
+    _prnt_ok($witem, 'Getting started on a channel:');
+    _prnt_ok($witem, '  1. in the channel window: /e2e on');
+    _prnt_ok($witem, '  2. the other person does the same (repartee, irssi, erssi, WeeChat: /e2e on)');
+    _prnt_ok($witem, '  3. keys are exchanged with the first message; on "Pending key exchange from <nick>"');
+    _prnt_ok($witem, '     accept it: /e2e accept <nick>  (or start it yourself: /e2e handshake <nick>)');
+    _prnt_ok($witem, '  4. check: /e2e list - the peer shows as [trusted]');
+    _prnt_ok($witem, '  5. compare fingerprints over another channel (e.g. by phone): /e2e verify <nick>');
+    _prnt_ok($witem, 'Turn off: /e2e off. Modes: /e2e mode normal (asks first) | auto-accept | quiet.');
 }
 
 sub cmd_e2e {
@@ -1717,8 +1719,8 @@ sub cmd_e2e {
     my @args = grep { length } split /\s+/, ($data // '');
     my $sub = lc(shift(@args) // '');
     if ($sub eq '' || $sub eq 'help') {
-        # erssi/y-o-o-z (5): a step-by-step guide in Polish before the list.
-        _cmd_guide_pl($witem);
+        # erssi/y-o-o-z (5): a step-by-step guide before the list.
+        _cmd_guide($witem);
         _prnt_ok($witem, 'Encryption commands: on off mode fingerprint list status accept decline revoke unrevoke forget handshake verify reverify rotate export import autotrust');
     } elsif ($sub eq 'on') {
         cmd_on($witem);

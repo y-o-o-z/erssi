@@ -1,41 +1,43 @@
-# shellter v1.3 — motyw erssi w barwach shellter.me ("Your shell, your shelter")
+# shellter v1.3 — the erssi theme in the colours of shellter.me ("Your shell, your shelter")
 #
-# Paleta z arkusza stylow shellter.me (ciemny wariant, GitHub Primer):
-#   tlo #0b0d10 · karta #0e1116 · muted #161b22 · ramka #30363d
-#   tekst #e6edf3 · tekst przygaszony #7d8590 · subtelny #6e7681 / #484f58
-#   akcent bursztyn #f59e0b · jasny bursztyn #fcd34d · czerwien #ff7b72
-#   uzupelnienia Primer: zielen #3fb950 · niebieski #79c0ff · fiolet #d2a8ff
+# Palette from the shellter.me stylesheet (dark variant, GitHub Primer):
+#   background #0b0d10 · card #0e1116 · muted #161b22 · border #30363d
+#   text #e6edf3 · dimmed text #7d8590 · subtle #6e7681 / #484f58
+#   amber accent #f59e0b · light amber #fcd34d · red #ff7b72
+#   Primer additions: green #3fb950 · blue #79c0ff · purple #d2a8ff
 #
-# Kolory 24-bit (%Z/%z); erssi z forka y-o-o-z/erssi >= 1.3.2 zamienia je na
-# najblizsze z palety 256 tam, gdzie terminal nie ma 24 bitow. Ustawienia
-# (w forku domyslne):
-#   /set sidepanel_left_width 22        (pelne nazwy kanalow, np. #bash.org.pl)
-#   /set nick_column_width 13           (1 znak trybu + 12 znakow nicka)
+# 24-bit colours (%Z/%z); erssi from the y-o-o-z/erssi fork (1.3.2 or newer)
+# maps them to the nearest 256-colour entry where the terminal has no 24-bit
+# colour. Settings (defaults in the fork):
+#   /set sidepanel_left_width 22        (full channel names, e.g. #bash.org.pl)
+#   /set nick_column_width 13           (1 mode character + 12 nick characters)
 #   /set nick_hash_colors #f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787
-#   /set nick_mode_color_op %ZF59E0B%_       (@ bursztyn)
-#   /set nick_mode_color_voice %Z79C0FF%_    (+ niebieski)
-#   /set nick_mode_color_halfop %Z3FB950%_   (% zielony)
-#   /set nick_mode_color_owner %ZFF7B72%_    (~ & czerwony)
-#   /set hilight_color %ZFCD34D              (podswietlenia w barwach motywu,
-#        np. /hilight -color %ZFF7B72%_ <nick>)
+#   /set nick_mode_color_op %ZF59E0B%_       (@ amber)
+#   /set nick_mode_color_voice %Z79C0FF%_    (+ blue)
+#   /set nick_mode_color_halfop %Z3FB950%_   (% green)
+#   /set nick_mode_color_owner %ZFF7B72%_    (~ & red)
+#   /set hilight_color %ZFCD34D              (highlights in the theme colours,
+#        e.g. /hilight -color %ZFF7B72%_ <nick>)
 #
-# Uklad: KAZDA linia ma czas, kolumne 13 znakow i separator "│", tekst
-# zaczyna sie zawsze w tym samym miejscu, zawiniete linie pod tekstem:
-#   wiadomosci       nick z trybem (@ + %) w kolorze rangi
-#   zdarzenia        znak: → wejscie, ← wyjscie, ⊘ kick/ban, ± tryb, ¶ temat,
-#                    ⇄ nick, * /me, · informacja, ⚙ serwer, ◆ CTCP, ! wallop
-#   komunikaty erssi "erssi" (line_start_irssi)
-#   WHOIS            nick, potem etykiety pol: chans, node, idle, info, ...
-#   notice / priv    nick nadawcy; wlasne: twoj nick i "→ odbiorca ⟫"
-# Kolumna = nick_column_width 13: zdarzenie to 12 spacji + 1 znak, nicki
-# dopelnia $[-13] wpisane wprost w format (w abstrakcie irssi dopelnia
-# niedokladnie). Inna szerokosc kolumny -> popraw spacje i $[-13].
-# Komendy wypisujace listy (/set, /help, /script list) zostaja bez kolumny.
+# Layout: EVERY line has the time, a 13-character column and the "│"
+# separator; text always starts in the same place, wrapped lines continue
+# under the text:
+#   messages         nick with its mode (@ + %) in the rank colour
+#   events           a glyph: → join, ← part/quit, ⊘ kick/ban, ± mode, ¶ topic,
+#                    ⇄ nick, * /me, · information, ⚙ server, ◆ CTCP, ! wallop
+#   erssi messages   "erssi" (line_start_irssi)
+#   WHOIS            the nick, then field labels: chans, node, idle, info, ...
+#   notice / priv    the sender's nick; your own: your nick and "→ target ⟫"
+# Column = nick_column_width 13: an event is 12 spaces + 1 glyph, nicks are
+# padded with $[-13] written directly in the format (inside an abstract irssi
+# pads inaccurately). Another column width -> adjust the spaces and $[-13].
+# Commands that print lists (/set, /help, /script list) stay without the column.
 #
-# Wejscie na kanal (zloty srodek irssi / WeeChat / repartee): temat, kto i kiedy
-# go ustawil, data utworzenia i jedna linia "N nicks · ops · voiced · regular" -
-# tabela nickow tylko przez /names (lista jest w panelu; erssi:
-# show_names_on_join_limit 1). Bez "synced in" (channel_synced = "").
+# Joining a channel (the middle ground of irssi / WeeChat / repartee): the
+# topic, who set it and when, the creation date and one line
+# "nicks N · ops · voiced · regular" - the nick table only with /names (the
+# list is in the panel; erssi: show_names_on_join_limit 1). No "synced in"
+# (channel_synced = "").
 
 default_color = "-1";
 info_eol = "false";
@@ -71,8 +73,8 @@ abstracts = {
   mode = "%ZD2A8FF%_$*%_%N";
 
   ##
-  ## kolumna: 13 znakow (zdarzenie = 12 spacji + znak) i separator "│";
-  ## %| po spacji: zawiniete linie zaczynaja sie rowno z tekstem
+  ## column: 13 characters (an event = 12 spaces + a glyph) and the "│" separator;
+  ## %| after the space: wrapped lines start level with the text
   ##
 
   col = "%Z484F58 │%N %|";
@@ -191,17 +193,17 @@ abstracts = {
   sb_background = "%z161B22";
   window_border = "%ZF59E0B│%N";
   sb_topic_bg = "%z0E1116%ZE6EDF3";
-  sb = " %ZE6EDF3$*%N %Z484F58│%N";
-  sbmode = "%Z6E7681(%ZF59E0B+%Z7D8590$*%Z6E7681)%N";
+  sb = " %ZE6EDF3$*%n %Z484F58│%n";
+  sbmode = "%Z6E7681(%ZF59E0B+%Z7D8590$*%Z6E7681)%n";
   sbservertag = ":$0 (change with ^X)";
-  sbmore = " %Z484F58── %Z7D8590wiecej %Z484F58── ";
-  sblag = "%ZFF7B72lag%N %Z7D8590$0-%N s";
+  sbmore = " %Z484F58── %Z7D8590more %Z484F58── ";
+  sblag = "%ZFF7B72lag%n %Z7D8590$0-%n s";
   sb_default_bg = "%z161B22";
-  sb_act_sep = "%Z484F58,%N";
+  sb_act_sep = "%Z484F58,%n";
   sb_act_text = "%Z7D8590$*";
   sb_act_msg = "%ZE6EDF3$*";
   sb_act_hilight = "%ZFF7B72%_$*%_";
-  sb_act_hilight_color = "%ZFCD34D%_$0$1-%_%N";
+  sb_act_hilight_color = "%ZFCD34D%_$0$1-%_%n";
   sb_info1_bg = "%z161B22";
   sb_window_bg = "%z161B22%ZE6EDF3";
   sb_window2_bg = "%z161B22%ZE6EDF3";
@@ -212,23 +214,23 @@ abstracts = {
   topicsbstart = "{sbstart $*}";
   topicsbend = "{sbend $*}";
 
-  prompt = "%ZF59E0B$$%N %Z7D8590$*%N %Z484F58❯%N ";
+  prompt = "%ZF59E0B$$%n %Z7D8590$*%n %Z484F58❯%n ";
 
-  sbaway = " %ZFCD34Daway%N";
+  sbaway = " %ZFCD34Daway%n";
   sbnickmode = "$0";
 
   # contents of the statusbar items of the default config (see
   # default.theme): clock, nick, window item, modes, lag, activity, "more",
   # prompt ($0 tag, $1- item) and prompt without an item ($1 window name)
-  sb_time = "%Z6E738D$*%N";
-  sb_nick = "%Z7AA2F7$*";
-  sb_item = "%Z7AA2F7$*";
-  sb_mode = "%Z565F89(%Z7AA2F7$*%Z565F89)%N";
-  sb_lag = "%Z565F89Lag:%N %ZA9B1D6$*%N";
-  sb_act = "%Z565F89Act:%N $*";
-  sb_more = "%Z565F89-- %ZA9B1D6more %Z565F89--";
-  sb_prompt = "%Z565F89[%Z7AA2F7$0%Z565F89❱%N $1-%Z565F89]%N ";
-  sb_prompt_empty = "%Z565F89[%Z7AA2F7$1%Z565F89]%N ";
+  sb_time = "%Z7D8590$*%n";
+  sb_nick = "%Z79C0FF$*";
+  sb_item = "%Z79C0FF$*";
+  sb_mode = "%Z6E7681(%Z79C0FF$*%Z6E7681)%n";
+  sb_lag = "%Z7D8590lag%n %ZE6EDF3$*%n";
+  sb_act = "%Z7D8590act%n $*";
+  sb_more = "%Z484F58── %Z7D8590more %Z484F58──";
+  sb_prompt = "%Z6E7681[%Z79C0FF$0%Z6E7681❱%n $1-%Z6E7681]%n ";
+  sb_prompt_empty = "%Z6E7681[%Z79C0FF$1%Z6E7681]%n ";
 };
 
 ##############################################################################
@@ -522,7 +524,7 @@ formats = {
     invitelist_long = "            %ZD2A8FF✉{col}{channel $0}: invite {ban $1} %Z6E7681⟨by {nick $2}, $3s ago⟩%N";
 
     no_such_channel = "            %ZFF7B72✗{col}{channel $0}: No such channel";
-    # pusty format = bez linii (jak WeeChat); przywrocenie: /format channel_synced {channel $0} synced in $1 s
+    # empty format = no line (like WeeChat); to restore: /format channel_synced {channel $0} synced in $1 s
     channel_synced = "";
 
     usermode_change = "{ev_mode}%Z6E7681Mode change%N {mode $0} %Z6E7681for%N {nick $1}";
@@ -659,7 +661,7 @@ formats = {
   };
 
   "fe-ansi" = {
-    # Baner startowy w barwach shellter.me ("$$" = znak dolara)
+    # Start banner in the shellter.me colours ("$$" = a dollar sign)
     irssi_banner = "%Z484F58──────────────────────────────────────────────────────────────%N%:%:  %ZF59E0B$$%N %ZE6EDF3%_shellter%_%Z7D8590.me%N   %Z6E7681// your shell, your shelter%N%:%:  %Z7D8590erssi %ZF59E0BShellter Edition%Z7D8590 %ZFCD34D$J%Z7D8590 · %ZE6EDF3/help%N%:%:%Z484F58──────────────────────────────────────────────────────────────%N";
     # Lastlog
     lastlog_too_long = "%ZFCD34D⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
@@ -718,9 +720,9 @@ formats = {
     sidepanel_item_events = "%Z484F58$[-2]0%N %Z79C0FF$1%N";
     sidepanel_item_highlight = "%ZFF7B72$[-2]0%N %ZFF7B72$1%N";
 
-    # Lista nickow: symbol statusu ($0) i nick ($1) w kolorze rangi - te same
-    # barwy co znak trybu w wiadomosciach (nick_mode_color_*): opy bursztyn,
-    # voice niebieski, halfop zielony, wlasciciel czerwony, reszta szara
+    # Nick list: the status symbol ($0) and the nick ($1) in the rank colour -
+    # the same colours as the mode character in messages (nick_mode_color_*):
+    # ops amber, voice blue, halfop green, owner red, everyone else grey
     sidepanel_nick_owner_status = " %ZFF7B72%_$0%_%N%ZFFA198$1%N";
     sidepanel_nick_admin_status = " %ZFF7B72%_$0%_%N%ZFFA198$1%N";
     sidepanel_nick_op_status = " %ZF59E0B%_$0%_%N%ZFCD34D$1%N";
@@ -774,14 +776,22 @@ formats = {
   };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z8B949Ebotnet{col}$0";
+    botnet_sb_label = "%Z8B949Ebot%n";
+    botnet_sb_up = "%Z3FB950●%n $0";
+    botnet_sb_unread = "%Z3FB950●%n $0 %ZF59E0B$1%n";
+    botnet_sb_hilight = "%Z3FB950●%n $0 %ZFF7B72%_$1%_%n";
+    botnet_sb_connecting = "%ZF59E0B◌%n %Z8B949E$0%n";
+    botnet_sb_retry = "%ZF59E0B↻%n %Z8B949E$0 $1s%n";
+    botnet_sb_stopped = "%ZFF7B72✕%n %Z8B949E$0%n";
+    botnet_sb_down = "%Z484F58○ $0%n";
   };
   "Irssi::Script::tk" = {
     tk_loaded = "           %Z8B949Etk{col}TK v$0 - /tk help";
     tk_info = "           %Z8B949Etk{col}$0";
-    tk_warn = "           %Z8B949Etk{col}%ZF59E0Buwaga%N $0";
-    tk_error = "           %Z8B949Etk{col}%ZFF7B72blad%N $0";
+    tk_warn = "           %Z8B949Etk{col}%ZF59E0Bwarning%N $0";
+    tk_error = "           %Z8B949Etk{col}%ZFF7B72error%N $0";
     tk_sent = "           %Z8B949Etk{col}%Z3FB950>>%N $0";
-    tk_dry = "           %Z8B949Etk{col}%ZF59E0Bpodglad%N $0";
+    tk_dry = "           %Z8B949Etk{col}%ZF59E0Bpreview%N $0";
   };
   "Irssi::Script::shrink" = {
     shrink_result = "       %Z8B949Eshrink{col}$0 {comment $1}";
