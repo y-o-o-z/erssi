@@ -79,6 +79,10 @@ and used when present. For a system-wide install use
   so text always starts in the same place and wrapped lines continue under
   it. Joining a channel prints one summary line
   (`#chan: nicks 70 · ops 29 · voiced 4 · regular 37`) instead of a nick table.
+  For terminals with a light background there is `shellter-light`, the same
+  layout in light colours with every text colour at 4.5:1 or more on white
+  ([screenshot](docs/images/erssi-shellter-light.png)): `/set theme shellter-light`,
+  with the matching nick colours listed at the top of `themes/shellter-light.theme`.
 - **Rank colours** — `$nickmode` and `nick_mode_color_*` draw `@`, `+`, `%`
   and `~`/`&` in their own colours in messages and in the nick list;
   `nick_hash_colors` accepts 24-bit colours.
