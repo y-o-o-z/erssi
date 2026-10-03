@@ -121,7 +121,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 			if (fe_web_fuzz_client_alive(client))
 				fe_web_client_handle_message(client, *line + 4);
 		} else {
-			char *irc_line = g_strdup_printf(prefixed ? ":user %s\n" : "%s\n", *line);
+			char *irc_line = g_strdup_printf(prefixed ? ":user %s" : "%s", *line);
 			gboolean disconnected;
 
 			server_ref(server);
