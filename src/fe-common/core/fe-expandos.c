@@ -350,6 +350,9 @@ static int get_persistent_nick_color(const char *nick, void *item, SERVER_REC *s
 		g_hash_table_insert(ctx->nick_colors, g_strdup(nick), entry);
 	} else {
 		entry->last_seen = time(NULL);
+		/* the palette may have shrunk since this colour was picked */
+		if (entry->color_index < 0 || entry->color_index >= palette_size)
+			entry->color_index = hash_nick_to_color_index(nick, channel_key, palette_size);
 	}
 	
 	color_index = entry->color_index;
@@ -396,6 +399,12 @@ static char *expando_nickcolored(SERVER_REC *server, void *item, int *free_ret)
 	/* Get persistent color index for this nick */
 	color_index = get_persistent_nick_color(current_nick, item, server);
 	
+	if (palette == NULL || palette_size <= 0 || color_index < 0 || color_index >= palette_size) {
+		g_strfreev(palette);
+		*free_ret = TRUE;
+		return (char *)display_nick;
+	}
+
 	/* Return colored nick with proper formatting */
 	*free_ret = TRUE;
 	raw_format = g_strdup_printf("%%%s%%_%s%%_%%n", palette[color_index], display_nick);
@@ -523,6 +532,7 @@ static void cleanup_nick_on_nickchange(SERVER_REC *server, const char *new_nick,
 }
 
 /* /nickhash command handler */
+/* SYNTAX: NICKHASH SHIFT <channel> <nick> */
 
 static void cmd_nickhash(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
@@ -543,7 +553,7 @@ static void cmd_nickhash(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 	
 	subcmd = g_strstrip(params[0]);
 	
-	if (g_strcmp0(subcmd, "shift") == 0) {
+	if (g_ascii_strcasecmp(subcmd, "shift") == 0) {
 		if (!params[1] || !params[2]) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTCRAP, "Usage: /nickhash shift <#channel> <nick>");
 			g_strfreev(params);
