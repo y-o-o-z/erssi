@@ -2,154 +2,170 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Version](https://img.shields.io/badge/version-1.3.2-f59e0b.svg)](NEWS)
-[![Upstream](https://img.shields.io/badge/erssi-1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
-[![irssi](https://img.shields.io/badge/irssi-1.4.5-30363d.svg)](https://github.com/irssi/irssi)
+[![Release](https://img.shields.io/badge/release-1.3.2-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
+[![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
 
-![erssi Shellter Edition: window list, channel with the shellter theme, nick list by rank](docs/images/erssi-shellter.png)
+erssi Shellter Edition is yooz's edition of
+[erssi](https://github.com/erssi-org/erssi), the modern irssi created by
+Jerzy “kofany” Dąbrowski and the erssi-org team. It keeps everything erssi
+brings — sidepanels, mouse support, 24-bit colour, image preview, a web
+frontend and full irssi Perl script compatibility — and tunes it for people
+who live on IRCnet: a polished default theme, help for every command,
+operator and botnet tools, and a security review of the parts that face the
+network.
+
+![erssi Shellter Edition: window list, a channel in the shellter theme, nick list by rank and the botnet status in the statusbar](docs/images/erssi-shellter.png)
+
+## Install
+
+One command, no root, about two minutes on a shell box:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
+```
+
+The installer checks the build dependencies and prints the exact package
+command for your system when something is missing, installs `meson` and
+`ninja` into a private Python environment if the system has none, builds the
+latest release, runs the test suite, installs to `~/.local/opt/erssi` and
+links `~/.local/bin/erssi`. Run it again to update. Options: `--prefix`,
+`--ref <tag|branch>`, `--no-test`.
+
+erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
+irssi. Start it inside tmux so the session survives logging out.
+
+<details>
+<summary>Manual build</summary>
+
+Debian / Ubuntu:
+
+```sh
+sudo apt install git gcc meson ninja-build pkgconf libglib2.0-dev libssl-dev \
+  libperl-dev libutf8proc-dev libgcrypt20-dev libotr5-dev \
+  libcurl4-openssl-dev libchafa-dev
+```
+
+FreeBSD: `pkg install git meson ninja pkgconf glib perl5 utf8proc libgcrypt libotr curl chafa`
 
 ```sh
 git clone https://github.com/y-o-o-z/erssi.git && cd erssi
-meson setup Build -Dprefix="$HOME/.local/opt/erssi" && ninja -C Build install
-~/.local/opt/erssi/bin/erssi          # no root, keeps its own ~/.erssi
+meson setup Build -Dprefix="$HOME/.local/opt/erssi" -Dwith-proxy=yes
+ninja -C Build && meson test -C Build && ninja -C Build install
 ```
 
-erssi Shellter Edition is a fork of [erssi](https://github.com/erssi-org/erssi),
-the next-generation irssi, tuned for daily use on IRCnet: a polished start theme, rank-colored
-nicks, WHOIS that stays out of your channels, a fe-web server that a browser
-client can drive exactly like the terminal, and scripts for IRC operators.
-
-`main` is upstream erssi plus the changes below, one commit per change, each
-explaining the problem it solves. Everything else — sidepanels, mouse
-gestures, image preview, full irssi Perl script compatibility — comes from
-erssi; see the [upstream README](docs/ERSSI-UPSTREAM-README.md). Credential
-encryption is switched off until it is rewritten (see *Security*).
+Only GLib (2.32 or newer) and OpenSSL are required. Perl, utf8proc,
+libcurl + chafa (image preview) and libotr + libgcrypt (OTR) are detected
+and used when present. For a system-wide install use
+`-Dprefix=/usr/local` and `sudo ninja -C Build install`.
+</details>
 
 ## Version
 
-```
-$ erssi --version
-erssi 1.3.2 (20261003 1302)
-```
-
 | | |
 |---|---|
-| **erssi 1.3.2** | erssi Shellter Edition: all of erssi 1.3.1 (erssi-org, 2026-04-06) plus the changes below. Release notes at the top of [NEWS](NEWS). |
-| **irssi base** | irssi 1.4.5, the latest irssi release (2023-10-03), plus irssi `master` up to 2025-07-26 as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date (`20261003`), so scripts that require irssi 1.4.5 or newer by date load. `$J` is erssi's own version (`1.3.2`): a script that compares `$J` with `1.4` needs a patch, as the bundled `rpe2e.pl` has. |
+| **erssi Shellter Edition 1.3.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
+| **irssi core** | irssi 1.4.5 plus irssi `master` up to 2025-07-26, as merged by erssi-org. |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.2`). |
 
-## What the fork changes
+## What this edition adds
 
-**Look and feel**
+### Look and feel
 
-| Change | Why |
-|---|---|
-| `shellter` is the start theme | A dark theme in the colors of [shellter.me](https://shellter.me). Every line — messages, events, server replies, WHOIS (field labels in the column), notices, private messages — shares one 13-character column and separator, so text always starts in the same place and wrapped lines continue under it. Default `nick_column_width` 13, a matching `nick_hash_colors` palette and hilight colors. |
-| `$nickmode` and `nick_mode_color_*` | The mode prefix is drawn in the color of the rank (`@` amber, `+` blue, `%` green, `~`/`&` red) in messages and in the nick list, so ops and voiced users stand out at a glance. |
-| 24-bit `nick_hash_colors` | Nick colors can match a 24-bit theme; invalid palette entries are never picked. |
-| `fe-text` section in themes | Themes written before 1.3.0 keep their sidepanel and statusbar formats. |
-| Sidepanel names cut with `…` | Long names (`#bash.org.pl`) are no longer chopped mid-word by the border; scroll arrows sit outside the nick text. |
-| Notices window keeps other windows | A script that creates its window at startup (e.g. *Mentions*) no longer loses it to the Notices window. |
-| Quiet network windows, tidy `/NAMES` | Network windows no longer start with three lines of `/WINDOW` output, and their lines carry no server tag (the Notices window keeps tags); the `/NAMES` table has no trailing padding, which wrapped into blank lines after a terminal resize. |
+- **`shellter` theme by default** — a dark theme in the colours of
+  [shellter.me](https://shellter.me). Messages, events, server replies,
+  WHOIS, notices and private messages share one column and one separator,
+  so text always starts in the same place and wrapped lines continue under
+  it. Joining a channel prints one summary line
+  (`#chan: 70 nicks · 29 ops · 4 voiced · 37 regular`) instead of a nick table.
+- **Rank colours** — `$nickmode` and `nick_mode_color_*` draw `@`, `+`, `%`
+  and `~`/`&` in their own colours in messages and in the nick list;
+  `nick_hash_colors` accepts 24-bit colours.
+- **Read marker in the column** — the trackbar branches off the separator
+  (`├────`) instead of cutting through timestamps and nicks.
+- **Activity that means something** — a quit or nick change marks only the
+  windows where that nick is, not every window of the network.
+- **Clean windows** — network windows open without `/WINDOW` chatter and
+  without server tags on every line; WHOIS replies go to the network window
+  (`print_whois_rpl_in_server_window`), not into the channel you are reading.
+- **Every terminal** — 24-bit colour where the terminal shows it, the
+  nearest 256-colour entry where it does not (GNU Screen, Linux console,
+  8/16-colour terminals). `/set term_truecolor auto|on|off` overrides it.
 
-**Behaviour**
+### Help for every command
 
-| Change | Why |
-|---|---|
-| WHOIS/WHOWAS in the network window (`print_whois_rpl_in_server_window`, on) | Replies go to the status window of the network that asked (IRCnet, IRCnet2), not into the channel you are reading. |
-| `anti_floodnet_notices` | Anti-Floodnet messages are local prints that `/ignore` cannot hide; this setting can. |
-| No `g_debug` in recode | Every sent line used to show up as `GLib default debug: recode_out: …` in Notices. |
-| `/HELP` for every command | The erssi commands that had no help (`/help credential`, `fe_web`, `floodnet`, `foreach`, `image`, `nickhash`, …) have it, and so does every bundled script command. Help files in `~/.erssi/help/` come first: drop in help for your own scripts. |
-| Anti-floodnet that does not eat private messages | It counted messages, so one friend without identd pasting five lines blocked every `~ident` sender on all networks, silently, until the next message. It now counts different senders, skips people you have a query with, ends protection on a timer, and a message from a server no longer crashes erssi. |
-| Activity that means something | A quit or nick change marked every window of the network; now only the windows where that nick is. |
-| 256-color fallback for 24-bit colors | erssi's new terminal backend always sent 24-bit color codes; GNU Screen and terminals without truecolor showed the theme without colors. Now, as in irssi 1.4.5, they get the nearest 256-color palette entry. |
+`/help` covers every command: the erssi commands that had no help
+(`credential`, `fe_web`, `floodnet`, `foreach`, `image`, `nickhash`, …) and
+every command of the bundled scripts. Help files in `~/.erssi/help/` are read
+first — drop in a file named after a command to document your own scripts.
 
-**fe-web** (WebSocket server for browser clients)
+### IRCnet tools
 
-| Change | Why |
-|---|---|
-| Commands with a `target` run in that window | `/e2e on`, `/topic`, `/kick` typed in a web channel window act on that channel instead of failing with “not in a channel”. |
-| Unknown server tags are rejected | A command meant for a disconnected network is dropped rather than run on another one. |
-| RFC 6455 Close handshake; lost TLS peer = plain disconnect | Restarting the web client no longer prints `SSL_ERROR_SSL … unexpected eof` in erssi. |
-| React to fe-web settings only | Every unrelated `/set` re-applied fe-web and printed “WebSocket server started/stopped”. |
-| `is_highlight` like the terminal | The web marks the same lines as mentions as the terminal does, `/me` included. |
-
-**Bundled scripts** — installed to `<prefix>/share/irssi/scripts`, not loaded
-by default (`/script load <name>`; autoload: symlink into
-`~/.erssi/scripts/autorun/`). Script messages are in Polish.
+Bundled in `<prefix>/share/irssi/scripts` and loaded on demand
+(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`). Their
+messages and help are in Polish.
 
 | Script | What it does |
 |---|---|
-| `tk.pl` | Temporary K-lines for IRCnet operators (ircd 2.11 `TKLINE`): nick → WHOIS → mask, never a guessed host; mask types (ident, host, domain), refusal of overly broad masks, `-dry` preview, optional confirmation, JSONL audit log. `/tkl <nick\|user@host> [time] <reason>`, `/untkl`, `/tklist`, `/klist`, `/tk help`. |
-| `skaner.pl` | Clones (same host) and IRC operators on a channel, reported in a *skaner* window after join, with alerts when a clone arrives. `/skaner [#channel\|all\|on\|off]`. |
-| `mentions.pl` | One *Mentions* window for highlights (also nick mid-sentence), private messages, notices and DCC, mirrored to `~/.erssi/logs/mentions.log`. |
-| `webjournal.pl` | Journals every window to `~/.erssi/journal` (JSONL, 0600, rotated) so a web client can show the same history and windows as the terminal. `/webjournal`. |
-| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop with an IRC interface): one connection and one window per botnet; a second `/connect` switches to it, closing the partyline window disconnects, at most one reconnect with a retry limit, cleanup of duplicates on load. `/bot [botnet\|close <botnet>\|cleanup]`, `botnet_chatnets`. |
+| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop): one connection per botnet, a network window with the partyline window under it like a channel, a statusbar item with the state of every botnet and unread partyline lines, a retry limit for hubs that are down. `/bot`, `/bot <botnet>`, `/bot close`. |
+| `tk.pl` | Temporary K-lines for IRCnet operators (ircd 2.11 `TKLINE`): nick → WHOIS → mask, never a guessed host; refuses overly broad masks; `-dry` preview; JSONL audit log. `/tkl`, `/untkl`, `/tklist`, `/klist`. |
+| `skaner.pl` | Clones and IRC operators on a channel, reported after join, with an alert when a clone arrives. `/skaner`. |
+| `mentions.pl` | One *Mentions* window for highlights, private messages, notices and DCC, mirrored to a log file. |
+| `trackbar.pl` | The read marker of trackbar 2.9, drawn as `├────` from the theme's separator column. `/mark`, `/trackbar`. |
+| `webjournal.pl` | Journals every window so the web client shows the same history and windows as the terminal. |
 
-## Security
+### Reliability
 
-Reviewed for this release; the details are in [NEWS](NEWS).
+- **Anti-floodnet without collateral damage** — counts different senders,
+  so one person pasting lines is no longer a flood; never filters people you
+  have a query with; ends protection on its own; bounded memory; no crash on
+  messages from servers.
+- **Sidepanels** — turning a panel off or changing its width gives the space
+  back; a terminal narrower than the panels (a phone over ssh) keeps a
+  usable window; stale scroll arrows, a leak on every panel hide and a crash
+  path on very tall terminals are fixed.
+- **Input line** — control characters (bold, colour) are visible and the
+  cursor stays on the text.
+- **Message formats** — messages to `@#channel` show the right nick.
 
-- **fe-web** gives a browser full control of erssi, so it is built for a
-  shared shell box: one password guess per connection, compared in constant
-  time; 16 KB and 10 seconds to log in; at most 16 clients; oversized frames
-  refused. The TLS certificate is kept in `~/.erssi/fe-web-cert.pem`, so the
-  web client trusts that certificate only — not whatever else listens on the
-  port while erssi restarts.
-- **Image preview** fetches only over http/https, only from public
-  addresses (also after redirects), stops at the size limit even when the
-  server lies about it, and refuses images too large to decode safely.
-- **`~/.erssi/config`** is written readable only by you (0600).
-- **Credential encryption** (`/credential encrypt`, external file) is
-  refused: in erssi 1.3.1 it never encrypted the configuration file, and a
-  wrong master password could delete stored credentials. Existing setups
-  keep working; `/help credential` explains how to go back to plain storage.
+### Security
 
-## Build and install (no root needed)
+The network-facing parts were reviewed for this release.
 
-Dependencies (Debian/Ubuntu names): `meson ninja-build pkg-config gcc
-libglib2.0-dev libssl-dev libperl-dev libutf8proc-dev
-libgcrypt20-dev libotr5-dev libcurl4-openssl-dev libchafa-dev`.
-
-```sh
-git clone https://github.com/y-o-o-z/erssi.git && cd erssi
-meson setup Build -Dprefix="$HOME/.local/opt/erssi" \
-  -Dwith-perl=yes -Dwith-proxy=yes -Dwith-otr=yes -Dwith-fe-web=yes \
-  -Dwith-image-preview=yes -Ddisable-utf8proc=no
-ninja -C Build && meson test -C Build && ninja -C Build install
-~/.local/opt/erssi/bin/erssi
-```
-
-Use `--prefix=/usr/local` and `sudo ninja -C Build install` for a system-wide
-install. erssi keeps its configuration in `~/.erssi/`, so it coexists with
-irssi.
+- **Web frontend (fe-web)** — built for a shared shell box: one password
+  guess per connection, compared in constant time; 16 KB and 10 seconds to
+  log in; at most 16 clients; oversized frames refused. The TLS certificate
+  is kept in `~/.erssi/fe-web-cert.pem` and the web client trusts exactly that
+  certificate, so nothing else listening on the port can receive the
+  password.
+- **Image preview** — http and https only, public addresses only (also after
+  redirects), a hard size limit, and no decoding of images too large to
+  handle safely. The debug log of clicked URLs is off by default.
+- **Configuration** — `~/.erssi/config` is written readable only by you.
+- **Credential encryption** — switched off: in erssi 1.3.1 it never
+  encrypted the configuration file and a wrong master password could delete
+  stored credentials. Existing setups keep working; `/help credential`
+  explains how to return to plain storage.
 
 ## Configuration
 
 ```
-/set theme shellter                       # already the default
-/set nick_mode_color_voice %Z79C0FF%_     # rank colors (owner, op, halfop, voice, normal)
-/set print_whois_rpl_in_server_window on  # off: WHOIS in the active window, as upstream
-/set anti_floodnet_notices off            # hide Anti-Floodnet messages
-/set colors_ansi_24bit on                 # default: 24-bit where detected, else 256 colors
+/set theme shellter                       # the default
+/set nick_mode_color_voice %Z79C0FF%_     # rank colours: _owner, _op, _halfop, _voice, _normal
+/set print_whois_rpl_in_server_window on  # off: WHOIS in the active window
+/set anti_floodnet_notices off            # hide Anti-Floodnet notices
+/set term_truecolor auto                  # on / off to override terminal detection
+/statusbar info add -after act botnet     # botnet states in the statusbar
 ```
 
-**Terminals and multiplexers.** 24-bit colors are used everywhere except
-where the terminal is known not to show them: GNU Screen (4.x drops 24-bit
-color codes, 5.x passes them only with `truecolor on`), the Linux console,
-8/16-color and mono terminals, Apple Terminal without `COLORTERM`. There
-erssi uses the nearest 256-color palette entry. `/set term_truecolor
-auto|on|off` overrides the detection (`on` for screen 5 with `truecolor
-on`). In tmux enable RGB (`set -as terminal-features ',*:RGB'`). Tested in
-tmux 3.5 (with and without `COLORTERM`), GNU Screen 4.09 and 5.0.1 and on
-`TERM=linux`.
+In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`.
 
 ## Web client
 
-fe-web plus [NexusIRC](https://github.com/kofany/nexus) gives a browser view
-of the *same* erssi session: channels, queries, history, and erssi's own
-windows (Notices, Mentions, script windows), with commands executed by erssi.
+fe-web together with [NexusIRC](https://github.com/kofany/nexus) by kofany
+gives a browser view of the same erssi session — channels, queries, history
+and erssi's own windows — with every command executed by erssi.
 
 ```
 /set fe_web_password <long random secret>
@@ -159,38 +175,39 @@ windows (Notices, Mentions, script windows), with commands executed by erssi.
 /save
 ```
 
-The NexusIRC patch series, build steps and reverse-proxy/tunnel setup are in
-[contrib/nexusirc](contrib/nexusirc/README.md). Keep fe-web on `127.0.0.1`;
-only the web client should be exposed, behind TLS.
+[contrib/nexusirc](contrib/nexusirc/README.md) holds the NexusIRC patch series
+(Polish interface, terminal-like view, certificate pinning) with build steps
+and reverse-proxy notes. Keep fe-web on `127.0.0.1`; expose only the web
+client, behind TLS.
 
 ## End-to-end encryption
 
 [contrib/rpe2e](contrib/rpe2e/README.md) carries `rpe2e.pl`, the RPE2E v1.0
-script from [repartee](https://github.com/outragedevs/repartee) (MIT), adapted
-to load on erssi installed without root. It is wire-compatible with repartee
-and WeeChat: `/e2e on` in a channel window encrypts that channel
-(XChaCha20-Poly1305, per-sender keys, CTCP key exchange). A migration tool
-moves an existing repartee identity and keys, so peers see no key change.
-Includes an integration test with two real erssi instances.
+script from [repartee](https://github.com/outragedevs/repartee), adapted to
+erssi. It is wire-compatible with repartee and WeeChat: `/e2e on` in a
+channel encrypts it (XChaCha20-Poly1305, per-sender keys, CTCP key exchange).
+A migration tool moves an existing repartee identity, so peers see no key
+change.
 
-## Tests
-
-```sh
-meson test -C Build                                # C unit tests
-python3 contrib/rpe2e/test_rpe2e_from_repartee.py  # repartee key migration
-# E2E between two real erssi on a local test server (needs tmux, Perl modules)
-contrib/rpe2e/test/run-e2e-test.sh ~/.local/opt/erssi/bin/erssi contrib/rpe2e/rpe2e.pl
-```
-
-## Keeping up with upstream
+## Development
 
 ```sh
+meson test -C Build                               # unit tests
+ln -sf ../../utils/pre-push .git/hooks/pre-push   # build, tests and history checks before every push
 git remote add upstream https://github.com/erssi-org/erssi.git
-git fetch upstream && git merge upstream/main
+git fetch upstream && git merge upstream/main     # follow erssi
 ```
 
-## License
+Each change in this edition is a separate commit that explains the problem
+it solves, so upstream merges stay reviewable.
 
-GPL-2.0-or-later, like irssi and erssi. `contrib/rpe2e/rpe2e.pl` is MIT
-(repartee authors). Upstream: [erssi-org/erssi](https://github.com/erssi-org/erssi)
-by the erssi-org team, built on [irssi](https://irssi.org).
+## Credits and license
+
+- **erssi** — Jerzy “kofany” Dąbrowski and the erssi-org team,
+  [erssi-org/erssi](https://github.com/erssi-org/erssi).
+- **irssi** — the irssi developers, [irssi.org](https://irssi.org).
+- **NexusIRC** — kofany, [kofany/nexus](https://github.com/kofany/nexus).
+- **RPE2E** — the repartee authors (MIT).
+- **Shellter Edition** — yooz, [y-o-o-z/erssi](https://github.com/y-o-o-z/erssi).
+
+GPL-2.0-or-later, like irssi and erssi. `contrib/rpe2e/rpe2e.pl` is MIT.
