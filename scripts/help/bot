@@ -37,15 +37,31 @@ BOT HELP%|
     powstanie drugie, jest od razu zamykane. Ręczne połączenie usuwa
     czekające ponowienia.
 
-    Rozmowa partyline jest otwierana od razu w oknie sieci (nazwa okna =
-    tag), a bez niego w nowym oknie nazwanym jak botnet, więc linie od bota
-    nie tworzą nowych okien. Zamknięcie rozmowy partyline (/WC, krzyżyk
-    w webie) rozłącza botnet bez ponawiania.
+    Jak każda sieć, botnet ma okno sieci (komunikaty serwera, nazwa okna =
+    tag), a tuż pod nim jedno okno partyline („partyline:<botnet>”).
+    Rozmowa jest w nim gotowa, zanim bot cokolwiek napisze, więc linie od
+    bota nie otwierają nowych okien; po ponownym połączeniu wracają do tego
+    samego okna. Zamknięcie okna partyline (/WC, krzyżyk w webie) rozłącza
+    botnet bez ponawiania.
 
     Po zerwaniu połączenia zostaje najwyżej jedno ponowienie. Po
     botnet_reconnect_tries nieudanych próbach z rzędu ponawianie jest
     wstrzymywane z komunikatem w oknie Notices; wznawia je /BOT <botnet>.
     Po załadowaniu skrypt sam robi porządek tak jak CLEANUP.
+
+%9Pasek stanu:%9
+
+    Element „botnet” pokazuje każdy botnet: ● połączony, ◌ łączy się,
+    ↻ ponowi za N s, ✕ ponawianie wstrzymane, ○ rozłączony. Przy
+    połączonym liczba linii partyline, których jeszcze nie widziałeś -
+    na czerwono, gdy ktoś napisał twój nick; znika po wejściu do okna.
+    Dodanie (pasek okna w erssi to „info”, w wielu konfiguracjach
+    „window”):
+
+        /STATUSBAR info ADD -after act botnet
+
+    Wygląd zmienia /FORMAT botnet_sb_up, _unread, _hilight, _connecting,
+    _retry, _stopped, _down i _label.
 
 %9Ustawienia:%9
 
@@ -57,6 +73,8 @@ BOT HELP%|
         Ile nieudanych ponowień z rzędu; 0 = bez limitu.
     botnet_quit_message =
         Powód przy rozłączaniu; pusty = domyślny powód erssi.
+    botnet_statusbar_all = ON
+        Pasek pokazuje także rozłączone botnety.
 
 %9Przykłady:%9
 
@@ -65,5 +83,5 @@ BOT HELP%|
     /BOT CLOSE hub
     /BOT CLEANUP
 
-%9Zobacz też:%9 CONNECT, DISCONNECT, NETWORK, QUERY, RECONNECT
+%9Zobacz też:%9 CONNECT, DISCONNECT, FORMAT, NETWORK, QUERY, RECONNECT, STATUSBAR
 
