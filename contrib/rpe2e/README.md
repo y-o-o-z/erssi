@@ -42,6 +42,9 @@ private conversations.
 /e2e help               all commands
 ```
 
+`/help e2e` describes every subcommand once `help/e2e` (Polish) is copied
+to `~/.erssi/help/`.
+
 Once on, every message to the channel leaves as `+RPE2E01 …`
 (XChaCha20-Poly1305, a separate key per sender and channel). Anyone without
 the key sees ciphertext. Key requests travel as CTCP; in `normal` mode erssi

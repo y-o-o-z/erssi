@@ -128,7 +128,10 @@ static int show_help_file(const char *file)
 
         helppath = settings_get_str("help_path");
 
-	paths = g_strsplit(helppath, ":", -1);
+	/* ~/.erssi/help first: help for scripts and local overrides */
+	path = g_strdup_printf("%s/help:%s", get_irssi_dir(), helppath);
+	paths = g_strsplit(path, ":", -1);
+	g_free(path);
 
 	handle = NULL;
 	for (tmp = paths; *tmp != NULL; tmp++) {
