@@ -628,6 +628,34 @@ static void cmd_nickhash(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 	g_strfreev(params);
 }
 
+/* Nick colours are kept per channel so a nick keeps its colour; nicks not
+   seen for a week (and channels left with none) are forgotten, or the
+   tables grow for as long as erssi runs. */
+#define NICK_COLOR_KEEP (7 * 24 * 3600)
+static guint nick_color_prune_tag = 0;
+
+static gboolean nick_color_entry_old(gpointer key, gpointer value, gpointer cutoff)
+{
+	return ((nick_color_entry *) value)->last_seen < *(time_t *) cutoff;
+}
+
+static gboolean channel_context_prune(gpointer key, gpointer value, gpointer cutoff)
+{
+	channel_color_context *ctx = value;
+
+	g_hash_table_foreach_remove(ctx->nick_colors, nick_color_entry_old, cutoff);
+	return g_hash_table_size(ctx->nick_colors) == 0;
+}
+
+static gboolean nick_colors_prune(gpointer data)
+{
+	time_t cutoff = time(NULL) - NICK_COLOR_KEEP;
+
+	if (channel_contexts != NULL)
+		g_hash_table_foreach_remove(channel_contexts, channel_context_prune, &cutoff);
+	return TRUE;
+}
+
 void fe_expandos_init(void)
 {
 	expando_create("winref", expando_winref, "window changed", EXPANDO_ARG_NONE,
@@ -650,6 +678,8 @@ void fe_expandos_init(void)
 	
 	/* Register command */
 	command_bind("nickhash", NULL, (SIGNAL_FUNC) cmd_nickhash);
+
+	nick_color_prune_tag = g_timeout_add_seconds(3600, nick_colors_prune, NULL);
 }
 
 void fe_expandos_deinit(void)
@@ -669,6 +699,11 @@ void fe_expandos_deinit(void)
 	/* Unregister command */
 	command_unbind("nickhash", (SIGNAL_FUNC) cmd_nickhash);
 	
+	if (nick_color_prune_tag != 0) {
+		g_source_remove(nick_color_prune_tag);
+		nick_color_prune_tag = 0;
+	}
+
 	/* Clean up hash coloring data */
 	if (channel_contexts) {
 		g_hash_table_destroy(channel_contexts);
