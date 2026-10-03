@@ -125,6 +125,19 @@ static CREDENTIAL_REC *credential_find(const char *network, CredentialContext co
 	return NULL;
 }
 
+/* Encryption and the external file are not reliable yet: encryption never
+ * reaches ~/.erssi/config (passwords stay in plain text there), external
+ * mode puts them back into it, and a wrong master password can delete
+ * stored credentials. Turning them on is refused until that is rewritten;
+ * a configuration that already uses them keeps working as before. */
+static gboolean credential_settings_ready = FALSE;
+
+#define CREDENTIAL_DISABLED_MSG \
+	"Credential encryption and the external credentials file are disabled " \
+	"in this version: they do not keep passwords out of ~/.erssi/config and " \
+	"a wrong master password can delete stored credentials. ~/.erssi/config " \
+	"is readable only by you."
+
 static void credential_storage_mode_changed(void)
 {
 	const char *mode_str = settings_get_str("credential_storage_mode");
@@ -140,6 +153,12 @@ static void credential_storage_mode_changed(void)
 	/* No change - exit */
 	if (old_mode == new_mode) {
 		credential_storage_mode = new_mode;
+		return;
+	}
+
+	if (credential_settings_ready && new_mode == CREDENTIAL_STORAGE_EXTERNAL) {
+		settings_set_str("credential_storage_mode", "config");
+		signal_emit("gui dialog", 2, "error", CREDENTIAL_DISABLED_MSG);
 		return;
 	}
 
@@ -175,6 +194,12 @@ static void credential_config_encrypt_changed(void)
 
 	if (new_value == was_enabled) {
 		return; /* No change */
+	}
+
+	if (credential_settings_ready && new_value) {
+		settings_set_bool("credential_config_encrypt", FALSE);
+		signal_emit("gui dialog", 2, "error", CREDENTIAL_DISABLED_MSG);
+		return;
 	}
 
 	/* Check if we can perform the operation */
@@ -1631,6 +1656,7 @@ void credential_init(void)
 	credential_external_file_changed();
 	credential_storage_mode_changed();
 	credential_config_encrypt_changed();
+	credential_settings_ready = TRUE;
 
 	/* Settings change handlers */
 	signal_add("setup changed", (SIGNAL_FUNC) credential_storage_mode_changed);
