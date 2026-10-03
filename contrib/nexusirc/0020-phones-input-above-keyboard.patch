@@ -1,0 +1,157 @@
+From 16ef36cee4441ea1fa85e0acd6bcf93591e083fb Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 13:14:16 +0200
+Subject: [PATCH] local: phones - the input line stays above the keyboard
+
+On a phone the input line was hidden or could not be used:
+- iOS Safari (and Chrome on Android without interactive-widget) does not
+  shrink the page for the on-screen keyboard, it covers it, and the page
+  was 100% of the layout viewport - the input sat under the keyboard or
+  the browser bar. The app now takes the height of the visible part
+  (visualViewport, js/viewport.ts, kept while pinch-zoomed) and undoes the
+  page scroll the browser makes when the keyboard opens; Chrome on Android
+  resizes the page itself (interactive-widget=resizes-content), 100dvh
+  otherwise.
+- The input font was 15px on phones; iOS zooms the page into any field
+  under 16px, pushing the input off screen. 16px now.
+- Send and upload buttons were 22px; 40px on phones. The form keeps
+  clear of the iPhone home indicator (safe-area-inset-bottom).
+---
+ client/css/style.css  | 40 ++++++++++++++++++++++++++++++++++++++++
+ client/index.html.tpl |  2 +-
+ client/js/viewport.ts | 41 +++++++++++++++++++++++++++++++++++++++++
+ client/js/vue.ts      |  2 ++
+ 4 files changed, 84 insertions(+), 1 deletion(-)
+ create mode 100644 client/js/viewport.ts
+
+diff --git a/client/css/style.css b/client/css/style.css
+index 4aca15d5..339c3cc0 100644
+--- a/client/css/style.css
++++ b/client/css/style.css
+@@ -2932,3 +2932,43 @@ part/quit messages where we don't load previews (adds a blank line otherwise) */
+ 	justify-content: center;
+ 	align-items: center;
+ }
++
++/* Telefony: aplikacja ma wysokosc widocznej czesci okna (bez paska
++   przegladarki i klawiatury - js/viewport.ts), linia wpisywania nad paskiem
++   gestow iPhone'a */
++@supports (height: 100dvh) {
++	html,
++	body,
++	#app {
++		height: var(--app-height, 100dvh);
++	}
++}
++
++#form {
++	padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
++}
++
++@media (max-width: 768px) {
++	/* 16px: przy mniejszej czcionce iOS powieksza strone po dotknieciu pola */
++	#form #input {
++		font-size: 16px;
++		line-height: 20px;
++		height: 20px;
++		min-height: 20px;
++		max-height: 100px;
++		margin: 6px 4px;
++	}
++
++	/* cel dla palca, nie dla kursora */
++	#form #upload,
++	#form #submit {
++		width: 40px;
++		height: 40px;
++		font-size: 16px;
++	}
++
++	#form {
++		padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
++		align-items: center;
++	}
++}
+diff --git a/client/index.html.tpl b/client/index.html.tpl
+index 386dfc1c..4d3f1812 100644
+--- a/client/index.html.tpl
++++ b/client/index.html.tpl
+@@ -3,7 +3,7 @@
+     <head>
+ 
+     <meta charset="utf-8">
+-    <meta name="viewport" content="width=device-width, initial-scale=1">
++    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+ 
+     <link rel="preload" as="script" href="js/loading-error-handlers.js?v=<%- cacheBust %>">
+     <link rel="modulepreload" href="js/bundle.js?v=<%- cacheBust %>">
+diff --git a/client/js/viewport.ts b/client/js/viewport.ts
+new file mode 100644
+index 00000000..e1183b0d
+--- /dev/null
++++ b/client/js/viewport.ts
+@@ -0,0 +1,41 @@
++// Telefony: klawiatura ekranowa na iOS (i w Chrome na Androidzie bez
++// interactive-widget) nie zmniejsza strony, tylko ja przykrywa - linia
++// wpisywania znikala pod klawiatura albo pod paskiem przegladarki.
++// Wysokosc aplikacji = widoczna czesc okna, a przesuniecie strony, ktore
++// przegladarka robi przy otwieraniu klawiatury, jest cofane.
++export function trackVisualViewport(): void {
++	const vv = window.visualViewport;
++
++	if (!vv) {
++		return;
++	}
++
++	const root = document.documentElement;
++	let frame = 0;
++
++	const update = () => {
++		frame = 0;
++
++		// powiekszenie dwoma palcami tez zmniejsza visualViewport - wtedy nie ruszaj
++		if (Math.abs(vv.scale - 1) > 0.01) {
++			return;
++		}
++
++		root.style.setProperty("--app-height", `${Math.round(vv.height)}px`);
++
++		if (window.scrollY !== 0 || window.scrollX !== 0) {
++			window.scrollTo(0, 0);
++		}
++	};
++
++	const schedule = () => {
++		if (!frame) {
++			frame = requestAnimationFrame(update);
++		}
++	};
++
++	vv.addEventListener("resize", schedule);
++	vv.addEventListener("scroll", schedule);
++	window.addEventListener("orientationchange", schedule);
++	update();
++}
+diff --git a/client/js/vue.ts b/client/js/vue.ts
+index 54b6b6c1..1bf51d05 100644
+--- a/client/js/vue.ts
++++ b/client/js/vue.ts
+@@ -17,6 +17,7 @@ import logger from "./logger";
+ import "./webpush";
+ import "./keybinds";
+ import {LoungeWindow} from "./types";
++import {trackVisualViewport} from "./viewport";
+ 
+ // interfejs po polsku: nazwy miesiecy, "2 godziny temu"
+ dayjs.locale("pl");
+@@ -32,6 +33,7 @@ VueApp.use(store as any); // TypedStore needs type casting for Vue plugin compat
+ VueApp.provide(key, store); // Provide store with injection key for useStore()
+ 
+ VueApp.mount("#app");
++trackVisualViewport();
+ socket.open();
+ 
+ store.watch(
+-- 
+2.47.3
+

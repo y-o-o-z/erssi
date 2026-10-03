@@ -19,6 +19,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0017 | Page head: document language, pinch zoom on phones, font preload. |
 | 0018 | The whole interface in Polish (chat, events with Polish plural forms, settings, network manager, help, menus, notifications, server feedback, dates) and one brand, erssi@tahio. |
 | 0019 | Trust only erssi's own fe-web certificate (`~/.erssi/fe-web-cert.pem`, kept by erssi since 1.3.2) instead of any certificate on the port. |
+| 0020 | Phones: the input line stays above the on-screen keyboard and the browser bar (visible-viewport height, 16px input so iOS does not zoom, 40px buttons, safe area). |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in
