@@ -58,7 +58,7 @@ use warnings;
 use Irssi;
 use Irssi::TextUI;
 
-our $VERSION = '1.2.0';
+our $VERSION = '1.2.1';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -391,14 +391,14 @@ sub sig_connect_failed {
             return;
         }
         remove_reconnect($_) for @rec[1 .. $#rec];
-    }, undef);
+    }, '');
 }
 
 sub sig_server_disconnected {
     my ($server) = @_;
     my $botnet = server_botnet($server) or return;
     delete $connecting{ $server->{tag} };
-    Irssi::timeout_add_once(100, sub { cleanup(1) }, undef);
+    Irssi::timeout_add_once(100, sub { cleanup(1) }, '');
 }
 
 # zamkniecie okna partyline przez uzytkownika = rozlaczenie botnetu
@@ -415,7 +415,7 @@ sub sig_query_destroyed {
         disconnect($s);
         remove_reconnect($_) for reconnects_of($botnet);
         say_info(display_name($botnet) . ' rozlaczony (zamknieto okno partyline)');
-    }, undef);
+    }, '');
 }
 
 # ── /bot ─────────────────────────────────────────────────────────────
@@ -575,7 +575,7 @@ sub sb_botnet {
         }
     }
     my $text = @parts ? join(' ', sb_format('botnet_sb_label'), @parts) : '';
-    $item->default_handler($get_size_only, length $text ? "{sb $text}" : '', undef, 1);
+    $item->default_handler($get_size_only, length $text ? "{sb $text}" : '', '', 1);
 }
 
 # linia partyline, gdy jej okno nie jest widoczne: licznik w pasku
@@ -627,11 +627,11 @@ Irssi::signal_add_last('message private', \&sig_message_private);
 Irssi::signal_add('window changed', \&sig_window_changed);
 Irssi::signal_add('setup changed', \&sb_redraw);
 for my $sig ('server looking', 'server connected', 'server connect failed', 'server disconnected') {
-    Irssi::signal_add_last($sig, sub { Irssi::timeout_add_once(150, \&sb_redraw, undef) });
+    Irssi::signal_add_last($sig, sub { Irssi::timeout_add_once(150, \&sb_redraw, '') });
 }
-Irssi::statusbar_item_register('botnet', undef, 'sb_botnet');
+Irssi::statusbar_item_register('botnet', '', 'sb_botnet');
 Irssi::timeout_add(1000, \&sb_tick, '');
 Irssi::signal_add_first('command help', \&cmd_help);
 
 # po zaladowaniu: porzadek w tym, co juz jest (po starcie erssi - z timera)
-Irssi::timeout_add_once(500, sub { cleanup(0) }, undef);
+Irssi::timeout_add_once(500, sub { cleanup(0) }, '');
