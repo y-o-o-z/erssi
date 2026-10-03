@@ -78,13 +78,64 @@ void sig_mainwindow_created(MAIN_WINDOW_REC *mw)
 	(void) mw;
 }
 
+/* Remove a panel and give back exactly the columns it reserved (its width
+ * at creation - the setting may have changed since). */
+static void destroy_left_panel(SP_MAINWIN_CTX *ctx)
+{
+	clear_window_full(ctx->left_tw, ctx->left_w, ctx->left_h);
+	term_window_destroy_left_panel(ctx->left_tw);
+	ctx->left_tw = NULL;
+	ctx->left_h = 0;
+	mainwindows_reserve_columns(-ctx->left_w, 0);
+	if (ctx->left_cache)
+		sp_cache_clear(ctx->left_cache);
+}
+
+static void destroy_right_panel(SP_MAINWIN_CTX *ctx)
+{
+	clear_window_full(ctx->right_tw, ctx->right_w, ctx->right_h);
+	term_window_destroy_right_panel(ctx->right_tw);
+	ctx->right_tw = NULL;
+	ctx->right_h = 0;
+	mainwindows_reserve_columns(0, -ctx->right_w);
+	if (ctx->right_cache)
+		sp_cache_clear(ctx->right_cache);
+}
+
 void setup_ctx_for(MAIN_WINDOW_REC *mw)
 {
 	SP_MAINWIN_CTX *ctx;
+	int left_w, right_w;
+
 	ctx = get_ctx(mw, TRUE);
-	ctx->left_w = (get_sp_enable_left() ? get_sp_left_width() : 0);
-	ctx->right_w = (get_sp_enable_right() ? get_sp_right_width() : 0);
+	left_w = (get_sp_enable_left() ? get_sp_left_width() : 0);
+	right_w = (get_sp_enable_right() ? get_sp_right_width() : 0);
+
+	/* A panel turned off or resized with /SET: remove it with its old
+	 * width; position_tw() creates it again with the new one. */
+	if (ctx->left_tw != NULL && left_w != ctx->left_w) {
+		destroy_left_panel(ctx);
+		mainwindows_recreate();
+	}
+	if (ctx->right_tw != NULL && right_w != ctx->right_w) {
+		destroy_right_panel(ctx);
+		mainwindows_recreate();
+	}
+	ctx->left_w = left_w;
+	ctx->right_w = right_w;
 	position_tw(mw, ctx);
+}
+
+/* Collapsing gives the panels' columns back after the main windows were
+ * laid out without them: lay them out again, once the current resize is
+ * over (calling it from here would recurse through "mainwindow resized"). */
+static guint relayout_tag = 0;
+
+static gboolean relayout_after_collapse(gpointer data)
+{
+	relayout_tag = 0;
+	mainwindows_resize(term_width, term_height);
+	return FALSE;
 }
 
 void update_left_selection_to_active(void)
@@ -172,26 +223,17 @@ void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		/* Destroy left panel if it exists */
 		if (ctx->left_tw) {
 			resize_debug_log("POSITION_TW", "destroying left panel");
-			clear_window_full(ctx->left_tw, ctx->left_w, ctx->left_h);
-			term_window_destroy_left_panel(ctx->left_tw);
-			ctx->left_tw = NULL;
-			ctx->left_h = 0;
-			mainwindows_reserve_columns(-ctx->left_w, 0);
-			if (ctx->left_cache)
-				sp_cache_clear(ctx->left_cache);
+			destroy_left_panel(ctx);
 		}
 
 		/* Destroy right panel if it exists */
 		if (ctx->right_tw) {
 			resize_debug_log("POSITION_TW", "destroying right panel");
-			clear_window_full(ctx->right_tw, ctx->right_w, ctx->right_h);
-			term_window_destroy_right_panel(ctx->right_tw);
-			ctx->right_tw = NULL;
-			ctx->right_h = 0;
-			mainwindows_reserve_columns(0, -ctx->right_w);
-			if (ctx->right_cache)
-				sp_cache_clear(ctx->right_cache);
+			destroy_right_panel(ctx);
 		}
+
+		if (relayout_tag == 0)
+			relayout_tag = g_idle_add(relayout_after_collapse, NULL);
 
 		/* Note: Do NOT call mainwindows_recreate() or signal_emit() here!
 		 * That would cause infinite recursion via sig_mainwindow_resized -> redraw_one -> position_tw */
