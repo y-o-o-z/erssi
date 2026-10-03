@@ -71,6 +71,13 @@ static char *whois_key(IRC_SERVER_REC *server, const char *nick)
 	return g_strdup_printf("%s:%s", server->tag, nick);
 }
 
+/* Helper: is a WHOIS key one of the server whose "tag:" is prefix */
+static gboolean whois_key_has_prefix(gpointer key, gpointer value, gpointer prefix)
+{
+	(void) value;
+	return g_str_has_prefix(key, prefix);
+}
+
 /* Helper: Create new WHOIS record */
 static WHOIS_REC *whois_rec_new(const char *nick)
 {
@@ -853,6 +860,14 @@ static void sig_server_disconnected(IRC_SERVER_REC *server)
 
 	fe_web_send_to_all_clients(web_msg);
 	fe_web_message_free(web_msg);
+
+	/* WHOIS replies the server never ended (no 318, or the 312 of a
+	 * WHOWAS) are of no use any more */
+	if (active_whois != NULL && server->tag != NULL) {
+		char *prefix = g_strconcat(server->tag, ":", NULL);
+		g_hash_table_foreach_remove(active_whois, whois_key_has_prefix, prefix);
+		g_free(prefix);
+	}
 }
 
 /* Signal: "server destroyed" - web clients must not keep pointing at it
@@ -1312,10 +1327,12 @@ static void event_end_of_whois(IRC_SERVER_REC *server, const char *data)
 
 		fe_web_send_to_server_clients(server, msg);
 		fe_web_message_free(msg);
-
-		/* Remove from active_whois */
-		g_hash_table_remove(active_whois, key);
 	}
+
+	/* This WHOIS is over, also when it had nothing to send (e.g. only
+	 * 312 or 313): kept, the record would grow into the next one */
+	if (rec != NULL)
+		g_hash_table_remove(active_whois, key);
 
 	g_free(key);
 	g_free(params);
