@@ -290,6 +290,13 @@ have_cert:
 		return;
 	}
 
+	/* Writes to a slow client are queued and retried from the queue
+	 * (fe_web_client_send_raw): a record may be written in parts, and the
+	 * retry after WANT_WRITE comes from a buffer that may have moved and
+	 * grown since */
+	SSL_CTX_set_mode(fe_web_ssl_ctx, SSL_MODE_ENABLE_PARTIAL_WRITE |
+	                                 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
 	/* Use generated certificate and key */
 	if (!SSL_CTX_use_certificate(fe_web_ssl_ctx, server_cert)) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
@@ -561,11 +568,20 @@ int fe_web_ssl_write(FE_WEB_SSL_CHANNEL *ssl_chan, const char *data, int len)
 	ssl_err = SSL_get_error(ssl_chan->ssl, ret);
 
 	if (ssl_err == SSL_ERROR_WANT_WRITE) {
-		return -2; /* Need to retry */
+		return FE_WEB_SSL_WANT_WRITE; /* socket full: retry when writable */
 	}
 
 	if (ssl_err == SSL_ERROR_WANT_READ) {
-		return -2; /* Need to read */
+		return FE_WEB_SSL_WANT_READ; /* retry after the next read */
+	}
+
+	/* the client went away: an ordinary disconnect, as on the read side */
+	if (ssl_err == SSL_ERROR_ZERO_RETURN ||
+	    (ssl_err == SSL_ERROR_SYSCALL &&
+	     (errno == 0 || errno == EPIPE || errno == ECONNRESET))) {
+		ssl_chan->failed = 1;
+		ERR_clear_error();
+		return -1;
 	}
 
 	if (ssl_err == SSL_ERROR_SYSCALL) {
@@ -588,8 +604,10 @@ int fe_web_ssl_write(FE_WEB_SSL_CHANNEL *ssl_chan, const char *data, int len)
 	}
 
 	/* Real error */
+	ssl_chan->failed = 1;
 	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 	          "fe-web-ssl: Unknown SSL write error %d", ssl_err);
+	ERR_clear_error();
 	return -1;
 }
 
