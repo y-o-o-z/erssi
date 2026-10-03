@@ -26,7 +26,7 @@ else
 fi
 
 pushed=""
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref local_sha _remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue          # deletion
     # tags too: a tag can carry commits that no branch on GitHub has
     tip=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
