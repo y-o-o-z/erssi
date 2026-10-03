@@ -631,6 +631,21 @@ static int get_window_format(WINDOW_REC *win, WINDOW_SORT_REC *sort_rec,
 	return format;
 }
 
+/* A row whose scroll marker is no longer needed is redrawn, which clears
+ * the marker. */
+static void sp_cache_update_markers(SP_PANEL_CACHE *cache, int height,
+                                    gboolean more_above, gboolean more_below)
+{
+	if (cache->marker_above && !more_above)
+		cache->lines[0].valid = FALSE;
+	if (cache->marker_below && !more_below && cache->marker_below_row >= 0 &&
+	    cache->marker_below_row < SP_CACHE_MAX_LINES)
+		cache->lines[cache->marker_below_row].valid = FALSE;
+	cache->marker_above = more_above;
+	cache->marker_below = more_below;
+	cache->marker_below_row = height - 1;
+}
+
 /* Arrows marking more entries above/below the visible part of a panel.
  * Returns the number of cells drawn. */
 static int draw_scroll_markers(TERM_WINDOW *tw, int x, int height, gboolean more_above,
@@ -681,6 +696,9 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		return;
 
 	height = ctx->left_h;
+	/* the row cache has a fixed size: rows below it stay empty */
+	if (height > SP_CACHE_MAX_LINES)
+		height = SP_CACHE_MAX_LINES;
 	width = ctx->left_w;
 
 	/* Get sorted list using shared function */
@@ -711,6 +729,7 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		ctx->left_cache = sp_cache_create();
 	}
 	cache = ctx->left_cache;
+	sp_cache_update_markers(cache, height, has_more_above, has_more_below);
 
 	/* Check if we need full redraw (dimensions or scroll changed) */
 	full_redraw = sp_cache_needs_full_redraw(cache, height, width, skip);
@@ -888,6 +907,9 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		return;
 
 	height = ctx->right_h;
+	/* the row cache has a fixed size: rows below it stay empty */
+	if (height > SP_CACHE_MAX_LINES)
+		height = SP_CACHE_MAX_LINES;
 	width = ctx->right_w;
 	aw = mw->active;
 	index = 0;
@@ -952,9 +974,10 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		int format;
 		const char *prefix_str;
 		const char *nick_prefix;
-		/* Calculate available width for nick display */
-		/* Available width = total panel width - 1 (start position) - 1 (status) - 1 (border margin) */
-		int nick_max_width = MAX(1, width - 3);
+		/* Calculate available width for nick display: panel width
+		 * - 1 (start position) - 1 (status) - 1 (themes may put a space
+		 * before the status) - 1 (outer column, for the scroll markers) */
+		int nick_max_width = MAX(1, width - 4);
 
 		/* Safety check for server */
 		if (!server) {
@@ -1012,6 +1035,7 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 		/* Check if we have more content above/below */
 		has_more_above = (skip > 0);
 		has_more_below = (total_items > skip + height);
+		sp_cache_update_markers(cache, height, has_more_above, has_more_below);
 
 		/* Render sorted nicks with differential rendering */
 		for (cur = sorted_nicks; cur; cur = cur->next) {

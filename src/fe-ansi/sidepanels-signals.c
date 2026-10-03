@@ -156,14 +156,18 @@ static void create_server_separator_window(const char *server_tag)
 
 	sp_logf("AUTO-SEPARATOR: Creating separator window for server '%s'", server_tag);
 
-	/* the same as /WINDOW NEW HIDE */
-	signal_emit("gui window create override", 1, GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
-	window = window_create(NULL, FALSE);
-	window_change_server(window, server);
-
-	/* as /WINDOW NAME: never a second window with the same name */
-	if (window_find_name(server_tag) == NULL)
+	/* A window already named after the network (e.g. it lost its sticky
+	 * server) becomes the network window again - window names are unique,
+	 * and a new unnamed window would never be found at the next connect. */
+	window = window_find_name(server_tag);
+	if (window == NULL) {
+		/* the same as /WINDOW NEW HIDE */
+		signal_emit("gui window create override", 1,
+		            GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
+		window = window_create(NULL, FALSE);
 		window_set_name(window, server_tag);
+	}
+	window_change_server(window, server);
 	/* everything except client messages and notices (the Notices window has those) */
 	window_set_level(window, MSGLEVEL_ALL & ~(MSGLEVEL_NOTICES | MSGLEVEL_CLIENTNOTICE |
 	                                          MSGLEVEL_CLIENTCRAP | MSGLEVEL_CLIENTERROR));
@@ -349,14 +353,38 @@ void sig_message_part(SERVER_REC *server, const char *channel, const char *nick,
 	schedule_batched_redraw("message_part"); /* Part affects both activity (left) and nicklist (right) */
 }
 
+/* TRUE if one of the window's channels has the nick, or it is a query
+ * with that nick: a quit or nick change marks only those windows, not
+ * every window of the network. */
+static gboolean window_has_nick(WINDOW_REC *window, SERVER_REC *server,
+                                const char *nick, const char *other_nick)
+{
+	GSList *tmp;
+
+	for (tmp = window->items; tmp != NULL; tmp = tmp->next) {
+		WI_ITEM_REC *item = tmp->data;
+
+		if (item->server != server)
+			continue;
+		if (IS_CHANNEL(item) && nicklist_find(CHANNEL(item), nick) != NULL)
+			return TRUE;
+		if (IS_QUERY(item) &&
+		    (g_ascii_strcasecmp(item->visible_name, nick) == 0 ||
+		     (other_nick != NULL && g_ascii_strcasecmp(item->visible_name, other_nick) == 0)))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 void sig_message_quit(SERVER_REC *server, const char *nick, const char *address,
                              const char *reason)
 {
-	/* Handle quit for all windows where this nick was present */
+	/* Handle quit for all windows where this nick was present (the nick
+	 * is still in the nick lists when "message quit" is sent) */
 	GSList *tmp;
 	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
 		WINDOW_REC *window = tmp->data;
-		if (window->active && window->active->server == server) {
+		if (window_has_nick(window, server, nick, NULL)) {
 			handle_new_activity(window, DATA_LEVEL_EVENT);
 		}
 	}
@@ -366,11 +394,12 @@ void sig_message_quit(SERVER_REC *server, const char *nick, const char *address,
 void sig_message_nick(SERVER_REC *server, const char *newnick, const char *oldnick,
                              const char *address)
 {
-	/* Handle nick change for all windows on this server */
+	/* Handle nick change for the windows where the nick is (the nick
+	 * lists already have the new nick, a query may still have the old) */
 	GSList *tmp;
 	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
 		WINDOW_REC *window = tmp->data;
-		if (window->active && window->active->server == server) {
+		if (window_has_nick(window, server, newnick, oldnick)) {
 			handle_new_activity(window, DATA_LEVEL_EVENT);
 		}
 	}
