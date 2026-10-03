@@ -27,12 +27,12 @@ use warnings;
 use Irssi;
 use Irssi::Irc;
 
-our $VERSION = '1.0.1';
+our $VERSION = '1.0.2';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
     name        => 'skaner',
-    description => 'Klony (ten sam host) i IRCopi na kanale - raport w oknie "skaner"',
+    description => 'Clones (same host) and IRC operators on a channel - report in the "skaner" window',
     license     => 'MIT',
     url         => 'https://github.com/y-o-o-z/irssi_scripts',
 );
@@ -44,18 +44,18 @@ Irssi::settings_add_bool('skaner', 'skaner_show_clean', 1);
 Irssi::settings_add_str('skaner',  'skaner_window',     'skaner');
 
 Irssi::theme_register([
-    'skaner_header',     '%K───%n {channel $0} %K·%n $1 %K·%n $2 osob %K───%n',
-    'skaner_clean',      '{channel $0} %K·%n $1 osob %K·%n klonow brak %K·%n IRCopow brak',
-    'skaner_clones',     '  {hilight klony}: $0 grup, $1 osob',
+    'skaner_header',     '%K───%n {channel $0} %K·%n $1 %K·%n users: $2 %K───%n',
+    'skaner_clean',      '{channel $0} %K·%n users: $1 %K·%n clones: none %K·%n IRCops: none',
+    'skaner_clones',     '  {hilight clones}: $1 users, groups: $0',
     'skaner_clone',      '    %Yx$0%n $1 %K—%n $2',
-    'skaner_no_clones',  '  klony: brak',
-    'skaner_opers',      '  {error IRCopi} ($0): $1',
-    'skaner_no_opers',   '  IRCopi: brak',
-    'skaner_no_host',    '  bez znanego hosta: $0 z $1 {comment WHO pominiety - channel_max_who_sync?}',
-    'skaner_alert',      '%Yklon%n {channel $0}: {nick $1} {nickhost $2} %K—%n juz sa: $3',
+    'skaner_no_clones',  '  clones: none',
+    'skaner_opers',      '  {error IRCops} ($0): $1',
+    'skaner_no_opers',   '  IRCops: none',
+    'skaner_no_host',    '  no known host: $0 of $1 {comment WHO skipped - channel_max_who_sync?}',
+    'skaner_alert',      '%Yclone%n {channel $0}: {nick $1} {nickhost $2} %K—%n already here: $3',
     'skaner_info',       '$0',
     'skaner_title',      '%_$0%_ $1',
-    'skaner_empty',      '{channel $0} - brak listy osob (kanal jeszcze sie synchronizuje)',
+    'skaner_empty',      '{channel $0} - no user list yet (the channel is still syncing)',
 ]);
 
 # ── narzedzia ────────────────────────────────────────────────────────
@@ -298,11 +298,11 @@ sub sig_channel_destroyed {
 # ── komenda ──────────────────────────────────────────────────────────
 
 sub help {
-    out('skaner_title', 'skaner', '- klony i IRCopi na kanale');
-    out('skaner_info', '  /skaner             raport dla biezacego kanalu');
-    out('skaner_info', '  /skaner #kanal      raport dla kanalu na tym serwerze');
-    out('skaner_info', '  /skaner all         wszystkie kanaly tego serwera');
-    out('skaner_info', '  /skaner on | off    automatyczne raporty i alerty o klonach');
+    out('skaner_title', 'skaner', '- clones and IRC operators on a channel');
+    out('skaner_info', '  /skaner             report for the current channel');
+    out('skaner_info', '  /skaner #channel    report for a channel on this server');
+    out('skaner_info', '  /skaner all         all channels of this server');
+    out('skaner_info', '  /skaner on | off    automatic reports and clone alerts');
     out('skaner_info', '  /skaner status | help');
 }
 
@@ -314,7 +314,7 @@ sub cmd_skaner {
 
     if ($sub eq 'on' || $sub eq 'off') {
         Irssi::settings_set_bool('skaner_enabled', $sub eq 'on' ? 1 : 0);
-        out('skaner_info', 'automatyczne raporty: ' . ($sub eq 'on' ? 'wlaczone' : 'wylaczone'));
+        out('skaner_info', 'automatic reports: ' . ($sub eq 'on' ? 'on' : 'off'));
         return;
     }
     if ($sub eq 'status') {
@@ -323,8 +323,8 @@ sub cmd_skaner {
             my @channels = $srv->channels();
             $count += @channels;
         }
-        out('skaner_title', "skaner v$VERSION", sprintf('· %s · kanaly: %d',
-            Irssi::settings_get_bool('skaner_enabled') ? 'wlaczony' : 'wylaczony', $count));
+        out('skaner_title', "skaner v$VERSION", sprintf('· %s · channels: %d',
+            Irssi::settings_get_bool('skaner_enabled') ? 'enabled' : 'disabled', $count));
         return;
     }
     if ($sub eq 'help') {
@@ -332,12 +332,12 @@ sub cmd_skaner {
         return;
     }
     if (!$server) {
-        out('skaner_info', 'brak aktywnego serwera - przelacz sie na okno sieci IRC');
+        out('skaner_info', 'no active server - switch to an IRC network window');
         return;
     }
     if ($sub eq 'all') {
         my @channels = sort { irc_lc($a->{name}) cmp irc_lc($b->{name}) } $server->channels();
-        out('skaner_title', 'raport:', scalar(@channels) . ' kanalow');
+        out('skaner_title', 'report:', scalar(@channels) . (@channels == 1 ? ' channel' : ' channels'));
         report($_, 0) for @channels;
         return;
     }
@@ -345,13 +345,13 @@ sub cmd_skaner {
     if (length $arg) {
         $channel = $server->channel_find($arg);
         if (!$channel) {
-            out('skaner_info', "nie jestes na kanale $arg");
+            out('skaner_info', "you are not on channel $arg");
             return;
         }
     } elsif ($witem && $witem->{type} eq 'CHANNEL') {
         $channel = $witem;
     } else {
-        out('skaner_info', 'podaj kanal: /skaner #kanal (albo wpisz komende w oknie kanalu)');
+        out('skaner_info', 'specify a channel: /skaner #channel (or run the command in a channel window)');
         return;
     }
     report($channel, 0);

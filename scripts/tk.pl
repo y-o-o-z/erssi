@@ -8,12 +8,12 @@ use Irssi;    # Irssi::Irc nie jest wymagane - obiekty serwera i tak sa Irssi::I
 
 use vars qw($VERSION %IRSSI);
 
-$VERSION = '2.1.2';
+$VERSION = '2.1.3';
 %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
     name        => 'tk',
-    description => 'TKLINE dla ircd 2.11 (IRCnet): WHOIS -> maska -> TKLINE, z kontrola zakresu maski, podgladem i audytem',
+    description => 'TKLINE for ircd 2.11 (IRCnet): WHOIS -> mask -> TKLINE, with mask scope checks, preview and audit log',
     license     => 'GPL-3.0-or-later',
 );
 
@@ -88,12 +88,12 @@ sub register_settings {
 
 sub register_formats {
     Irssi::theme_register([
-        'tk_loaded', '{line_start}%_TK%_ v$0 zaladowany - /tk help',
+        'tk_loaded', '{line_start}%_TK%_ v$0 loaded - /tk help',
         'tk_info',   '{line_start}%_TK%_ $0',
-        'tk_warn',   '{line_start}%_TK%_ %Yuwaga%n $0',
-        'tk_error',  '{line_start}%_TK%_ %Rblad%n $0',
+        'tk_warn',   '{line_start}%_TK%_ %Ywarning%n $0',
+        'tk_error',  '{line_start}%_TK%_ %Rerror%n $0',
         'tk_sent',   '{line_start}%_TK%_ %G>>%n $0',
-        'tk_dry',    '{line_start}%_TK%_ %Ypodglad%n $0',
+        'tk_dry',    '{line_start}%_TK%_ %Ypreview%n $0',
     ]);
 }
 
@@ -234,18 +234,18 @@ sub split_mask {
 # odrzucic lokalnie niz dostac "T/KLINE: Incorrect format".
 sub mask_problem {
     my ($mask) = @_;
-    return 'maska jest pusta' unless defined $mask && length $mask;
-    return 'maska zawiera bialy znak lub znak sterujacy' if $mask =~ /[\s\x00-\x1f]/;
+    return 'the mask is empty' unless defined $mask && length $mask;
+    return 'the mask contains whitespace or a control character' if $mask =~ /[\s\x00-\x1f]/;
     my ($user, $host) = split_mask($mask);
-    return 'maska musi miec postac user@host' unless defined $host;
-    return 'maska musi miec postac user@host' if index($host, '@') >= 0;
-    return 'maska bez czesci user lub host (ircd to odrzuca)'
+    return 'the mask must have the form user@host' unless defined $host;
+    return 'the mask must have the form user@host' if index($host, '@') >= 0;
+    return 'the mask has no user or host part (ircd rejects it)'
         if !length($user) || !length($host) || $mask eq '@' || $mask eq '@*' || $mask eq '*@';
     my $bare = $user;
     $bare =~ s/\A=//;    # '=' = wariant "otherkill", ircd go zdejmuje
-    return 'czesc user jest za dluga (ircd 2.11: ' . $USERLEN . ' znakow)'
+    return 'the user part is too long (ircd 2.11: ' . $USERLEN . ' characters)'
         if length($bare) > $USERLEN;
-    return 'czesc host jest za dluga (ircd 2.11: ' . $HOSTLEN . ' znakow)'
+    return 'the host part is too long (ircd 2.11: ' . $HOSTLEN . ' characters)'
         if length($host) > $HOSTLEN;
     return cidr_problem($host) if index($host, '/') >= 0;
     return;
@@ -256,17 +256,17 @@ sub mask_problem {
 sub cidr_problem {
     my ($host) = @_;
     my ($addr, $bits) = $host =~ m{\A([^/]+)/([0-9]{1,3})\z}
-        or return "maska z '/' musi miec postac ip/prefiks, np. 1.2.3.0/24";
+        or return "a mask with '/' must have the form ip/prefix, e.g. 1.2.3.0/24";
     if ($addr =~ /\A([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)\z/) {
-        return 'nieprawidlowy adres IPv4 w masce' if grep { $_ > 255 } ($1, $2, $3, $4);
-        return 'prefiks IPv4 musi byc z zakresu 0-32' if $bits > 32;
+        return 'invalid IPv4 address in the mask' if grep { $_ > 255 } ($1, $2, $3, $4);
+        return 'an IPv4 prefix must be in the range 0-32' if $bits > 32;
         return;
     }
     if (index($addr, ':') >= 0 && $addr =~ /\A[0-9A-Fa-f:]+\z/) {
-        return 'prefiks IPv6 musi byc z zakresu 0-128' if $bits > 128;
+        return 'an IPv6 prefix must be in the range 0-128' if $bits > 128;
         return;
     }
-    return "ip/prefiks tylko dla adresow IP - serwer odrzuca hostname z '/'";
+    return "ip/prefix works only with IP addresses - the server rejects a hostname with '/'";
 }
 
 # Maska, ktora zdejmie pol sieci. Serwer jej nie odrzuci, wiec musimy my.
@@ -391,12 +391,12 @@ sub resolve_server {
     my ($tag, $server) = @_;
     if (defined $tag && length $tag) {
         my $found = Irssi::server_find_tag($tag);
-        return (undef, "brak polaczenia o tagu $tag") unless $found;
+        return (undef, "no connection with tag $tag") unless $found;
         $server = $found;
     }
     $server = Irssi::active_server() unless $server;
-    return (undef, 'brak aktywnego polaczenia IRC') unless $server;
-    return (undef, 'serwer ' . ($server->{tag} // '?') . ' nie jest polaczony')
+    return (undef, 'no active IRC connection') unless $server;
+    return (undef, 'server ' . ($server->{tag} // '?') . ' is not connected')
         unless $server->{connected};
     return ($server, undef);
 }
@@ -441,7 +441,7 @@ sub deliver {
     if (length($line) > $MAX_RAW && $req->{command} eq 'TKLINE') {
         my $overflow = length($line) - $MAX_RAW;
         $req->{reason} = clean_reason(substr($req->{reason}, 0, length($req->{reason}) - $overflow));
-        say_warn('powod przyciety do limitu dlugosci linii IRC');
+        say_warn('reason truncated to the IRC line length limit');
         $line = raw_line($req, $mask);
     }
 
@@ -477,7 +477,7 @@ sub finish_request {
     my ($server, $req, $mask) = @_;
 
     if (my $problem = mask_problem($mask)) {
-        say_error("$problem ($mask) - nie wysylam");
+        say_error("$problem ($mask) - not sent");
         audit_event('rejected', reason => $problem, mask => $mask, target => $req->{target});
         return;
     }
@@ -487,19 +487,19 @@ sub finish_request {
         # erssi zna nasz user@host dopiero po wejsciu na kanal (albo 396) -
         # bez niego nie sprawdzimy samobanu, wiec tylko maska waska
         if ((!defined $me || !length $me) && !mask_is_exact($mask)) {
-            say_error("nie znam Twojego user\@host (serwer go nie podal - wejdz na dowolny kanal), "
-                . "wiec nie sprawdze, czy maska $mask nie lapie Ciebie - nie wysylam; "
-                . 'bez tego dozwolona tylko maska ident@dokladny.host (-mask ident)');
+            say_error("your user\@host is unknown (the server has not sent it - join any channel), "
+                . "so it cannot be checked whether the mask $mask matches you - not sent; "
+                . 'until then only an ident@exact.host mask is allowed (-mask ident)');
             audit_event('rejected', reason => 'self_unknown', mask => $mask);
             return;
         }
         if (defined $me && length $me && mask_matches($mask, $me)) {
-            say_error("maska $mask lapie Ciebie ($me) - nie wysylam");
+            say_error("the mask $mask matches you ($me) - not sent");
             audit_event('rejected', reason => 'self_match', mask => $mask);
             return;
         }
         if (mask_is_broad($mask) && !$req->{force} && !Irssi::settings_get_bool('tk_allow_broad')) {
-            say_error("maska $mask jest zbyt szeroka - powtorz z -force albo zawez (-mask ident)");
+            say_error("the mask $mask is too broad - repeat with -force or narrow it (-mask ident)");
             audit_event('rejected', reason => 'broad_mask', mask => $mask);
             return;
         }
@@ -513,7 +513,7 @@ sub finish_request {
     if ($req->{command} eq 'TKLINE' && Irssi::settings_get_bool('tk_confirm') && !$req->{confirmed}) {
         $confirm{$server->{tag}} = { %$req, mask => $mask, expires => time() + $confirm_window };
         say_command('tk_dry', $req, $mask);
-        say_info("potwierdz w ciagu ${confirm_window}s: /tk yes (anulowanie: /tk no)");
+        say_info("confirm within ${confirm_window}s: /tk yes (cancel: /tk no)");
         return;
     }
 
@@ -529,7 +529,7 @@ sub start_whois {
 
     my $key = pending_key($server->{tag}, $req->{target});
     if (exists $pending{$key}) {
-        say_error("WHOIS dla $req->{target} jest juz w toku");
+        say_error("a WHOIS for $req->{target} is already in progress");
         return;
     }
 
@@ -549,7 +549,7 @@ sub start_whois {
         ''          => 'event empty',
     });
     $server->send_raw('WHOIS ' . $req->{target});
-    say_info("WHOIS $req->{target} - czekam na ident\@host");
+    say_info("WHOIS $req->{target} - waiting for ident\@host");
     return;
 }
 
@@ -564,7 +564,7 @@ sub take_pending {
 sub whois_timed_out {
     my ($key) = @_;
     my $req = delete $pending{$key} or return;
-    say_error("WHOIS dla $req->{target} bez odpowiedzi - $req->{command} NIE zostal wyslany");
+    say_error("no reply to WHOIS for $req->{target} - $req->{command} was NOT sent");
     audit_event('whois_timeout', tag => $req->{tag}, target => $req->{target});
     return;
 }
@@ -588,7 +588,7 @@ sub sig_whois {
 
     my $mask = build_mask($user, $host, $req->{mask_type});
     unless (defined $mask) {
-        say_error("WHOIS dla $nick zwrocil nieuzyteczny host - nie wysylam");
+        say_error("WHOIS for $nick returned an unusable host - not sent");
         return;
     }
     say_info("$nick = $user\@$host -> $mask");
@@ -602,7 +602,7 @@ sub sig_whois_end {
     my (undef, $nick) = split / +/, ($data // '');
     return unless defined $nick;
     my $req = take_pending($server->{tag}, $nick) or return;
-    say_error("nie znaleziono $nick - $req->{command} NIE zostal wyslany");
+    say_error("$nick not found - $req->{command} was NOT sent");
     audit_event('whois_missing', tag => $req->{tag}, target => $req->{target});
     return;
 }
@@ -616,7 +616,7 @@ sub sig_whois_none {
     my $req = defined $token ? take_pending($server->{tag}, $token) : undef;
     $req = take_single_pending($server->{tag}) unless $req;
     return unless $req;
-    say_error("nie znaleziono $req->{target} - $req->{command} NIE zostal wyslany");
+    say_error("$req->{target} not found - $req->{command} was NOT sent");
     audit_event('whois_missing', tag => $req->{tag}, target => $req->{target});
     return;
 }
@@ -646,7 +646,7 @@ sub sig_notice {
     return unless $server;
     my $rec = expected_recently($server) or return;
     return unless ($data // '') =~ /(T?KLINE|UNTKLINE): Incorrect format/i;
-    say_error("serwer odrzucil $rec->{command} $rec->{mask} - niepoprawny format maski");
+    say_error("the server rejected $rec->{command} $rec->{mask} - incorrect mask format");
     audit_event('server_rejected', tag => $server->{tag}, mask => $rec->{mask});
     return;
 }
@@ -655,7 +655,7 @@ sub sig_no_privileges {
     my ($server) = @_;
     return unless $server;
     my $rec = expected_recently($server) or return;
-    say_error("brak uprawnien do $rec->{command} (O-line bez flagi kline/tkline)");
+    say_error("no privileges for $rec->{command} (O-line without the kline/tkline flag)");
     audit_event('no_privileges', tag => $server->{tag}, mask => $rec->{mask});
     return;
 }
@@ -666,7 +666,7 @@ sub sig_unknown_command {
     return unless $server;
     my (undef, $command) = split / +/, ($data // '');
     return unless defined $command && $command =~ /\A(?:UN)?TKLINE\z/i;
-    say_error("serwer nie zna komendy $command - ircd zbudowany bez #define TKLINE");
+    say_error("the server does not know $command - ircd built without #define TKLINE");
     audit_event('unknown_command', tag => $server->{tag}, command => uc $command);
     return;
 }
@@ -691,13 +691,13 @@ sub prepare_request {
         return;
     }
     if ($needs_oper && !$server->{server_operator} && Irssi::settings_get_bool('tk_require_oper')) {
-        say_error('nie masz +o na serwerze (/oper) - ustaw tk_require_oper OFF aby wysylac mimo to');
+        say_error('you are not an IRC operator (/oper) - set tk_require_oper OFF to send anyway');
         return;
     }
 
     my $mask_type = $options->{mask} // Irssi::settings_get_str('tk_mask_type');
     unless (mask_type_valid($mask_type)) {
-        say_error('tk_mask_type / -mask musi byc: ' . join(', ', @MASK_TYPES));
+        say_error('tk_mask_type / -mask must be one of: ' . join(', ', @MASK_TYPES));
         return;
     }
 
@@ -731,7 +731,7 @@ sub cmd_tkl {
         ($duration_raw, $reason) = ($maybe_time, $reason_rest);
     }
     elsif (!defined $maybe_time && defined duration_seconds($tail)) {
-        say_error('brak powodu - sam czas nie wystarczy');
+        say_error('no reason given - a time alone is not enough');
         usage_tkl();
         return;
     }
@@ -742,19 +742,19 @@ sub cmd_tkl {
 
     my $seconds = duration_seconds($duration_raw);
     unless (defined $seconds) {
-        say_error("nieprawidlowy czas '$duration_raw' - uzyj 30s, 10m, 2h, 1d, 1w lub 1d12h");
+        say_error("invalid time '$duration_raw' - use 30s, 10m, 2h, 1d, 1w or 1d12h");
         return;
     }
     my $limit = max_seconds();
     if ($limit && $seconds > $limit) {
-        say_error('czas ' . human_duration($seconds) . ' przekracza tk_max_time ('
+        say_error('time ' . human_duration($seconds) . ' exceeds tk_max_time ('
             . human_duration($limit) . ')');
         return;
     }
 
     $reason = clean_reason($reason, reason_limit($server));
     unless (length $reason) {
-        say_error('powod nie moze byc pusty');
+        say_error('the reason must not be empty');
         return;
     }
 
@@ -766,11 +766,11 @@ sub cmd_tkl {
         return finish_request($server, $req, $target);
     }
     unless (valid_nick($target)) {
-        say_error("'$target' to ani poprawny nick, ani maska user\@host");
+        say_error("'$target' is neither a valid nick nor a user\@host mask");
         return;
     }
     if (lc($target) eq lc($server->{nick} // '')) {
-        say_error('to Twoj wlasny nick');
+        say_error('that is your own nick');
         return;
     }
     return start_whois($server, $req);
@@ -785,8 +785,8 @@ sub cmd_untkl {
 
     my ($target) = ($rest // '') =~ /\A\s*(\S+)\s*\z/;
     unless (defined $target) {
-        say_info('uzycie: /untkl <user@host albo nick>');
-        say_info('UNTKLINE dopasowuje maski doslownie - sprawdz /tklist');
+        say_info('usage: /untkl <user@host|nick>');
+        say_info('UNTKLINE matches masks literally - check /tklist');
         return;
     }
 
@@ -796,10 +796,10 @@ sub cmd_untkl {
 
     return finish_request($server, $req, $target) if index($target, '@') >= 0;
     unless (valid_nick($target)) {
-        say_error("'$target' to ani poprawny nick, ani maska user\@host");
+        say_error("'$target' is neither a valid nick nor a user\@host mask");
         return;
     }
-    say_warn('UNTKLINE wymaga maski identycznej z nadana - maska z WHOIS moze sie nie zgadzac');
+    say_warn('UNTKLINE needs exactly the mask that was set - the mask built from WHOIS may differ');
     return start_whois($server, $req);
 }
 
@@ -828,7 +828,7 @@ sub cmd_tk_yes {
     }
     my $req = delete $confirm{$resolved->{tag}};
     unless ($req && $req->{expires} >= time()) {
-        say_error('nie ma nic do potwierdzenia');
+        say_error('nothing to confirm');
         return;
     }
     $req->{confirmed} = 1;
@@ -839,19 +839,19 @@ sub cmd_tk_no {
     my ($data, $server) = @_;
     my ($resolved) = resolve_server(undef, $server);
     my $req = $resolved ? delete $confirm{$resolved->{tag}} : undef;
-    say_info($req ? "anulowano $req->{command} $req->{mask}" : 'nie ma nic do anulowania');
+    say_info($req ? "cancelled $req->{command} $req->{mask}" : 'nothing to cancel');
     return;
 }
 
 sub cmd_tk_pending {
     my @keys = sort keys %pending;
     unless (@keys) {
-        say_info('brak zadan czekajacych na WHOIS');
+        say_info('no requests waiting for WHOIS');
         return;
     }
     for my $key (@keys) {
         my $req = $pending{$key};
-        say_info(sprintf('%s %s (%s) od %ds', $req->{command}, $req->{target},
+        say_info(sprintf('%s %s (%s) for %ds', $req->{command}, $req->{target},
             $req->{tag}, time() - $req->{started}));
     }
     return;
@@ -859,7 +859,7 @@ sub cmd_tk_pending {
 
 sub cmd_tk_recent {
     unless (@recent) {
-        say_info('w tej sesji skrypt nic nie wyslal');
+        say_info('nothing has been sent in this session');
         return;
     }
     for my $entry (@recent) {
@@ -880,7 +880,7 @@ sub cmd_tk_mask {
 
     my ($target) = ($rest // '') =~ /\A\s*(\S+)\s*\z/;
     unless (defined $target && valid_nick($target)) {
-        say_info('uzycie: /tk mask [-mask ident|host|domain] <nick>');
+        say_info('usage: /tk mask [-mask ident|host|domain] <nick>');
         return;
     }
     $req->{target}   = $target;
@@ -891,8 +891,8 @@ sub cmd_tk_mask {
 }
 
 sub usage_tkl {
-    say_info('uzycie: /tkl [-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [czas] <powod>');
-    say_info('przyklad: /tkl Spammer 30m flood reklamowy');
+    say_info('usage: /tkl [-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host> [<time>] <reason>');
+    say_info('example: /tkl Spammer 30m advertising flood');
     return;
 }
 
@@ -913,26 +913,26 @@ sub cmd_tk_help {
 }
 
 sub tk_help_text {
-    say_info("tk.pl v$VERSION - czasowe K-linie (TKLINE) dla ircd 2.11 / IRCnet");
+    say_info("tk.pl v$VERSION - temporary K-lines (TKLINE) for ircd 2.11 / IRCnet");
     say_info(' ');
     usage_tkl();
-    say_info('  -mask ident  = ident@host (domyslnie, ~ident -> *ident)');
-    say_info('  -mask host   = *@pelny.host');
-    say_info('  -mask domain = *@*.domena, *@1.2.3.* dla IPv4, *@siec::/64 dla IPv6');
-    say_info('  -dry         = pokaz komende, nie wysylaj');
-    say_info('  -force       = pozwol na szeroka maske');
-    say_info('  czas opcjonalny: 30s 10m 2h 1d 1w 1d12h; bez niego tk_default_time');
+    say_info('  -mask ident  = ident@host (default, ~ident -> *ident)');
+    say_info('  -mask host   = *@full.host');
+    say_info('  -mask domain = *@*.domain, *@1.2.3.* for IPv4, *@net::/64 for IPv6');
+    say_info('  -dry         = show the command, do not send it');
+    say_info('  -force       = allow a broad mask');
+    say_info('  time is optional: 30s 10m 2h 1d 1w 1d12h; tk_default_time without it');
     say_info(' ');
-    say_info('/untkl <user@host|nick>  - zdejmij tkline (dopasowanie doslowne)');
-    say_info('/tklist [maska]          - STATS k, lista tklinii');
-    say_info('/klist [maska]           - STATS K, lista stalych K-linii');
-    say_info('/tk mask <nick>          - pokaz jaka maske zbudowalby skrypt');
+    say_info('/untkl <user@host|nick>  - remove a tkline (literal match)');
+    say_info('/tklist [<mask>]         - STATS k, list of tklines');
+    say_info('/klist [<mask>]          - STATS K, list of permanent K-lines');
+    say_info('/tk mask <nick>          - show the masks the script would build');
     say_info('/tk pending | /tk recent | /tk yes | /tk no | /tk help');
     say_info(' ');
-    say_info('ustawienia: tk_mask_type tk_default_time tk_max_time tk_confirm');
-    say_info('            tk_allow_broad tk_require_oper tk_reason_max');
-    say_info('            tk_whois_timeout_ms tk_audit');
-    say_info('audyt: ' . audit_path());
+    say_info('settings: tk_mask_type tk_default_time tk_max_time tk_confirm');
+    say_info('          tk_allow_broad tk_require_oper tk_reason_max');
+    say_info('          tk_whois_timeout_ms tk_audit');
+    say_info('audit log: ' . audit_path());
     return;
 }
 

@@ -107,8 +107,7 @@ first — drop in a file named after a command to document your own scripts.
 ### IRCnet tools
 
 Bundled in `<prefix>/share/irssi/scripts` and loaded on demand
-(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`). Their
-messages and help are in Polish.
+(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`).
 
 | Script | What it does |
 |---|---|

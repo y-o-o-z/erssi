@@ -1,28 +1,30 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
-KLIST %|[<maska>]
+KLIST %|[<mask>]
 
-%9Parametry:%9
+%9Parameters:%9
 
-    Opcjonalna maska przekazywana serwerowi jako argument STATS.
+    An optional mask passed to the server as the STATS argument.
 
-%9Opis:%9
+%9Description:%9
 
-    Wysyła STATS K do serwera aktywnego okna, czyli prosi o listę stałych
-    K-linii z konfiguracji ircd 2.11. Odpowiedź serwera erssi wyświetla jak
-    każdą inną. Komenda skryptu tk.pl; to samo robi /TK KLIST.
+    Sends STATS K to the server of the active window, asking for the list
+    of permanent K-lines from the ircd 2.11 configuration. erssi shows the
+    server's reply like any other. A command of the tk.pl script; /TK KLIST
+    does the same.
 
-    Argument musi być jednym słowem (do 64 znaków) - inny jest pomijany
-    i idzie samo STATS K. O tym, kto zobaczy listę, decyduje serwer.
+    The argument must be a single word (up to 64 characters) - anything
+    else is ignored and a plain STATS K is sent. The server decides who
+    may see the list.
 
-    Stałych K-linii nie da się zdjąć przez /UNTKL - ta komenda dotyczy
-    tylko tklinii z /TKLIST.
+    Permanent K-lines cannot be removed with /UNTKL - that command only
+    applies to tklines from /TKLIST.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /KLIST
     /KLIST *@*.example.org
 
-%9Zobacz też:%9 STATS, TK, TKL, TKLIST, UNTKL
+%9See also:%9 STATS, TK, TKL, TKLIST, UNTKL
 

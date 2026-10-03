@@ -1,63 +1,64 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
-SKANER %|[<kanał>]
+SKANER %|[<channel>]
 SKANER ALL%|
 SKANER ON%|
 SKANER OFF%|
 SKANER STATUS%|
 SKANER HELP%|
 
-%9Parametry:%9
+%9Parameters:%9
 
-    ALL:         Raport dla wszystkich kanałów serwera aktywnego okna.
-    ON:          Włącza automatyczne raporty i alerty (skaner_enabled).
-    OFF:         Wyłącza automatyczne raporty i alerty.
-    STATUS:      Wersja, stan i liczba kanałów na wszystkich serwerach.
-    HELP:        Krótka pomoc.
+    ALL:         Report for all channels of the active window's server.
+    ON:          Turns automatic reports and alerts on (skaner_enabled).
+    OFF:         Turns automatic reports and alerts off.
+    STATUS:      Version, state and number of channels on all servers.
+    HELP:        Short help.
 
-    Kanał na serwerze aktywnego okna; bez argumentu - kanał z aktywnego
-    okna.
+    A channel on the active window's server; without an argument, the
+    channel in the active window.
 
-%9Opis:%9
+%9Description:%9
 
-    Szuka na kanale klonów (kilku nicków z tym samym hostem, czyli częścią
-    po „@”, bez względu na wielkość liter) i IRC operatorów (flaga „*”
-    z odpowiedzi WHO). Komenda skryptu skaner.pl.
+    Looks for clones on a channel (several nicks with the same host, i.e.
+    the part after '@', case-insensitive) and for IRC operators (the '*'
+    flag in the WHO reply). A command of the skaner.pl script.
 
-    Wszystko - raporty, alerty i komunikaty o błędach - trafia do osobnego
-    okna (domyślnie „skaner”), a nie do okna, w którym wpisano komendę.
-    Okno powstaje w tle po starcie, ma włączone /WINDOW IMMORTAL, a gdy
-    zostanie zamknięte, skrypt tworzy je od nowa.
+    Everything - reports, alerts and error messages - goes to a separate
+    window (by default "skaner"), not to the window where the command was
+    typed. The window is created in the background at startup, has
+    /WINDOW IMMORTAL on, and is recreated by the script if it gets closed.
 
-    Raport: nagłówek (kanał, sieć, liczba osób), grupy klonów od
-    najliczniejszej (liczba, host, nicki z prefiksami @ %% +, najwyżej 12,
-    reszta jako +N), IRC operatorzy z hostami oraz liczba osób bez znanego
-    hosta (np. gdy WHO pominięto przez channel_max_who_sync).
+    A report contains: a header (channel, network, number of users), clone
+    groups from the largest (count, host, nicks with @ %% + prefixes, at
+    most 12, the rest as +N), IRC operators with their hosts, and the
+    number of users with no known host (e.g. when WHO was skipped because
+    of channel_max_who_sync).
 
-    Przy skaner_enabled = ON raport powstaje sam po wejściu na kanał, gdy
-    erssi skończy synchronizację; kanał bez znalezisk daje wtedy jedną
-    linię (albo nic, przy skaner_show_clean = OFF). Gdy na
-    zsynchronizowany kanał wchodzi ktoś z hostem, który już na nim jest,
-    w oknie skanera pojawia się alert o klonie (poziom NOTICES - okno
-    dostaje oznaczenie aktywności). Ręczne /SKANER zawsze daje pełny
-    raport.
+    With skaner_enabled = ON a report is produced automatically after you
+    join a channel, once erssi has finished syncing it; a channel with no
+    findings then gives a single line (or nothing with
+    skaner_show_clean = OFF). When someone whose host is already present
+    joins a synced channel, a clone alert appears in the skaner window
+    (level NOTICES - the window gets an activity mark). A manual /SKANER
+    always gives the full report.
 
-%9Ustawienia:%9
+%9Settings:%9
 
     skaner_enabled = ON
-        Automatyczne raporty po wejściu na kanał i alerty o klonach.
+        Automatic reports after joining a channel, and clone alerts.
     skaner_show_clean = ON
-        Jedna linia także dla kanałów bez znalezisk (raport automatyczny).
+        One line also for channels with no findings (automatic report).
     skaner_window = skaner
-        Nazwa okna na wyniki.
+        Name of the window for the results.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /SKANER
-    /SKANER #kanal
+    /SKANER #channel
     /SKANER ALL
     /SKANER OFF
 
-%9Zobacz też:%9 NAMES, WHO, WINDOW
+%9See also:%9 NAMES, WHO, WINDOW
 

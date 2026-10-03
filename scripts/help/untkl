@@ -1,39 +1,40 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
 UNTKL %|[-server <tag>] [-mask ident|host|domain] [-dry] <user@host|nick>
 
-%9Parametry:%9
+%9Parameters:%9
 
-    -server:     Tag połączenia; domyślnie serwer aktywnego okna.
-    -mask:       Rodzaj maski budowanej z WHOIS, gdy podano nick (jak w TKL;
-                 domyślnie tk_mask_type).
-    -dry:        Podgląd: pokazuje linię UNTKLINE i nic nie wysyła.
+    -server:     Connection tag; defaults to the server of the active
+                 window.
+    -mask:       Type of mask built from WHOIS when a nick is given (as in
+                 TKL; default: tk_mask_type).
+    -dry:        Preview: shows the UNTKLINE line and sends nothing.
 
-    <user@host|nick>: Maska do zdjęcia albo nick, z którego skrypt zbuduje
-                 maskę przez WHOIS.
+    <user@host|nick>: The mask to remove, or a nick the script builds the
+                 mask from via WHOIS.
 
-    Opcja -force jest przyjmowana, ale przy UNTKL niczego nie zmienia.
+    The -force option is accepted but has no effect with UNTKL.
 
-%9Opis:%9
+%9Description:%9
 
-    Zdejmuje czasową K-linię (UNTKLINE) na serwerze ircd 2.11. Komenda
-    skryptu tk.pl.
+    Removes a temporary K-line (UNTKLINE) on an ircd 2.11 server.
+    A command of the tk.pl script.
 
-    Serwer dopasowuje maskę dosłownie, bez wildcardów: musi być identyczna
-    z maską nadaną przez TKLINE. Najpewniej skopiować ją z /TKLIST. Przy
-    podaniu nicka skrypt ostrzega, że maska z WHOIS może się nie zgadzać
-    (inny rodzaj maski, zmieniony host).
+    The server matches the mask literally, without wildcards: it must be
+    identical to the mask set with TKLINE. The safest way is to copy it
+    from /TKLIST. When a nick is given, the script warns that the mask
+    built from WHOIS may differ (another mask type, a changed host).
 
-    Wymaga statusu IRC operatora, chyba że tk_require_oper = OFF. Maska
-    przechodzi te same kontrole formatu co w TKL; wysłanie trafia do
-    dziennika tk_audit.jsonl.
+    Requires IRC operator status unless tk_require_oper is OFF. The mask
+    goes through the same format checks as in TKL; sending is logged to
+    tk_audit.jsonl.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /UNTKL *bot@*.example.org
     /UNTKL -dry *@203.0.113.*
     /UNTKL -mask host spammer
 
-%9Zobacz też:%9 KLIST, TK, TKL, TKLIST
+%9See also:%9 KLIST, TK, TKL, TKLIST
 
