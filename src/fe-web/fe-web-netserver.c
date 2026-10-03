@@ -431,11 +431,12 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 
 	/* Update fields from JSON (simplified parsing) */
 	password = fe_web_json_get_string(json_str, "password");
+	/* "***" is the mask server_list sends: keep the password */
 	if (password != NULL && g_strcmp0(password, "***") != 0) {
 		g_free_not_null(rec->password);
 		rec->password = g_strdup(password);
-		g_free(password);
 	}
+	g_free(password);
 	
 	if (fe_web_json_has_key(json_str, "autoconnect")) {
 		rec->autoconnect = fe_web_json_get_int(json_str, "autoconnect", 0);
