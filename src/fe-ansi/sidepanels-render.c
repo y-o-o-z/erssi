@@ -25,6 +25,7 @@
 #include <irssi/src/fe-ansi/mainwindows.h>
 #include <irssi/src/fe-ansi/sidepanels.h>
 #include <irssi/src/fe-ansi/sidepanels-render.h>
+#include <irssi/src/fe-ansi/sidepanels-text.h>
 #include <irssi/src/fe-ansi/sidepanels-activity.h>
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/channels.h>
@@ -45,10 +46,6 @@
 #include <stdlib.h>
 
 /* SP_MAINWIN_CTX is now defined in sidepanels-types.h */
-
-/* Color attribute masks from textbuffer-view.c */
-#define FGATTR (ATTR_NOCOLORS | ATTR_RESETFG | FG_MASK | ATTR_FGCOLOR24)
-#define BGATTR (ATTR_NOCOLORS | ATTR_RESETBG | BG_MASK | ATTR_BGCOLOR24)
 
 /* Redraw batching system to prevent excessive redraws during mass events */
 gboolean redraw_pending = FALSE;
@@ -182,24 +179,6 @@ static gboolean sp_cache_needs_full_redraw(SP_PANEL_CACHE *cache, int height,
 	return FALSE;
 }
 
-/* UTF-8 character reading function based on textbuffer-view.c */
-static inline unichar read_unichar(const unsigned char *data, const unsigned char **next,
-                                   int *width)
-{
-	unichar chr = g_utf8_get_char_validated((const char *) data, -1);
-	if (chr & 0x80000000) {
-		chr = 0xfffd; /* replacement character for invalid UTF-8 */
-		*next = data + 1;
-		*width = 1;
-	} else {
-		/* Use string_advance for proper grapheme cluster handling */
-		char const *str_ptr = (char const *)data;
-		*width = string_advance(&str_ptr, TREAT_STRING_AS_UTF8);
-		*next = (unsigned char *)str_ptr;
-	}
-	return chr;
-}
-
 void clear_window_full(TERM_WINDOW *tw, int width, int height)
 {
 	int y;
@@ -232,116 +211,58 @@ void draw_border_vertical(TERM_WINDOW *tw, int width, int height, int right_bord
 	term_set_color(tw, ATTR_RESET);
 }
 
-/* 24-bit color handling function from textbuffer-view.c */
-static void unformat_24bit_line_color(const unsigned char **ptr, int off, int *flags, unsigned int *fg, unsigned int *bg)
+typedef struct {
+	TERM_WINDOW *tw;
+	int x, y;
+	int max_width;
+	int col;
+	int last_color;
+	unsigned int last_fg24, last_bg24;
+} SP_DRAW_REC;
+
+static gboolean draw_formatted_char(unichar chr, int width, int color, unsigned int fg24,
+                                    unsigned int bg24, void *data)
 {
-	unsigned int color;
-	unsigned char rgbx[4];
-	unsigned int i;
-	for (i = 0; i < 4; ++i) {
-		if ((*ptr)[i + off] == '\0')
-			return;
-		rgbx[i] = (*ptr)[i + off];
+	SP_DRAW_REC *rec = data;
+
+	if (color != rec->last_color || fg24 != rec->last_fg24 || bg24 != rec->last_bg24) {
+		term_set_color2(rec->tw, color, fg24, bg24);
+		rec->last_color = color;
+		rec->last_fg24 = fg24;
+		rec->last_bg24 = bg24;
 	}
-	rgbx[3] -= 0x20;
-	*ptr += 4;
-	for (i = 0; i < 3; ++i) {
-		if (rgbx[3] & (0x10 << i))
-			rgbx[i] -= 0x20;
+
+	/* The theme may add characters around the (already truncated) name,
+	 * so clip to max_width here and end with an ellipsis instead of
+	 * letting the panel border cut a word in half. */
+	if (rec->max_width > 0 && rec->col + width > rec->max_width) {
+		term_move(rec->tw, rec->x + rec->max_width - 1, rec->y);
+		term_addstr(rec->tw, sidepanel_ellipsis());
+		return FALSE;
 	}
-	color = rgbx[0] << 16 | rgbx[1] << 8 | rgbx[2];
-	if (rgbx[3] & 0x1) {
-		*flags = (*flags & FGATTR) | ATTR_BGCOLOR24;
-		*bg = color;
-	}
-	else {
-		*flags = (*flags & BGATTR) | ATTR_FGCOLOR24;
-		*fg = color;
-	}
+	term_add_unichar(rec->tw, chr);
+	rec->col += width;
+	return TRUE;
 }
 
-/* Format processing function for color codes - exact copy from textbuffer-view.c */
-static inline void unformat(const unsigned char **ptr, int *color, unsigned int *fg24,
-                            unsigned int *bg24)
+/* Draw the output of format_get_text_theme*() - already expanded, it is
+ * not passed through format_string_expand() again (see
+ * sidepanel_text_walk()). */
+static void draw_formatted(TERM_WINDOW *tw, int x, int y, const char *text, int max_width)
 {
-	switch (**ptr) {
-	case FORMAT_STYLE_BLINK:
-		*color ^= ATTR_BLINK;
-		break;
-	case FORMAT_STYLE_UNDERLINE:
-		*color ^= ATTR_UNDERLINE;
-		break;
-	case FORMAT_STYLE_BOLD:
-		*color ^= ATTR_BOLD;
-		break;
-	case FORMAT_STYLE_REVERSE:
-		*color ^= ATTR_REVERSE;
-		break;
-	case FORMAT_STYLE_ITALIC:
-		*color ^= ATTR_ITALIC;
-		break;
-	case FORMAT_STYLE_MONOSPACE:
-		/* *color ^= ATTR_MONOSPACE; */
-		break;
-	case FORMAT_STYLE_DEFAULTS:
-		*color = ATTR_RESET;
-		break;
-	case FORMAT_STYLE_CLRTOEOL:
-		break;
-#define SET_COLOR_EXT_FG_BITS(base, pc)                                                            \
-	*color &= ~ATTR_FGCOLOR24;                                                                 \
-	*color = (*color & BGATTR) | (base + *pc - FORMAT_COLOR_NOCHANGE)
-#define SET_COLOR_EXT_BG_BITS(base, pc)                                                            \
-	*color &= ~ATTR_BGCOLOR24;                                                                 \
-	*color = (*color & FGATTR) | ((base + *pc - FORMAT_COLOR_NOCHANGE) << BG_SHIFT)
-	case FORMAT_COLOR_EXT1:
-		SET_COLOR_EXT_FG_BITS(0x10, ++*ptr);
-		break;
-	case FORMAT_COLOR_EXT1_BG:
-		SET_COLOR_EXT_BG_BITS(0x10, ++*ptr);
-		break;
-	case FORMAT_COLOR_EXT2:
-		SET_COLOR_EXT_FG_BITS(0x60, ++*ptr);
-		break;
-	case FORMAT_COLOR_EXT2_BG:
-		SET_COLOR_EXT_BG_BITS(0x60, ++*ptr);
-		break;
-	case FORMAT_COLOR_EXT3:
-		SET_COLOR_EXT_FG_BITS(0xb0, ++*ptr);
-		break;
-	case FORMAT_COLOR_EXT3_BG:
-		SET_COLOR_EXT_BG_BITS(0xb0, ++*ptr);
-		break;
-#undef SET_COLOR_EXT_BG_BITS
-#undef SET_COLOR_EXT_FG_BITS
-	case FORMAT_COLOR_24:
-		unformat_24bit_line_color(ptr, 1, color, fg24, bg24);
-		break;
-	default:
-		if (**ptr != FORMAT_COLOR_NOCHANGE) {
-			if (**ptr == (unsigned char) 0xff) {
-				*color = (*color & BGATTR) | ATTR_RESETFG;
-			} else {
-				*color = (*color & BGATTR) | (((unsigned char) **ptr - '0') & 0xf);
-			}
-		}
-		if ((*ptr)[1] == '\0')
-			break;
+	SP_DRAW_REC rec;
 
-		(*ptr)++;
-		if (**ptr != FORMAT_COLOR_NOCHANGE) {
-			if (**ptr == (unsigned char) 0xff) {
-				*color = (*color & FGATTR) | ATTR_RESETBG;
-			} else {
-				*color = (*color & FGATTR) |
-				         ((((unsigned char) **ptr - '0') & 0xf) << BG_SHIFT);
-			}
-		}
-	}
-	if (**ptr == '\0')
-		return;
+	term_move(tw, x, y);
+	term_set_color(tw, ATTR_RESET);
 
-	(*ptr)++;
+	rec.tw = tw;
+	rec.x = x;
+	rec.y = y;
+	rec.max_width = max_width;
+	rec.col = 0;
+	rec.last_color = ATTR_RESET;
+	rec.last_fg24 = rec.last_bg24 = UINT_MAX;
+	sidepanel_text_walk(text, draw_formatted_char, &rec);
 }
 
 void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format_id,
@@ -349,63 +270,14 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 {
 	TEXT_DEST_REC dest;
 	THEME_REC *theme;
-	char *out, *expanded;
-	const unsigned char *ptr;
-	const unsigned char *next_ptr;
-	int color;
-	int char_width;
-	unsigned int fg24, bg24;
-	unichar chr;
-	int col;
+	char *out;
 
 	format_create_dest(&dest, NULL, NULL, 0, wctx);
 	theme = window_get_theme(wctx);
 	out = format_get_text_theme(theme, MODULE_NAME, &dest, format_id, text);
 
 	if (out != NULL && *out != '\0') {
-		/* Convert theme color codes and render with proper color handling */
-		expanded = format_string_expand(out, NULL);
-
-		/* Initialize color state */
-		color = ATTR_RESET;
-		fg24 = bg24 = UINT_MAX;
-		ptr = (const unsigned char *) expanded;
-
-		term_move(tw, x, y);
-		term_set_color(tw, ATTR_RESET);
-
-		/* Process each character with color codes (like textbuffer-view.c).
-		 * The theme may add characters around the (already truncated) name,
-		 * so clip to max_width here and end with an ellipsis instead of
-		 * letting the panel border cut a word in half. */
-		col = 0;
-		while (*ptr != '\0') {
-			if (*ptr == 4) {
-				/* Format code - process color change */
-				ptr++;
-				if (*ptr == '\0')
-					break;
-				unformat(&ptr, &color, &fg24, &bg24);
-				term_set_color2(tw, color, fg24, bg24);
-				continue;
-			}
-
-			/* Regular character - read UTF-8 properly */
-			chr = read_unichar(ptr, &next_ptr, &char_width);
-
-			if (unichar_isprint(chr)) {
-				if (max_width > 0 && col + char_width > max_width) {
-					term_move(tw, x + max_width - 1, y);
-					term_addstr(tw, sidepanel_ellipsis());
-					break;
-				}
-				term_add_unichar(tw, chr);
-				col += char_width;
-			}
-			ptr = next_ptr;
-		}
-
-		g_free(expanded);
+		draw_formatted(tw, x, y, out, max_width);
 	} else {
 		/* Fallback: display plain text if theme formatting fails */
 		term_move(tw, x, y);
@@ -441,14 +313,7 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 {
 	TEXT_DEST_REC dest;
 	THEME_REC *theme;
-	char *out, *expanded;
-	const unsigned char *ptr;
-	const unsigned char *next_ptr;
-	int color;
-	int char_width;
-	unsigned int fg24, bg24;
-	unichar chr;
-	int col;
+	char *out;
 	char *args[3];
 
 	format_create_dest(&dest, NULL, NULL, 0, wctx);
@@ -462,49 +327,7 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 	out = format_get_text_theme_charargs(theme, MODULE_NAME, &dest, format_id, args);
 
 	if (out != NULL && *out != '\0') {
-		/* Convert theme color codes and render with proper color handling */
-		expanded = format_string_expand(out, NULL);
-
-		/* Initialize color state */
-		color = ATTR_RESET;
-		fg24 = bg24 = UINT_MAX;
-		ptr = (const unsigned char *) expanded;
-
-		term_move(tw, x, y);
-		term_set_color(tw, ATTR_RESET);
-
-		/* Process each character with color codes (like textbuffer-view.c).
-		 * The theme may add characters around the (already truncated) name,
-		 * so clip to max_width here and end with an ellipsis instead of
-		 * letting the panel border cut a word in half. */
-		col = 0;
-		while (*ptr != '\0') {
-			if (*ptr == 4) {
-				/* Format code - process color change */
-				ptr++;
-				if (*ptr == '\0')
-					break;
-				unformat(&ptr, &color, &fg24, &bg24);
-				term_set_color2(tw, color, fg24, bg24);
-				continue;
-			}
-
-			/* Regular character - read UTF-8 properly */
-			chr = read_unichar(ptr, &next_ptr, &char_width);
-
-			if (unichar_isprint(chr)) {
-				if (max_width > 0 && col + char_width > max_width) {
-					term_move(tw, x + max_width - 1, y);
-					term_addstr(tw, sidepanel_ellipsis());
-					break;
-				}
-				term_add_unichar(tw, chr);
-				col += char_width;
-			}
-			ptr = next_ptr;
-		}
-
-		g_free(expanded);
+		draw_formatted(tw, x, y, out, max_width);
 	} else {
 		/* Fallback: display plain text if theme formatting fails */
 		term_move(tw, x, y);
