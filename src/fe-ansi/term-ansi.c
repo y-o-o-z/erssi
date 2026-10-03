@@ -542,12 +542,14 @@ static void read_settings(void)
 		irssi_redraw();
 }
 
+/* SYNTAX: RESIZE */
 static void cmd_resize(void)
 {
 	resize_dirty = TRUE;
 	term_resize_dirty();
 }
 
+/* SYNTAX: REDRAW */
 static void cmd_redraw(void)
 {
 	irssi_redraw();
