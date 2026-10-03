@@ -1,0 +1,320 @@
+From d8e86a420047ea47ae0b464985f49153b6cbc72a Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 21:02:38 +0200
+Subject: [PATCH] local: connect to erssi over its Unix socket
+ (irssiConnection.socketPath)
+
+erssi Shellter Edition can listen on a Unix socket instead of a TCP port
+(/set fe_web_socket ~/.erssi/fe-web.sock). On a shared box the loopback
+port is open to every local user; the socket is 0600 and erssi refuses
+connections from other users' processes.
+
+irssiConnection.socketPath (optional, set in the user's file) makes Nexus
+connect over that socket instead of host:port. "~/" is the home
+directory and a relative path is relative to ~/.erssi, as in erssi.
+host and port stay in the file: passwordEncrypted is encrypted with them
+as salt, and the settings page keeps saving them as before.
+
+Over the socket nothing else changes: TLS with the same certificate pin
+(the default ~/.erssi/fe-web-cert.pem applies, a Unix socket always
+means an erssi on this machine), the certificate checked for the name
+"localhost" (it is in erssi's certificate), the password in the
+Authorization header and AES-256-GCM on top. ws has no wss over a Unix
+socket ("ws+unix:" is plain), so the WebSocket is opened for
+wss://localhost/ with a createConnection that calls tls.connect() with
+"path": ws passes its TLS options (ca, rejectUnauthorized, versions)
+through unchanged.
+
+The connection test in the settings uses the stored socketPath as well,
+the journal default (~/.erssi/journal) applies to a socket like to a
+local host, and log lines name the connection unix:<path>.
+---
+ server/erssiJournal.ts            | 13 +++++++---
+ server/feWebClient/feWebPin.ts    | 42 ++++++++++++++++++++++++++++---
+ server/feWebClient/feWebSocket.ts | 31 ++++++++++++++++++++---
+ server/irssiClient.ts             | 13 +++++++---
+ server/server.ts                  |  9 +++++--
+ 5 files changed, 91 insertions(+), 17 deletions(-)
+
+diff --git a/server/erssiJournal.ts b/server/erssiJournal.ts
+index bc655f1..c00487e 100644
+--- a/server/erssiJournal.ts
++++ b/server/erssiJournal.ts
+@@ -24,7 +24,7 @@ import path from "path";
+ import Msg from "./models/msg.js";
+ import User from "./models/user.js";
+ import {MessageType} from "../shared/types/msg.js";
+-import {isLocalHost} from "./feWebClient/feWebPin.js";
++import {isLocalErssi} from "./feWebClient/feWebPin.js";
+ 
+ export type JournalEntry = {
+ 	t: number; // unix time, seconds with a fraction
+@@ -56,17 +56,22 @@ export function journalDir(): string {
+ /**
+  * Journal directory of one user's erssi, or null for none. The process
+  * default (ERSSI_JOURNAL_DIR or ~/.erssi/journal) is the journal of an erssi
+- * on this machine, so it is used only when the user's fe-web host is local;
++ * on this machine, so it is used only when the user's fe-web host is local
++ * (or a Unix socket);
+  * a remote erssi needs irssiConnection.journalDir, otherwise there is no
+  * journal (the history of another erssi must never show up). Several users,
+  * each with an erssi on this machine, set journalDir each.
+  */
+-export function userJournalDir(conn: {host: string; journalDir?: string}): string | null {
++export function userJournalDir(conn: {
++	host: string;
++	socketPath?: string;
++	journalDir?: string;
++}): string | null {
+ 	if (conn.journalDir) {
+ 		return conn.journalDir;
+ 	}
+ 
+-	return isLocalHost(conn.host) ? journalDir() : null;
++	return isLocalErssi(conn) ? journalDir() : null;
+ }
+ 
+ /** Lowercase ASCII, bytes outside [a-z0-9#&+!._-] as %XX - like webjournal.pl. */
+diff --git a/server/feWebClient/feWebPin.ts b/server/feWebClient/feWebPin.ts
+index 4d4cd14..d45e05b 100644
+--- a/server/feWebClient/feWebPin.ts
++++ b/server/feWebClient/feWebPin.ts
+@@ -31,6 +31,36 @@ export function defaultCertFile(): string {
+ 	return path.join(os.homedir(), ".erssi", "fe-web-cert.pem");
+ }
+ 
++/**
++ * erssi's Unix socket (its fe_web_socket setting), or undefined for TCP.
++ * "~/" is the home directory, a relative path is relative to ~/.erssi
++ * (as in erssi).
++ */
++export function feWebSocketPath(conn: {socketPath?: string}): string | undefined {
++	const value = String(conn.socketPath || "").trim();
++
++	if (!value) {
++		return undefined;
++	}
++
++	if (value === "~" || value.startsWith("~/")) {
++		return path.join(os.homedir(), value.slice(1));
++	}
++
++	return path.resolve(path.join(os.homedir(), ".erssi"), value);
++}
++
++/** erssi on this machine: over a Unix socket, or on a loopback address. */
++export function isLocalErssi(conn: {host: string; socketPath?: string}): boolean {
++	return feWebSocketPath(conn) !== undefined || isLocalHost(conn.host);
++}
++
++/** host:port, or unix:<path> for a Unix socket - for log lines. */
++export function feWebWhere(conn: {host: string; port: number; socketPath?: string}): string {
++	const socketPath = feWebSocketPath(conn);
++	return socketPath ? `unix:${socketPath}` : `${conn.host}:${conn.port}`;
++}
++
+ /**
+  * TLS options for one connection attempt. Called on every (re)connect, so a
+  * certificate erssi writes (or regenerates) later is picked up.
+@@ -42,10 +72,16 @@ export function defaultCertFile(): string {
+  *    caFile): the "verify" setting of the user, with a warning when off.
+  */
+ export function feWebTls(
+-	conn: {host: string; port: number; caFile?: string; rejectUnauthorized?: boolean},
++	conn: {
++		host: string;
++		port: number;
++		socketPath?: string;
++		caFile?: string;
++		rejectUnauthorized?: boolean;
++	},
+ 	who: string
+ ): FeWebTls {
+-	const where = `${conn.host}:${conn.port}`;
++	const where = feWebWhere(conn);
+ 
+ 	if (conn.caFile) {
+ 		try {
+@@ -59,7 +95,7 @@ export function feWebTls(
+ 		}
+ 	}
+ 
+-	if (isLocalHost(conn.host)) {
++	if (isLocalErssi(conn)) {
+ 		const file = defaultCertFile();
+ 
+ 		try {
+diff --git a/server/feWebClient/feWebSocket.ts b/server/feWebClient/feWebSocket.ts
+index 8c3ae55..82a3784 100644
+--- a/server/feWebClient/feWebSocket.ts
++++ b/server/feWebClient/feWebSocket.ts
+@@ -8,6 +8,8 @@
+  */
+ 
+ import WebSocket from "ws";
++import net from "net";
++import tls from "tls";
+ import {EventEmitter} from "events";
+ import {FeWebEncryption} from "./feWebEncryption.js";
+ import {FeWebPinError, FeWebTls} from "./feWebPin.js";
+@@ -85,6 +87,10 @@ export type ServerMessageType =
+ export interface FeWebConfig {
+ 	host: string;
+ 	port: number;
++	// erssi's Unix socket (fe_web_socket), absolute path; used instead of
++	// host:port. TLS, certificate pin and password work as on TCP; the
++	// certificate is checked for the name "localhost".
++	socketPath?: string;
+ 	password?: string; // WebSocket authentication password (used for key derivation)
+ 	encryption?: boolean; // Use AES-256-GCM encryption (ALWAYS true for fe-web v1.5)
+ 
+@@ -114,8 +120,9 @@ type MessageHandler = (message: FeWebMessage) => void;
+ 
+ // Internal config type with all required fields
+ type InternalFeWebConfig = Required<
+-	Omit<FeWebConfig, "ca" | "cert" | "key" | "tls" | "onDisconnect">
++	Omit<FeWebConfig, "socketPath" | "ca" | "cert" | "key" | "tls" | "onDisconnect">
+ > & {
++	socketPath?: string;
+ 	ca?: Buffer;
+ 	cert?: Buffer;
+ 	key?: Buffer;
+@@ -147,6 +154,7 @@ export class FeWebSocket extends EventEmitter {
+ 		this.config = {
+ 			host: config.host,
+ 			port: config.port,
++			socketPath: config.socketPath || undefined,
+ 			password: config.password ?? "",
+ 			encryption: config.encryption ?? true, // ALWAYS true for fe-web v1.5
+ 
+@@ -214,13 +222,18 @@ export class FeWebSocket extends EventEmitter {
+ 		return new Promise((resolve, reject) => {
+ 			// fe-web v1.5 REQUIRES wss:// (dual-layer security)
+ 			const protocol = this.config.useTLS ? "wss" : "ws";
+-			// no password here: URLs end up in logs and process listings
+-			const url = `${protocol}://${this.config.host}:${this.config.port}/`;
++			const socketPath = this.config.socketPath;
++			// no password here: URLs end up in logs and process listings. Over a
++			// Unix socket the URL only gives the Host header and the TLS name.
++			const url = socketPath
++				? `${protocol}://localhost/`
++				: `${protocol}://${this.config.host}:${this.config.port}/`;
++			const where = socketPath ? `${protocol}+unix:${socketPath}` : url;
+ 
+ 			const encStatus = this.encryption ? "AES-256-GCM" : "plain";
+ 			const tlsStatus = this.config.useTLS ? "TLS" : "plain";
+ 			logger.debug(
+-				`[FeWebSocket] Connecting to ${url} (Layer 1: ${tlsStatus}, Layer 2: ${encStatus})...`
++				`[FeWebSocket] Connecting to ${where} (Layer 1: ${tlsStatus}, Layer 2: ${encStatus})...`
+ 			);
+ 
+ 			// Prepare WebSocket options for SSL/TLS
+@@ -271,6 +284,16 @@ export class FeWebSocket extends EventEmitter {
+ 				);
+ 			}
+ 
++			// erssi's Unix socket: ws hands its request options (ca,
++			// rejectUnauthorized, TLS versions) to createConnection; with
++			// "path" the connection goes to the socket, host and port unused
++			if (socketPath) {
++				wsOptions.createConnection = this.config.useTLS
++					? (options: tls.ConnectionOptions) =>
++							tls.connect({...options, path: socketPath, servername: "localhost"})
++					: () => net.connect(socketPath);
++			}
++
+ 			try {
+ 				// WebSocket constructor: new WebSocket(address, protocols, options)
+ 				// protocols: string | string[] | undefined
+diff --git a/server/irssiClient.ts b/server/irssiClient.ts
+index 463be87..4c9b8e1 100644
+--- a/server/irssiClient.ts
++++ b/server/irssiClient.ts
+@@ -31,7 +31,7 @@ import {ServerToClientEvents} from "../shared/types/socket-events.js";
+ import {FeWebSocket, FeWebConfig, FeWebMessage} from "./feWebClient/feWebSocket.js";
+ import {FeWebEncryption} from "./feWebClient/feWebEncryption.js";
+ import {FeWebAdapter, FeWebAdapterCallbacks, NetworkData} from "./feWebClient/feWebAdapter.js";
+-import {feWebTls} from "./feWebClient/feWebPin.js";
++import {feWebSocketPath, feWebTls, feWebWhere} from "./feWebClient/feWebPin.js";
+ import {
+ 	IrssiNetwork,
+ 	IrssiServer,
+@@ -177,6 +177,10 @@ export type IrssiConnectionConfig = {
+ 	useTLS: boolean; // Use wss:// (required for fe-web v1.5)
+ 	rejectUnauthorized: boolean; // Accept self-signed certificates
+ 	caFile?: string; // erssi's fe-web certificate (default ~/.erssi/fe-web-cert.pem, local erssi only)
++	// erssi's Unix socket (its fe_web_socket setting), used instead of
++	// host:port; "~/" = home, relative = in ~/.erssi. host and port stay:
++	// passwordEncrypted is encrypted with them.
++	socketPath?: string;
+ 	journalDir?: string; // webjournal.pl directory of this erssi (default only for a local erssi)
+ };
+ 
+@@ -540,6 +544,7 @@ export class IrssiClient {
+ 		const feWebConfig: FeWebConfig = {
+ 			host: this.config.irssiConnection.host,
+ 			port: this.config.irssiConnection.port,
++			socketPath: feWebSocketPath(this.config.irssiConnection),
+ 			password: this.irssiPassword,
+ 			encryption: true, // ALWAYS true for fe-web v1.5
+ 
+@@ -601,9 +606,9 @@ export class IrssiClient {
+ 		await this.irssiConnection.connect();
+ 
+ 		logger.info(
+-			`User ${chalk.bold(this.name)} connected to irssi at wss://${feWebConfig.host}:${
+-				feWebConfig.port
+-			} (dual-layer security)`
++			`User ${chalk.bold(this.name)} connected to irssi at ${feWebWhere(
++				this.config.irssiConnection
++			)} (dual-layer security)`
+ 		);
+ 	}
+ 
+diff --git a/server/server.ts b/server/server.ts
+index cf004f7..a7cd28b 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -11,7 +11,7 @@ import net from "net";
+ 
+ import logger, {log} from "./logger.js";
+ import {IrssiClient} from "./irssiClient.js";
+-import {feWebTls} from "./feWebClient/feWebPin.js";
++import {feWebSocketPath, feWebTls} from "./feWebClient/feWebPin.js";
+ import ClientManager from "./clientManager.js";
+ import Uploader from "./plugins/uploader.js";
+ import Helper from "./helper.js";
+@@ -1009,6 +1009,7 @@ function initializeIrssiClient(
+ 		(socket as any).emit("irssi:config:info", {
+ 			host: client.config.irssiConnection.host,
+ 			port: client.config.irssiConnection.port,
++			socketPath: client.config.irssiConnection.socketPath,
+ 			useTLS: client.config.irssiConnection.useTLS,
+ 			rejectUnauthorized: client.config.irssiConnection.rejectUnauthorized,
+ 			encryption: client.config.irssiConnection.encryption,
+@@ -1129,10 +1130,13 @@ function initializeIrssiClient(
+ 			const {FeWebSocket} = await import("./feWebClient/feWebSocket.js");
+ 
+ 			// Create temporary connection for testing, with the same certificate
+-			// pin as the real one (the password must not go to just anyone)
++			// pin and Unix socket (socketPath, set in the user's file) as the
++			// real one (the password must not go to just anyone)
++			const socketPath = client.config.irssiConnection.socketPath;
+ 			const testSocket = new FeWebSocket({
+ 				host,
+ 				port,
++				socketPath: feWebSocketPath({socketPath}),
+ 				password: irssiWebSocketPassword, // irssi WebSocket password (NOT The Lounge password!)
+ 				encryption: true,
+ 				useTLS: true,
+@@ -1141,6 +1145,7 @@ function initializeIrssiClient(
+ 						{
+ 							host,
+ 							port,
++							socketPath,
+ 							caFile: client.config.irssiConnection.caFile,
+ 							rejectUnauthorized: rejectUnauthorized ?? false,
+ 						},
+-- 
+2.47.3
+
