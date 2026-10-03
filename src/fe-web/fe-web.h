@@ -71,6 +71,7 @@ typedef struct {
 	GString *output_buffer;
 	GByteArray *input_buffer; /* For incomplete WebSocket frames */
 	int recv_tag;
+	guint handshake_tag; /* closes the client if it does not log in in time */
 
 	/* SSL/TLS */
 	FE_WEB_SSL_CHANNEL *ssl_channel; /* SSL wrapper (if SSL enabled) */
@@ -188,6 +189,9 @@ void fe_web_dump_state(WEB_CLIENT_REC *client);
 
 /* WebSocket protocol (RFC 6455) */
 char *fe_web_websocket_compute_accept(const char *client_key);
+/* Largest WebSocket frame accepted from a client */
+#define FE_WEB_MAX_FRAME (16 * 1024 * 1024)
+
 int fe_web_websocket_parse_frame(const guchar *data, gsize data_len, int *fin, int *opcode,
                                  int *masked, guint64 *payload_len, guchar mask_key[4],
                                  const guchar **payload);
