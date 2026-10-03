@@ -72,6 +72,7 @@ by default (`/script load <name>`; autoload: symlink into
 | `skaner.pl` | Clones (same host) and IRC operators on a channel, reported in a *skaner* window after join, with alerts when a clone arrives. `/skaner [#channel\|all\|on\|off]`. |
 | `mentions.pl` | One *Mentions* window for highlights (also nick mid-sentence), private messages, notices and DCC, mirrored to `~/.erssi/logs/mentions.log`. |
 | `webjournal.pl` | Journals every window to `~/.erssi/journal` (JSONL, 0600, rotated) so a web client can show the same history and windows as the terminal. `/webjournal`. |
+| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop with an IRC interface): one connection and one window per botnet; a second `/connect` switches to it, closing the partyline window disconnects, at most one reconnect with a retry limit, cleanup of duplicates on load. `/bot [botnet\|close <botnet>\|cleanup]`, `botnet_chatnets`. |
 
 ## Build and install (no root needed)
 
