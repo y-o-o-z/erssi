@@ -278,8 +278,12 @@ nvlist_t *symbiont_gethostbyname(const nvlist_t *request)
 
 	addr = nvlist_get_string(request, "addr");
 
-	/* Connect. */
-	ret = net_gethostbyname(addr, &ip4, &ip6);
+	/* Resolve. The symbiont runs outside the sandbox, so this is the
+	   ordinary (GResolver) lookup; net_gethostbyname() itself is internal
+	   to network.c since erssi 1.3. */
+	memset(&ip4, 0, sizeof(ip4));
+	memset(&ip6, 0, sizeof(ip6));
+	ret = net_gethostbyname_first_ips(addr, G_RESOLVER_NAME_LOOKUP_FLAGS_DEFAULT, &ip4, &ip6);
 	saved_errno = errno;
 
 	/* Send back the IPs. */
