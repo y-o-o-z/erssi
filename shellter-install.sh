@@ -64,7 +64,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -t 1 ]; then B=$(printf '\033[1m'); A=$(printf '\033[38;5;214m'); R=$(printf '\033[38;5;203m'); G=$(printf '\033[38;5;71m'); N=$(printf '\033[0m'); else B= A= R= G= N=; fi
+if [ -t 1 ]; then B=$(printf '\033[1m'); A=$(printf '\033[38;5;214m'); R=$(printf '\033[38;5;203m'); G=$(printf '\033[38;5;71m'); N=$(printf '\033[0m'); else B='' A='' R='' G='' N=''; fi
 say()  { printf '%s==>%s %s\n' "$A" "$N" "$*"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '  %s!%s %s\n' "$A" "$N" "$*"; }
@@ -192,7 +192,7 @@ fi
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) RUN=erssi ;;
     *) RUN="$HOME/.local/bin/erssi"
-       warn "~/.local/bin is not in PATH - add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+       warn "$HOME/.local/bin is not in PATH - add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
 cat <<EOF
 
