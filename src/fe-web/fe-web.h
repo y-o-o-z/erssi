@@ -68,7 +68,16 @@ typedef struct {
 
 	/* Network */
 	NET_SENDBUF_REC *handle;
-	GString *output_buffer;
+	/* What the socket did not take yet, in order: output_buffer->data +
+	 * output_pos up to its end. fe_web_client_send_raw() is the only
+	 * writer to the socket. */
+	GByteArray *output_buffer;
+	gsize output_pos;
+	int send_tag;             /* writable watch while output is queued */
+	guint close_tag;          /* deferred or lingering close */
+	unsigned int output_want_read : 1; /* TLS has to read before it can write */
+	unsigned int output_failed : 1;    /* write error or too much queued: closing */
+	unsigned int closing : 1;          /* last frame queued, closing once written */
 	GByteArray *input_buffer; /* For incomplete WebSocket frames */
 	int recv_tag;
 	guint handshake_tag; /* closes the client if it does not log in in time */
@@ -156,6 +165,7 @@ WEB_MESSAGE_REC *fe_web_message_new(WEB_MESSAGE_TYPE type);
 void fe_web_message_free(WEB_MESSAGE_REC *msg);
 
 /* Message sending */
+gboolean fe_web_client_send_raw(WEB_CLIENT_REC *client, const void *data, gsize len);
 void fe_web_send_message(WEB_CLIENT_REC *client, WEB_MESSAGE_REC *msg);
 void fe_web_send_to_server_clients(IRC_SERVER_REC *server, WEB_MESSAGE_REC *msg);
 void fe_web_send_to_all_clients(WEB_MESSAGE_REC *msg);

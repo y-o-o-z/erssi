@@ -244,6 +244,12 @@ void fe_web_fuzz_client_send(WEB_CLIENT_REC *client, const guchar *data, gsize l
 		int avail = 0;
 
 		drain_peer();
+		/* there is no main loop here: what the writable watch of fe-web
+		 * does once the browser has read */
+		if (client->send_tag != -1) {
+			output_ready(client);
+			continue;
+		}
 		if (off < len) {
 			ssize_t n = write(peer_fd, data + off, len - off);
 			if (n > 0)
