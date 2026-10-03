@@ -2,6 +2,7 @@ install_data(
   files(
     'autoop.pl',
     'autorejoin.pl',
+    'botnet.pl',
     'buf.pl',
     'dns.pl',
     'kills.pl',
