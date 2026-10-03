@@ -1,4 +1,4 @@
-# shellter v1.2 — motyw erssi w barwach shellter.me ("Your shell, your shelter")
+# shellter v1.3 — motyw erssi w barwach shellter.me ("Your shell, your shelter")
 #
 # Paleta z arkusza stylow shellter.me (ciemny wariant, GitHub Primer):
 #   tlo #0b0d10 · karta #0e1116 · muted #161b22 · ramka #30363d
@@ -727,6 +727,29 @@ formats = {
     script_list_footer = "";
     script_error = "%ZFF7B72⚠%N {error Error in script {hilight $0}:}";
   };
+
+  # Bundled scripts: their messages in the column, labelled with the script's
+  # name like erssi's own ("erssi │ ..."). Labels are padded to 13 columns.
+  "Irssi::Script::translate" = {
+    translate_info = "    %Z8B949Etranslate{col}$0";
+    translate_error = "    %Z8B949Etranslate{col}%ZFF7B72$0%N";
+    translate_line = "            %Z484F58↳{col}%Z6E7681$0%N $1";
+  };
+  "Irssi::Script::botnet" = {
+    botnet_info = "       %Z8B949Ebotnet{col}$0";
+  };
+  "Irssi::Script::tk" = {
+    tk_loaded = "           %Z8B949Etk{col}TK v$0 - /tk help";
+    tk_info = "           %Z8B949Etk{col}$0";
+    tk_warn = "           %Z8B949Etk{col}%ZF59E0Buwaga%N $0";
+    tk_error = "           %Z8B949Etk{col}%ZFF7B72blad%N $0";
+    tk_sent = "           %Z8B949Etk{col}%Z3FB950>>%N $0";
+    tk_dry = "           %Z8B949Etk{col}%ZF59E0Bpodglad%N $0";
+  };
+  "Irssi::Script::shrink" = {
+    shrink_result = "       %Z8B949Eshrink{col}$0 {comment $1}";
+    shrink_error = "       %Z8B949Eshrink{col}%ZFF7B72$0%N";
+  };
 };
 
-# End of shellter v1.2
+# End of shellter v1.3

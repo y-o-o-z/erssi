@@ -5,6 +5,7 @@ install_data(
     'botnet.pl',
     'buf.pl',
     'dns.pl',
+    'health.pl',
     'kills.pl',
     'mail.pl',
     'mentions.pl',

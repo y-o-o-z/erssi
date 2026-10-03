@@ -43,7 +43,7 @@ use Time::HiRes ();
 use File::Path qw(make_path);
 use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
-our $VERSION = '1.2.1';
+our $VERSION = '1.2.2';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -183,6 +183,8 @@ sub mentions_me {
 
 sub ignored {
     my ($server, $nick, $address, $target, $text, $level) = @_;
+    # brak adresu (wiadomosc od serwera) albo celu to celowo NULL dla irssi
+    no warnings 'uninitialized';
     my $hit = eval { $server->ignore_check($nick, $address, $target, $text, $level) };
     return $hit ? 1 : 0;
 }
