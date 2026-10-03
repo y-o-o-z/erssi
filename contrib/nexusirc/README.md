@@ -23,6 +23,8 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0021 | Sessions and sign-out work with erssi: a reload keeps its session instead of creating a new never-expiring one, the session list and "Sign out" / "Sign out all other sessions" work, a sign-out button in the sidebar, sessions unused for 30 days expire. |
 | 0022 | The fe-web password goes in an `Authorization` header, never in the URL or a log; the settings test uses the certificate pin too, an unreadable `caFile` stops the connection, the certificate is re-read on every reconnect; sign-out waits for the server, sessions expire while Nexus runs and end on a password change; `irssiConnection.journalDir` per user. Needs erssi Shellter Edition 1.3.3. |
 | 0023 | Source Sans 3 (text, interface, 15px) and Source Code Pro (time, nick column, nick list, code) instead of Geist: Adobe's Source family, variable fonts, latin + latin-ext, hosted with the theme (OFL 1.1); a monospaced nick list tells I from l and 0 from O; no ligatures in IRC text. |
+| 0024 | Connect to erssi over its Unix socket (`irssiConnection.socketPath`, erssi `fe_web_socket`): no TCP port other users of the box can reach; TLS, the certificate pin and the password header stay. |
+| 0025 | The encrypted message storage key is derived the same way after saving the erssi settings as at login (it used a different key). |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in
