@@ -1,50 +1,51 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
 MENTIONS%|
 MENTIONS CLEAR%|
 
-%9Parametry:%9
+%9Parameters:%9
 
-    CLEAR:       Czyści zawartość okna wzmianek (/CLEAR); pliku dziennika
-                 nie rusza.
+    CLEAR:       Clears the mentions window (/CLEAR); the log file is not
+                 touched.
 
-    Bez argumentu (i z każdym innym) przełącza na okno wzmianek.
+    Without an argument (or with any other one) switches to the mentions
+    window.
 
-%9Opis:%9
+%9Description:%9
 
-    Przechodzi do okna wzmianek (domyślnie „Mentions”), do którego skrypt
-    mentions.pl zbiera wszystko, co dotyczy Twojego nicka. Komenda skryptu
-    mentions.pl.
+    Goes to the mentions window (by default "Mentions"), where the
+    mentions.pl script collects everything addressed to your nick.
+    A command of the mentions.pl script.
 
-    Do okna trafiają: wiadomości i /ME na kanałach, które erssi oznaczyło
-    jako podświetlenie (nick w treści przy hilight_nick_matches_everywhere
-    albo dowolna reguła /HILIGHT), wszystkie wiadomości prywatne i
-    prywatne /ME, prywatne NOTICE od ludzi (nie od serwerów i nie na kanał)
-    oraz wiadomości DCC CHAT. Wpisy mają poziom HILIGHT, więc okno dostaje
-    kolor wzmianki na liście okien.
+    The window receives: channel messages and /ME actions that erssi
+    marked as a hilight (your nick in the text with
+    hilight_nick_matches_everywhere, or any /HILIGHT rule), all private
+    messages and private /ME actions, private NOTICEs from people (not
+    from servers and not sent to a channel) and DCC CHAT messages. Entries
+    have the HILIGHT level, so the window gets the hilight colour in the
+    window list.
 
-    Okno powstaje w tle po starcie, ma włączone /WINDOW IMMORTAL, a po
-    zamknięciu skrypt tworzy je od nowa.
+    The window is created in the background at startup, has
+    /WINDOW IMMORTAL on, and is recreated by the script if it gets closed.
 
-    Każdy wpis jest też dopisywany do pliku mentions_log_file w postaci
-    „RRRR-MM-DD GG:MM:SS [tag] miejsce <nick> tekst” (prawa 0600), więc
-    przetrwa restart. Katalog pliku musi istnieć - skrypt go nie tworzy
-    i przy jego braku po cichu nic nie zapisuje.
+    Every entry is also appended to mentions_log_file in the form
+    "YYYY-MM-DD HH:MM:SS [tag] place <nick> text" (mode 0600), so it
+    survives a restart. A missing directory is created with mode 0700.
 
-%9Ustawienia:%9
+%9Settings:%9
 
     mentions_window = Mentions
-        Nazwa okna wzmianek.
+        Name of the mentions window.
     mentions_log = ON
-        Zapis wzmianek do pliku.
+        Write mentions to the log file.
     mentions_log_file = ~/.erssi/logs/mentions.log
-        Plik dziennika („~” to katalog domowy).
+        The log file ('~' is your home directory).
 
-%9Przykłady:%9
+%9Examples:%9
 
     /MENTIONS
     /MENTIONS CLEAR
 
-%9Zobacz też:%9 HILIGHT, LASTLOG, WINDOW
+%9See also:%9 HILIGHT, LASTLOG, WINDOW
 

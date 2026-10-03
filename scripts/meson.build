@@ -20,7 +20,7 @@ install_data(
   ),
   install_dir : scriptdir)
 
-# /HELP for the commands of the scripts above (Polish, like the scripts)
+# /HELP for the commands of the scripts above
 install_data(
   files(
     'help/bot',

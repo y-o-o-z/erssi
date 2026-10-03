@@ -1,5 +1,5 @@
 
-%9Składnia:%9
+%9Syntax:%9
 
 TRACKBAR%|
 TRACKBAR GOTO%|
@@ -11,60 +11,60 @@ TRACKBAR REMOVE%|
 TRACKBAR REMOVEALL%|
 TRACKBAR REDRAW%|
 
-%9Parametry:%9
+%9Parameters:%9
 
-    GOTO:        Przewija aktywne okno do linii trackbara (to samo co
-                 /TRACKBAR bez argumentów).
-    KEEP:        Przy najbliższym opuszczeniu aktywnego okna linia zostaje
-                 na miejscu (jednorazowo).
-    MARK:        Usuwa starą linię i rysuje nową na dole aktywnego okna
-                 (to samo co /MARK).
-    MARKVISIBLE: Jak MARK, dla wszystkich widocznych okien (podział ekranu).
-    MARKALL:     Jak MARK, dla wszystkich okien.
-    REMOVE:      Usuwa linię z aktywnego okna.
-    REMOVEALL:   Usuwa linie ze wszystkich okien.
-    REDRAW:      Przerysowuje wszystkie linie według bieżących ustawień.
+    GOTO:        Scrolls the active window to the trackbar line (same as
+                 /TRACKBAR without arguments).
+    KEEP:        The next time you leave the active window, the line stays
+                 where it is (once).
+    MARK:        Removes the old line and draws a new one at the bottom of
+                 the active window (same as /MARK).
+    MARKVISIBLE: Like MARK, for all visible windows (split screen).
+    MARKALL:     Like MARK, for all windows.
+    REMOVE:      Removes the line from the active window.
+    REMOVEALL:   Removes the lines from all windows.
+    REDRAW:      Redraws all lines using the current settings.
 
-%9Opis:%9
+%9Description:%9
 
-    Skrypt trackbar.pl rysuje poziomą linię w oknie, które opuszczasz, więc
-    po powrocie widać, do którego miejsca czytałeś. Poprzednia linia w tym
-    oknie znika. Komenda skryptu trackbar.pl.
+    The trackbar.pl script draws a horizontal line in the window you are
+    leaving, so when you come back you can see where you stopped reading.
+    The previous line in that window is removed. A command of the
+    trackbar.pl script.
 
-    Linia nie trafia do logów (poziom NEVER), nie pojawia się w pustych
-    oknach ani w oknach z trackbar_ignore_windows (wyjątek: /MARK i
-    /TRACKBAR MARK). Przed /UPGRADE i przy wyładowaniu skryptu wszystkie
-    linie są usuwane, a po zmianie rozmiaru terminala - przerysowywane.
+    The line is never logged (level NEVER) and does not appear in empty
+    windows or in windows from trackbar_ignore_windows (except with /MARK
+    and /TRACKBAR MARK). Before /UPGRADE and when the script is unloaded
+    all lines are removed, and after a terminal resize they are redrawn.
 
-    GOTO przewija przez /SCROLLBACK GOTO do czasu narysowania linii
-    (z dokładnością do sekundy). Gdy w oknie nie ma linii, pojawia się
-    „No trackbar found in this window”.
+    GOTO scrolls with /SCROLLBACK GOTO to the time the line was drawn (to
+    the second). When the window has no line, "No trackbar found in this
+    window" is printed.
 
-%9Ustawienia:%9
+%9Settings:%9
 
     trackbar_string = ─
-        Znak lub ciąg, z którego składa się linia („-” przy terminalu
-        bez UTF-8).
+        Character or string the line is made of ('-' on a terminal
+        without UTF-8).
     trackbar_style = %%K
-        Kolor linii w zapisie formatów irssi.
+        Colour of the line, in irssi format notation.
     trackbar_ignore_windows =
-        Okna bez linii: nazwy, numery albo nazwy kanałów i rozmów,
-        oddzielone spacją lub przecinkiem.
+        Windows without a line: names, numbers, or channel and query
+        names, separated by spaces or commas.
     trackbar_use_status_window = ON
-        Linia także w oknie (status).
+        Also draw the line in the (status) window.
     trackbar_print_timestamp = OFF
-        Znacznik czasu przed linią.
+        Print a timestamp in front of the line.
     trackbar_require_seen = OFF
-        ON = linia przesuwa się dopiero wtedy, gdy ją zobaczyłeś
-        (przewinąłeś do niej).
+        ON = the line moves only after you have seen it (scrolled to it).
     trackbar_all_manual = OFF
-        ON = linia przesuwa się tylko po /MARK.
+        ON = the line moves only with /MARK.
 
-%9Przykłady:%9
+%9Examples:%9
 
     /TRACKBAR
     /TRACKBAR MARKALL
     /BIND meta-t command trackbar
 
-%9Zobacz też:%9 BIND, MARK, SCROLLBACK
+%9See also:%9 BIND, MARK, SCROLLBACK
 
