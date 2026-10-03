@@ -1,7 +1,7 @@
 project('erssi', 'c',
   version : '1.3.2',
   meson_version : '>=0.53',
-  default_options : ['warning_level=1'])
+  default_options : ['warning_level=1', 'b_pie=true', 'buildtype=debugoptimized'])
 
 ############################
 ############################
@@ -630,6 +630,16 @@ add_project_arguments(cc.get_supported_arguments('-Werror=declaration-after-stat
 
 #### personality ####
 add_project_arguments(cc.get_supported_arguments('-fno-strict-aliasing'), language : 'c')
+
+# erssi Shellter Edition: hardening, where the compiler and linker support it
+# (fe-web and the image preview take input from the network). PIE is set in
+# default_options; _FORTIFY_SOURCE needs optimization.
+hardening_c_args = ['-fstack-protector-strong', '-fstack-clash-protection']
+if get_option('optimization') not in ['0', 'plain']
+  hardening_c_args += ['-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=2']
+endif
+add_project_arguments(cc.get_supported_arguments(hardening_c_args), language : 'c')
+add_project_link_arguments(cc.get_supported_link_arguments(['-Wl,-z,relro', '-Wl,-z,now']), language : 'c')
 if get_option('buildtype').contains('debug')
   add_project_arguments(cc.get_supported_arguments('-fno-omit-frame-pointer'), language : 'c')
 endif
