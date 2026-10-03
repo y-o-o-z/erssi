@@ -687,7 +687,7 @@ static unsigned int file_checksum(const char *fname)
         n = 0;
 	while ((ret = read(f, buf, sizeof(buf))) > 0) {
 		while (ret-- > 0)
-			checksum += buf[ret] << ((n++ & 3)*8);
+			checksum += (unsigned int) (unsigned char) buf[ret] << ((n++ & 3) * 8);
 	}
 	close(f);
 	return checksum;
