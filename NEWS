@@ -56,6 +56,19 @@ erssi-v1.3.2 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    webjournal.pl (journal of every window for a web client),
 	    botnet.pl (botnet partylines: one connection and one window each)
 	  - /HELP for each script command (Polish, like the scripts)
+	  - botnet.pl 1.2: a network window per botnet with the partyline
+	    window under it, like a channel; statusbar item "botnet" with the
+	    state of every botnet and unread partyline lines
+	  - trackbar.pl 2.9.1: the read marker branches off the separator
+	    column ("├────") instead of crossing timestamps and nicks
+
+	+ Install
+	  - shellter-install.sh: one command, no root - checks dependencies
+	    (with the package command for Debian/Ubuntu and FreeBSD), installs
+	    meson and ninja into a private venv when missing, builds the latest
+	    release, runs the tests, installs to ~/.local/opt/erssi
+	  - utils/pre-push: build, tests and author/attribution/private-data
+	    checks before every push
 
 	+ Help
 	  - /HELP for the erssi commands that had none: CREDENTIAL, FE_WEB,
