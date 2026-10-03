@@ -16,6 +16,11 @@ erssi-v1.3.4 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - sidepanel lines are expanded once: a 24-bit colour with a 0x05 or
 	    0x25 byte and "%" in names are no longer garbled
 	  - sidepanel scroll arrows use a theme format on the panel background
+	+ fe-web reliability
+	  - output to a slow web client (a phone on mobile data, a large state
+	    dump) is queued in order instead of dropped when the socket is
+	    full; a client that never reads is disconnected at 32 MB; close
+	    and error responses are sent completely before closing
 	+ Scripts
 	  - messages and /help of all bundled scripts in English;
 	    botnet.pl 1.2.4 no longer uses a window freed by autoclose
