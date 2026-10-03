@@ -12,7 +12,8 @@ TKL %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host>
                    ident   ident@host, „~ident” zamieniany na „*ident”,
                    host    *@pełny.host,
                    domain  *@*.domena.tld, dla IPv4 *@a.b.c.*, dla IPv6
-                           pierwsze cztery grupy adresu i „:*”.
+                           sieć /64 (*@2001:db8:1:2::/64); ::ffff:a.b.c.d
+                           jak IPv4.
     -force:      Pozwala wysłać maskę uznaną za zbyt szeroką.
     -dry:        Podgląd: pokazuje gotową linię TKLINE i nic nie wysyła.
 
@@ -49,8 +50,8 @@ TKL %|[-server <tag>] [-mask ident|host|domain] [-force] [-dry] <nick|user@host>
     czytelne komunikaty. Wysłane komendy trafiają do dziennika
     ~/.erssi/tk_audit.jsonl (tk_audit).
 
-    Uwaga: dla adresu IPv6 zapisanego skrótem „::” maska domain nie
-    odpowiada sieci /64 - sprawdź ją przez -dry albo /TK MASK.
+    Bez znanego własnego hosta (erssi poznaje go po wejściu na kanał)
+    przechodzi tylko maska ident@pełny.host - inna mogłaby trafić Ciebie.
 
 %9Ustawienia:%9
 

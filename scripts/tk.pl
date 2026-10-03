@@ -3,11 +3,12 @@ use warnings;
 
 use Fcntl qw(O_APPEND O_CREAT O_WRONLY LOCK_EX);
 use JSON::PP ();
+use Socket qw(AF_INET AF_INET6 inet_pton inet_ntop);
 use Irssi;    # Irssi::Irc nie jest wymagane - obiekty serwera i tak sa Irssi::Irc::Server
 
 use vars qw($VERSION %IRSSI);
 
-$VERSION = '2.1.1';
+$VERSION = '2.1.2';
 %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -96,20 +97,21 @@ sub register_formats {
     ]);
 }
 
-# Tekst od usera (nick, maska, powod, komunikat serwera) trafia do
-# formatera irssi, ktory interpretuje kody %. Podwojenie % daje
-# doslowny znak i odcina wstrzykiwanie kolorow przez spamera.
+# Tekst od usera (nick, maska, powod, komunikat serwera) idzie wylacznie
+# jako argument printformat - erssi wstawia argumenty doslownie (bez kodow
+# %), wiec % zostaje jak jest (podwojenie dawaloby na ekranie "%%").
+# Zdejmujemy tylko znaki sterujace (kolory mIRC, CR/LF).
 sub esc {
     my ($text) = @_;
     return '' unless defined $text;
     $text =~ s/[\x00-\x08\x0a-\x1f]//g;
-    $text =~ s/%/%%/g;
     return $text;
 }
 
 sub say_info  { Irssi::printformat(Irssi::MSGLEVEL_CLIENTCRAP(),  'tk_info',  esc($_[0])) }
 sub say_warn  { Irssi::printformat(Irssi::MSGLEVEL_CLIENTCRAP(),  'tk_warn',  esc($_[0])) }
-sub say_error { Irssi::printformat(Irssi::MSGLEVEL_CLIENTERROR(), 'tk_error', esc($_[0])) }
+# poziom CLIENTCRAP: przy CLIENTERROR erssi dokleja przed linia wlasna etykiete
+sub say_error { Irssi::printformat(Irssi::MSGLEVEL_CLIENTCRAP(),  'tk_error', esc($_[0])) }
 
 sub say_command {
     my ($format, $req, $mask) = @_;
@@ -285,6 +287,21 @@ sub host_is_ipv4 { return defined $_[0] && $_[0] =~ /\A[0-9]{1,3}(?:\.[0-9]{1,3}
 # Domeny drugiego poziomu, przy ktorych *.<2ld>.<tld> byloby za szerokie.
 my %SECOND_LEVEL = map { $_ => 1 } qw(com net org edu gov mil co ac biz info waw);
 
+# IPv6 -> siec /64 jako ip/prefiks (2001:db8:1:2::/64): glob na zapisie
+# tekstowym nie dziala, bo ten sam adres ma wiele zapisow ("::" skraca
+# zera). ::ffff:a.b.c.d to IPv4 - maska jak dla IPv4. Niepoprawny adres:
+# undef (maska sie nie zbuduje, nic nie wychodzi).
+sub ipv6_mask_host {
+    my ($host) = @_;
+    my $packed = inet_pton(AF_INET6, $host) or return;
+    if (substr($packed, 0, 12) eq ("\0" x 10) . "\xff\xff") {
+        my $ipv4 = inet_ntop(AF_INET, substr($packed, 12, 4));
+        return domain_mask_host($ipv4);
+    }
+    my $net = substr($packed, 0, 8) . ("\0" x 8);
+    return inet_ntop(AF_INET6, $net) . '/64';
+}
+
 sub domain_mask_host {
     my ($host) = @_;
     return $host unless defined $host && length $host;
@@ -294,11 +311,7 @@ sub domain_mask_host {
         $octets[3] = '*';
         return join('.', @octets);
     }
-    if (index($host, ':') >= 0) {                    # IPv6 - /64
-        my @groups = split /:/, $host, -1;
-        @groups = @groups[0 .. 3] if @groups > 4;
-        return join(':', @groups) . ':*';
-    }
+    return ipv6_mask_host($host) if index($host, ':') >= 0;
 
     my @labels = split /\./, $host;
     return $host if @labels <= 2;
@@ -323,16 +336,51 @@ sub build_mask {
 
     return "$user\@$host"                if $type eq 'ident';
     return '*@' . $host                  if $type eq 'host';
-    return '*@' . domain_mask_host($host);
+    my $domain = domain_mask_host($host);
+    return defined $domain ? '*@' . $domain : undef;
+}
+
+sub glob_matches {
+    my ($glob, $text) = @_;
+    my $regex = quotemeta lc $glob;
+    $regex =~ s/\\\*/.*/g;
+    $regex =~ s/\\\?/./g;
+    return lc($text) =~ /\A$regex\z/ ? 1 : 0;
+}
+
+# adres IP (v4 albo v6) w ip/prefiks
+sub ip_in_cidr {
+    my ($ip, $cidr) = @_;
+    my ($net, $bits) = $cidr =~ m{\A([^/]+)/([0-9]{1,3})\z} or return 0;
+    for my $family (AF_INET, AF_INET6) {
+        my $addr = inet_pton($family, $ip) // next;
+        my $netp = inet_pton($family, $net) // return 0;
+        return 0 if $bits > 8 * length $netp;
+        my $mask = pack('B*', ('1' x $bits) . ('0' x (8 * length($netp) - $bits)));
+        return (($addr & $mask) eq ($netp & $mask)) ? 1 : 0;
+    }
+    return 0;
 }
 
 sub mask_matches {
     my ($mask, $userhost) = @_;
     return 0 unless defined $mask && defined $userhost;
-    my $regex = quotemeta lc $mask;
-    $regex =~ s/\\\*/.*/g;
-    $regex =~ s/\\\?/./g;
-    return lc($userhost) =~ /\A$regex\z/ ? 1 : 0;
+    my ($muser, $mhost) = split_mask($mask);
+    my ($uuser, $uhost) = split_mask($userhost);
+    if (defined $mhost && defined $uhost && index($mhost, '/') >= 0) {
+        return glob_matches($muser, $uuser) && ip_in_cidr($uhost, $mhost) ? 1 : 0;
+    }
+    return glob_matches($mask, $userhost);
+}
+
+# Maska typu ident@dokladny.host: ident bez wildcardow (dopuszczalny
+# '*' zamiast '~' na poczatku, jak z build_mask) i host bez * ? oraz '/'.
+sub mask_is_exact {
+    my ($mask) = @_;
+    my ($user, $host) = split_mask($mask);
+    return 0 unless defined $host && length $host;
+    return 0 if $host =~ m{[*?/]};
+    return $user =~ /\A=?\*?[^*?]+\z/ ? 1 : 0;
 }
 
 # =====================================================================
@@ -436,6 +484,15 @@ sub finish_request {
 
     if ($req->{command} eq 'TKLINE') {
         my $me = $server->{userhost};
+        # erssi zna nasz user@host dopiero po wejsciu na kanal (albo 396) -
+        # bez niego nie sprawdzimy samobanu, wiec tylko maska waska
+        if ((!defined $me || !length $me) && !mask_is_exact($mask)) {
+            say_error("nie znam Twojego user\@host (serwer go nie podal - wejdz na dowolny kanal), "
+                . "wiec nie sprawdze, czy maska $mask nie lapie Ciebie - nie wysylam; "
+                . 'bez tego dozwolona tylko maska ident@dokladny.host (-mask ident)');
+            audit_event('rejected', reason => 'self_unknown', mask => $mask);
+            return;
+        }
         if (defined $me && length $me && mask_matches($mask, $me)) {
             say_error("maska $mask lapie Ciebie ($me) - nie wysylam");
             audit_event('rejected', reason => 'self_match', mask => $mask);
@@ -484,7 +541,7 @@ sub start_whois {
 
     # Cala odpowiedz WHOIS trafia do skryptu; '' => 'event empty' wycisza
     # numeryki, ktorych nie obslugujemy, zeby nie zasmiecac okna.
-    $server->redirect_event('whois', 1, $req->{target}, -1, undef, {
+    $server->redirect_event('whois', 1, $req->{target}, -1, '', {
         'event 311' => 'redir tk whois',       # RPL_WHOISUSER
         'event 318' => 'redir tk whois end',   # RPL_ENDOFWHOIS
         'event 401' => 'redir tk whois none',  # ERR_NOSUCHNICK
@@ -647,8 +704,9 @@ sub prepare_request {
     return ($server, {
         command   => $command,
         mask_type => lc $mask_type,
-        force     => $options->{force} ? 1 : 0,
-        dry       => $options->{dry} ? 1 : 0,
+        # flaga bez argumentu przychodzi z erssi jako '' (falsz!) - liczy sie obecnosc
+        force     => exists $options->{force} ? 1 : 0,
+        dry       => exists $options->{dry} ? 1 : 0,
     });
 }
 
@@ -860,7 +918,7 @@ sub tk_help_text {
     usage_tkl();
     say_info('  -mask ident  = ident@host (domyslnie, ~ident -> *ident)');
     say_info('  -mask host   = *@pelny.host');
-    say_info('  -mask domain = *@*.domena albo *@1.2.3.* dla IP');
+    say_info('  -mask domain = *@*.domena, *@1.2.3.* dla IPv4, *@siec::/64 dla IPv6');
     say_info('  -dry         = pokaz komende, nie wysylaj');
     say_info('  -force       = pozwol na szeroka maske');
     say_info('  czas opcjonalny: 30s 10m 2h 1d 1w 1d12h; bez niego tk_default_time');
@@ -934,10 +992,6 @@ sub UNLOAD {
 register_settings();
 register_formats();
 
-Irssi::command_set_options('tkl',     'force dry +mask +server');
-Irssi::command_set_options('untkl',   'force dry +mask +server');
-Irssi::command_set_options('tk mask', '+mask +server');
-
 Irssi::command_bind('tkl',         'cmd_tkl',      'TKLINE');
 Irssi::command_bind('tk',          'cmd_tk',       'TKLINE');
 Irssi::command_bind('untkl',       'cmd_untkl',    'TKLINE');
@@ -953,6 +1007,13 @@ Irssi::command_bind('tk no',       'cmd_tk_no',    'TKLINE');
 Irssi::command_bind('tk list',     'cmd_tklist',   'TKLINE');
 Irssi::command_bind('tk klist',    'cmd_klist',    'TKLINE');
 Irssi::command_bind_first('help',  'cmd_help');
+
+# Opcje dopiero po command_bind: dla komendy, ktorej jeszcze nie ma, erssi
+# odrzuca command_set_options ("default critical") i -dry/-force/-mask/
+# -server byly nieznanymi opcjami.
+Irssi::command_set_options('tkl',     'force dry +mask +server');
+Irssi::command_set_options('untkl',   'force dry +mask +server');
+Irssi::command_set_options('tk mask', '+mask +server');
 
 Irssi::signal_add('redir tk whois',      'sig_whois');
 Irssi::signal_add('redir tk whois end',  'sig_whois_end');
