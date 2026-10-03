@@ -204,7 +204,7 @@ static void fe_web_send_nicklist_update(IRC_SERVER_REC *server, IRC_CHANNEL_REC 
 /* Is this channel message a highlight for us? Same rules as the terminal
  * (fe-common/core/fe-messages.c): our own nick per hilight_nick_matches /
  * hilight_nick_matches_everywhere, then any /HILIGHT rule. Previously only
- * /HILIGHT rules were checked, so "hej yooz, ..." reached web clients
+ * /HILIGHT rules were checked, so "hej alice, ..." reached web clients
  * unflagged unless the user had added their own nick as a /HILIGHT. */
 static int fe_web_is_highlight(IRC_SERVER_REC *server, const char *target, const char *nick,
                                const char *address, const char *msg)
@@ -340,7 +340,7 @@ static void sig_message_irc_action(IRC_SERVER_REC *server, const char *msg, cons
 	web_msg->text = g_strdup(msg);
 	web_msg->level = MSGLEVEL_ACTIONS; /* Mark as ACTION */
 	web_msg->is_own = FALSE;
-	/* "/me waves at yooz" on a channel is a mention too */
+	/* "/me waves at alice" on a channel is a mention too */
 	web_msg->is_highlight = target != NULL && server_ischannel(SERVER(server), target) &&
 	                        fe_web_is_highlight(server, target, nick, address, msg);
 
