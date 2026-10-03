@@ -417,6 +417,11 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 	
 	if (is_new) {
 		rec = g_new0(IRC_SERVER_SETUP_REC, 1);
+		/* as server_setup_read() makes them: without the type the
+		 * SERVER_SETUP() cast below is NULL, and server_setup_add()
+		 * puts a NULL in setupservers and dereferences it */
+		rec->type = module_get_uniq_id("SERVER SETUP", 0);
+		rec->chat_type = IRC_PROTOCOL;
 		rec->address = g_strdup(address);
 		rec->port = port;
 		rec->chatnet = chatnet != NULL ? g_strdup(chatnet) : NULL;
