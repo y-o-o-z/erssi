@@ -1,0 +1,18 @@
+
+%9Składnia:%9
+
+MARK%|
+
+%9Opis:%9
+
+    Usuwa starą linię trackbara z aktywnego okna i rysuje nową na jego
+    dole - to samo co /TRACKBAR MARK. Działa także w oknach wymienionych
+    w trackbar_ignore_windows. Przy trackbar_all_manual = ON to jedyny
+    sposób przesunięcia linii. Komenda skryptu trackbar.pl.
+
+%9Przykłady:%9
+
+    /MARK
+
+%9Zobacz też:%9 TRACKBAR
+
