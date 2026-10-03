@@ -2,18 +2,30 @@
 # shellter-install.sh - build and install erssi Shellter Edition without root.
 #
 #   curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
-#   sh shellter-install.sh [--prefix DIR] [--src DIR] [--ref REF] [--repo URL] [--no-test]
+#   sh shellter-install.sh [--prefix DIR] [--src DIR] [--ref REF] [--repo URL]
+#                          [--no-test] [--clean]
 #
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. Run it again
 # to update. Missing build tools (meson, ninja) are installed into a private
 # Python venv; missing libraries are listed with the command for your system.
+# A release is checked against the commit recorded below, so a moved tag
+# never installs something else. --clean removes the build directory after
+# installing (for small disk quotas; the next update builds from scratch).
 set -eu
+
+# release tag -> commit it must point to (one line per release)
+RELEASES="
+shellter-v1.3.2 05a1ad752e6c701cb20e51be196ce880745008c4
+"
+MESON_PIP="meson==1.12.1"
+NINJA_PIP="ninja==1.13.2"
 
 PREFIX="$HOME/.local/opt/erssi"
 SRC="$HOME/.local/src/erssi"
 REF=""
 REPO="https://github.com/y-o-o-z/erssi.git"
 RUN_TESTS=1
+CLEAN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -22,7 +34,8 @@ while [ $# -gt 0 ]; do
         --ref) REF=$2; shift 2 ;;
         --repo) REPO=$2; shift 2 ;;
         --no-test) RUN_TESTS=0; shift ;;
-        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+        --clean) CLEAN=1; shift ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "shellter-install.sh: unknown option $1 (--help)" >&2; exit 2 ;;
     esac
 done
@@ -65,12 +78,14 @@ ok "git, cc, perl, $PKGCONFIG"
 
 MESON=meson; NINJA=ninja
 if ! have meson || ! have ninja; then
-    have python3 || die "meson and ninja are missing and so is python3: $(hint_packages)"
+    PY=""
+    for p in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do have "$p" && { PY=$p; break; }; done
+    [ -n "$PY" ] || die "meson and ninja are missing and so is Python 3: $(hint_packages)"
     VENV="$SRC.venv"
     if [ ! -x "$VENV/bin/meson" ] || [ ! -x "$VENV/bin/ninja" ]; then
-        say "meson/ninja not found - installing them into $VENV (no root needed)"
-        python3 -m venv "$VENV" || die "python3 -m venv failed (Debian: apt install python3-venv)"
-        "$VENV/bin/pip" install -q --upgrade meson ninja || die "pip could not install meson and ninja"
+        say "meson/ninja not found - installing $MESON_PIP and $NINJA_PIP into $VENV (no root needed)"
+        "$PY" -m venv "$VENV" || die "$PY -m venv failed (Debian: apt install python3-venv)"
+        "$VENV/bin/pip" install -q "$MESON_PIP" "$NINJA_PIP" || die "pip could not install meson and ninja"
     fi
     PATH="$VENV/bin:$PATH"; export PATH
 fi
@@ -95,24 +110,36 @@ optional "libcurl + chafa" "$PKGCONFIG --exists 'libcurl chafa'" "no image previ
 optional "libotr + libgcrypt" "$PKGCONFIG --exists 'libotr libgcrypt'" "no OTR"
 
 # ── source ───────────────────────────────────────────────────────────
-if [ -d "$SRC/.git" ]; then
-    say "updating $SRC"
-    git -C "$SRC" fetch -q --tags origin
-else
-    say "cloning $REPO"
-    mkdir -p "$(dirname "$SRC")"
-    git clone -q "$REPO" "$SRC"
-fi
 if [ -z "$REF" ]; then
     # the newest release of this edition, else main
-    REF=$(git -C "$SRC" tag -l 'shellter-v*' --sort=-version:refname | head -1)
+    REF=$(git ls-remote --tags --refs "$REPO" 'shellter-v*' 2>/dev/null \
+          | sed 's#.*refs/tags/##' | sort -t. -k1,1V -k2,2n -k3,3n 2>/dev/null | tail -1)
     [ -n "$REF" ] || REF=main
 fi
-case "$REF" in
-    main|master) git -C "$SRC" checkout -q "$REF" && git -C "$SRC" merge -q --ff-only "origin/$REF" ;;
-    *) git -C "$SRC" checkout -q "$REF" ;;
-esac
-ok "source: $REF ($(git -C "$SRC" rev-parse --short HEAD))"
+# only this ref, without history: a few MB instead of the whole repository
+GITLOG=$(mktemp)
+G() { git -c advice.detachedHead=false "$@" >"$GITLOG" 2>&1 || { cat "$GITLOG" >&2; rm -f "$GITLOG"; return 1; }; }
+if [ -d "$SRC/.git" ]; then
+    say "updating $SRC to $REF"
+    G -C "$SRC" fetch -q --depth 1 origin "$REF" || die "cannot fetch $REF from $REPO"
+    G -C "$SRC" checkout -q --force FETCH_HEAD || die "cannot check out $REF"
+else
+    say "downloading $REF from $REPO"
+    mkdir -p "$(dirname "$SRC")"
+    G clone -q --depth 1 --branch "$REF" "$REPO" "$SRC" || die "cannot download $REF from $REPO"
+fi
+rm -f "$GITLOG"
+HEAD_SHA=$(git -C "$SRC" rev-parse HEAD)
+PINNED=$(printf '%s\n' "$RELEASES" | awk -v r="$REF" '$1 == r {print $2}')
+if [ -n "$PINNED" ]; then
+    [ "$HEAD_SHA" = "$PINNED" ] || die "$REF points to $HEAD_SHA, but this installer expects $PINNED - refusing to build (download the installer again, or report it)"
+    ok "source: $REF, verified ($(echo "$HEAD_SHA" | cut -c1-8))"
+else
+    case "$REF" in
+        shellter-v*) warn "$REF is newer than this installer - not verified; download the installer again to verify it" ;;
+    esac
+    ok "source: $REF ($(echo "$HEAD_SHA" | cut -c1-8))"
+fi
 
 # ── build, test, install ─────────────────────────────────────────────
 say "building (a few minutes on a small shell box)"
@@ -131,6 +158,10 @@ $NINJA -C "$SRC/Build" install >/dev/null || die "install failed"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$PREFIX/bin/erssi" "$HOME/.local/bin/erssi"
 ok "installed: $PREFIX ($("$PREFIX/bin/erssi" --version))"
+if [ "$CLEAN" = 1 ]; then
+    rm -rf "$SRC/Build"
+    ok "build directory removed ($(du -sh "$SRC" "$PREFIX" 2>/dev/null | awk '{print $1}' | paste -sd+ -) used)"
+fi
 
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) RUN=erssi ;;
