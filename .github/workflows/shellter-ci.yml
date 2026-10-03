@@ -1,0 +1,94 @@
+name: Shellter CI
+
+# Build and test of erssi Shellter Edition on every push, pull request and
+# release tag: the normal hardened build, a build with AddressSanitizer and
+# UndefinedBehaviorSanitizer running the same tests, and a check that the
+# installer is valid POSIX sh. The workflows inherited from erssi-org
+# (release binaries, ABI check, commit lint) are disabled in this fork.
+
+on:
+  push:
+    branches: [main]
+    tags: ['shellter-v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEPS: >-
+    ninja-build meson pkgconf gcc libglib2.0-dev libssl-dev libperl-dev
+    libutf8proc-dev libotr5-dev libgcrypt20-dev libcurl4-openssl-dev
+    libchafa-dev
+  OPTIONS: >-
+    -Dwith-perl=yes -Dwith-otr=yes -Dwith-proxy=yes -Dwith-fe-web=yes
+    -Dwith-image-preview=yes -Ddisable-utf8proc=no
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: hardened
+            setup: ''
+          - name: sanitizers
+            setup: -Db_sanitize=address,undefined -Db_lundef=false -Dbuildtype=debug
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q $DEPS
+
+      - name: Configure
+        run: meson setup Build $OPTIONS ${{ matrix.setup }} -Dprefix="$RUNNER_TEMP/erssi"
+
+      - name: Build
+        run: |
+          ninja -C Build 2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo '::error::compiler warnings'; grep 'warning:' build.log; exit 1
+          fi
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: meson test -C Build --print-errorlogs
+
+      - name: Install and start
+        if: matrix.name == 'hardened'
+        run: |
+          ninja -C Build install
+          "$RUNNER_TEMP/erssi/bin/erssi" --version
+
+  installer:
+    name: Installer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: POSIX sh syntax and shellcheck
+        run: |
+          sh -n shellter-install.sh
+          dash -n shellter-install.sh
+          shellcheck -s sh -S warning shellter-install.sh utils/pre-push
+      - name: Every pinned release points to its commit
+        run: |
+          git fetch --tags --force -q origin
+          awk 'NF == 2 && $1 ~ /^shellter-v/' shellter-install.sh | while read -r tag sha; do
+            got=$(git rev-parse "$tag^{commit}")
+            [ "$got" = "$sha" ] || { echo "::error::$tag is $got, installer pins $sha"; exit 1; }
+            echo "$tag -> $sha ok"
+          done
