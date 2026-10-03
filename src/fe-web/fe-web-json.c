@@ -16,6 +16,21 @@
 #include <ctype.h>
 #include <stdlib.h>
 
+/* Value of the 4 hex digits at p, or -1 */
+static int json_hex4(const char *p)
+{
+	int i, value = 0;
+
+	for (i = 0; i < 4; i++) {
+		int digit = g_ascii_xdigit_value(p[i]);
+
+		if (digit < 0)
+			return -1;
+		value = value * 16 + digit;
+	}
+	return value;
+}
+
 /* Helper: Unescape JSON string (\\, \", \n, \r, \t, \b, \f, \uXXXX) */
 static char *fe_web_json_unescape(const char *str)
 {
@@ -58,36 +73,28 @@ static char *fe_web_json_unescape(const char *str)
 				g_string_append_c(result, '\t');
 				break;
 			case 'u': {
-				/* Unicode escape: \uXXXX */
-				char hex[5] = { 0 };
-				unsigned int code;
-				int i;
+				/* \uXXXX is a UTF-16 unit: a surrogate pair is one
+				 * character, and a lone surrogate or a NUL (which a
+				 * C string cannot hold) becomes U+FFFD */
+				int code = json_hex4(p + 1);
 
-				/* Read 4 hex digits */
-				for (i = 0; i < 4 && *(p + 1 + i) != '\0'; i++) {
-					hex[i] = *(p + 1 + i);
+				if (code < 0) {
+					/* not 4 hex digits: keep it as it is */
+					g_string_append_c(result, 'u');
+					break;
 				}
+				p += 4;
+				if (code >= 0xD800 && code <= 0xDBFF && p[1] == '\\' && p[2] == 'u') {
+					int low = json_hex4(p + 3);
 
-				if (i == 4) {
-					code = (unsigned int) strtol(hex, NULL, 16);
-					/* Simple UTF-8 encoding (BMP only) */
-					if (code < 0x80) {
-						g_string_append_c(result, (char) code);
-					} else if (code < 0x800) {
-						g_string_append_c(result,
-						                  (char) (0xC0 | (code >> 6)));
-						g_string_append_c(result,
-						                  (char) (0x80 | (code & 0x3F)));
-					} else {
-						g_string_append_c(result,
-						                  (char) (0xE0 | (code >> 12)));
-						g_string_append_c(
-						    result, (char) (0x80 | ((code >> 6) & 0x3F)));
-						g_string_append_c(result,
-						                  (char) (0x80 | (code & 0x3F)));
+					if (low >= 0xDC00 && low <= 0xDFFF) {
+						code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+						p += 6;
 					}
-					p += 4; /* Skip the 4 hex digits */
 				}
+				if (code == 0 || (code >= 0xD800 && code <= 0xDFFF))
+					code = 0xFFFD;
+				g_string_append_unichar(result, code);
 				break;
 			}
 			default:
