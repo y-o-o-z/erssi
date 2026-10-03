@@ -59,8 +59,12 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 	guint64 len;
 	const guchar *p;
 
-	if (data == NULL || data_len < 2) {
+	if (data == NULL) {
 		return -1;
+	}
+	/* A header cut between two reads is not an error: wait for the rest */
+	if (data_len < 2) {
+		return 0;
 	}
 
 	p = data;
@@ -78,13 +82,13 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 	/* Extended payload length */
 	if (len == 126) {
 		if (data_len < 4) {
-			return -1;
+			return 0;
 		}
 		len = (p[0] << 8) | p[1];
 		p += 2;
 	} else if (len == 127) {
 		if (data_len < 10) {
-			return -1;
+			return 0;
 		}
 		len = ((guint64)p[0] << 56) | ((guint64)p[1] << 48) |
 		      ((guint64)p[2] << 40) | ((guint64)p[3] << 32) |
@@ -98,7 +102,7 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 	/* Masking key */
 	if (*masked) {
 		if (p + 4 > data + data_len) {
-			return -1;
+			return 0;
 		}
 		memcpy(mask_key, p, 4);
 		p += 4;

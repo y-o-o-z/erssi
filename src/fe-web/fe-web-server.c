@@ -38,13 +38,22 @@ static int listen_tag = -1;
 #define FE_WEB_HANDSHAKE_TIMEOUT 10
 static guint relisten_tag = 0;
 static time_t refused_logged = 0;
-/* After FE_WEB_MAX_FAILS wrong passwords within a minute, every login is
- * refused for FE_WEB_LOCKOUT seconds without looking at the password. */
+/* After FE_WEB_MAX_FAILS wrong passwords within a minute, logins are paced:
+ * one password is checked every FE_WEB_CHECK_INTERVAL seconds and requests
+ * in between are refused unchecked (429), until a minute passes without a
+ * wrong password. Not a full lockout: fe-web usually listens on a loopback
+ * port every user of a shared box can reach, and a lockout would let any of
+ * them keep the owner's web client out for good. */
 #define FE_WEB_MAX_FAILS 5
-#define FE_WEB_LOCKOUT 60
+#define FE_WEB_CHECK_INTERVAL 2
 static int login_fails = 0;
-static time_t login_fails_since = 0;
-static time_t login_locked_until = 0;
+static time_t login_last_fail = 0;
+static time_t login_last_check = 0;
+
+/* Connections still logging in have their own limit, so they can never
+ * take the places of logged-in clients; when it is reached the oldest of
+ * them makes room (idle connections cannot keep new logins out). */
+#define FE_WEB_MAX_PENDING 8
 static int refused_unlogged = 0;
 
 /* Forward declarations */
@@ -171,6 +180,7 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	char *key_end;
 	char *accept_key;
 	GString *response;
+	time_t now;
 
 	/* Look for Sec-WebSocket-Key header */
 	key_line = strstr(data, "Sec-WebSocket-Key:");
@@ -187,26 +197,29 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		return 0; /* Headers not complete */
 	}
 
-	/* Locked after too many wrong passwords: refuse without checking */
-	if (time(NULL) < login_locked_until) {
-		log_refused(client, "too many wrong passwords, logins paused");
+	/* Paced after too many wrong passwords: one check per interval */
+	now = time(NULL);
+	if (now - login_last_fail > 60)
+		login_fails = 0;
+	if (login_fails >= FE_WEB_MAX_FAILS && now - login_last_check < FE_WEB_CHECK_INTERVAL) {
+		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
+		                           "Retry-After: " G_STRINGIFY(FE_WEB_CHECK_INTERVAL) "\r\n"
+		                           "Content-Length: 0\r\n\r\n";
+		if (client->use_ssl && client->ssl_channel != NULL)
+			fe_web_ssl_write(client->ssl_channel, busy, sizeof(busy) - 1);
+		log_refused(client, "too many wrong passwords, logins paced");
 		return -1;
 	}
+	login_last_check = now;
 
 	/* Verify password */
 	if (!fe_web_verify_password(data)) {
-		time_t now = time(NULL);
-
-		if (now - login_fails_since > 60) {
-			login_fails = 0;
-			login_fails_since = now;
-		}
-		if (++login_fails >= FE_WEB_MAX_FAILS) {
-			login_locked_until = now + FE_WEB_LOCKOUT;
-			login_fails = 0;
+		login_last_fail = now;
+		if (++login_fails == FE_WEB_MAX_FAILS) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: %d wrong passwords within a minute - logins paused for %d s",
-			          FE_WEB_MAX_FAILS, FE_WEB_LOCKOUT);
+			          "fe-web: %d wrong passwords within a minute - "
+			          "checking one login every %d s",
+			          FE_WEB_MAX_FAILS, FE_WEB_CHECK_INTERVAL);
 		}
 		log_refused(client, "wrong or missing password");
 
@@ -441,7 +454,25 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 }
 
 /* Read data from client */
+static void client_input_once(WEB_CLIENT_REC *client);
+
+/* Read until nothing is left: OpenSSL may hold already-decrypted data (a
+ * record larger than one read, several frames in one record) that never
+ * makes the socket readable again, so stopping after one read would leave
+ * those frames waiting for the next packet */
 static void client_input(WEB_CLIENT_REC *client)
+{
+	int rounds = 0;
+
+	do {
+		client_input_once(client);
+	} while (g_slist_find(web_clients, client) != NULL && client->use_ssl &&
+	         client->ssl_channel != NULL && client->ssl_channel->ssl != NULL &&
+	         client->ssl_channel->handshake_done &&
+	         SSL_pending(client->ssl_channel->ssl) > 0 && ++rounds < 1024);
+}
+
+static void client_input_once(WEB_CLIENT_REC *client)
 {
 	guchar buffer[8192];
 	int ret;
@@ -599,9 +630,29 @@ static void sig_listen(void)
 		return;
 	}
 
-	if (g_slist_length(web_clients) >= FE_WEB_MAX_CLIENTS) {
-		net_disconnect(handle);
-		return;
+	{
+		WEB_CLIENT_REC *oldest = NULL;
+		int logged_in = 0, pending = 0;
+		GSList *tmp;
+
+		for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
+			WEB_CLIENT_REC *c = tmp->data;
+			if (c->authenticated) {
+				logged_in++;
+			} else {
+				pending++;
+				if (oldest == NULL || c->connected_at < oldest->connected_at)
+					oldest = c;
+			}
+		}
+		if (logged_in >= FE_WEB_MAX_CLIENTS) {
+			net_disconnect(handle);
+			return;
+		}
+		if (pending >= FE_WEB_MAX_PENDING && oldest != NULL) {
+			log_refused(oldest, "too many connections logging in, oldest closed");
+			fe_web_close_client(oldest);
+		}
 	}
 
 	/* Increase TCP send buffer to 2MB for large state dumps */
