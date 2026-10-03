@@ -14,14 +14,38 @@
 
 #include <irssi/src/fe-fuzz/fe-web/fe-web-fuzz.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* known answers of the JSON string decoding, checked once at start */
+static const char *const decoded[][2] = {
+	{ "{\"v\":\"a\\\"b\\\\c\\/\\n\"}", "a\"b\\c/\n" },
+	{ "{\"v\" : \"\\u00e9\\u20AC\"}", "\xc3\xa9\xe2\x82\xac" },
+	{ "{\"v\":\"\\ud83d\\ude00!\"}", "\xf0\x9f\x98\x80!" },
+	{ "{\"v\":\"\\ud800x\\udc00\"}", "\xef\xbf\xbdx\xef\xbf\xbd" },
+	{ "{\"v\":\"a\\u0000b\"}", "a\xef\xbf\xbd" "b" },
+	{ "{\"v\":\"\\uzz12\\u12\"}", "uzz12u12" },
+};
+
 int LLVMFuzzerInitialize(int *argc, char ***argv)
 {
+	gsize i;
+
 	(void) argc;
 	(void) argv;
 	fe_web_fuzz_init(FALSE);
+
+	for (i = 0; i < G_N_ELEMENTS(decoded); i++) {
+		char *value = fe_web_json_get_string(decoded[i][0], "v");
+
+		if (g_strcmp0(value, decoded[i][1]) != 0) {
+			fprintf(stderr, "fe_web_json_get_string(%s) = \"%s\", not \"%s\"\n",
+			        decoded[i][0], value, decoded[i][1]);
+			abort();
+		}
+		g_free(value);
+	}
 	return 0;
 }
 
@@ -34,9 +58,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
 	WEB_CLIENT_REC *client;
 	char *json;
+	gboolean utf8;
 	gsize i;
 
 	json = g_strndup((const char *) data, size);
+	utf8 = g_utf8_validate(json, -1, NULL);
 
 	/* the lookups on their own, and the escaping of what they return */
 	for (i = 0; i < G_N_ELEMENTS(keys); i++) {
@@ -44,6 +70,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		char *escaped = fe_web_escape_json(value);
 
 		if (value != NULL && strlen(escaped) < strlen(value))
+			abort();
+		/* \u escapes must not turn valid UTF-8 (what browsers send)
+		 * into invalid, which irssi would send on to IRC */
+		if (value != NULL && utf8 && !g_utf8_validate(value, -1, NULL))
 			abort();
 		fe_web_json_get_int(json, keys[i], -1);
 		fe_web_json_has_key(json, keys[i]);
