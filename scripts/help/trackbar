@@ -1,0 +1,70 @@
+
+%9Składnia:%9
+
+TRACKBAR%|
+TRACKBAR GOTO%|
+TRACKBAR KEEP%|
+TRACKBAR MARK%|
+TRACKBAR MARKVISIBLE%|
+TRACKBAR MARKALL%|
+TRACKBAR REMOVE%|
+TRACKBAR REMOVEALL%|
+TRACKBAR REDRAW%|
+
+%9Parametry:%9
+
+    GOTO:        Przewija aktywne okno do linii trackbara (to samo co
+                 /TRACKBAR bez argumentów).
+    KEEP:        Przy najbliższym opuszczeniu aktywnego okna linia zostaje
+                 na miejscu (jednorazowo).
+    MARK:        Usuwa starą linię i rysuje nową na dole aktywnego okna
+                 (to samo co /MARK).
+    MARKVISIBLE: Jak MARK, dla wszystkich widocznych okien (podział ekranu).
+    MARKALL:     Jak MARK, dla wszystkich okien.
+    REMOVE:      Usuwa linię z aktywnego okna.
+    REMOVEALL:   Usuwa linie ze wszystkich okien.
+    REDRAW:      Przerysowuje wszystkie linie według bieżących ustawień.
+
+%9Opis:%9
+
+    Skrypt trackbar.pl rysuje poziomą linię w oknie, które opuszczasz, więc
+    po powrocie widać, do którego miejsca czytałeś. Poprzednia linia w tym
+    oknie znika. Komenda skryptu trackbar.pl.
+
+    Linia nie trafia do logów (poziom NEVER), nie pojawia się w pustych
+    oknach ani w oknach z trackbar_ignore_windows (wyjątek: /MARK i
+    /TRACKBAR MARK). Przed /UPGRADE i przy wyładowaniu skryptu wszystkie
+    linie są usuwane, a po zmianie rozmiaru terminala - przerysowywane.
+
+    GOTO przewija przez /SCROLLBACK GOTO do czasu narysowania linii
+    (z dokładnością do sekundy). Gdy w oknie nie ma linii, pojawia się
+    „No trackbar found in this window”.
+
+%9Ustawienia:%9
+
+    trackbar_string = ─
+        Znak lub ciąg, z którego składa się linia („-” przy terminalu
+        bez UTF-8).
+    trackbar_style = %%K
+        Kolor linii w zapisie formatów irssi.
+    trackbar_ignore_windows =
+        Okna bez linii: nazwy, numery albo nazwy kanałów i rozmów,
+        oddzielone spacją lub przecinkiem.
+    trackbar_use_status_window = ON
+        Linia także w oknie (status).
+    trackbar_print_timestamp = OFF
+        Znacznik czasu przed linią.
+    trackbar_require_seen = OFF
+        ON = linia przesuwa się dopiero wtedy, gdy ją zobaczyłeś
+        (przewinąłeś do niej).
+    trackbar_all_manual = OFF
+        ON = linia przesuwa się tylko po /MARK.
+
+%9Przykłady:%9
+
+    /TRACKBAR
+    /TRACKBAR MARKALL
+    /BIND meta-t command trackbar
+
+%9Zobacz też:%9 BIND, MARK, SCROLLBACK
+
