@@ -325,6 +325,7 @@ void cmd_credential_migrate_to_config(const char *data, SERVER_REC *server, WI_I
 	signal_emit("command set", 3, "credential_storage_mode config", server, item);
 }
 
+/* SYNTAX: CREDENTIAL ENCRYPT */
 void cmd_credential_encrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	/* 1. Check if master password is set */
@@ -348,6 +349,7 @@ void cmd_credential_encrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 	signal_emit("command set", 3, "credential_config_encrypt ON", server, item);
 }
 
+/* SYNTAX: CREDENTIAL DECRYPT */
 void cmd_credential_decrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	/* 1. Check if master password is set (needed for verification) */
@@ -371,6 +373,7 @@ void cmd_credential_decrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 	signal_emit("command set", 3, "credential_config_encrypt OFF", server, item);
 }
 
+/* SYNTAX: CREDENTIAL RELOAD */
 void cmd_credential_reload(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	if (credential_external_reload()) {
@@ -432,6 +435,7 @@ void credential_show_help(void)
 	         "  /SET credential_external_file <filename>");
 }
 
+/* SYNTAX: CREDENTIAL STATUS */
 void credential_show_status(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	const char *storage_mode = credential_storage_mode_to_string(credential_storage_mode);
