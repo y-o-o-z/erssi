@@ -641,7 +641,7 @@ formats = {
 
   "fe-ansi" = {
     # Baner startowy w barwach shellter.me ("$$" = znak dolara)
-    irssi_banner = "%Z484F58──────────────────────────────────────────────────────────────%N%:%:  %ZF59E0B$$%N %ZE6EDF3%_shellter%_%Z7D8590.me%N   %Z6E7681// your shell, your shelter%N%:%:  %Z7D8590erssi %ZFCD34D$J%Z7D8590 · motyw %ZF59E0Bshellter%Z7D8590 · %ZE6EDF3/help%N%:%:%Z484F58──────────────────────────────────────────────────────────────%N";
+    irssi_banner = "%Z484F58──────────────────────────────────────────────────────────────%N%:%:  %ZF59E0B$$%N %ZE6EDF3%_shellter%_%Z7D8590.me%N   %Z6E7681// your shell, your shelter%N%:%:  %Z7D8590erssi %ZF59E0BShellter Edition%Z7D8590 %ZFCD34D$J%Z7D8590 · %ZE6EDF3/help%N%:%:%Z484F58──────────────────────────────────────────────────────────────%N";
     # Lastlog
     lastlog_too_long = "%ZFCD34D⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
     lastlog_count = "%Z79C0FF»%N {hilight Lastlog}: $0 lines";

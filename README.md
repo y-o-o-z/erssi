@@ -1,12 +1,14 @@
-# erssi — y-o-o-z fork
+# erssi Shellter Edition
+
+**Your shell, your shelter — on IRCnet.**
 
 [![Version](https://img.shields.io/badge/version-1.3.2-f59e0b.svg)](NEWS)
 [![Upstream](https://img.shields.io/badge/erssi-1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/irssi-1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
 
-A fork of [erssi](https://github.com/erssi-org/erssi), the next-generation
-irssi, tuned for daily use on IRCnet: a polished start theme, rank-colored
+erssi Shellter Edition is a fork of [erssi](https://github.com/erssi-org/erssi),
+the next-generation irssi, tuned for daily use on IRCnet: a polished start theme, rank-colored
 nicks, WHOIS that stays out of your channels, a fe-web server that a browser
 client can drive exactly like the terminal, and scripts for IRC operators.
 
@@ -25,7 +27,7 @@ erssi 1.3.2 (20261002 1302)
 
 | | |
 |---|---|
-| **erssi 1.3.2** | This fork: all of erssi 1.3.1 (erssi-org, 2026-04-06) plus the changes below. Release notes at the top of [NEWS](NEWS). |
+| **erssi 1.3.2** | erssi Shellter Edition: all of erssi 1.3.1 (erssi-org, 2026-04-06) plus the changes below. Release notes at the top of [NEWS](NEWS). |
 | **irssi base** | irssi 1.4.5, the latest irssi release (2023-10-03), plus irssi `master` up to 2025-07-26 as merged by erssi-org. |
 | **Perl scripts** | `Irssi::version()` returns the release date (`20261002`), so scripts that require irssi 1.4.5 or newer by date load. `$J` is erssi's own version (`1.3.2`): a script that compares `$J` with `1.4` needs a patch, as the bundled `rpe2e.pl` has. |
 
