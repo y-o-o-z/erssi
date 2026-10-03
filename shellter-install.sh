@@ -8,9 +8,14 @@
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. Run it again
 # to update. Missing build tools (meson, ninja) are installed into a private
 # Python venv; missing libraries are listed with the command for your system.
-# A release is checked against the commit recorded below, so a moved tag
-# never installs something else. --clean removes the build directory after
-# installing (for small disk quotas; the next update builds from scratch).
+# Without --ref it installs the newest release recorded below and checks it
+# against the recorded commit, so neither a moved nor a newly pushed tag
+# changes what gets installed; --ref main (or any other ref) is built as is,
+# with a warning. --clean removes the build directory after installing (for
+# small disk quotas; the next update builds from scratch).
+#
+# Everything runs from main() at the end of the file, so a download cut
+# short by the network does not run half a script.
 set -eu
 
 # release tag -> commit it must point to (one line per release)
@@ -20,6 +25,24 @@ shellter-v1.3.2 05a1ad752e6c701cb20e51be196ce880745008c4
 MESON_PIP="meson==1.12.1"
 NINJA_PIP="ninja==1.13.2"
 
+usage() {
+    cat <<'USAGE'
+erssi Shellter Edition installer
+
+  curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
+  sh shellter-install.sh [options]
+  curl -fsSL .../shellter-install.sh | sh -s -- [options]
+
+  --prefix DIR   install here (default ~/.local/opt/erssi)
+  --src DIR      source checkout used for building (default ~/.local/src/erssi)
+  --ref REF      release tag, branch or commit (default: newest verified release)
+  --repo URL     git repository (default https://github.com/y-o-o-z/erssi.git)
+  --no-test      skip the test suite
+  --clean        remove the build directory afterwards (small disk quotas)
+USAGE
+}
+
+main() {
 PREFIX="$HOME/.local/opt/erssi"
 SRC="$HOME/.local/src/erssi"
 REF=""
@@ -35,7 +58,7 @@ while [ $# -gt 0 ]; do
         --repo) REPO=$2; shift 2 ;;
         --no-test) RUN_TESTS=0; shift ;;
         --clean) CLEAN=1; shift ;;
-        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         *) echo "shellter-install.sh: unknown option $1 (--help)" >&2; exit 2 ;;
     esac
 done
@@ -111,17 +134,18 @@ optional "libotr + libgcrypt" "$PKGCONFIG --exists 'libotr libgcrypt'" "no OTR"
 
 # ── source ───────────────────────────────────────────────────────────
 if [ -z "$REF" ]; then
-    # the newest release of this edition, else main
-    REF=$(git ls-remote --tags --refs "$REPO" 'shellter-v*' 2>/dev/null \
-          | sed 's#.*refs/tags/##' | sort -t. -k1,1V -k2,2n -k3,3n 2>/dev/null | tail -1)
-    [ -n "$REF" ] || REF=main
+    # the newest release this installer knows (and can verify)
+    REF=$(printf '%s\n' "$RELEASES" | awk 'NF == 2 {r = $1} END {print r}')
+    [ -n "$REF" ] || die "no release recorded in this installer - use --ref"
 fi
 # only this ref, without history: a few MB instead of the whole repository
 GITLOG=$(mktemp)
 G() { git -c advice.detachedHead=false "$@" >"$GITLOG" 2>&1 || { cat "$GITLOG" >&2; rm -f "$GITLOG"; return 1; }; }
 if [ -d "$SRC/.git" ]; then
+    [ -z "$(git -C "$SRC" status --porcelain --untracked-files=no)" ] ||
+        die "$SRC has local changes - the installer would overwrite them; use another --src"
     say "updating $SRC to $REF"
-    G -C "$SRC" fetch -q --depth 1 origin "$REF" || die "cannot fetch $REF from $REPO"
+    G -C "$SRC" fetch -q --depth 1 "$REPO" "$REF" || die "cannot fetch $REF from $REPO"
     G -C "$SRC" checkout -q --force FETCH_HEAD || die "cannot check out $REF"
 else
     say "downloading $REF from $REPO"
@@ -136,7 +160,8 @@ if [ -n "$PINNED" ]; then
     ok "source: $REF, verified ($(echo "$HEAD_SHA" | cut -c1-8))"
 else
     case "$REF" in
-        shellter-v*) warn "$REF is newer than this installer - not verified; download the installer again to verify it" ;;
+        shellter-v*) warn "$REF is not recorded in this installer - not verified; download the installer again to verify it" ;;
+        *) warn "$REF is not a release - built as is, not verified" ;;
     esac
     ok "source: $REF ($(echo "$HEAD_SHA" | cut -c1-8))"
 fi
@@ -176,3 +201,6 @@ cat <<EOF
   ${B}Update:${N}    run this installer again
 
 EOF
+}
+
+main "$@"
