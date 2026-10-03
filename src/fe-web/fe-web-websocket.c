@@ -106,8 +106,14 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 
 	header_len = p - data;
 
+	/* Larger than any message a web client sends: refuse instead of
+	 * buffering it (and keep the length check below from overflowing) */
+	if (len > FE_WEB_MAX_FRAME) {
+		return -1;
+	}
+
 	/* Check if we have complete frame */
-	if (header_len + len > data_len) {
+	if (len > data_len - header_len) {
 		return 0; /* Incomplete frame */
 	}
 

@@ -82,10 +82,22 @@ static void fe_web_apply_settings(void)
 	}
 }
 
-static void fe_web_setup_changed(void)
+static guint apply_tag = 0;
+
+static gboolean fe_web_apply_idle(gpointer data)
 {
+	apply_tag = 0;
 	if (fe_web_settings_differ())
 		fe_web_apply_settings();
+	return FALSE;
+}
+
+/* Restarting the server drops every web client, also the one whose /SET
+ * is still running - so the restart waits until that command is done. */
+static void fe_web_setup_changed(void)
+{
+	if (apply_tag == 0 && fe_web_settings_differ())
+		apply_tag = g_idle_add(fe_web_apply_idle, NULL);
 }
 
 /* SYNTAX: FE_WEB STATUS */
@@ -174,6 +186,10 @@ void fe_web_deinit(void)
 {
 	/* Cleanup */
 	signal_remove("setup changed", (SIGNAL_FUNC) fe_web_setup_changed);
+	if (apply_tag != 0) {
+		g_source_remove(apply_tag);
+		apply_tag = 0;
+	}
 	command_unbind("fe_web", (SIGNAL_FUNC) cmd_fe_web);
 	command_unbind("fe_web status", (SIGNAL_FUNC) cmd_fe_web_status);
 
