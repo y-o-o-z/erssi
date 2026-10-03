@@ -45,12 +45,16 @@ erssi-v1.3.2 2026-10-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    connection messages
 	  - no server tag on lines in a window bound to that server (network
 	    windows); the Notices window keeps tags
+	  - a network window is found by its own name and sticky server, not
+	    by its active item: with a query kept in it, every reconnect
+	    created another network window
 	  - anti_floodnet_notices
 
 	+ Scripts (installed, not autoloaded)
 	  - tk.pl (TKLINE for IRCnet operators), skaner.pl (clones and IRC
 	    operators on a channel), mentions.pl (Mentions window and log),
-	    webjournal.pl (journal of every window for a web client)
+	    webjournal.pl (journal of every window for a web client),
+	    botnet.pl (botnet partylines: one connection and one window each)
 
 erssi-v1.3.0 2026-03-24  erssi-org team <https://github.com/erssi-org>
 	Lead Developer: Jerzy (kofany) Dąbrowski <https://github.com/kofany>
