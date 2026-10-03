@@ -28,6 +28,20 @@ static const char *const decoded[][2] = {
 	{ "{\"v\":\"\\uzz12\\u12\"}", "uzz12u12" },
 };
 
+/* and of the number lookup (-1 = not a number) */
+static const struct {
+	const char *json;
+	int value;
+} numbers[] = {
+	{ "{\"v\":6697}", 6697 },
+	{ "{\"v\": -12,\"w\":1}", -12 },
+	{ "{\"v\":true}", 1 },
+	{ "{\"v\":false}", 0 },
+	{ "{\"v\":99999999999}", -1 },
+	{ "{\"v\":\"6697\"}", -1 },
+	{ "{\"v\":}", -1 },
+};
+
 int LLVMFuzzerInitialize(int *argc, char ***argv)
 {
 	gsize i;
@@ -45,6 +59,15 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
 			abort();
 		}
 		g_free(value);
+	}
+	for (i = 0; i < G_N_ELEMENTS(numbers); i++) {
+		int value = fe_web_json_get_int(numbers[i].json, "v", -1);
+
+		if (value != numbers[i].value) {
+			fprintf(stderr, "fe_web_json_get_int(%s) = %d, not %d\n", numbers[i].json,
+			        value, numbers[i].value);
+			abort();
+		}
 	}
 	return 0;
 }
