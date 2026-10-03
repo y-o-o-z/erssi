@@ -9,7 +9,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | Patches | What they add |
 |---|---|
 | 0001 | A *Recent mentions* window for erssi (fe-web `is_highlight`). |
-| 0002, 0003, 0013 | The **shellter** theme (shellter.me colors, light and dark following the system, Geist fonts) and a sign-in page with a map of IRCnet. |
+| 0002, 0003, 0013 | The **shellter** theme (shellter.me colors, light and dark following the system; fonts since 0023: Inter and JetBrains Mono) and a sign-in page with a map of IRCnet. |
 | 0004, 0005, 0007, 0008, 0010–0012 | The erssi window journal (`scripts/webjournal.pl`): history without gaps across web restarts, an “erssi” group with windows that are not channels, script messages live. |
 | 0006 | Closing the fe-web connection with a handshake (no TLS errors in erssi). |
 | 0009 | Commands typed in a channel window run in that channel. |
@@ -22,6 +22,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0020 | Phones: the input line stays above the on-screen keyboard and the browser bar (visible-viewport height, 16px input so iOS does not zoom, 40px buttons, safe area). |
 | 0021 | Sessions and sign-out work with erssi: a reload keeps its session instead of creating a new never-expiring one, the session list and "Sign out" / "Sign out all other sessions" work, a sign-out button in the sidebar, sessions unused for 30 days expire. |
 | 0022 | The fe-web password goes in an `Authorization` header, never in the URL or a log; the settings test uses the certificate pin too, an unreadable `caFile` stops the connection, the certificate is re-read on every reconnect; sign-out waits for the server, sessions expire while Nexus runs and end on a password change; `irssiConnection.journalDir` per user. Needs erssi Shellter Edition 1.3.3. |
+| 0023 | Inter (text, interface) and JetBrains Mono (time, nick column, nick list, code) instead of Geist: variable fonts, latin + latin-ext, hosted with the theme (OFL 1.1); a monospaced nick list tells I from l and 0 from O; no programming ligatures in IRC text. |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in
