@@ -1,3 +1,31 @@
+erssi-v1.3.4 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 1.3.4: a Unix socket for the web frontend, a
+	light theme, English everywhere, sanitizer and fuzz testing.
+
+	+ fe-web
+	  - fe_web_socket: listen on a Unix socket (0600, parent directory
+	    0700, other users refused by their credentials) instead of a TCP
+	    port every user of a shared box can reach; TLS, the password and
+	    the certificate pin stay (NexusIRC patch 0024 connects to it)
+	+ Themes
+	  - shellter-light: the shellter layout in light colours, every text
+	    colour at 4.5:1 contrast or more on white
+	  - statusbar item colours come from the theme (new sb_* abstracts,
+	    old ones unchanged for other themes); one bar background instead
+	    of patches; shellter palette in the dark bar
+	  - sidepanel lines are expanded once: a 24-bit colour with a 0x05 or
+	    0x25 byte and "%" in names are no longer garbled
+	  - sidepanel scroll arrows use a theme format on the panel background
+	+ Scripts
+	  - messages and /help of all bundled scripts in English;
+	    botnet.pl 1.2.4 no longer uses a window freed by autoclose
+	    (found with AddressSanitizer)
+	+ Quality
+	  - no undefined behaviour in the config checksum (found with UBSan)
+	  - Shellter CI: hardened and ASan/UBSan builds, installer checks
+	  - NexusIRC 0023 (Source Sans 3 / Source Code Pro), 0025 (one
+	    message storage key)
+
 erssi-v1.3.3 2026-10-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.3: security and reliability fixes from a
 	second full review.
