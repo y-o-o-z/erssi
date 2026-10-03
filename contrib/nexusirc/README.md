@@ -21,6 +21,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0019 | Trust only erssi's own fe-web certificate (`~/.erssi/fe-web-cert.pem`, kept by erssi since 1.3.2) instead of any certificate on the port. |
 | 0020 | Phones: the input line stays above the on-screen keyboard and the browser bar (visible-viewport height, 16px input so iOS does not zoom, 40px buttons, safe area). |
 | 0021 | Sessions and sign-out work with erssi: a reload keeps its session instead of creating a new never-expiring one, the session list and "Sign out" / "Sign out all other sessions" work, a sign-out button in the sidebar, sessions unused for 30 days expire. |
+| 0022 | The fe-web password goes in an `Authorization` header, never in the URL or a log; the settings test uses the certificate pin too, an unreadable `caFile` stops the connection, the certificate is re-read on every reconnect; sign-out waits for the server, sessions expire while Nexus runs and end on a password change; `irssiConnection.journalDir` per user. Needs erssi Shellter Edition 1.3.3. |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in
@@ -30,7 +31,7 @@ the interface in Polish. For your own brand or language, change the texts in
 
 ## Install
 
-**1. erssi: fe-web and the journal** (y-o-o-z/erssi ≥ 1.3.2)
+**1. erssi: fe-web and the journal** (y-o-o-z/erssi ≥ 1.3.3)
 
 ```
 /set fe_web_password <long random secret, e.g. from: openssl rand -base64 32>
