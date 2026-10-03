@@ -38,6 +38,13 @@ static int listen_tag = -1;
 #define FE_WEB_HANDSHAKE_TIMEOUT 10
 static guint relisten_tag = 0;
 static time_t refused_logged = 0;
+/* After FE_WEB_MAX_FAILS wrong passwords within a minute, every login is
+ * refused for FE_WEB_LOCKOUT seconds without looking at the password. */
+#define FE_WEB_MAX_FAILS 5
+#define FE_WEB_LOCKOUT 60
+static int login_fails = 0;
+static time_t login_fails_since = 0;
+static time_t login_locked_until = 0;
 static int refused_unlogged = 0;
 
 /* Forward declarations */
@@ -100,8 +107,31 @@ static int fe_web_verify_password(const char *data)
 		return 0;
 	}
 
-	/* Check query parameter (?password=...) */
-	password_param = strstr(data, "?password=");
+	/* "Authorization: Bearer <password>" header - the password stays out of
+	 * the request line (and of anything that logs URLs) */
+	{
+		const char *headers = strstr(data, "\r\n");
+		const char *h = headers;
+
+		while (h != NULL && password == NULL) {
+			h += 2;
+			if (strncmp(h, "\r\n", 2) == 0)
+				break;  /* end of headers */
+			if (g_ascii_strncasecmp(h, "Authorization:", 14) == 0) {
+				const char *v = h + 14;
+				const char *end = strstr(v, "\r\n");
+
+				while (*v == ' ' || *v == '\t')
+					v++;
+				if (g_ascii_strncasecmp(v, "Bearer ", 7) == 0 && end != NULL && end > v + 7)
+					password = g_strndup(v + 7, end - (v + 7));
+			}
+			h = strstr(h, "\r\n");
+		}
+	}
+
+	/* Otherwise the query parameter (?password=...), as older web clients send */
+	password_param = password != NULL ? NULL : strstr(data, "?password=");
 	if (password_param != NULL) {
 		password_start = password_param + strlen("?password=");
 		password_end = strpbrk(password_start, " &\r\n");
@@ -157,8 +187,27 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		return 0; /* Headers not complete */
 	}
 
+	/* Locked after too many wrong passwords: refuse without checking */
+	if (time(NULL) < login_locked_until) {
+		log_refused(client, "too many wrong passwords, logins paused");
+		return -1;
+	}
+
 	/* Verify password */
 	if (!fe_web_verify_password(data)) {
+		time_t now = time(NULL);
+
+		if (now - login_fails_since > 60) {
+			login_fails = 0;
+			login_fails_since = now;
+		}
+		if (++login_fails >= FE_WEB_MAX_FAILS) {
+			login_locked_until = now + FE_WEB_LOCKOUT;
+			login_fails = 0;
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: %d wrong passwords within a minute - logins paused for %d s",
+			          FE_WEB_MAX_FAILS, FE_WEB_LOCKOUT);
+		}
 		log_refused(client, "wrong or missing password");
 
 		/* Send 401 Unauthorized response - MUST use SSL if enabled! */
@@ -475,6 +524,7 @@ static void client_input(WEB_CLIENT_REC *client)
 			fe_web_message_free(msg);
 
 			client->authenticated = TRUE;
+			login_fails = 0;
 
 			/* Clear input buffer */
 			g_byte_array_set_size(client->input_buffer, 0);
