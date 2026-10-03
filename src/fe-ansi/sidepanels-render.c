@@ -469,29 +469,32 @@ static void sp_cache_update_markers(SP_PANEL_CACHE *cache, int height,
 	cache->marker_below_row = height - 1;
 }
 
-/* Arrows marking more entries above/below the visible part of a panel.
- * Returns the number of cells drawn. */
-static int draw_scroll_markers(TERM_WINDOW *tw, int x, int height, gboolean more_above,
-                               gboolean more_below)
+/* Arrows marking more entries above/below the visible part of a panel,
+ * in the theme's sidepanel_scroll_arrow format ($0 is the arrow; the format
+ * must stay one cell wide - colours only, no text around $0) on the
+ * panel background. Returns the number of cells drawn. */
+static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int height,
+                               gboolean more_above, gboolean more_below)
 {
+	/* ASCII outside UTF-8: a non-UTF-8 terminal would get a C1 control
+	 * byte instead of the arrow */
+	gboolean utf8 = term_type == TERM_TYPE_UTF8;
 	int drawn = 0;
 
 	if (x < 0)
 		return 0;
 
-	term_set_color(tw, 6 | ATTR_BOLD); /* bright cyan */
 	if (more_above && height > 0) {
-		term_move(tw, x, 0);
-		/* ASCII outside UTF-8: a non-UTF-8 terminal would get a C1
-		 * control byte instead of the arrow */
-		term_add_unichar(tw, term_type == TERM_TYPE_UTF8 ? 0x2191 : '^'); /* ↑ */
+		draw_str_themed(tw, x, 0, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
+		                utf8 ? "\xe2\x86\x91" : "^", 1); /* up arrow */
 		drawn++;
 	}
 	if (more_below && height > 1) {
-		term_move(tw, x, height - 1);
-		term_add_unichar(tw, term_type == TERM_TYPE_UTF8 ? 0x2193 : 'v'); /* ↓ */
+		draw_str_themed(tw, x, height - 1, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
+		                utf8 ? "\xe2\x86\x93" : "v", 1); /* down arrow */
 		drawn++;
 	}
+	term_set_color(tw, ATTR_RESET);
 	return drawn;
 }
 
@@ -654,7 +657,8 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	draw_border_vertical(tw, width, height, 1);
 
 	/* Scroll markers in the column next to the border */
-	lines_changed += draw_scroll_markers(tw, width - 2, height, has_more_above, has_more_below);
+	lines_changed += draw_scroll_markers(tw, mw->active, width - 2, height, has_more_above,
+	                                     has_more_below);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
@@ -945,7 +949,8 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	/* Scroll markers in the outer (right) column: column 1, right after the
 	 * border, is the nick's mode prefix - a marker there read as part of the
 	 * nick (e.g. "vKnut") */
-	lines_changed += draw_scroll_markers(tw, width - 1, height, has_more_above, has_more_below);
+	lines_changed += draw_scroll_markers(tw, mw->active, width - 1, height, has_more_above,
+	                                     has_more_below);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
