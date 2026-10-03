@@ -1,0 +1,39 @@
+
+%9Składnia:%9
+
+UNTKL %|[-server <tag>] [-mask ident|host|domain] [-dry] <user@host|nick>
+
+%9Parametry:%9
+
+    -server:     Tag połączenia; domyślnie serwer aktywnego okna.
+    -mask:       Rodzaj maski budowanej z WHOIS, gdy podano nick (jak w TKL;
+                 domyślnie tk_mask_type).
+    -dry:        Podgląd: pokazuje linię UNTKLINE i nic nie wysyła.
+
+    <user@host|nick>: Maska do zdjęcia albo nick, z którego skrypt zbuduje
+                 maskę przez WHOIS.
+
+    Opcja -force jest przyjmowana, ale przy UNTKL niczego nie zmienia.
+
+%9Opis:%9
+
+    Zdejmuje czasową K-linię (UNTKLINE) na serwerze ircd 2.11. Komenda
+    skryptu tk.pl.
+
+    Serwer dopasowuje maskę dosłownie, bez wildcardów: musi być identyczna
+    z maską nadaną przez TKLINE. Najpewniej skopiować ją z /TKLIST. Przy
+    podaniu nicka skrypt ostrzega, że maska z WHOIS może się nie zgadzać
+    (inny rodzaj maski, zmieniony host).
+
+    Wymaga statusu IRC operatora, chyba że tk_require_oper = OFF. Maska
+    przechodzi te same kontrole formatu co w TKL; wysłanie trafia do
+    dziennika tk_audit.jsonl.
+
+%9Przykłady:%9
+
+    /UNTKL *bot@*.example.org
+    /UNTKL -dry *@203.0.113.*
+    /UNTKL -mask host spammer
+
+%9Zobacz też:%9 KLIST, TK, TKL, TKLIST
+

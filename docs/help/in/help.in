@@ -12,6 +12,11 @@
 
     Displays the documentation for the given command.
 
+    Help files are read from the help directory in your configuration
+    directory (~/.erssi/help) first, then from the directories in the
+    help_path setting. Put a file named after a command there to add help
+    for a script command or to replace the built-in text.
+
 %9Examples:%9
 
     /HELP
