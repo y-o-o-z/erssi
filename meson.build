@@ -696,6 +696,12 @@ install_man('docs/irssi.1')
 # subdirs #
 ###########
 
+# Tests run with HOME in the build directory: the default configuration
+# logs to ~/.erssi/logs, and a test must never write into the real home of
+# whoever builds erssi.
+test_env = environment()
+test_env.set('HOME', meson.build_root() / 'test-home')
+
 subdir('src')
 subdir('tests')
 subdir('docs')

@@ -34,6 +34,7 @@ test_test_paste_join_multiline = executable('test-paste-join-multiline',
 )
 
 test('test-paste-join-multiline test', test_test_paste_join_multiline,
+  env : test_env,
   args : ['--tap'],
   protocol : 'tap')
 
@@ -56,5 +57,6 @@ test_test_sidepanel_text = executable('test-sidepanel-text',
 )
 
 test('test-sidepanel-text test', test_test_sidepanel_text,
+  env : test_env,
   args : ['--tap'],
   protocol : 'tap')
