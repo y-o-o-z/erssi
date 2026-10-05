@@ -827,6 +827,12 @@ formats = {
     chanstats_bars = "%Z687079$[-13]0{col}%Z0969DA$1%N";
     chanstats_error = "    %Z59636Echanstats{col}%ZCF222E$0%N";
   };
+  "Irssi::Script::histsearch" = {
+    histsearch_prompt = "%Z59636E($0)`%n%Z9A6700$1-%n%Z59636E':%n ";
+    histsearch_failed = "%ZCF222E(failed $0)%n%Z59636E`%n%Z9A6700$1-%n%Z59636E':%n ";
+    histsearch_info = "   %Z59636Ehistsearch{col}$0";
+    histsearch_error = "   %Z59636Ehistsearch{col}%ZCF222E$0%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z59636Ebotnet{col}$0";
     botnet_sb_label = "%Z59636Ebot%n";
