@@ -29,9 +29,12 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
 The installer checks the build dependencies and prints the exact package
 command for your system when something is missing, installs `meson` and
 `ninja` into a private Python environment if the system has none, builds the
-latest release, runs the test suite, installs to `~/.local/opt/erssi` and
-links `~/.local/bin/erssi`. Run it again to update. Options: `--prefix`,
-`--ref <tag|branch>`, `--no-test`.
+newest release recorded in the installer — and only if its tag points to the
+recorded commit — runs the test suite, installs to `~/.local/opt/erssi` and
+links `~/.local/bin/erssi`. Run it again to update. Works on Linux and
+FreeBSD. Options: `--prefix`, `--ref <tag|branch>` (anything that is not a
+recorded release is built with a warning), `--no-test`, `--clean` (remove
+the build directory afterwards, for small disk quotas).
 
 erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
 irssi. Start it inside tmux so the session survives logging out.
@@ -93,9 +96,13 @@ and used when present. For a system-wide install use
 - **Clean windows** — network windows open without `/WINDOW` chatter and
   without server tags on every line; WHOIS replies go to the network window
   (`print_whois_rpl_in_server_window`), not into the channel you are reading.
+- **Themeable statusbar** — the colours of the statusbar items (time,
+  nick, window, activity, lag, prompt) come from the theme (`sb_*`
+  abstracts), with one continuous bar background.
 - **Every terminal** — 24-bit colour where the terminal shows it, the
   nearest 256-colour entry where it does not (GNU Screen, Linux console,
-  8/16-colour terminals). `/set term_truecolor auto|on|off` overrides it.
+  rxvt-unicode, 8/16-colour terminals). `/set term_truecolor auto|on|off`
+  overrides it.
 
 ### Help for every command
 
@@ -107,11 +114,13 @@ first — drop in a file named after a command to document your own scripts.
 ### IRCnet tools
 
 Bundled in `<prefix>/share/irssi/scripts` and loaded on demand
-(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`).
+(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`). Their
+messages and `/help` are in English, and the shellter themes align their
+output to the same column as everything else.
 
 | Script | What it does |
 |---|---|
-| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop): one connection per botnet, a network window with the partyline window under it like a channel, a statusbar item with the state of every botnet and unread partyline lines, a retry limit for hubs that are down. `/bot`, `/bot <botnet>`, `/bot close`. |
+| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop): one connection per botnet, a network window with the partyline window under it like a channel, a statusbar item with the state of every botnet (or only those in `botnet_statusbar_list`) and unread partyline lines, a retry limit for hubs that are down. `/bot`, `/bot <botnet>`, `/bot close`. |
 | `tk.pl` | Temporary K-lines for IRCnet operators (ircd 2.11 `TKLINE`): nick → WHOIS → mask, never a guessed host; refuses overly broad masks; `-dry` preview; JSONL audit log. `/tkl`, `/untkl`, `/tklist`, `/klist`. |
 | `skaner.pl` | Clones and IRC operators on a channel, reported after join, with an alert when a clone arrives. `/skaner`. |
 | `mentions.pl` | One *Mentions* window for highlights, private messages, notices and DCC, mirrored to a log file. |
@@ -131,10 +140,16 @@ Bundled in `<prefix>/share/irssi/scripts` and loaded on demand
 - **Input line** — control characters (bold, colour) are visible and the
   cursor stays on the text.
 - **Message formats** — messages to `@#channel` show the right nick.
+- **Slow web clients** — output to a web client that reads slowly (a
+  phone on mobile data, a large state dump) is queued in order instead of
+  dropped; a client that never reads is disconnected at 32 MB.
+- **FreeBSD** — builds and runs, including `/connect` inside Capsicum
+  capability mode.
 
 ### Security
 
-The network-facing parts were reviewed for this release.
+The network-facing parts were reviewed, fuzzed and tested under
+sanitizers.
 
 - **Web frontend (fe-web)** — built for a shared shell box: the password
   travels in an `Authorization` header, never in a URL; one guess per
@@ -150,6 +165,13 @@ The network-facing parts were reviewed for this release.
   redirects), a hard size limit, and no decoding of images too large to
   handle safely. The debug log of clicked URLs is off by default.
 - **Configuration** — `~/.erssi/config` is written readable only by you.
+- **Hardened build** — by default: PIE, stack protector, stack clash
+  protection, `FORTIFY_SOURCE=2`, full RELRO.
+- **Tested the hard way** — everything fe-web reads from the network (the
+  login request, WebSocket frames, encrypted frames, client messages, IRC
+  lines turned into web events) is fuzzed with libFuzzer under AddressSanitizer
+  and UndefinedBehaviorSanitizer; every finding is replayed by `meson test`.
+  The test suite also runs under both sanitizers.
 - **Credential encryption** — switched off: in erssi 1.3.1 it never
   encrypted the configuration file and a wrong master password could delete
   stored credentials. Existing setups keep working; `/help credential`
@@ -163,7 +185,10 @@ The network-facing parts were reviewed for this release.
 /set print_whois_rpl_in_server_window on  # off: WHOIS in the active window
 /set anti_floodnet_notices off            # hide Anti-Floodnet notices
 /set term_truecolor auto                  # on / off to override terminal detection
+/set theme shellter-light                 # for terminals with a light background
 /statusbar info add -after act botnet     # botnet states in the statusbar
+/set botnet_statusbar_list IRCnetBot      # only these botnets in it (empty = all)
+/set fe_web_socket ~/.erssi/fe-web.sock   # web frontend on a Unix socket (shared boxes)
 ```
 
 In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`.
@@ -194,8 +219,9 @@ you can write to) and connections from other users' processes are refused;
 TLS and the password work as on TCP. `/help fe_web` has the details.
 
 [contrib/nexusirc](contrib/nexusirc/README.md) holds the NexusIRC patch series
-(Polish interface, terminal-like view, certificate pinning) with build steps
-and reverse-proxy notes. Keep fe-web on `127.0.0.1`; expose only the web
+(Polish interface, terminal-like view, certificate pinning, the password in
+a header, connection over the Unix socket, working sessions and sign-out,
+Source Sans 3 / Source Code Pro) with build steps and reverse-proxy notes. Keep fe-web on `127.0.0.1`; expose only the web
 client, behind TLS.
 
 ## End-to-end encryption
@@ -210,11 +236,17 @@ change.
 ## Development
 
 ```sh
-meson test -C Build                               # unit tests
+meson test -C Build                               # unit tests and fuzz corpus replays
 ln -sf ../../utils/pre-push .git/hooks/pre-push   # build, tests and history checks before every push
+meson setup Build-asan -Db_sanitize=address,undefined -Db_lundef=false
+meson test -C Build-asan                          # the same tests under ASan and UBSan
 git remote add upstream https://github.com/erssi-org/erssi.git
 git fetch upstream && git merge upstream/main     # follow erssi
 ```
+
+Tests run with `HOME` inside the build directory, so building and testing
+never writes into your own `~/.erssi`. `.github/workflows/shellter-ci.yml`
+runs the hardened and the sanitizer build, and checks the installer.
 
 Each change in this edition is a separate commit that explains the problem
 it solves, so upstream merges stay reviewable.
