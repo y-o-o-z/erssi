@@ -825,6 +825,23 @@ formats = {
     histsearch_info = "   %Z8B949Ehistsearch{col}$0";
     histsearch_error = "   %Z8B949Ehistsearch{col}%ZFF7B72$0%N";
   };
+  "Irssi::Script::pmguard" = {
+    pmguard_msg = "%Z6E7681$[-13]0{col}%Z8B949E$1 $2%N %ZD2A8FF$3%Z6E7681!$4%N %ZC9D1D9$5%N";
+    pmguard_action = "%Z6E7681$[-13]0{col}%Z8B949E$1 $2%N %ZD2A8FF* $3%Z6E7681!$4%N %ZC9D1D9$5%N";
+    pmguard_notice = "%Z6E7681$[-13]0{col}%Z8B949E$1 $2%N %Z79C0FFnotice%N %ZD2A8FF$3%Z6E7681!$4%N %ZC9D1D9$5%N";
+    pmguard_ctcp = "%Z6E7681$[-13]0{col}%Z8B949E$1 $2%N %ZF59E0Bctcp%N %ZD2A8FF$3%Z6E7681!$4%N %ZC9D1D9$5%N";
+    pmguard_summary = "      %Z8B949Epmguard{col}%ZF59E0B$0%N";
+    pmguard_info = "      %Z8B949Epmguard{col}$0";
+    pmguard_error = "      %Z8B949Epmguard{col}%ZFF7B72$0%N";
+  };
+  "Irssi::Script::logsearch" = {
+    logsearch_info = "         %Z8B949Elogs{col}$0";
+    logsearch_error = "         %Z8B949Elogs{col}%ZFF7B72$0%N";
+    logsearch_hit = "%Z6E7681$[-13]0{col}%Z8B949E$1%N  %Z79C0FF$2%N  %ZC9D1D9$3%N%ZF59E0B%_$4%_%N%ZC9D1D9$5%N";
+    logsearch_summary = "         %Z8B949Elogs{col}%Z6E7681$0%N";
+    logsearch_net = "         %Z8B949Elogs{col}%ZF59E0B$0%N %Z8B949E$1%N";
+    logsearch_list = "%Z6E7681$[-13]0{col}%ZC9D1D9$1%N  %Z6E7681$2%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z8B949Ebotnet{col}$0";
     botnet_sb_label = "%Z8B949Ebot%n";
