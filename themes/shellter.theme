@@ -819,6 +819,12 @@ formats = {
     chanstats_bars = "%Z6E7681$[-13]0{col}%Z58A6FF$1%N";
     chanstats_error = "    %Z8B949Echanstats{col}%ZFF7B72$0%N";
   };
+  "Irssi::Script::histsearch" = {
+    histsearch_prompt = "%Z8B949E($0)`%n%ZF59E0B$1-%n%Z8B949E':%n ";
+    histsearch_failed = "%ZFF7B72(failed $0)%n%Z8B949E`%n%ZF59E0B$1-%n%Z8B949E':%n ";
+    histsearch_info = "   %Z8B949Ehistsearch{col}$0";
+    histsearch_error = "   %Z8B949Ehistsearch{col}%ZFF7B72$0%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z8B949Ebotnet{col}$0";
     botnet_sb_label = "%Z8B949Ebot%n";

@@ -49,6 +49,7 @@
 #                            limitu)
 #   botnet_quit_message      powod przy rozlaczaniu (pusty = domyslny erssi)
 #   botnet_statusbar_all     w pasku takze rozlaczone botnety (ON)
+#   botnet_statusbar_list    ktore botnety pokazywac w pasku (puste = wszystkie)
 #
 # Wyglad paska: /format botnet_sb_* (np. /format botnet_sb_up).
 
@@ -58,7 +59,7 @@ use warnings;
 use Irssi;
 use Irssi::TextUI;
 
-our $VERSION = '1.2.4';
+our $VERSION = '1.2.5';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -73,6 +74,7 @@ Irssi::settings_add_str('botnet', 'botnet_partyline_nick',  'partyline');
 Irssi::settings_add_int('botnet', 'botnet_reconnect_tries', 3);
 Irssi::settings_add_str('botnet', 'botnet_quit_message',    '');
 Irssi::settings_add_bool('botnet', 'botnet_statusbar_all',  1);
+Irssi::settings_add_str('botnet', 'botnet_statusbar_list', '');
 
 # element paska "botnet": $0 nazwa botnetu, $1 liczba albo sekundy
 Irssi::theme_register([
@@ -519,6 +521,7 @@ sub help {
         '  botnet_partyline_nick    partyline nick on the hub (' . partyline_nick() . ')',
         '  botnet_reconnect_tries   reconnect attempt limit (' . Irssi::settings_get_int('botnet_reconnect_tries') . ', 0 = unlimited)',
         '  botnet_quit_message      quit message used when disconnecting',
+        '  botnet_statusbar_list    botnets shown in the statusbar (empty = all)',
     );
 }
 
@@ -602,8 +605,10 @@ sub sb_botnet {
     my ($item, $get_size_only) = @_;
     my %set = botnets();
     my $all = Irssi::settings_get_bool('botnet_statusbar_all');
+    my %only = map { lc($_) => 1 } grep { length } split /[\s,]+/, Irssi::settings_get_str('botnet_statusbar_list');
     my @parts;
     for my $botnet (sort keys %set) {
+        next if %only && !$only{lc $botnet};
         my ($state, $secs) = botnet_state($botnet);
         next if $state eq 'down' && !$all;
         my $name = display_name($botnet);

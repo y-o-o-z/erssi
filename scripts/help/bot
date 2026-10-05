@@ -77,6 +77,10 @@ BOT HELP%|
         Quit message when disconnecting; empty = erssi's default.
     botnet_statusbar_all = ON
         Also show disconnected botnets in the statusbar.
+    botnet_statusbar_list =
+        Botnets shown in the statusbar, separated by spaces; empty = all
+        of botnet_chatnets. The others still work as botnets, they are
+        only left out of the statusbar.
 
 %9Examples:%9
 
