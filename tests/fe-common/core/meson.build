@@ -15,6 +15,7 @@ test_test_formats = executable('test-formats',
   dependencies : dep
 )
 test('test-formats test', test_test_formats,
+  env : test_env,
   args : ['--tap'],
   protocol : 'tap')
 
@@ -35,5 +36,6 @@ test_test_nick_palette = executable('test-nick-palette',
   dependencies : dep
 )
 test('test-nick-palette test', test_test_nick_palette,
+  env : test_env,
   args : ['--tap'],
   protocol : 'tap')

@@ -108,6 +108,9 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 	if (fuzz_home == NULL)
 		abort();
 	atexit(remove_fuzz_home);
+	/* also HOME: settings such as autolog_path ("~/.erssi/logs/...") are
+	 * relative to the home directory, not to --home */
+	g_setenv("HOME", fuzz_home, TRUE);
 
 	argv[0] = "fe-web-fuzz";
 	argv[1] = home_arg = g_strconcat("--home=", fuzz_home, NULL);
