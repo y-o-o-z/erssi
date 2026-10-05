@@ -842,6 +842,14 @@ formats = {
     logsearch_net = "         %Z8B949Elogs{col}%ZF59E0B$0%N %Z8B949E$1%N";
     logsearch_list = "%Z6E7681$[-13]0{col}%ZC9D1D9$1%N  %Z6E7681$2%N";
   };
+  "Irssi::Script::spellcheck" = {
+    spellcheck_sb = "%Z484F58│%n$0%Z484F58│%n ";
+    spellcheck_sb_word = " %ZC9D1D9$0%n ";
+    spellcheck_sb_active = "%Z0D1117%zF59E0B $0 %n";
+    spellcheck_sb_sep = "%Z484F58│%n";
+    spellcheck_info = "   %Z8B949Espellcheck{col}$0";
+    spellcheck_error = "   %Z8B949Espellcheck{col}%ZFF7B72$0%N";
+  };
   "Irssi::Script::botnet" = {
     botnet_info = "       %Z8B949Ebotnet{col}$0";
     botnet_sb_label = "%Z8B949Ebot%n";
