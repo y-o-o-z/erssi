@@ -25,6 +25,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0023 | Source Sans 3 (text, interface, 15px) and Source Code Pro (time, nick column, nick list, code) instead of Geist: Adobe's Source family, variable fonts, latin + latin-ext, hosted with the theme (OFL 1.1); a monospaced nick list tells I from l and 0 from O; no ligatures in IRC text. |
 | 0024 | Connect to erssi over its Unix socket (`irssiConnection.socketPath`, erssi `fe_web_socket`): no TCP port other users of the box can reach; TLS, the certificate pin and the password header stay. |
 | 0025 | The encrypted message storage key is derived the same way after saving the erssi settings as at login (it used a different key). |
+| 0026 | Help: the changelog is the list of local patches in this checkout and no update is announced (the upstream check asked The Lounge's releases, another project); the missing handler for the changelog request is added. |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in

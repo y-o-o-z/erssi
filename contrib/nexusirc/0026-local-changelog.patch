@@ -1,0 +1,350 @@
+From ad8f9e3e3de6741e3e573c89fd67694421816f94 Mon Sep 17 00:00:00 2001
+From: y-o-o-z <136268860+y-o-o-z@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 21:03:56 +0200
+Subject: [PATCH] local: changelog and update note from the local patch series
+
+The help window said an update was available and its changelog stayed
+empty. The update check asked The Lounge's GitHub releases - another
+project - and announced its versions, which must not be installed over
+this client; and no server handler answered the browser's "changelog"
+request, so the changelog never loaded. The changelog is now the list of
+local patches in this checkout (the "local:" commits on top of NexusIRC,
+oldest first, with their first paragraph), nothing is fetched from the
+network, no update is announced, and the version note says updates are
+deployed together with erssi.
+---
+ client/components/VersionChecker.vue    |   5 +-
+ client/components/Windows/Changelog.vue |  16 +-
+ server/plugins/changelog.ts             | 238 +++++++++++-------------
+ server/server.ts                        |   4 +
+ 4 files changed, 117 insertions(+), 146 deletions(-)
+
+diff --git a/client/components/VersionChecker.vue b/client/components/VersionChecker.vue
+index 26ae032..e040a4d 100644
+--- a/client/components/VersionChecker.vue
++++ b/client/components/VersionChecker.vue
+@@ -17,7 +17,10 @@
+ 			serwerze poleceniem <code>upgrade</code> klienta web.
+ 		</p>
+ 		<template v-if="store.state.versionStatus === 'up-to-date'">
+-			<p>Klient web jest aktualny.</p>
++			<p>
++				Klient web jest aktualny. Aktualizacje wdraża administrator razem z erssi, nic nie
++				trzeba robić w przeglądarce.
++			</p>
+ 
+ 			<button
+ 				v-if="store.state.versionDataExpired"
+diff --git a/client/components/Windows/Changelog.vue b/client/components/Windows/Changelog.vue
+index 8af1e57..c50a542 100644
+--- a/client/components/Windows/Changelog.vue
++++ b/client/components/Windows/Changelog.vue
+@@ -9,12 +9,9 @@
+ 			<template
+ 				v-if="store.state.versionData?.current && store.state.versionData?.current.version"
+ 			>
+-				<h1 class="title">
+-					Lista zmian klienta web {{ store.state.versionData.current.version }}
+-				</h1>
++				<h1 class="title">Lista zmian: {{ store.state.versionData.current.version }}</h1>
+ 
+ 				<template v-if="store.state.versionData.current.changelog">
+-					<h3>Wprowadzenie</h3>
+ 					<div
+ 						ref="changelog"
+ 						class="changelog-text"
+@@ -22,16 +19,7 @@
+ 					></div>
+ 				</template>
+ 				<template v-else>
+-					<p>Nie udało się pobrać z GitHuba listy zmian bieżącego wydania.</p>
+-					<p>
+-						<a
+-							v-if="store.state.serverConfiguration?.version"
+-							:href="`https://github.com/erssi-org/nexuslounge/releases/tag/v${store.state.serverConfiguration?.version}`"
+-							target="_blank"
+-							rel="noopener"
+-							>Zobacz listę zmian tej wersji na GitHubie</a
+-						>
+-					</p>
++					<p>Brak listy zmian.</p>
+ 				</template>
+ 			</template>
+ 			<p v-else>Wczytywanie listy zmian…</p>
+diff --git a/server/plugins/changelog.ts b/server/plugins/changelog.ts
+index a662f59..85a58cb 100644
+--- a/server/plugins/changelog.ts
++++ b/server/plugins/changelog.ts
+@@ -1,147 +1,123 @@
+-import got, {HTTPError} from "got";
+-import chalk from "chalk";
+-import {log} from "../logger.js";
++import {execFile} from "child_process";
++import path from "path";
++import {fileURLToPath} from "url";
++import {promisify} from "util";
+ import pkg from "../../package.json" with {type: "json"};
+ import ClientManager from "../clientManager.js";
+-import Config from "../config.js";
++import {log} from "../logger.js";
+ import {SharedChangelogData} from "../../shared/types/changelog.js";
+ 
+-const TIME_TO_LIVE = 15 * 60 * 1000; // 15 minutes, in milliseconds
+-
+-// Use local variable for mutable state instead of module.exports (ESM compatibility)
+-let isUpdateAvailable = false;
+-
+-export default {
+-	get isUpdateAvailable() {
+-		return isUpdateAvailable;
+-	},
+-	fetch,
+-	checkForUpdates,
+-};
+-const versions: SharedChangelogData = {
+-	current: {
+-		prerelease: false,
+-		version: `v${pkg.version}`,
+-		changelog: undefined,
+-		url: "", // TODO: properly init
+-	},
+-	expiresAt: -1,
+-	latest: undefined,
+-	packages: undefined,
+-};
+-
+-type GithubRelease = {
+-	tag_name: string;
+-	body_html: string;
+-	prerelease: boolean;
+-	html_url: string;
+-};
++// erssi@tahio: this web client is NexusIRC with the erssi patch series
++// (y-o-o-z/erssi contrib/nexusirc), updated together with erssi by whoever
++// runs it. The upstream check asked The Lounge's GitHub releases - another
++// project - so it announced "updates" that must not be installed, and its
++// changelog was empty. The changelog is now the list of local patches in
++// this checkout (commits "local: ..." on top of NexusIRC), and nothing is
++// fetched from the network.
++
++const run = promisify(execFile);
++const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
++
++type Patch = {sha: string; date: string; subject: string; summary: string};
++
++let versions: SharedChangelogData | null = null;
++
++const escape = (s: string) =>
++	s.replace(
++		/[&<>"']/g,
++		(c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]!
++	);
++
++async function localPatches(): Promise<Patch[]> {
++	const sep = "\x1f";
++	const end = "\x1e";
++	const {stdout} = await run(
++		"git",
++		[
++			"-C",
++			root,
++			"log",
++			"-n",
++			"200",
++			"--date=short",
++			`--format=%h${sep}%ad${sep}%s${sep}%b${end}`,
++		],
++		{maxBuffer: 4 * 1024 * 1024}
++	);
++	const patches: Patch[] = [];
++	for (const rec of stdout.split(end)) {
++		const [sha, date, subject, body] = rec.replace(/^\n/, "").split(sep);
++		if (!sha || !subject) {
++			continue;
++		}
++		// the series is on top: stop at the first upstream commit
++		if (!subject.startsWith("local:")) {
++			break;
++		}
++		const summary = (body || "")
++			.trim()
++			.split(/\n\s*\n/)[0]
++			.replace(/\s+/g, " ");
++		patches.push({sha, date, subject: subject.replace(/^local:\s*/, ""), summary});
++	}
++	return patches.reverse();
++}
+ 
+-async function fetch() {
+-	const time = Date.now();
++function render(patches: Patch[]): string {
++	if (!patches.length) {
++		return "<p>Ta kopia klienta web nie zawiera listy łatek (brak historii git).</p>";
++	}
++	const items = patches
++		.map(
++			(p, i) =>
++				`<li><b>${escape(p.subject)}</b> <small>(${escape(p.date)}, ${escape(p.sha)})</small>` +
++				(p.summary ? `<br>${escape(p.summary)}` : "") +
++				`</li>`
++		)
++		.join("\n");
++	return (
++		`<p>Klient web erssi@tahio to NexusIRC ${escape(pkg.version)} z ${patches.length} łatkami ` +
++		`erssi (od najstarszej). Aktualizacje wdraża administrator razem z erssi.</p>\n<ol>\n${items}\n</ol>`
++	);
++}
+ 
+-	// Serving information from cache
+-	if (versions.expiresAt > time) {
++async function fetch(): Promise<SharedChangelogData> {
++	if (versions) {
+ 		return versions;
+ 	}
+-
++	let changelog: string;
++	let count = 0;
+ 	try {
+-		const response = await got.get<GithubRelease[]>(
+-			"https://api.github.com/repos/thelounge/thelounge/releases",
+-			{
+-				headers: {
+-					Accept: "application/vnd.github.v3.html", // Request rendered markdown
+-					"User-Agent": pkg.name + "; +" + pkg.repository.url, // Identify the client
+-				},
+-				localAddress: Config.values.bind,
+-				responseType: "json",
+-			}
+-		);
+-
+-		if (response.statusCode !== 200 || !Array.isArray(response.body)) {
+-			return versions;
+-		}
+-
+-		updateVersions(response.body);
+-
+-		// Add expiration date to the data to send to the client for later refresh
+-		versions.expiresAt = time + TIME_TO_LIVE;
++		const patches = await localPatches();
++		count = patches.length;
++		changelog = render(patches);
+ 	} catch (error) {
+-		if (error instanceof HTTPError) {
+-			log.error(`Failed to fetch changelog: ${error.response.statusCode} ${error.message}`);
+-		} else {
+-			log.error(
+-				`Failed to fetch changelog: ${error instanceof Error ? error.message : error}`
+-			);
+-		}
++		log.warn(`changelog: no git history (${error instanceof Error ? error.message : error})`);
++		changelog = render([]);
+ 	}
+-
++	versions = {
++		current: {
++			prerelease: false,
++			version: count ? `v${pkg.version} + ${count} łatek erssi` : `v${pkg.version}`,
++			changelog,
++			url: "https://github.com/y-o-o-z/erssi/blob/main/contrib/nexusirc/README.md",
++		},
++		expiresAt: -1,
++		latest: undefined,
++		packages: undefined,
++	};
+ 	return versions;
+ }
+ 
+-function updateVersions(releases: GithubRelease[]) {
+-	let i: number;
+-	let release: GithubRelease;
+-	let prerelease = false;
+-
+-	// Find the current release among releases on GitHub
+-	for (i = 0; i < releases.length; i++) {
+-		release = releases[i];
+-
+-		if (release.tag_name === versions.current.version) {
+-			versions.current.changelog = release.body_html;
+-			prerelease = release.prerelease;
+-
+-			break;
+-		}
+-	}
+-
+-	// Find the latest release made after the current one if there is one
+-	if (i > 0) {
+-		for (let j = 0; j < i; j++) {
+-			release = releases[j];
+-
+-			// Find latest release or pre-release if current version is also a pre-release
+-			if (!release.prerelease || release.prerelease === prerelease) {
+-				isUpdateAvailable = true;
+-
+-				versions.latest = {
+-					prerelease: release.prerelease,
+-					version: release.tag_name,
+-					url: release.html_url,
+-				};
+-
+-				break;
+-			}
+-		}
+-	}
++// No upstream update check: there is nothing this server should install.
++function checkForUpdates(_manager: ClientManager) {
++	return;
+ }
+ 
+-function checkForUpdates(manager: ClientManager) {
+-	fetch()
+-		.then((versionData) => {
+-			if (!isUpdateAvailable) {
+-				// Check for updates every 24 hours + random jitter of <3 hours
+-				setTimeout(
+-					() => checkForUpdates(manager),
+-					24 * 3600 * 1000 + Math.floor(Math.random() * 10000000)
+-				);
+-			}
+-
+-			if (!versionData.latest) {
+-				return;
+-			}
+-
+-			log.info(
+-				`NexusIRC ${chalk.green(
+-					versionData.latest.version
+-				)} is available. Read more on GitHub: ${versionData.latest.url}`
+-			);
+-
+-			// Notify all connected clients about the new version
+-			manager.clients.forEach((client) => client.emit("changelog:newversion"));
+-		})
+-		.catch((error: Error) => {
+-			log.error(`Failed to check for updates: ${error.message}`);
+-		});
+-}
++export default {
++	get isUpdateAvailable() {
++		return false;
++	},
++	fetch,
++	checkForUpdates,
++};
+diff --git a/server/server.ts b/server/server.ts
+index c331913..007e418 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -840,6 +840,10 @@ function initializeIrssiClient(
+ 	}
+ 
+ 	socket.on("sessions:get", () => client.sendSessionList(socket));
++	// Help -> "lista zmian" and the version note: the local patch series
++	socket.on("changelog", () => {
++		void changelog.fetch().then((data) => socket.emit("changelog", data));
++	});
+ 	// the acknowledgement tells the browser its session is revoked, so it can
+ 	// leave without its token still working on the server
+ 	socket.on("sign-out", (tokenToSignOut?: string | null, ack?: () => void) =>
+-- 
+2.47.3
+
