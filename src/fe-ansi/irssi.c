@@ -19,7 +19,9 @@
 */
 
 #include "module.h"
+#include <glib/gstdio.h>
 #include <irssi/src/fe-ansi/module-formats.h>
+#include "default-files-known.h"
 #include <irssi/src/core/modules-load.h>
 #include <irssi/src/core/args.h>
 #include <irssi/src/core/signals.h>
@@ -82,6 +84,7 @@ static GMainLoop *main_loop;
 int quitting;
 
 static int display_firsttimer = FALSE;
+static GSList *default_notes;	/* about ~/.erssi files, printed after the banner */
 static unsigned int user_settings_changed = 0;
 
 static void sig_exit(void)
@@ -254,8 +257,14 @@ static void textui_finish_init(void)
 	signal_emit("irssi init finished", 0);
 	statusbar_redraw(NULL, TRUE);
 
-	if (servers == NULL && lookup_servers == NULL) {
+	/* every start, also when servers connect at once (they are still being
+	 * looked up), but not after /UPGRADE (its servers are restored) */
+	if (servers == NULL)
 		printformat(NULL, NULL, MSGLEVEL_CRAP | MSGLEVEL_NO_ACT, TXT_IRSSI_BANNER);
+	while (default_notes != NULL) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "%s", (char *) default_notes->data);
+		g_free(default_notes->data);
+		default_notes = g_slist_delete_link(default_notes, default_notes);
 	}
 
 	if (display_firsttimer) {
@@ -347,15 +356,155 @@ static void textui_deinit(void)
 	core_deinit();
 }
 
+/* Files erssi ships into ~/.erssi (themes, startup) are updated like
+ * configuration files of a package: replaced by the new version only while
+ * the user has not changed them - their sha256 is the one erssi recorded
+ * when it installed them (default-files.sha256) or one of a version erssi
+ * ever shipped under that name (known_default_files). A changed file is
+ * never touched;
+ * when a new version ships, one note says where it is. Symbolic links and
+ * anything that is not a regular file are left alone. */
+#define DEFAULT_FILES_SHA256 "default-files.sha256"
+
+static GHashTable *default_hashes;	/* file name -> recorded sha256 */
+static gboolean default_hashes_changed;
+static gboolean default_themes_changed;
+
+static void default_hashes_load(const char *irssi_dir)
+{
+	char *path, *contents, **lines, **line;
+
+	default_hashes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	path = g_strdup_printf("%s/" DEFAULT_FILES_SHA256, irssi_dir);
+	if (g_file_get_contents(path, &contents, NULL, NULL)) {
+		/* "<sha256>  <name>", as sha256sum writes it */
+		lines = g_strsplit(contents, "\n", -1);
+		for (line = lines; *line != NULL; line++) {
+			if (strlen(*line) > 66 && (*line)[64] == ' ' && (*line)[65] == ' ')
+				g_hash_table_replace(default_hashes, g_strdup(*line + 66),
+				                     g_strndup(*line, 64));
+		}
+		g_strfreev(lines);
+		g_free(contents);
+	}
+	g_free(path);
+}
+
+static void default_hashes_save(const char *irssi_dir)
+{
+	GString *out;
+	GList *names, *tmp;
+	char *path;
+
+	if (default_hashes_changed) {
+		out = g_string_new(NULL);
+		names = g_list_sort(g_hash_table_get_keys(default_hashes), (GCompareFunc) strcmp);
+		for (tmp = names; tmp != NULL; tmp = tmp->next) {
+			g_string_append_printf(out, "%s  %s\n",
+			                       (char *) g_hash_table_lookup(default_hashes, tmp->data),
+			                       (char *) tmp->data);
+		}
+		g_list_free(names);
+		path = g_strdup_printf("%s/" DEFAULT_FILES_SHA256, irssi_dir);
+		if (g_file_set_contents(path, out->str, out->len, NULL))
+			chmod(path, 0600);
+		g_free(path);
+		g_string_free(out, TRUE);
+	}
+	g_hash_table_destroy(default_hashes);
+	default_hashes = NULL;
+}
+
+static void default_hash_record(const char *name, const char *hash)
+{
+	const char *old = g_hash_table_lookup(default_hashes, name);
+
+	if (old == NULL || strcmp(old, hash) != 0) {
+		g_hash_table_replace(default_hashes, g_strdup(name), g_strdup(hash));
+		default_hashes_changed = TRUE;
+	}
+}
+
+static gboolean default_hash_known(const char *name, const char *hash)
+{
+	int i;
+
+	for (i = 0; known_default_files[i][0] != NULL; i++) {
+		if (strcmp(known_default_files[i][0], name) == 0 &&
+		    strcmp(known_default_files[i][1], hash) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* ~/.erssi/<name> from shipped_path: copied when missing, replaced while
+ * unchanged by the user, otherwise kept (one note per new shipped version). */
+static void update_default_file(const char *shipped_path, const char *irssi_dir,
+                                const char *name, gboolean theme)
+{
+	char *shipped, *current, *dst_path, *shipped_hash, *current_hash;
+	const char *recorded;
+	gsize shipped_len, current_len;
+	struct stat st;
+
+	if (!g_file_get_contents(shipped_path, &shipped, &shipped_len, NULL))
+		return;
+	shipped_hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (guchar *) shipped, shipped_len);
+	recorded = g_hash_table_lookup(default_hashes, name);
+	dst_path = g_strdup_printf("%s/%s", irssi_dir, name);
+
+	if (g_lstat(dst_path, &st) != 0) {
+		if (errno == ENOENT && g_file_set_contents(dst_path, shipped, shipped_len, NULL)) {
+			chmod(dst_path, 0600);
+			default_hash_record(name, shipped_hash);
+		}
+	} else if (S_ISREG(st.st_mode) &&
+	           g_file_get_contents(dst_path, &current, &current_len, NULL)) {
+		current_hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (guchar *) current, current_len);
+		if (strcmp(current_hash, shipped_hash) == 0) {
+			default_hash_record(name, shipped_hash);
+		} else if ((recorded != NULL && strcmp(current_hash, recorded) == 0) ||
+		           default_hash_known(name, current_hash)) {
+			/* not changed since erssi installed it: the new version */
+			if (g_file_set_contents(dst_path, shipped, shipped_len, NULL)) {
+				chmod(dst_path, st.st_mode & 07777);
+				default_hash_record(name, shipped_hash);
+				default_themes_changed |= theme;
+			}
+		} else {
+			/* the user's own version: kept, with a note once per
+			 * shipped version (also the first time, without a record) */
+			if (recorded == NULL || strcmp(recorded, shipped_hash) != 0) {
+				char *note = g_strdup_printf(
+					"%s: kept as you changed it; the version shipped "
+					"with erssi is %s", dst_path, shipped_path);
+				char **parts = g_strsplit(note, "%", -1);
+
+				/* printed as text: a % in a path is not a colour code */
+				default_notes = g_slist_append(default_notes, g_strjoinv("%%", parts));
+				g_strfreev(parts);
+				g_free(note);
+			}
+			default_hash_record(name, shipped_hash);
+		}
+		g_free(current_hash);
+		g_free(current);
+	}
+	g_free(dst_path);
+	g_free(shipped_hash);
+	g_free(shipped);
+}
+
 static void copy_default_files(void)
 {
 	struct stat statbuf;
-	char *themes_dir, *startup_file, *src_path, *dst_path;
+	char *themes_dir, *startup_file, *src_path;
 	const char *irssi_dir = get_irssi_dir();
 	
 	/* Only copy files if this is erssi (.erssi directory) */
 	if (!g_str_has_suffix(irssi_dir, ".erssi"))
 		return;
+	default_hashes_load(irssi_dir);
 		
 	/* Copy themes */
 	themes_dir = g_strdup(THEMESDIR);
@@ -366,22 +515,8 @@ static void copy_default_files(void)
 			while ((filename = g_dir_read_name(dir)) != NULL) {
 				if (g_str_has_suffix(filename, ".theme")) {
 					src_path = g_strdup_printf("%s/%s", themes_dir, filename);
-					dst_path = g_strdup_printf("%s/%s", irssi_dir, filename);
-					
-					/* Copy if destination doesn't exist */
-					if (stat(dst_path, &statbuf) != 0) {
-						if (g_file_test(src_path, G_FILE_TEST_EXISTS)) {
-							char *contents = NULL;
-							gsize length;
-							if (g_file_get_contents(src_path, &contents, &length, NULL)) {
-								g_file_set_contents(dst_path, contents, length, NULL);
-								g_free(contents);
-							}
-						}
-					}
-					
+					update_default_file(src_path, irssi_dir, filename, TRUE);
 					g_free(src_path);
-					g_free(dst_path);
 				}
 			}
 			g_dir_close(dir);
@@ -389,21 +524,15 @@ static void copy_default_files(void)
 	}
 	g_free(themes_dir);
 	
-	/* Copy startup banner */
 	startup_file = g_strdup_printf("%s/startup", PKGDATADIR);
-	if (stat(startup_file, &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
-		dst_path = g_strdup_printf("%s/startup", irssi_dir);
-		if (stat(dst_path, &statbuf) != 0) {
-			char *contents = NULL;
-			gsize length;
-			if (g_file_get_contents(startup_file, &contents, &length, NULL)) {
-				g_file_set_contents(dst_path, contents, length, NULL);
-				g_free(contents);
-			}
-		}
-		g_free(dst_path);
-	}
+	update_default_file(startup_file, irssi_dir, "startup", FALSE);
 	g_free(startup_file);
+
+	default_hashes_save(irssi_dir);
+	/* themes were read already: show a replaced one at once (before
+	 * term_init - "theme changed" handlers do not touch the terminal) */
+	if (default_themes_changed)
+		themes_reload();
 }
 
 static void check_files(void)

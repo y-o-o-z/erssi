@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# erssi Installation Script
-# Enhanced/Evolved IRC Client
-# https://erssi.org
+# erssi Shellter Edition - system-wide installation script (inherited from
+# erssi; uses the package manager and sudo). Without root, and verified
+# against signed releases: shellter-install.sh (see README).
+# https://github.com/y-o-o-z/erssi
 
 # Colors for output
 RED='\033[0;31m'
@@ -317,14 +318,13 @@ show_completion_message() {
    echo "  • Configuration directory: ~/.erssi/"
    echo "  • Pure ANSI terminal backend with image preview support"
    echo "  • Inline image preview (Kitty, iTerm2, Sixel, symbols)"
-   echo "  • Secure credential management with AES-256 encryption"
    echo "  • Advanced sidepanels with mouse gesture support"
    echo "  • Full Unicode/emoji grapheme cluster support"
    echo "  • Web interface (fe-web) with WebSocket support"
    echo "  • 100% compatible with irssi Perl scripts"
    echo ""
    print_info "To run: erssi"
-   print_info "Website: https://erssi.org"
+   print_info "Website: https://github.com/y-o-o-z/erssi"
 
    if [[ "$install_path" != "/opt/erssi" ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
        echo ""
@@ -349,10 +349,9 @@ main() {
        VERSION="unknown"
    fi
 
-   echo "🚀 erssi Installation Script"
+   echo "erssi Shellter Edition ${VERSION} - installation"
    echo "====================================="
-   echo "Enhanced/Evolved IRC Client v${VERSION}"
-   echo "https://erssi.org"
+   echo "https://github.com/y-o-o-z/erssi (no root: shellter-install.sh)"
    echo ""
 
    # Detect system and package manager

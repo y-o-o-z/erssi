@@ -6,7 +6,8 @@
 # 2. every pushed commit (branches and tags) is authored and committed by
 #    y-o-o-z (noreply address) and carries no AI attribution trailer;
 #    annotated tags are tagged by y-o-o-z, and a release tag (shellter-v*)
-#    carries a valid SSH signature by the key in utils/allowed_signers
+#    carries a valid SSH signature by the key in utils/allowed_signers;
+#    src/fe-ansi/default-files-known.h lists every shipped startup/theme
 # 3. nothing that the push publishes matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line, case
 #    insensitive; the file stays on your machine, so the patterns themselves
@@ -93,6 +94,21 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         fi
     fi
 done
+
+# every shipped version of startup and the themes must be in the list erssi
+# uses to tell an unchanged ~/.erssi copy from the user's own - checked for
+# each pushed commit from its own history and files (not the working tree)
+known=$(mktemp)
+for tip in $pushed; do
+    git cat-file -e "$tip:src/fe-ansi/default-files-known.h" 2>/dev/null || continue
+    if sh "$ROOT/utils/default-file-hashes.sh" "$tip" "$known" >/dev/null 2>&1; then
+        git show "$tip:src/fe-ansi/default-files-known.h" | cmp -s - "$known" ||
+            bad "$(git log -1 --format=%h "$tip"): src/fe-ansi/default-files-known.h is out of date - run utils/default-file-hashes.sh and commit it"
+    else
+        bad "utils/default-file-hashes.sh failed for $(git log -1 --format=%h "$tip")"
+    fi
+done
+rm -f "$known"
 
 [ "$fail" = 0 ] || { echo "pre-push: push refused" >&2; exit 1; }
 
