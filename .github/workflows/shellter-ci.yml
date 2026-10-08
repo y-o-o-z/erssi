@@ -87,8 +87,14 @@ jobs:
       - name: Every pinned release points to its commit
         run: |
           git fetch --tags --force -q origin
-          awk 'NF == 2 && $1 ~ /^shellter-v/' shellter-install.sh | while read -r tag sha; do
+          awk 'NF >= 2 && $1 ~ /^shellter-v/ {print $1, $2}' shellter-install.sh | while read -r tag sha; do
             got=$(git rev-parse "$tag^{commit}")
             [ "$got" = "$sha" ] || { echo "::error::$tag is $got, installer pins $sha"; exit 1; }
             echo "$tag -> $sha ok"
+          done
+      - name: Every release marked signed has a valid signature
+        run: |
+          git config gpg.ssh.allowedSignersFile utils/allowed_signers
+          awk '$1 ~ /^shellter-v/ && $3 == "signed" {print $1}' shellter-install.sh | while read -r tag; do
+            git -c gpg.format=ssh verify-tag "$tag" || { echo "::error::$tag: no valid signature"; exit 1; }
           done

@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-1.3.7-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-1.3.8-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -30,11 +30,17 @@ The installer checks the build dependencies and prints the exact package
 command for your system when something is missing, installs `meson` and
 `ninja` into a private Python environment if the system has none, builds the
 newest release recorded in the installer — and only if its tag points to the
-recorded commit — runs the test suite, installs to `~/.local/opt/erssi` and
+recorded commit and, from 1.3.8 on, carries a valid signature by the release
+key — runs the test suite, installs to `~/.local/opt/erssi` and
 links `~/.local/bin/erssi`. Run it again to update. Works on Linux and
 FreeBSD. Options: `--prefix`, `--ref <tag|branch>` (anything that is not a
 recorded release is built with a warning), `--no-test`, `--clean` (remove
 the build directory afterwards, for small disk quotas).
+
+Releases are signed with an SSH key (ED25519,
+`SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`, public key in
+[`utils/allowed_signers`](utils/allowed_signers)). To check a release by hand:
+`git -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v1.3.8`.
 
 erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
 irssi. Start it inside tmux so the session survives logging out.
@@ -68,9 +74,9 @@ and used when present. For a system-wide install use
 
 | | |
 |---|---|
-| **erssi Shellter Edition 1.3.7** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 1.3.8** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus irssi `master` up to 2025-07-26, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.7`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.8`). |
 
 ## What this edition adds
 
