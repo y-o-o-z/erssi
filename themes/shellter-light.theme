@@ -672,7 +672,7 @@ formats = {
 
   "fe-ansi" = {
     # Startup banner in the colours of shellter.me ("$$" = a dollar sign)
-    irssi_banner = "%Z818B98──────────────────────────────────────────────────────────────%N%:%:  %Z9A6700$$%N %Z1F2328%_shellter%_%Z59636E.me%N   %Z687079// your shell, your shelter%N%:%:  %Z59636Eerssi %Z9A6700Shellter Edition%Z59636E %Z7D4E00$J%Z59636E · %Z1F2328/help%N%:  %Z1F2328/connect IRCnet%Z687079 · %Z1F2328/join #channel%Z687079 · %Z1F2328Alt+1..0%Z687079 windows%N%:%:%Z818B98──────────────────────────────────────────────────────────────%N";
+    irssi_banner = "  %Z9A6700┃%N %Z1F2328%_erssi%_ %Z9A6700Shellter Edition %Z7D4E00$J%N%:  %Z9A6700┃%N %Z1F2328shellter%Z59636E.me %Z818B98·%Z687079 your shell, your shelter%N%:  %Z9A6700┃%N %Z1F2328/connect IRCnet %Z818B98·%Z1F2328 /join #channel %Z818B98·%Z1F2328 /help%N";
     # Lastlog
     lastlog_too_long = "%Z7D4E00⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
     lastlog_count = "%Z0969DA»%N {hilight Lastlog}: $0 lines";

@@ -663,8 +663,9 @@ formats = {
   };
 
   "fe-ansi" = {
-    # Start banner in the shellter.me colours ("$$" = a dollar sign)
-    irssi_banner = "%Z484F58──────────────────────────────────────────────────────────────%N%:%:  %ZF59E0B$$%N %ZE6EDF3%_shellter%_%Z7D8590.me%N   %Z6E7681// your shell, your shelter%N%:%:  %Z7D8590erssi %ZF59E0BShellter Edition%Z7D8590 %ZFCD34D$J%Z7D8590 · %ZE6EDF3/help%N%:  %ZE6EDF3/connect IRCnet%Z6E7681 · %ZE6EDF3/join #channel%Z6E7681 · %ZE6EDF3Alt+1..0%Z6E7681 windows%N%:%:%Z484F58──────────────────────────────────────────────────────────────%N";
+    # Start banner: three short lines (no rules - they wrap on narrow
+    # terminals), name and version first, then the first commands
+    irssi_banner = "  %ZF59E0B┃%N %ZE6EDF3%_erssi%_ %ZF59E0BShellter Edition %ZFCD34D$J%N%:  %ZF59E0B┃%N %ZE6EDF3shellter%Z7D8590.me %Z484F58·%Z6E7681 your shell, your shelter%N%:  %ZF59E0B┃%N %ZE6EDF3/connect IRCnet %Z484F58·%ZE6EDF3 /join #channel %Z484F58·%ZE6EDF3 /help%N";
     # Lastlog
     lastlog_too_long = "%ZFCD34D⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
     lastlog_count = "%Z79C0FF»%N {hilight Lastlog}: $0 lines";
