@@ -890,7 +890,7 @@ static void smart_flush(GString *accum)
  * multi code point cluster - the caller then handles it key by key. */
 static gboolean process_input_smart(GArray *input_buffer)
 {
-	int pos, cluster_end;
+	int pos, cluster_end, len;
 	unichar *data;
 	int i;
 	gboolean has_cluster;
@@ -924,16 +924,23 @@ static gboolean process_input_smart(GArray *input_buffer)
 		return FALSE;
 
 	accum = g_string_new(NULL);
+	len = input_buffer->len;
 	pos = 0;
-	while (pos < input_buffer->len) {
+	while (pos < len) {
 		cluster_end = pos;
-		unichar_array_advance_cluster(data, input_buffer->len, &cluster_end);
+		unichar_array_advance_cluster(data, len, &cluster_end);
 		if (cluster_end <= pos)
 			cluster_end = pos + 1;
 
 		if (cluster_end - pos == 1) {
+			unichar key = data[pos];
+
 			smart_flush(accum);
-			signal_emit("gui key pressed", 1, GINT_TO_POINTER(data[pos]));
+			signal_emit("gui key pressed", 1, GINT_TO_POINTER(key));
+			/* a key handler may have changed the buffer (paste
+			 * bindings, scripts) - stop rather than read stale data */
+			if (input_buffer->len != len || (unichar *) input_buffer->data != data)
+				break;
 		} else {
 			for (i = pos; i < cluster_end; i++) {
 				char out[7];

@@ -740,6 +740,7 @@ formats = {
 
     # Arrows at the top/bottom of a panel with more entries than fit
     # ($0 is the arrow), on the panel background
+    # one cell: colours only around $0 (the arrow)
     sidepanel_scroll_arrow = "%Z9A6700$0%N";
   };
 

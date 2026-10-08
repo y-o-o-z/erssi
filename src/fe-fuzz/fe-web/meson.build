@@ -60,7 +60,7 @@ foreach name : fe_web_fuzz_targets
     build_by_default : false,
   )
   test('fe-web fuzz corpus ' + name, replay,
-    env : test_env,
+    env : fuzz_test_env,
     args : [meson.current_source_dir() / 'corpus' / name],
     timeout : 120)
 endforeach
