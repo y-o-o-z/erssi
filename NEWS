@@ -4,6 +4,26 @@ erssi-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	+ Start
 	  - the topic bar of an empty window and the fallback banner show only
 	    the name and the version: "erssi Shellter Edition 1.3.10"
+	  - the banner of the shellter themes is three short lines (name and
+	    version, shellter.me, the first commands) with no rules, so it no
+	    longer wraps on 80-column terminals with side panels
+	+ Modifications (1.3.10, same version)
+	  - erssi --update and erssi --check-update: the installer shipped with
+	    erssi finds the newest release signed by the release key it carries
+	    (unsigned tags are skipped), builds, tests and installs it into the
+	    same prefix; nothing is built when erssi is up to date; /upgrade then
+	    loads it in a running erssi. An erssi kept up to date by another
+	    tool names it in share/irssi/shellter-install.conf (UPDATE_COMMAND)
+	  - shellter-install.sh: one line per step (spinner and time on a
+	    terminal), the build output in ~/.local/state/erssi/install.log
+	    (shown when a step fails), a summary; as root it lists the missing
+	    packages and installs them after you confirm (--yes; only with
+	    root's own home - sudo -i, su -), on a user account it lists them
+	    with the command for the administrator
+	  - release signatures are checked only against the SSH release key
+	    (gpg and gpgsm off, so an OpenPGP signature by any key the user's
+	    gpg knows does not pass), also in the pre-push hook; the tag that
+	    was checked is the one built
 
 erssi-v1.3.9 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.9: a banner of its own, updates reach

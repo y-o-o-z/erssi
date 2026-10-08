@@ -547,10 +547,15 @@ static void check_files(void)
 
 int main(int argc, char **argv)
 {
-	static int version = 0;
-	static GOptionEntry options[] = { { "version", 'v', 0, G_OPTION_ARG_NONE, &version,
-		                            "Display Irssi version", NULL },
-		                          { NULL } };
+	static int version = 0, update = 0, check_update = 0;
+	static GOptionEntry options[] = {
+		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display Irssi version", NULL },
+		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
+		  "Update erssi to the newest signed release", NULL },
+		{ "check-update", 0, 0, G_OPTION_ARG_NONE, &check_update,
+		  "Show whether a newer signed release is available", NULL },
+		{ NULL }
+	};
 	int loglev;
 
 	core_register_options();
@@ -562,6 +567,23 @@ int main(int argc, char **argv)
 		printf(PACKAGE_TARNAME " " PACKAGE_VERSION " (%d %04d)\n", IRSSI_VERSION_DATE,
 		       IRSSI_VERSION_TIME);
 		return 0;
+	}
+
+	if (update || check_update) {
+		/* the installer of this release, installed with it: it finds the
+		 * newest release signed by the key it carries, builds and installs
+		 * it into this prefix (or runs the updater named in its config) */
+		const char *installer = PKGDATADIR "/shellter-install.sh";
+
+		if (access(installer, R_OK) != 0) {
+			fprintf(stderr, "erssi: the installer %s is missing - update with "
+			        "shellter-install.sh, the way erssi was installed\n", installer);
+			return 1;
+		}
+		execl("/bin/sh", "sh", installer, "--update", "--prefix", ERSSI_PREFIX,
+		      check_update ? "--check" : (char *) NULL, (char *) NULL);
+		fprintf(stderr, "erssi: cannot run %s: %s\n", installer, g_strerror(errno));
+		return 1;
 	}
 
 	srand(time(NULL));

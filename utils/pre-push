@@ -84,6 +84,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         case "$local_ref" in
             refs/tags/shellter-v*)
                 git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ROOT/utils/allowed_signers" \
+                    -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
                     verify-tag "$local_sha" >/dev/null 2>&1 ||
                     bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)" ;;
         esac
