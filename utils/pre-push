@@ -6,9 +6,13 @@
 # 2. every pushed commit (branches and tags) is authored and committed by
 #    y-o-o-z (noreply address) and carries no AI attribution trailer;
 #    annotated tags are tagged by y-o-o-z
-# 3. no line added by the pushed commits matches a private pattern from
-#    ~/.config/git-private-patterns (one extended regex per line; the file
-#    stays on your machine, so the patterns themselves are never published)
+# 3. nothing that the push publishes matches a private pattern from
+#    ~/.config/git-private-patterns (one extended regex per line, case
+#    insensitive; the file stays on your machine, so the patterns themselves
+#    are never published): lines added by the pushed commits, their commit
+#    messages and file paths, annotated tag messages and the ref names.
+#    Without the file the push is refused; PREPUSH_NO_PATTERNS=1 git push
+#    pushes once without this check.
 # Skip in an emergency with: git push --no-verify
 set -u
 ROOT=$(git rev-parse --show-toplevel)
@@ -21,13 +25,29 @@ bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
 if [ -r "$PATTERNS" ]; then
     grep -Eq -f "$PATTERNS" </dev/null 2>/dev/null; [ $? -le 1 ] ||
         { echo "pre-push: $PATTERNS has an invalid pattern (grep -E): push refused" >&2; exit 1; }
+    check_private=1
+elif [ "${PREPUSH_NO_PATTERNS:-}" = 1 ]; then
+    echo "pre-push: warning: $PATTERNS missing - private data check skipped (PREPUSH_NO_PATTERNS=1)" >&2
+    check_private=0
 else
-    echo "pre-push: warning: $PATTERNS missing - private data check skipped" >&2
+    cat >&2 <<EOF
+pre-push: $PATTERNS is missing or unreadable - push refused,
+          the private data check cannot run. Create it (one extended regex
+          per line), or push once without the check:
+            PREPUSH_NO_PATTERNS=1 git push
+EOF
+    exit 1
 fi
+# up to 3 lines of stdin that match a private pattern
+private() { grep -iEf "$PATTERNS" | head -3; }
 
 pushed=""
-while read -r local_ref local_sha _remote_ref remote_sha; do
+while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$ZERO" ] && continue          # deletion
+    if [ "$check_private" = 1 ]; then
+        hits=$(printf '%s\n%s\n' "$local_ref" "$remote_ref" | private)
+        [ -n "$hits" ] && bad "ref name: private data: $hits"
+    fi
     # tags too: a tag can carry commits that no branch on GitHub has
     tip=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
     pushed="$pushed $tip"
@@ -45,15 +65,24 @@ while read -r local_ref local_sha _remote_ref remote_sha; do
         if git log -1 --format=%B "$c" | grep -qiE '^co-authored-by:.*(claude|anthropic)|generated with \[?claude'; then
             bad "$(git log -1 --format='%h %s' "$c"): AI attribution trailer"
         fi
-        if [ -r "$PATTERNS" ]; then
-            hits=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++ \(b/\|/dev/null\)' | grep -iEf "$PATTERNS" | head -3)
-            [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data: $hits"
+        if [ "$check_private" = 1 ]; then
+            hits=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++ \(b/\|/dev/null\)' | private)
+            [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the diff: $hits"
+            hits=$(git log -1 --format=%B "$c" | private)
+            [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the commit message: $hits"
+            hits=$(git -c core.quotePath=false show --name-only --format= "$c" | private)
+            [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in a file path: $hits"
         fi
     done
     # an annotated tag has its own author line and message
     if [ "$(git cat-file -t "$local_sha")" = tag ]; then
         tagger=$(git cat-file -p "$local_sha" | sed -n 's/^tagger .*<\(.*\)>.*/\1/p')
         [ "$tagger" = "$EMAIL" ] || bad "$local_ref: tagger $tagger"
+        if [ "$check_private" = 1 ]; then
+            # the message: everything after the header, without a signature
+            hits=$(git cat-file -p "$local_sha" | sed '1,/^$/d; /^-----BEGIN PGP SIGNATURE-----/,$d' | private)
+            [ -n "$hits" ] && bad "$local_ref: private data in the tag message: $hits"
+        fi
     fi
 done
 

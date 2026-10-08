@@ -38,11 +38,19 @@ erssi Shellter Edition installer
 
   --prefix DIR   install here (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
-  --ref REF      release tag, branch or commit (default: newest verified release)
+  --ref REF      release tag, branch or full commit SHA (default: newest
+                 verified release)
   --repo URL     git repository (default https://github.com/y-o-o-z/erssi.git)
   --no-test      skip the test suite
   --clean        remove the build directory afterwards (small disk quotas)
 USAGE
+}
+
+# an option that takes a value: present, not empty, not the next option
+optval() {
+    case "$2" in
+        ''|-*) echo "shellter-install.sh: $1 needs a value, e.g. $1 $3 (--help)" >&2; exit 2 ;;
+    esac
 }
 
 main() {
@@ -55,10 +63,10 @@ CLEAN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --prefix) PREFIX=$2; shift 2 ;;
-        --src) SRC=$2; shift 2 ;;
-        --ref) REF=$2; shift 2 ;;
-        --repo) REPO=$2; shift 2 ;;
+        --prefix) optval "$1" "${2:-}" DIR; PREFIX=$2; shift 2 ;;
+        --src) optval "$1" "${2:-}" DIR; SRC=$2; shift 2 ;;
+        --ref) optval "$1" "${2:-}" shellter-v1.3.5; REF=$2; shift 2 ;;
+        --repo) optval "$1" "${2:-}" URL; REPO=$2; shift 2 ;;
         --no-test) RUN_TESTS=0; shift ;;
         --clean) CLEAN=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -141,19 +149,36 @@ if [ -z "$REF" ]; then
     REF=$(printf '%s\n' "$RELEASES" | awk 'NF == 2 {r = $1} END {print r}')
     [ -n "$REF" ] || die "no release recorded in this installer - use --ref"
 fi
-# only this ref, without history: a few MB instead of the whole repository
+# only this ref, without history: a few MB instead of the whole repository.
+# Fetching by name works for tags, branches and full commit SHAs alike
+# (git clone --branch takes no SHA), so a fresh install is git init + fetch.
 GITLOG=$(mktemp)
-G() { git -c advice.detachedHead=false "$@" >"$GITLOG" 2>&1 || { cat "$GITLOG" >&2; rm -f "$GITLOG"; return 1; }; }
+trap 'rm -f "$GITLOG"' EXIT
+trap 'exit 1' HUP INT TERM
+G() { git -c advice.detachedHead=false -c init.defaultBranch=main "$@" >"$GITLOG" 2>&1 || { cat "$GITLOG" >&2; return 1; }; }
+SHA_HINT=""
+case "$REF" in
+    *[!0-9a-f]*) ;;
+    *) [ ${#REF} -eq 40 ] || SHA_HINT=" (a commit must be given as the full 40-character SHA)" ;;
+esac
 if [ -d "$SRC/.git" ]; then
     [ -z "$(git -C "$SRC" status --porcelain --untracked-files=no)" ] ||
         die "$SRC has local changes - the installer would overwrite them; use another --src"
     say "updating $SRC to $REF"
-    G -C "$SRC" fetch -q --depth 1 "$REPO" "$REF" || die "cannot fetch $REF from $REPO"
+    G -C "$SRC" fetch -q --depth 1 "$REPO" "$REF" || die "cannot fetch $REF from $REPO$SHA_HINT"
     G -C "$SRC" checkout -q --force FETCH_HEAD || die "cannot check out $REF"
 else
+    # checkout --force must not land on somebody's files
+    [ ! -e "$SRC" ] || [ -z "$(ls -A "$SRC" 2>/dev/null)" ] ||
+        die "$SRC exists and is not a git checkout - remove it or use another --src"
     say "downloading $REF from $REPO"
-    mkdir -p "$(dirname "$SRC")"
-    G clone -q --depth 1 --branch "$REF" "$REPO" "$SRC" || die "cannot download $REF from $REPO"
+    mkdir -p "$SRC"
+    G init -q "$SRC" || die "cannot create a git repository in $SRC"
+    if ! G -C "$SRC" fetch -q --depth 1 "$REPO" "$REF"; then
+        rm -rf "$SRC/.git"
+        die "cannot download $REF from $REPO$SHA_HINT"
+    fi
+    G -C "$SRC" checkout -q --force FETCH_HEAD || die "cannot check out $REF"
 fi
 rm -f "$GITLOG"
 HEAD_SHA=$(git -C "$SRC" rev-parse HEAD)
