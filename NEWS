@@ -1,3 +1,35 @@
+erssi-v1.3.6 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 1.3.6: fixes from a full code review.
+
+	+ fe-web
+	  - fe_web_socket: every directory above the socket directory must be
+	    yours or root's and not writable by others unless sticky (like
+	    /tmp); a symbolic link is followed only if it is yours or root's.
+	    A parent directory writable by others let another user swap the
+	    socket directory and receive the web password
+	  - the socket directory itself is checked without following links
+	    (a symbolic link is refused) and checked again after it is made
+	  - accepted connections are close-on-exec (no leak into /exec)
+	  - a socket path longer than the system allows is refused with a
+	    clear message
+	+ Input
+	  - a key binding or script that changes the input buffer while a
+	    fast batch of keys is processed no longer leaves the rest of the
+	    batch reading stale data
+	+ Installer
+	  - --ref also takes a full commit SHA; an existing non-git --src is
+	    refused; an option without its value is an error
+	  - pre-push hook: the private data check covers commit messages,
+	    file paths, tag messages and ref names, and refuses the push when
+	    the patterns file is missing
+	+ Tests
+	  - the fe-web fuzz corpus replays with leak detection under
+	    AddressSanitizer
+	+ NexusIRC (contrib/nexusirc 0027)
+	  - a new fe-web password re-encrypts the stored web history instead
+	    of losing it; every local address of the machine keeps the
+	    certificate pin; attached sessions do not expire
+
 erssi-v1.3.5 2026-10-06  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.5
 

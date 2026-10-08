@@ -65,7 +65,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) optval "$1" "${2:-}" DIR; PREFIX=$2; shift 2 ;;
         --src) optval "$1" "${2:-}" DIR; SRC=$2; shift 2 ;;
-        --ref) optval "$1" "${2:-}" shellter-v1.3.5; REF=$2; shift 2 ;;
+        --ref) optval "$1" "${2:-}" TAG; REF=$2; shift 2 ;;
         --repo) optval "$1" "${2:-}" URL; REPO=$2; shift 2 ;;
         --no-test) RUN_TESTS=0; shift ;;
         --clean) CLEAN=1; shift ;;
