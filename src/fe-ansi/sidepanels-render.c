@@ -470,7 +470,8 @@ static void sp_cache_update_markers(SP_PANEL_CACHE *cache, int height,
 }
 
 /* Arrows marking more entries above/below the visible part of a panel,
- * in the theme's sidepanel_scroll_arrow format ($0 is the arrow) on the
+ * in the theme's sidepanel_scroll_arrow format ($0 is the arrow; the format
+ * must stay one cell wide - colours only, no text around $0) on the
  * panel background. Returns the number of cells drawn. */
 static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int height,
                                gboolean more_above, gboolean more_below)

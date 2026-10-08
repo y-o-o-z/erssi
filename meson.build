@@ -701,6 +701,11 @@ install_man('docs/irssi.1')
 # whoever builds erssi.
 test_env = environment()
 test_env.set('HOME', meson.build_root() / 'test-home')
+# the fe-web fuzz corpus holds leak reproducers: under AddressSanitizer they
+# must run with leak detection even when the rest of the suite does not
+fuzz_test_env = environment()
+fuzz_test_env.set('HOME', meson.build_root() / 'test-home')
+fuzz_test_env.set('ASAN_OPTIONS', 'detect_leaks=1:abort_on_error=1')
 
 subdir('src')
 subdir('tests')
