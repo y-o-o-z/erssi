@@ -30,6 +30,7 @@ shellter-v1.3.4 eba342ff9c4b3eb0fd0d557fe0865b819e3c1fa6
 shellter-v1.3.5 cc6eac9cd09dfb088c5cc59978809fa0b7e83acb
 shellter-v1.3.6 6c92e621bba125ac1a9c7d050d769ee8b92d1de9
 shellter-v1.3.7 0c74bd9925fe366f598957f9012a83aa997056f9
+shellter-v1.3.8 f0d20f32f5c1e62d576c2418e7e7662d754f6bd7 signed
 "
 # who signs the releases (git allowed_signers format; utils/allowed_signers)
 RELEASE_SIGNER='136268860+y-o-o-z@users.noreply.github.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS'
