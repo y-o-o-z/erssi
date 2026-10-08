@@ -11,14 +11,18 @@
 # Without --ref it installs the newest release recorded below and checks it
 # against the recorded commit, so neither a moved nor a newly pushed tag
 # changes what gets installed; --ref main (or any other ref) is built as is,
-# with a warning. --clean removes the build directory after installing (for
+# with a warning. A release marked "signed" must also carry a valid SSH
+# signature by the key below (checked with git verify-tag; needs git 2.34+
+# and ssh-keygen - without them the recorded commit is still checked).
+# --clean removes the build directory after installing (for
 # small disk quotas; the next update builds from scratch).
 #
 # Everything runs from main() at the end of the file, so a download cut
 # short by the network does not run half a script.
 set -eu
 
-# release tag -> commit it must point to (one line per release)
+# release tag -> commit it must point to [signed] (one line per release;
+# "signed": the tag must be signed by RELEASE_SIGNER)
 RELEASES="
 shellter-v1.3.2 05a1ad752e6c701cb20e51be196ce880745008c4
 shellter-v1.3.3 e5f939902710b3a6f58218bb5a4acd3eec9080bf
@@ -27,6 +31,8 @@ shellter-v1.3.5 cc6eac9cd09dfb088c5cc59978809fa0b7e83acb
 shellter-v1.3.6 6c92e621bba125ac1a9c7d050d769ee8b92d1de9
 shellter-v1.3.7 0c74bd9925fe366f598957f9012a83aa997056f9
 "
+# who signs the releases (git allowed_signers format; utils/allowed_signers)
+RELEASE_SIGNER='136268860+y-o-o-z@users.noreply.github.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS'
 MESON_PIP="meson==1.12.1"
 NINJA_PIP="ninja==1.13.2"
 
@@ -53,6 +59,36 @@ optval() {
     case "$2" in
         ''|-*) echo "shellter-install.sh: $1 needs a value, e.g. $1 $3 (--help)" >&2; exit 2 ;;
     esac
+}
+
+# The fetched tag (FETCH_HEAD) must be an annotated tag named $REF, signed
+# by RELEASE_SIGNER. Without git 2.34+ or ssh-keygen the signature cannot be
+# checked: a warning, the pinned commit is still checked after this.
+check_signature() {
+    gv=$(git --version | sed -n 's/^git version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    # shellcheck disable=SC2086 # "2 47" -> $1 $2
+    set -- $gv
+    if [ -z "${2:-}" ] || [ "$1" -lt 2 ] || { [ "$1" -eq 2 ] && [ "$2" -lt 34 ]; }; then
+        warn "git $(git --version | cut -d' ' -f3) cannot check SSH signatures (2.34+ needed) - release signature not checked"
+        return 0
+    fi
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        warn "ssh-keygen not found (openssh-client) - release signature not checked"
+        return 0
+    fi
+    [ "$(git -C "$SRC" cat-file -t FETCH_HEAD 2>/dev/null)" = tag ] ||
+        die "$REF is not a signed tag on $REPO - refusing to build (download the installer again, or report it)"
+    name=$(git -C "$SRC" cat-file tag FETCH_HEAD | sed -n '1,/^$/s/^tag //p')
+    [ "$name" = "$REF" ] || die "the tag fetched as $REF is named '$name' - refusing to build"
+    signers=$(mktemp)
+    printf '%s\n' "$RELEASE_SIGNER" > "$signers"
+    if git -C "$SRC" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" verify-tag FETCH_HEAD >/dev/null 2>&1; then
+        rm -f "$signers"
+        ok "signature: $REF signed by the erssi Shellter release key"
+    else
+        rm -f "$signers"
+        die "$REF does not carry a valid signature by the erssi Shellter release key - refusing to build (report it)"
+    fi
 }
 
 main() {
@@ -148,7 +184,7 @@ optional "libotr + libgcrypt" "$PKGCONFIG --exists 'libotr libgcrypt'" "no OTR"
 # ── source ───────────────────────────────────────────────────────────
 if [ -z "$REF" ]; then
     # the newest release this installer knows (and can verify)
-    REF=$(printf '%s\n' "$RELEASES" | awk 'NF == 2 {r = $1} END {print r}')
+    REF=$(printf '%s\n' "$RELEASES" | awk 'NF >= 2 {r = $1} END {print r}')
     [ -n "$REF" ] || die "no release recorded in this installer - use --ref"
 fi
 # only this ref, without history: a few MB instead of the whole repository.
@@ -185,6 +221,10 @@ fi
 rm -f "$GITLOG"
 HEAD_SHA=$(git -C "$SRC" rev-parse HEAD)
 PINNED=$(printf '%s\n' "$RELEASES" | awk -v r="$REF" '$1 == r {print $2}')
+SIGNED=$(printf '%s\n' "$RELEASES" | awk -v r="$REF" '$1 == r && $3 == "signed" {print "yes"}')
+if [ -n "$SIGNED" ]; then
+    check_signature
+fi
 if [ -n "$PINNED" ]; then
     [ "$HEAD_SHA" = "$PINNED" ] || die "$REF points to $HEAD_SHA, but this installer expects $PINNED - refusing to build (download the installer again, or report it)"
     ok "source: $REF, verified ($(echo "$HEAD_SHA" | cut -c1-8))"
