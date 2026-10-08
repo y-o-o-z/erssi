@@ -87,8 +87,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
                     bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)" ;;
         esac
         if [ "$check_private" = 1 ]; then
-            # the message: everything after the header, without a signature
-            hits=$(git cat-file -p "$local_sha" | sed '1,/^$/d; /^-----BEGIN PGP SIGNATURE-----/,$d' | private)
+            # the message: everything after the header, without a signature (PGP or SSH)
+            hits=$(git cat-file -p "$local_sha" | sed '1,/^$/d; /^-----BEGIN .*SIGNATURE-----/,$d' | private)
             [ -n "$hits" ] && bad "$local_ref: private data in the tag message: $hits"
         fi
     fi
