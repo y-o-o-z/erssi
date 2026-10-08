@@ -26,16 +26,35 @@ One command, no root, about two minutes on a shell box:
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-The installer checks the build dependencies and prints the exact package
-command for your system when something is missing, installs `meson` and
-`ninja` into a private Python environment if the system has none, builds the
-newest release recorded in the installer — and only if its tag points to the
+The installer checks the system first. Run as **root**, it lists the
+packages erssi needs (required and recommended, named for apt, dnf, apk,
+pacman, zypper or FreeBSD pkg) and installs them once you confirm (`--yes`
+skips the question; root must use its own home - `sudo -i` or `su -`); on
+a **user account** it lists the missing packages with the command to give
+the administrator. Without system `meson`/`ninja`
+it installs them into a private Python environment. It then builds the
+newest release recorded in the installer — only if its tag points to the
 recorded commit and, from 1.3.8 on, carries a valid signature by the release
-key — runs the test suite, installs to `~/.local/opt/erssi` and
-links `~/.local/bin/erssi`. Run it again to update. Works on Linux and
-FreeBSD. Options: `--prefix`, `--ref <tag|branch>` (anything that is not a
-recorded release is built with a warning), `--no-test`, `--clean` (remove
-the build directory afterwards, for small disk quotas).
+key — runs the test suite and installs to `~/.local/opt/erssi`, linked as
+`~/.local/bin/erssi`. Every step is one line; the build output goes to
+`~/.local/state/erssi/install.log`, shown when a step fails. Works on Linux
+and FreeBSD. Options: `--prefix`, `--ref <tag|branch>` (anything that is not
+a recorded release is built with a warning), `--no-test`, `--clean` (remove
+the build directory afterwards, for small disk quotas), `--yes`.
+
+### Update
+
+```sh
+erssi --check-update     # is a newer release available?
+erssi --update           # build and install it
+```
+
+`erssi --update` runs the installer shipped with the installed release: it
+takes the newest release on GitHub that carries a valid signature by the key
+of that installer (a tag pushed by anyone else is skipped), builds, tests
+and installs it into the same prefix, with the settings of the first install.
+Nothing is built when erssi is up to date. In a running erssi, `/upgrade`
+then loads the new version without disconnecting.
 
 Releases are signed with an SSH key (ED25519,
 `SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`, public key in

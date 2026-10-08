@@ -40,6 +40,7 @@ fe_ansi_libs = [
 fe_ansi_c_args = [
   def_themesdir,
   def_datadir,
+  def_prefix,
 ]
 fe_ansi_inc = [rootinc]
 
