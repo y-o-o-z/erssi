@@ -89,7 +89,7 @@ FORMAT_REC gui_text_formats[] = {
 	  " / _ \\| '__/ __|/ __| | |%:"
 	  "|  __/| |  \\__ \\\\__ \\ | |%:"
 	  " \\___||_|  |___/|___/ |_|%:"
-	  "erssi v$J - https://erssi.org", 0 },
+	  "erssi Shellter Edition $J - https://github.com/y-o-o-z/erssi", 0 },
 	{ "welcome_firsttime",
 	  "- - - - - - - - - - - - - - - - - - - - - - - - - - - -\n"
 	  "Hi there! If this is your first time using Irssi, you%:"

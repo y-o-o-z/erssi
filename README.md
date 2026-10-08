@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-1.3.8-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-1.3.9-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -45,6 +45,13 @@ Releases are signed with an SSH key (ED25519,
 erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
 irssi. Start it inside tmux so the session survives logging out.
 
+The themes and the `startup` file erssi copies into `~/.erssi/` are updated
+with erssi, like the configuration files of a system package: a copy you
+have not changed is replaced by the new version on the next start; a copy
+you changed (also by `/save -formats`) is never touched, and erssi says once
+where the new version is. The sha256 of what erssi installed is kept in
+`~/.erssi/default-files.sha256`. Symbolic links are left alone.
+
 <details>
 <summary>Manual build</summary>
 
@@ -74,9 +81,9 @@ and used when present. For a system-wide install use
 
 | | |
 |---|---|
-| **erssi Shellter Edition 1.3.8** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 1.3.9** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus irssi `master` up to 2025-07-26, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.8`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.9`). |
 
 ## What this edition adds
 
