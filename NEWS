@@ -1,3 +1,33 @@
+erssi-v1.3.9 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 1.3.9: a banner of its own, updates reach
+	~/.erssi.
+
+	+ Start
+	  - the banner of the shellter themes shows the name, the version and
+	    the first commands (/connect IRCnet, /join, Alt+1..0), on every
+	    start - also when servers connect at once, not again after /UPGRADE
+	  - the old erssi startup banner (v1.2.6, features this edition does
+	    not turn on) is gone; the shipped startup file only explains itself
+	  - /VERSION, the default /SV alias, the empty topic bar and the
+	    fallback banner name erssi Shellter Edition and its repository
+	    instead of erssi.org and "v1.1.0"
+	+ ~/.erssi files
+	  - the themes and startup erssi copies into ~/.erssi are updated with
+	    erssi: an unchanged copy (its sha256 is the one erssi recorded in
+	    ~/.erssi/default-files.sha256, or one of a version erssi ever
+	    shipped) is replaced; a copy you changed is kept, with one note
+	    where the new version is; symbolic links are left alone. Before,
+	    a copy was made once and never updated. A replaced theme is shown
+	    at once
+	  - the pre-push hook checks, for every pushed commit, that
+	    src/fe-ansi/default-files-known.h lists every shipped version
+	    (utils/default-file-hashes.sh)
+	+ Fixes
+	  - redrawing a line printed with a format without arguments (e.g. the
+	    banner, after a theme reload) passed NULL to memcpy (UBSan)
+	  - install.sh (the inherited system-wide installer) names this
+	    edition and its repository
+
 erssi-v1.3.8 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.8: signed releases.
 
