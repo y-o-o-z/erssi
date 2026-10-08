@@ -26,6 +26,7 @@ windows (Notices, Mentions, script windows). The series is made against
 | 0024 | Connect to erssi over its Unix socket (`irssiConnection.socketPath`, erssi `fe_web_socket`): no TCP port other users of the box can reach; TLS, the certificate pin and the password header stay. |
 | 0025 | The encrypted message storage key is derived the same way after saving the erssi settings as at login (it used a different key). |
 | 0026 | Help: the changelog is the list of local patches in this checkout and no update is announced (the upstream check asked The Lounge's releases, another project); the missing handler for the changelog request is added. |
+| 0027 | Review fixes: a new fe-web password re-encrypts the stored history (one transaction, rolled back on failure) instead of losing it; every local address of this machine (127.0.0.0/8, ::1 forms, own interfaces) keeps the certificate pin; one `~` expansion for socketPath, caFile and journalDir; attached sessions do not expire; changelog git run shared, cached and time-limited; Polish plural forms; pin errors logged once; lint and new tests. |
 
 Patches 0002, 0003 and 0018 brand the web client as **erssi@tahio** and put
 the interface in Polish. For your own brand or language, change the texts in
