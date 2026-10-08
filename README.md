@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-1.3.6-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-1.3.7-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -68,9 +68,9 @@ and used when present. For a system-wide install use
 
 | | |
 |---|---|
-| **erssi Shellter Edition 1.3.6** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 1.3.7** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus irssi `master` up to 2025-07-26, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.6`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi's own version (`1.3.7`). |
 
 ## What this edition adds
 

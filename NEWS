@@ -1,3 +1,15 @@
+erssi-v1.3.7 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 1.3.7
+
+	+ Settings
+	  - /SET does not show the value of secrets: settings with password,
+	    passwd, secret or token in the name, names ending in api_key and
+	    those in the new hidden_settings (default translate_deepl_key)
+	    print as "(secret, set - not shown)", and tab completion does not
+	    put their value on the input line. /SET output reaches the screen,
+	    the window's log and the web client. Scripts and $variables still
+	    get the real value
+
 erssi-v1.3.6 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.6: fixes from a full code review.
 
