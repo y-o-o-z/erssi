@@ -24,6 +24,7 @@ shellter-v1.3.2 05a1ad752e6c701cb20e51be196ce880745008c4
 shellter-v1.3.3 e5f939902710b3a6f58218bb5a4acd3eec9080bf
 shellter-v1.3.4 eba342ff9c4b3eb0fd0d557fe0865b819e3c1fa6
 shellter-v1.3.5 cc6eac9cd09dfb088c5cc59978809fa0b7e83acb
+shellter-v1.3.6 6c92e621bba125ac1a9c7d050d769ee8b92d1de9
 "
 MESON_PIP="meson==1.12.1"
 NINJA_PIP="ninja==1.13.2"
