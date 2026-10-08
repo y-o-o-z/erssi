@@ -842,8 +842,12 @@ static int socket_peer_uid(int fd, uid_t *uid)
 	struct ucred cred;
 	socklen_t len = sizeof(cred);
 
-	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0 || len != sizeof(cred))
+	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) < 0)
 		return 0;
+	if (len != sizeof(cred)) {
+		errno = EPROTO;
+		return 0;
+	}
 	*uid = cred.uid;
 	return 1;
 #elif defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
@@ -869,6 +873,8 @@ static GIOChannel *socket_accept(GIOChannel *channel)
 	if (fd < 0)
 		return NULL;
 	fcntl(fd, F_SETFL, O_NONBLOCK);
+	/* /exec children must not inherit web clients' connections */
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
 	return i_io_channel_new(fd);
 }
 
@@ -1003,28 +1009,99 @@ static char *socket_path_expand(const char *value)
 	return path;
 }
 
+/* No one else may be able to swap any part of the socket path: every
+ * component is owned by the user or root, a directory writable by others
+ * only if sticky (like /tmp), and a symbolic link only one owned by the
+ * user or root (e.g. /home -> /usr/home on FreeBSD; another user's link in
+ * /tmp could later be pointed elsewhere). Returns NULL when trusted, else
+ * the offending component (to be freed). */
+static char *socket_path_untrusted(const char *dir)
+{
+	char **parts, *prefix;
+	int i;
+	uid_t me = getuid();
+
+	if (!g_path_is_absolute(dir))
+		return g_strdup(dir);
+	parts = g_strsplit(dir, "/", -1);
+	prefix = g_strdup("/");
+	for (i = 0; parts[i] != NULL; i++) {
+		struct stat st;
+		char *next;
+
+		if (*parts[i] == '\0')
+			continue;
+		next = g_build_filename(prefix, parts[i], NULL);
+		g_free(prefix);
+		prefix = next;
+		if (lstat(prefix, &st) < 0) {
+			if (errno == ENOENT)
+				break;	/* the rest is created 0700 by us */
+			g_strfreev(parts);
+			return prefix;
+		}
+		if (st.st_uid != me && st.st_uid != 0)
+			goto bad;
+		if (S_ISLNK(st.st_mode))
+			continue;
+		if (!S_ISDIR(st.st_mode))
+			goto bad;
+		if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (st.st_mode & S_ISVTX) == 0)
+			goto bad;
+		continue;
+bad:
+		g_strfreev(parts);
+		return prefix;
+	}
+	g_strfreev(parts);
+	g_free(prefix);
+	return NULL;
+}
+
 /* The socket's directory must be the user's own and writable only by the
- * user - otherwise someone else could replace the socket with their own and
- * receive the web client's password. A missing directory is made 0700. */
+ * user, and no one else may be able to swap any directory above it -
+ * otherwise someone else could replace the socket with their own and
+ * receive the web client's password. The directory itself must be a real
+ * directory, not a symbolic link (lstat). A missing directory is made 0700. */
 static gboolean socket_dir_check(const char *path)
 {
 	struct stat st;
-	char *dir;
+	char *dir, *parent, *bad;
 	gboolean ok = FALSE;
 
 	dir = g_path_get_dirname(path);
-	if (stat(dir, &st) < 0) {
-		if (errno != ENOENT || g_mkdir_with_parents(dir, 0700) < 0 ||
-		    chmod(dir, 0700) < 0 || stat(dir, &st) < 0) {
+	parent = g_path_get_dirname(dir);
+	/* the directory itself is checked below, with a message for each case */
+	bad = socket_path_untrusted(parent);
+	g_free(parent);
+	if (bad != NULL) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: %s in the fe_web_socket path can be changed by "
+		          "another user (owner, mode or a link that is not yours) - put the socket "
+		          "in a directory of your own, e.g. ~/.erssi/fe-web.sock",
+		          bad);
+		g_free(bad);
+		g_free(dir);
+		return FALSE;
+	}
+	if (lstat(dir, &st) < 0) {
+		if (errno != ENOENT || (errno = 0, g_mkdir_with_parents(dir, 0700) < 0) ||
+		    lstat(dir, &st) < 0 || !S_ISDIR(st.st_mode) || st.st_uid != getuid() ||
+		    chmod(dir, 0700) < 0 || lstat(dir, &st) < 0) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 			          "fe-web: Not starting: directory %s of fe_web_socket: %s", dir,
-			          g_strerror(errno));
+			          errno ? g_strerror(errno) : "not created as a directory of yours");
 			g_free(dir);
 			return FALSE;
 		}
 	}
 
-	if (!S_ISDIR(st.st_mode)) {
+	if (S_ISLNK(st.st_mode)) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: directory %s of fe_web_socket is a symbolic link - "
+		          "use the real directory",
+		          dir);
+	} else if (!S_ISDIR(st.st_mode)) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Not starting: %s is not a directory", dir);
 	} else if (st.st_uid != getuid()) {
@@ -1173,6 +1250,18 @@ static void server_listen_unix(const char *value)
 	char *path;
 
 	path = socket_path_expand(value);
+	{
+		struct sockaddr_un sa;
+
+		if (strlen(path) >= sizeof(sa.sun_path)) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: Not starting: fe_web_socket path %s is too long "
+			          "(at most %d bytes)",
+			          path, (int) sizeof(sa.sun_path) - 1);
+			g_free(path);
+			return;
+		}
+	}
 	if (!socket_dir_check(path) || !socket_stale_remove(path)) {
 		g_free(path);
 		return;
