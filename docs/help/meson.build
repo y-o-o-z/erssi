@@ -23,6 +23,7 @@ install_data(
     'devoice',
     'die',
     'disconnect',
+    'e2e',
     'echo',
     'eval',
     'exec',
