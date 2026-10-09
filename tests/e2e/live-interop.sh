@@ -13,6 +13,17 @@
 # query: plain text, Polish text, a long message that is chunked, /me,
 # "..." and /quote privmsg. Checked: each side reads the other in plain
 # text (erssi logs), and the server never saw any of it in plain text.
+# In normal mode each side accepts the other once (/e2e accept).
+#
+# A third client, mallory (native module, auto-accept), plays the outsider
+# of the security review: his messages make alice ask him for his key, but
+# alice never sends him hers without /e2e accept. Then, on alice: a script
+# binding /e2e does not switch the module off, a raw line with CR LF and a
+# PRIVMSG sent from a rawlog hook do not leave in clear text, and /upgrade
+# with PRIVMSGs still in the flood queue encrypts them. A query with E2E on
+# whose nick (carol) is no longer reachable is refused, not sent in clear
+# text, until /e2e off in that query. Last, rpe2e.pl
+# loads and saves alice's keyring and keeps what only the module writes.
 #
 # Each client has its own --home and HOME under a temporary directory and
 # runs in a private tmux server (-L e2e-live-<pid>); only that tmux server
@@ -73,7 +84,7 @@ while ! python3 -c "import socket; socket.create_connection(('127.0.0.1', $PORT)
     sleep 0.1
 done
 
-for nick in alice bob; do
+for nick in alice bob mallory carol; do
     home="$WORK/$nick"
     mkdir -p "$home/modules" "$home/logs" "$home/scripts/autorun" "$WORK/home-$nick"
     for so in "$MODDIR"/*.so; do ln -s "$so" "$home/modules/"; done
@@ -98,6 +109,12 @@ say() {  # say <nick> <text>: type one line into that erssi
     tmux -L "$SOCK" send-keys -t "$1" -l -- "$2"
     tmux -L "$SOCK" send-keys -t "$1" Enter
     sleep 1
+}
+
+quick() {  # quick <nick> <text>: the same, without waiting
+    tmux -L "$SOCK" send-keys -t "$1" -l -- "$2"
+    tmux -L "$SOCK" send-keys -t "$1" Enter
+    sleep 0.2
 }
 
 wait_for() {  # wait_for <file> <fixed string> <seconds>
@@ -174,6 +191,13 @@ else
 fi
 say bob "/e2e accept alice"
 sleep 2
+# bob's key arrived with his answer, but his own request for alice's key
+# waits for her decision as well
+if wait_for "$WORK/alice/logs/$CHAN.log" "Pending key exchange from bob" 10; then
+    pass "alice (native) got bob's reciprocal KEYREQ and asks before answering"
+else
+    bad "alice did not ask about bob's reciprocal KEYREQ"
+fi
 say alice "/e2e accept bob"
 sleep 2
 
@@ -318,6 +342,141 @@ assert bob["incoming"]["alice@127.0.0.1|#test"]["status"] == "trusted"
 assert alice["incoming"]["bob@127.0.0.1|@alice@127.0.0.1"]["status"] == "trusted"
 assert bob["incoming"]["alice@127.0.0.1|@bob@127.0.0.1"]["status"] == "trusted"
 EOF
+
+# ---- mallory: an outsider gets no key without /e2e accept (review C1) ----
+say alice "/window goto $CHAN"
+say mallory "/window goto $CHAN"
+say mallory "/e2e mode auto"
+say mallory "hello from mallory"
+# handshake NOTICEs go through the flood queue: mallory answers bob too
+if wait_for "$WORK/alice/logs/$CHAN.log" "Pending key exchange from mallory" 30; then
+    pass "alice: mallory's request for her key waits for /e2e accept"
+else
+    bad "alice: no pending request from mallory"
+fi
+if grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" "$WORK/wire.log"; then
+    bad "alice sent her key (KEYRSP) to mallory without /e2e accept"
+else
+    pass "alice sent mallory no KEYRSP"
+fi
+say alice "members only after mallory came"
+sleep 3
+check "$WORK/bob/logs/$CHAN.log" "members only after mallory came"
+if grep -qF "members only after mallory came" "$WORK/mallory/logs/$CHAN.log" 2>/dev/null; then
+    bad "mallory reads alice's channel messages"
+else
+    pass "mallory cannot read alice's channel messages"
+fi
+
+# ---- a script that binds /e2e is not rpe2e.pl (review M3) ----
+cat > "$WORK/alice/scripts/e2ealias.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'e2ealias');
+Irssi::command_bind('e2e', sub { });
+PERL
+say alice "/script load e2ealias"
+say alice "after another script bound e2e"
+sleep 2
+check "$WORK/bob/logs/$CHAN.log" "after another script bound e2e"
+say alice "/script unload e2ealias"
+
+# ---- a PRIVMSG from a rawlog hook while ciphertext goes out (review M4) ----
+cat > "$WORK/alice/scripts/e2erawlog.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'e2erawlog');
+my $done = 0;
+Irssi::signal_add('rawlog', sub {
+    my ($rawlog, $data) = @_;
+    return if $done || $data !~ /^<< PRIVMSG #test :\+RPE2E01 /;
+    $done = 1;
+    my ($server) = Irssi::servers();
+    $server->send_raw_now('PRIVMSG #test :sent from a rawlog hook');
+});
+PERL
+say alice "/script load e2erawlog"
+say alice "this line triggers the hook"
+sleep 2
+check "$WORK/bob/logs/$CHAN.log" "sent from a rawlog hook"
+say alice "/script unload e2erawlog"
+
+# ---- a raw line with CR LF in it (review I2) ----
+say alice "/script exec Irssi::active_server->send_raw('PRIVMSG #pub :hello'.chr(13).chr(10).'PRIVMSG $CHAN :raw line with CRLF')"
+sleep 1
+say alice "/script exec Irssi::active_server->send_raw('PRIVMSG #pub :hello'.chr(13).'PRIVMSG $CHAN :raw line with CR')"
+sleep 2
+
+python3 - "$WORK/wire.log" <<'PY' && pass "server: the review checks sent no plain text" || bad "server: plain text from the review checks"
+import sys
+bad = 0
+for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    for word in ("hello from mallory", "members only", "another script bound", "triggers the hook",
+                 "rawlog hook", "raw line with"):
+        if word in l:
+            print("  plain text:", l.rstrip())
+            bad += 1
+sys.exit(1 if bad else 0)
+PY
+
+# ---- E2E on in a query, the nick's address no longer known (review 2, I3) ----
+say alice "/query carol"
+say alice "/e2e on"
+say alice "/window close"
+say carol "/part $CHAN"
+sleep 1
+say alice "/window goto $CHAN"
+say alice "/msg carol unresolved dm secret"
+sleep 2
+if grep -aqF "unresolved dm secret" "$WORK/wire.log"; then
+    bad "a DM to carol (E2E on, address unknown) went out in plain text"
+else
+    pass "a DM to carol (E2E on, address unknown) is refused"
+fi
+# turned off in carol's query: clear text is the user's choice now
+say alice "/query carol"
+say alice "/e2e off"
+say alice "/msg carol clear after off"
+sleep 2
+if grep -aqF "alice PRIVMSG carol :clear after off" "$WORK/wire.log"; then
+    pass "/e2e off in the query turns E2E off for carol's last address"
+else
+    bad "/e2e off in carol's query did not turn E2E off"
+fi
+say alice "/window close"
+
+# ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
+say alice "/set cmds_max_at_once 1"
+say alice "/set cmd_queue_speed 8s"
+quick alice "upgrade queued one"
+quick alice "upgrade queued two"
+quick alice "upgrade queued three"
+quick alice "/upgrade"
+sleep 6
+if grep -aqiF "upgrade queued" "$WORK/wire.log"; then
+    bad "/upgrade sent queued messages in plain text"
+    grep -aF "upgrade queued" "$WORK/wire.log" | sed 's/^/    /'
+else
+    pass "/upgrade sent no queued message in plain text"
+fi
+check "$WORK/bob/logs/$CHAN.log" "upgrade queued three"
+
+# ---- rpe2e.pl keeps what only the module writes ----
+# bob's rpe2e.pl loads and saves alice's keyring: "accepted" and
+# "seen_rekeys" are the module's own members, rpe2e.pl keeps them
+cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
+say bob "/window goto $CHAN"
+say bob "/e2e mode quiet"
+sleep 1
+python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
+import json, sys
+a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+assert b["channels"][sys.argv[3]]["mode"] == "quiet", "rpe2e.pl did not save"
+assert a.get("accepted"), "alice accepted nobody"
+assert b.get("accepted") == a["accepted"], "accepted changed"
+assert b.get("seen_rekeys") == a.get("seen_rekeys"), "seen_rekeys changed"
+assert b["identity"] == a["identity"]
+PY
 
 for f in "$WORK"/asan-* "$WORK"/ubsan-*; do
     [ -e "$f" ] || continue

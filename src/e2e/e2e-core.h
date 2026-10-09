@@ -20,6 +20,13 @@ void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick);
 const char *e2e_keyring_file(void);
 /* load_keyring of rpe2e.pl: problems are printed */
 E2E_JSON *e2e_load(void);
+/* the same; *lost: the keyring is lost (a corrupt one was moved aside),
+   the one returned is empty and must not be used for anything */
+E2E_JSON *e2e_load_full(gboolean *lost);
+/* a corrupt keyring was moved aside and /e2e reset not run yet */
+gboolean e2e_keyring_is_lost(void);
+/* drops the PRIVMSGs waiting in the flood queues; how many */
+int e2e_drop_queued_privmsgs(void);
 gboolean e2e_save(const E2E_JSON *kr);
 /* ensure_identity: creates and stores one when the keyring has none */
 gboolean e2e_ensure_identity(E2E_JSON *kr, E2E_IDENTITY *id);

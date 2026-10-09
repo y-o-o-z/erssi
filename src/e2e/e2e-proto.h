@@ -14,10 +14,17 @@
 */
 
 #include "e2e-json.h"
+#include "e2e-wire.h"
 
 #define E2E_KEYREQ_MIN_INTERVAL         30
 #define E2E_KEYREQ_INBOUND_MIN_INTERVAL 10
 #define E2E_PENDING_KEYREQ_TTL          120
+/* growth limits of what anyone can make us store */
+#define E2E_MAX_PENDING_INBOUND         64
+#define E2E_MAX_UNACCEPTED_PEERS        256
+#define E2E_MAX_PENDING_OUT             256
+#define E2E_MAX_TRUST_CHANGES           128
+#define E2E_MAX_SEEN_REKEYS             1024
 
 /* seconds since the epoch; tests replace it */
 extern gint64 (*e2e_now)(void);
@@ -84,6 +91,50 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const char *sender_handle, const char *
                            const char *body);
 gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *sender_handle,
                           const char *nick, const char *body);
+/* "at most once per 10 s" for each kind of handshake, sender and context */
+gboolean e2e_handshake_allow(GHashTable *stamps, E2E_HS_TYPE type, const char *sender,
+                             const char *ctx);
+
+/* ---- trust decisions of the user ---- */
+
+/* the session row holds a real key (32 bytes, not all zero) */
+gboolean e2e_session_has_key(const E2E_JSON *row);
+/* handle may receive our key for ctx: /e2e accept, autotrust or auto-accept
+   mode said so for this fingerprint ("accepted" in the keyring) */
+gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
+                           const char *fp_hex);
+/* the incoming session handle|ctx (fingerprint fp) is of a peer the user
+   accepted - for a DM session ("@<own>") the acceptance of "@<handle>" */
+gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
+                              const char *fp);
+/* the ident@host of every "@<handle>" config with E2E on that belongs to
+   nick (its "nick" member, or a peer last seen as nick there) */
+GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const char *nick);
+/* /e2e off in the query with nick (live: its ident@host now, or NULL):
+   the "@<handle>" contexts to turn off */
+GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const char *nick, const char *live);
+/* some "accepted" row is for this fingerprint */
+gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex);
+/* /e2e revoke, decline, forget: handle no longer gets our key for ctx */
+void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);
+
+typedef enum {
+	E2E_ACCEPT_SENT,	/* a pending request answered: *rsp (and *reciprocal) */
+	E2E_ACCEPT_TRUSTED,	/* no pending request: the session with a key trusted */
+	E2E_ACCEPT_NO_KEY,	/* only a session without a real key: nothing changed */
+	E2E_ACCEPT_NOTHING,	/* neither a pending request nor a session */
+	E2E_ACCEPT_DAMAGED,	/* the pending request does not decode */
+	E2E_ACCEPT_FAILED	/* the KEYRSP could not be built */
+} E2E_ACCEPT_RESULT;
+
+/* /e2e accept: handle and ctx as in pending_inbound; own_ctx is "@<own>"
+   for a query (where its DM session lives), else NULL */
+E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *handle,
+                             const char *ctx, const char *own_ctx, const char *own_handle,
+                             char **rsp, char **reciprocal);
+/* /e2e unrevoke: the sessions of handle on ctx and own_ctx that hold a key
+   are trusted again; how many (0: nothing changed) */
+int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx);
 
 /* ---- the outbound gate ---- */
 
@@ -111,14 +162,30 @@ typedef struct {
 #define E2E_REFUSE_NO_HANDLE "cannot encrypt PM without peer handle — wait for a message from them first"
 #define E2E_REFUSE_KEYRING   "cannot encrypt — keyring read failed; message NOT sent (E2E stays on)"
 #define E2E_REFUSE_ENCRYPT   "encryption failed — message NOT sent as plaintext (use /e2e off to send cleartext)"
+#define E2E_REFUSE_TOO_LONG  "the encrypted line would be longer than the server allows (target name too long) — message NOT sent"
+#define E2E_REFUSE_LOST      "cannot encrypt — the keyring was corrupt and is moved aside, E2E state is lost; message NOT sent. /e2e reset starts a new keyring"
 
 /* kr_ok: the keyring was read (an unreadable one may hold an enabled
    context: everything but a bot command is refused). id may be NULL
    (no REKEY then). */
+/* the ident@host of another "@<handle>" config with E2E on for nick (a
+   query's "nick" member, or a peer last seen as nick) than live; NULL
+   when there is none. The gate refuses a DM to nick then. */
+char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const char *nick, const char *live);
 void e2e_gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
                      const char *target, const char *body,
                      E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res);
 void e2e_gate_result_clear(E2E_GATE_RESULT *res);
+/* every IRC line of the wires fits max_len bytes (without CR LF) */
+gboolean e2e_gate_lines_fit(const E2E_GATE_RESULT *res, const char *tags, const char *target,
+                            gsize max_len);
+/* An outgoing buffer with more than one IRC line in it (CR, LF or NUL
+   before its end): the refusal message when one of its PRIVMSGs would
+   need encryption or be refused by the gate, NULL when it may go out */
+char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const char *buf, gsize len,
+                         E2E_RESOLVE_FUNC resolve, void *resolve_data);
+/* one of the IRC lines in buf (split at CR, LF and NUL) is a PRIVMSG */
+gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
 
 /* ---- incoming messages ---- */
 
