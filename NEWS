@@ -24,6 +24,40 @@ erssi-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    (gpg and gpgsm off, so an OpenPGP signature by any key the user's
 	    gpg knows does not pass), also in the pre-push hook; the tag that
 	    was checked is the one built
+	+ Review fixes (1.3.10, same version)
+	  - fe-web: no use-after-free when a web client runs /disconnect (or
+	    /quit) on its own network - the next command used the freed server
+	  - fe-web: a link in fe_web_socket is followed and the directories it
+	    leads to checked too; the path is checked again after mkdir
+	  - fe-web: the TLS key and certificate are made at the first server
+	    start, not at every erssi start (no key in ~/.erssi without
+	    fe-web); a key other users can read is replaced
+	  - fe-web: control frames over 125 bytes or fragmented close the
+	    connection; web sockets are close-on-exec; refusals at the client
+	    limit are logged
+	  - ~/.erssi defaults are read without following links and replaced
+	    atomically with their final mode
+	  - erssi --update finds a release of the installed version published
+	    again with changes (the installer records the commit it built)
+	  - signatures checked with ssh-keygen whatever gpg.ssh.program says;
+	    pre-push: blank pattern lines no longer refuse every push, a tag
+	    object naming another tag is refused; install.sh builds again
+	    (-Dwith-fe-ansi removed); CI: pipefail, shellcheck at style level
+	  - botnet, tk, skaner and health and the NexusIRC patch series
+	    (contrib/nexusirc) are no longer part of this repository: they are
+	    the author's own tools and are kept privately. mentions, trackbar,
+	    webjournal and contrib/rpe2e stay
+	  - trackbar 2.9.2: the column mode only when the theme itself draws a
+	    column (text someone typed could switch it on); text decoded as
+	    UTF-8
+	  - webjournal 1.2.5: quits and joins hidden by a netsplit summary are
+	    journaled also after hide_netsplit_quits is toggled
+	  - rpe2e 0.2.2: Polish text was UTF-8 encoded twice on the way out
+	    (and channel names in the AAD); keyring writes made safe; KEYREQ
+	    flood limited; "..." no longer bypasses encryption; MIT LICENSE
+	  - the start banner: /join #shellter as the first channel
+	  - themes: unused formats removed, comments match the defaults
+	  - comments of mentions.pl in English
 
 erssi-v1.3.9 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.9: a banner of its own, updates reach
