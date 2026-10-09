@@ -29,8 +29,16 @@ TRACKBAR REDRAW%|
 
     The trackbar.pl script draws a horizontal line in the window you are
     leaving, so when you come back you can see where you stopped reading.
-    The previous line in that window is removed. A command of the
+    The previous line in that window is removed. Provided by the
     trackbar.pl script.
+
+    With a theme that has a column and a "│" separator (such as shellter),
+    the line does not cross the time and nick column: it starts at the
+    separator as "├────". The column is taken from the last lines of the
+    window, so it follows timestamp_format and the nick column width. In
+    this mode a trackbar_string longer than one character is drawn as "─".
+    Other themes, and trackbar_print_timestamp = ON, get a full-width line;
+    a "│" typed by someone in a channel does not change that.
 
     The line is never logged (level NEVER) and does not appear in empty
     windows or in windows from trackbar_ignore_windows (except with /MARK

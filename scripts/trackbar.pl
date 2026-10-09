@@ -102,14 +102,15 @@ use strict;
 use warnings;
 use vars qw($VERSION %IRSSI);
 
-$VERSION = "2.9.1"; # a4c78e85092a271 + erssi: znacznik w kolumnie motywu
+$VERSION = "2.9.2"; # upstream a4c78e85092a271 + erssi: the bar starts at the theme's column
 
 %IRSSI = (
     authors     => "Peter 'kinlo' Leurs, Uwe Dudenhoeffer, " .
                    "Michiel Holtkamp, Nico R. Wohlgemuth, " .
                    "Geert Hauwaerts",
     contact     => 'peter@pfoe.be',
-    patchers    => 'Johan Kiviniemi (UTF-8), Uwe Dudenhoeffer (on-upgrade-remove-line)',
+    patchers    => 'Johan Kiviniemi (UTF-8), Uwe Dudenhoeffer (on-upgrade-remove-line), ' .
+                   'yooz (erssi: theme column, help file, width guard)',
     name        => 'trackbar',
     description => 'Shows a bar where you have last read a window.',
     license     => 'GNU General Public License',
@@ -223,7 +224,7 @@ use POSIX qw(strftime);
 
 sub cmd_help {
     my ($args) = @_;
-    # erssi: plik ~/.erssi/help/trackbar (albo w help_path) pokazuje /help sam
+    # erssi: with a help file ~/.erssi/help/trackbar (or in help_path) /help shows it itself
     if ($args =~ /^trackbar *$/i && !grep { -f "$_/trackbar" } Irssi::get_irssi_dir() . '/help', split /:/, Irssi::settings_get_str('help_path')) {
         print CLIENTCRAP <<HELP
 %9Syntax:%9
@@ -409,19 +410,30 @@ sub screen_length;
   }
 }
 
-# erssi: motyw z kolumna (shellter: "czas  nick │ tekst") - znacznik nie
-# przecina kolumny czasu i nickow, tylko odchodzi od separatora: "├────".
-# Kolumne separatora czytamy z ostatnich linii okna, wiec pasuje do kazdego
-# timestamp_format i szerokosci kolumny nickow; bez takich linii (inny
-# motyw, puste okno) zostaje zwykla linia na cala szerokosc.
+# erssi: a theme with a column (shellter: "time  nick │ text") - the bar
+# does not cross the time and nick column, it branches off the separator:
+# "├────". Only a theme whose message format has the "│" separator gets
+# this; the column itself is read from the window's last lines, so it fits
+# any timestamp_format and nick column width. With another theme, or
+# without such lines (an empty window), the bar is a plain full-width line.
+# Text people type cannot switch this on: in a theme without a column a
+# "│" in a message is ignored.
+sub theme_has_column {
+    my $expanded = eval { Irssi::current_theme()->format_expand('{line_start}{msgnick a b}') } // '';
+    utf8::decode($expanded) unless utf8::is_utf8($expanded);
+    return $expanded =~ /\x{2502}/ ? 1 : 0;
+}
+
 sub separator_column {
     my ($win) = @_;
     return undef unless $win && $win->can('view');
+    return undef unless is_utf8() && theme_has_column();
     my $line = $win->view->{buffer}{cur_line};
     for (1 .. 40) {
         last unless $line;
-        my $text = $line->get_text(0);
-        Encode::_utf8_on($text) if is_utf8();
+        # a byte that is not UTF-8 (recode off) becomes U+FFFD instead of a
+        # malformed string
+        my $text = Encode::decode('UTF-8', $line->get_text(0));
         if ($text =~ /\A(.{1,60}?) \x{2502} /) {
             my $col = screen_length($1) + 1;
             return $col if $col < 60;
@@ -461,7 +473,7 @@ sub line {
         $format =~ y/\01/%/;
     }
 
-    # erssi: przy starcie (panele boczne) okno moze miec jeszcze szerokosc <= 0
+    # erssi: at startup (side panels) a window may still have a width <= 0
     return "" if $width <= 0;
     my $times = $width / $length;
     $times += 1 if $times != int $times;
