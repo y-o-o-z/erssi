@@ -66,6 +66,10 @@ static void sig_swallow(void)
 }
 
 static char *fuzz_home = NULL;
+/* "--home=..." for args_execute(), which takes it out of argv: freed at
+ * exit (a pointer that is only written could be optimised away, and
+ * LeakSanitizer then reports it) */
+static char *home_arg = NULL;
 static gboolean verbose = FALSE;
 
 static void remove_tree(const char *path)
@@ -93,11 +97,12 @@ static void remove_fuzz_home(void)
 {
 	if (fuzz_home != NULL)
 		remove_tree(fuzz_home);
+	g_free(home_arg);
+	home_arg = NULL;
 }
 
 void fe_web_fuzz_init(gboolean with_irc_signals)
 {
-	static char *home_arg; /* args_execute() takes it out of argv */
 	char *argv[3];
 
 	verbose = g_getenv("FE_WEB_FUZZ_VERBOSE") != NULL;
