@@ -44,7 +44,7 @@
 # Commands that print lists (/set, /help, /script list) have no column.
 #
 # Joining a channel: the topic, who set it and when, the creation date and a
-# single "N nicks · ops · voiced · regular" line - the nick table only with
+# single "nicks N · ops · voiced · regular" line - the nick table only with
 # /names (the list is in the side panel; erssi: show_names_on_join_limit 1).
 # No "synced in" (channel_synced = "").
 
@@ -238,7 +238,7 @@ abstracts = {
   sb_mode = "%Z59636E(%Z0969DA$*%Z59636E)%n";
   sb_lag = "%Z59636Elag%n %Z1F2328$*%n";
   sb_act = "%Z59636Eact%n $*";
-  sb_more = "%Z59636E-- %Z1F2328more %Z59636E--";
+  sb_more = "%Z59636E── %Z1F2328more %Z59636E──";
   sb_prompt = "%Z59636E[%Z0969DA$0%Z59636E❱%n $1-%Z59636E]%n ";
   sb_prompt_empty = "%Z59636E[%Z0969DA$1%Z59636E]%n ";
 };
@@ -378,8 +378,6 @@ formats = {
 
     no_away_msgs = "%Z1A7F37◆%N No new messages in awaylog";
     away_msgs = "%Z7D4E00◇%N {hilight $1} new messages in awaylog:";
-    away = "            %Z7D4E00◇{col}You have been marked as being away";
-    unaway = "            %Z1A7F37◆{col}You are no longer marked as being away";
 
     module_header = "%#%Z9A6700⚙%N Module               Type    Submodules";
     module_line = "%#  %Z0969DA◆%N $[!20]0 %Z8250DF$[7]1%N $2";
@@ -555,8 +553,6 @@ formats = {
     whois_idle_signon = "%Z687079         idle{col}%Z0969DA$1%Z687079d %Z0969DA$2%Z687079h %Z0969DA$3%Z687079m %Z0969DA$4%Z687079s ⟨signon %Z7D4E00$5%Z687079⟩%N";
     whois_server = "%Z687079         node{col}%Z1A7F37$1%N %Z687079⟨%Z0969DA$2%Z687079⟩%N";
     whois_oper = "%Z687079         oper{col}%Z7D4E00$1%N";
-    whois_registered = "%Z687079         auth{col}%Z1A7F37verified%N";
-    whois_help = "%Z687079         help{col}%Z1A7F37available%N";
     whois_modes = "%Z687079        modes{col}%Z8250DF$1%N";
     whois_realhost = "%Z687079         host{col}%Z0969DA$1-%N";
     whois_usermode = "%Z687079        umode{col}%Z8250DF$1%N";
@@ -671,8 +667,10 @@ formats = {
   };
 
   "fe-ansi" = {
-    # Startup banner in the colours of shellter.me ("$$" = a dollar sign)
-    irssi_banner = "  %Z9A6700┃%N %Z1F2328%_erssi%_ %Z9A6700Shellter Edition %Z7D4E00$J%N%:  %Z9A6700┃%N %Z1F2328shellter%Z59636E.me %Z818B98·%Z687079 your shell, your shelter%N%:  %Z9A6700┃%N %Z1F2328/connect IRCnet %Z818B98·%Z1F2328 /join #channel %Z818B98·%Z1F2328 /help%N";
+    # Start banner: three short lines behind an amber bar (no rules -
+    # they wrap on narrow terminals): name and version, shellter.me, the
+    # first commands.
+    irssi_banner = "  %Z9A6700┃%N %Z1F2328%_erssi%_ %Z9A6700Shellter Edition %Z7D4E00$J%N%:  %Z9A6700┃%N %Z1F2328shellter%Z59636E.me %Z818B98·%Z687079 your shell, your shelter%N%:  %Z9A6700┃%N %Z1F2328/connect IRCnet %Z818B98·%Z1F2328 /join #shellter %Z818B98·%Z1F2328 /help%N";
     # Lastlog
     lastlog_too_long = "%Z7D4E00⚠%N /LASTLOG would print $0 lines. If you really want to print all these lines use -force option.";
     lastlog_count = "%Z0969DA»%N {hilight Lastlog}: $0 lines";
