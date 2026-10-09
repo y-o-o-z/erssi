@@ -162,13 +162,30 @@ static gboolean load_key_and_cert(void)
 	EVP_PKEY *pkey = NULL;
 	X509 *x509 = NULL;
 	time_t tomorrow;
+	struct stat st;
+	int fd;
 
 	key_path = ssl_file_path(FE_WEB_KEY_FILE);
 	cert_path = ssl_file_path(FE_WEB_CERT_FILE);
 
-	if ((f = fopen(key_path, "r")) != NULL) {
-		pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
-		fclose(f);
+	fd = open(key_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd >= 0 && (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() ||
+	                (st.st_mode & 077) != 0)) {
+		/* someone else may have read or replaced it: not used */
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web-ssl: %s can be read by other users or is not yours - "
+		          "making a new key",
+		          key_path);
+		close(fd);
+		fd = -1;
+	}
+	if (fd >= 0) {
+		if ((f = fdopen(fd, "r")) != NULL) {
+			pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+			fclose(f);
+		} else {
+			close(fd);
+		}
 	}
 	if ((f = fopen(cert_path, "r")) != NULL) {
 		x509 = PEM_read_X509(f, NULL, NULL, NULL);
@@ -234,13 +251,22 @@ static void save_key_and_cert(void)
 	}
 }
 
-/* Initialize SSL subsystem */
+/* Initialize SSL subsystem: the library only - the key and certificate are
+ * loaded or made when the server starts (fe_web_ssl_prepare), so an erssi
+ * without fe-web never writes a key into ~/.erssi */
 void fe_web_ssl_init(void)
 {
-	/* Initialize OpenSSL */
 	SSL_library_init();
 	SSL_load_error_strings();
 	OpenSSL_add_all_algorithms();
+}
+
+/* The TLS context with the stored (or a new) key and certificate; made once,
+ * at the first server start. Returns TRUE when TLS can be used. */
+int fe_web_ssl_prepare(void)
+{
+	if (fe_web_ssl_ctx != NULL)
+		return TRUE;
 
 	if (load_key_and_cert())
 		goto have_cert;
@@ -250,7 +276,7 @@ void fe_web_ssl_init(void)
 	if (!server_key) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: Failed to generate RSA key - SSL disabled");
-		return;
+		return FALSE;
 	}
 
 	/* Generate self-signed certificate */
@@ -260,7 +286,7 @@ void fe_web_ssl_init(void)
 		          "fe-web-ssl: Failed to generate certificate - SSL disabled");
 		EVP_PKEY_free(server_key);
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
 	save_key_and_cert();
 
@@ -274,7 +300,7 @@ have_cert:
 		EVP_PKEY_free(server_key);
 		server_cert = NULL;
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
 
 	/* Enforce TLS 1.2 minimum (required by modern clients like cloudflared) */
@@ -287,7 +313,7 @@ have_cert:
 		fe_web_ssl_ctx = NULL;
 		server_cert = NULL;
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
 
 	/* Writes to a slow client are queued and retried from the queue
@@ -307,7 +333,7 @@ have_cert:
 		fe_web_ssl_ctx = NULL;
 		server_cert = NULL;
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
 
 	if (!SSL_CTX_use_PrivateKey(fe_web_ssl_ctx, server_key)) {
@@ -319,7 +345,7 @@ have_cert:
 		fe_web_ssl_ctx = NULL;
 		server_cert = NULL;
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
 
 	/* Verify key matches certificate */
@@ -332,8 +358,9 @@ have_cert:
 		fe_web_ssl_ctx = NULL;
 		server_cert = NULL;
 		server_key = NULL;
-		return;
+		return FALSE;
 	}
+	return TRUE;
 }
 
 /* Cleanup SSL subsystem */
