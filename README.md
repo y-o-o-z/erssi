@@ -277,8 +277,11 @@ git fetch upstream && git merge upstream/main     # follow erssi
 ```
 
 Tests run with `HOME` inside the build directory, so building and testing
-never writes into your own `~/.erssi`. `.github/workflows/shellter-ci.yml`
-runs the hardened and the sanitizer build, and checks the installer.
+never writes into your own `~/.erssi`. `utils/pre-push` builds, runs the
+tests and checks the release tags before every push.
+`.github/workflows/shellter-ci.yml` describes the same hardened and
+sanitizer builds and the installer checks for GitHub Actions, which are
+switched off on this repository for now.
 
 Each change in this edition is a separate commit that explains the problem
 it solves, so upstream merges stay reviewable.

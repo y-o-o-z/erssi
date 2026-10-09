@@ -195,7 +195,7 @@ signed_tag() {
     signers=$(mktemp)
     printf '%s\n' "$RELEASE_SIGNER" > "$signers"
     if git -C "$1" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" \
-            -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
+            -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
             verify-tag --raw "$TAG_OBJ" 2>&1 |
             # the fingerprint of RELEASE_SIGNER (ssh-keygen -lf)
             grep -q '^Good "git" signature for 136268860+y-o-o-z@users.noreply.github.com with ED25519 key SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw$'; then
@@ -208,7 +208,9 @@ fetch_ref() {   # repository-dir ref
 }
 # the newest shellter-vX.Y.Z on $REPO newer than $2 with a valid signature,
 # checked in the repository $1; unsigned ones are named and skipped. Prints
-# the tag; none newer than $2: prints nothing (an up to date install).
+# the tag; none newer than $2: prints nothing (an up to date install). With
+# the installed commit $3, the release $2 itself counts when its signed tag
+# now points elsewhere (the same version released again with changes).
 newest_signed() {
     refs=$(git ls-remote --tags --refs -- "$REPO" 'shellter-v*' 2>>"${LOG:-/dev/null}") || return 2
     tags=$(printf '%s\n' "$refs" |
@@ -217,7 +219,16 @@ newest_signed() {
     [ -n "$tags" ] || return 1
     tries=0
     for v in $tags; do
-        newer "$v" "$2" || return 0
+        if ! newer "$v" "$2"; then
+            # older, or the installed version without a known commit
+            newer "$2" "$v" || [ -z "${3:-}" ] && return 0
+            if fetch_ref "$1" "shellter-v$v" && signed_tag "$1" "shellter-v$v"; then
+                [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] || echo "shellter-v$v $TAG_OBJ"
+                return 0
+            fi
+            warn "shellter-v$v is not signed by the erssi Shellter release key - skipped" >&2
+            return 0
+        fi
         if fetch_ref "$1" "shellter-v$v" && signed_tag "$1" "shellter-v$v"; then
             echo "shellter-v$v $TAG_OBJ"; return 0
         fi
@@ -258,6 +269,7 @@ JOB=""
 # Ctrl-C: stop the step running in the background too (Python and meson
 # started from a script ignore SIGINT), then leave
 trap 'if [ -n "$JOB" ]; then kill -TERM "$JOB" 2>/dev/null; wait "$JOB" 2>/dev/null; fi; [ "$IN_STEP" = 1 ] && printf "\n"; printf "\n  Interrupted.\n\n" >&2; exit 130' HUP INT TERM
+# shellcheck disable=SC2012 # find -printf is not POSIX; ls -n is
 owner() { ls -ldn "$1" 2>/dev/null | awk '{print $3}'; }
 ROOT=0
 [ "$(id -u)" = 0 ] && ROOT=1
@@ -285,6 +297,11 @@ done
 
 INSTALLED=""
 [ -x "$PREFIX/bin/erssi" ] && INSTALLED=$("$PREFIX/bin/erssi" --version 2>/dev/null | awk '{print $2}')
+# the commit it was built from; installs before COMMIT was recorded: the
+# checkout in the source directory, if it is still there
+INSTALLED_COMMIT=$(conf_get COMMIT)
+[ -n "$INSTALLED_COMMIT" ] || [ ! -d "$SRC/.git" ] ||
+    INSTALLED_COMMIT=$(git -C "$SRC" rev-parse -q --verify HEAD 2>/dev/null) || INSTALLED_COMMIT=""
 
 if [ "$UPDATE" = 1 ]; then
     OTHER=$(conf_get UPDATE_COMMAND)
@@ -474,6 +491,7 @@ else
         STEP=$((STEP - 1)); step "Installing packages"
         if [ "$PM" = apt ]; then run_logged apt-get update -q || die_log "apt-get update failed"; fi
         # shellcheck disable=SC2046 # the command and its package names
+        # shellcheck disable=SC2086 # package lists are split on purpose
         run_logged env DEBIAN_FRONTEND=noninteractive $(pm_install_cmd $NEED $WANT) || die_log "installing the packages failed"
         hash -r 2>/dev/null || true
         check_system
@@ -508,7 +526,7 @@ else
         fi
         PATH="$VENV/bin:$PATH"; export PATH
     fi
-    done_ "meson $($MESON --version) · ninja $($NINJA --version) · glib $($PKGCONFIG --modversion glib-2.0) · openssl $($PKGCONFIG --modversion openssl)"
+    done_ "meson $("$MESON" --version) · ninja $("$NINJA" --version) · glib $($PKGCONFIG --modversion glib-2.0) · openssl $($PKGCONFIG --modversion openssl)"
 fi
 
 # ── 2. the release ───────────────────────────────────────────────────
@@ -540,18 +558,27 @@ fi
 if [ "$UPDATE" = 1 ]; then
     step "Finding the release"
     can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-vX.Y.Z"
-    rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED") || rc=$?
+    rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
     [ "$rc" != 2 ] || die "cannot reach $REPO"
     [ "$rc" = 0 ] || die "no signed release newer than $INSTALLED found on $REPO"
     REF=${FOUND%% *}; TAG_OBJ=${FOUND#* }
+    SAME=""             # the installed version, released again with changes
     if [ -n "$REF" ]; then
         NEWEST=${REF#shellter-v}
         done_ "$REF · signed by the erssi Shellter release key"
+        if [ "$NEWEST" = "$INSTALLED" ]; then
+            SAME="$(echo "$INSTALLED_COMMIT" | cut -c1-8) → $(git -C "$WORK" rev-parse "$TAG_OBJ^{commit}" | cut -c1-8)"
+        fi
     else
         NEWEST=$INSTALLED
         done_ "none newer than $INSTALLED"
     fi
-    if ! newer "$NEWEST" "$INSTALLED"; then
+    if [ -n "$SAME" ]; then
+        if [ "$CHECK" = 1 ]; then
+            printf '\n  %sChanges to %s available: %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$SAME" "$N"
+            exit 0
+        fi
+    elif ! newer "$NEWEST" "$INSTALLED"; then
         if newer "$INSTALLED" "$NEWEST"; then
             printf '\n  The installed erssi %s is newer than the newest release (%s) - nothing to do.\n\n' "$INSTALLED" "$NEWEST"
         else
@@ -606,7 +633,11 @@ fi
 # exactly the object that was checked, not whatever FETCH_HEAD is by now
 git -C "$SRC" -c advice.detachedHead=false checkout -q --force "$TAG_OBJ^{commit}" >> "$LOG" 2>&1 || die "cannot check out $REF"
 HEAD_SHA=$(git -C "$SRC" rev-parse HEAD)
-if [ -n "$PINNED" ]; then
+if [ -n "$PINNED" ] && [ "$UPDATE" = 1 ] && [ "$HEAD_SHA" != "$PINNED" ]; then
+    # this copy of the installer records the release as first published;
+    # an update trusts the release signature checked above
+    :
+elif [ -n "$PINNED" ]; then
     [ "$HEAD_SHA" = "$PINNED" ] || die "$REF points to $HEAD_SHA, but this installer expects $PINNED - refusing to build (download the installer again, or report it)"
     VERIFIED="${VERIFIED:+$VERIFIED · }commit recorded"
 elif [ "$UPDATE" = 0 ]; then
@@ -620,17 +651,17 @@ done_ "$(echo "$HEAD_SHA" | cut -c1-8)${VERIFIED:+ · $VERIFIED}"
 # ── 4. build ─────────────────────────────────────────────────────────
 step "Building"
 if [ -f "$SRC/Build/build.ninja" ]; then
-    run_logged $MESON setup --reconfigure "$SRC/Build" "$SRC" -Dprefix="$PREFIX" || die_log "configuring the build failed"
+    run_logged "$MESON" setup --reconfigure "$SRC/Build" "$SRC" -Dprefix="$PREFIX" || die_log "configuring the build failed"
 else
-    run_logged $MESON setup "$SRC/Build" "$SRC" -Dprefix="$PREFIX" -Dwith-proxy=yes || die_log "configuring the build failed"
+    run_logged "$MESON" setup "$SRC/Build" "$SRC" -Dprefix="$PREFIX" -Dwith-proxy=yes || die_log "configuring the build failed"
 fi
-run_logged $NINJA -C "$SRC/Build" || die_log "the build failed"
+run_logged "$NINJA" -C "$SRC/Build" || die_log "the build failed"
 done_ "$(elapsed $(($(now) - STEP_T0)))"
 
 # ── 5. test ──────────────────────────────────────────────────────────
 step "Testing"
 if [ "$RUN_TESTS" = 1 ]; then
-    run_logged $MESON test -C "$SRC/Build" || die_log "tests failed (all results: $SRC/Build/meson-logs/testlog.txt)"
+    run_logged "$MESON" test -C "$SRC/Build" || die_log "tests failed (all results: $SRC/Build/meson-logs/testlog.txt)"
     n=$(sed -n 's/^Ok: *\([0-9]*\).*/\1/p' "$LOG" | tail -n 1)
     done_ "${n:+$n tests · }$(elapsed $(($(now) - STEP_T0)))"
 else
@@ -639,7 +670,7 @@ fi
 
 # ── 6. install ───────────────────────────────────────────────────────
 step "Installing"
-run_logged $NINJA -C "$SRC/Build" install || die_log "installing failed"
+run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
 mkdir -p "$HOME/.local/bin" "$PREFIX/share/irssi"
 ln -sf "$PREFIX/bin/erssi" "$HOME/.local/bin/erssi"
 # erssi --update runs this installer (the copy of the installed release)
@@ -650,6 +681,7 @@ cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/n
     echo "REPO=$REPO"
     echo "TESTS=$RUN_TESTS"
     echo "CLEAN=$CLEAN"
+    echo "COMMIT=$HEAD_SHA"
 } > "$CONF.tmp" && chmod 600 "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
 VERSION=$("$PREFIX/bin/erssi" --version | awk '{print $2}')
 if [ "$CLEAN" = 1 ]; then
@@ -667,7 +699,10 @@ case ":$PATH:" in
     *) RUN="~/.local/bin/erssi"; IN_PATH=0 ;;
 esac
 printf '\n'
-if [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
+if [ -n "${SAME:-}" ]; then
+    printf '  %s%sUpdated: %s (%s)%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$SAME" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
+    field "running" "in a running erssi, /upgrade loads it without disconnecting"
+elif [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
     printf '  %s%sUpdated: %s → %s%s  %s(%s)%s\n\n' "$B" "$G" "$INSTALLED" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
     field "running" "in a running erssi, /upgrade loads $VERSION without disconnecting"
 else
