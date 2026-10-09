@@ -45,16 +45,28 @@ erssi-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    (-Dwith-fe-ansi removed); CI: pipefail, shellcheck at style level
 	  - botnet, tk, skaner and health and the NexusIRC patch series
 	    (contrib/nexusirc) are no longer part of this repository: they are
-	    the author's own tools and are kept privately. mentions, trackbar,
-	    webjournal and contrib/rpe2e stay
+	    the author's own tools and are kept privately. mentions, trackbar
+	    and webjournal stay
 	  - trackbar 2.9.2: the column mode only when the theme itself draws a
 	    column (text someone typed could switch it on); text decoded as
 	    UTF-8
 	  - webjournal 1.2.5: quits and joins hidden by a netsplit summary are
 	    journaled also after hide_netsplit_quits is toggled
-	  - rpe2e 0.2.2: Polish text was UTF-8 encoded twice on the way out
-	    (and channel names in the AAD); keyring writes made safe; KEYREQ
-	    flood limited; "..." no longer bypasses encryption; MIT LICENSE
+	  - end-to-end encryption is built in: the e2e module speaks RPE2E
+	    v1.0 natively (C, OpenSSL only: Ed25519, X25519, HKDF-SHA256,
+	    XChaCha20-Poly1305 with HChaCha20 checked against the IETF draft
+	    vectors and libsodium), wire-compatible with repartee and its
+	    irssi/WeeChat scripts; the same /e2e commands and the same
+	    keyring file as the rpe2e.pl script, so its users keep their keys
+	    (the module stays inactive while the script is loaded). Built by
+	    default (-Dwith-e2e), loaded at start like otr. Unit tests with
+	    vectors made by rpe2e.pl and libsodium, fuzz corpora, and a live
+	    test against rpe2e.pl in both directions (RPE2E_SCRIPT)
+	  - contrib/rpe2e keeps only rpe2e-from-repartee (moves a repartee
+	    identity into the keyring) and the MIT licence of the script the
+	    module is ported from; the script itself is no longer shipped
+	  - fe-web fuzz harness: no leak report of its --home argument in an
+	    optimised ASan build
 	  - the start banner: /join #shellter as the first channel
 	  - themes: unused formats removed, comments match the defaults
 	  - comments of mentions.pl in English
