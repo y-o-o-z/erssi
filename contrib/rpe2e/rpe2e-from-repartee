@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""rpe2e-from-repartee - moves E2E keys (RPE2E) from repartee to rpe2e.pl.
+"""rpe2e-from-repartee - moves E2E keys (RPE2E) from repartee to erssi.
 
 repartee keeps its keyring in the e2e_* tables of its database (~/.repartee/
 logs/messages.db), with secrets encrypted by AES-256-GCM under
-REPARTEE_KEYRING_KEY from ~/.repartee/.env. rpe2e.pl (irssi/erssi) keeps its
-keyring as JSON (~/.erssi/rpe2e/keyring.json) with a different layout. This
-tool:
+REPARTEE_KEYRING_KEY from ~/.repartee/.env. erssi's e2e module keeps its
+keyring as JSON (~/.erssi/rpe2e/keyring.json - the file and layout of the
+older rpe2e.pl script, which reads it too) with a different layout. This
+tool prepares that keyring:
 
   * opens the database READ-ONLY (repartee may be stopped or running),
   * decrypts the secrets with libsodium (crypto_aead_aes256gcm),
@@ -13,13 +14,15 @@ tool:
     identity seed and compares it with the stored one, and compares
     fingerprints (SHA-256 "RPE2E01-FP:" + key) with the stored ones -
     inconsistent data aborts the run,
-  * builds keyring.json in the rpe2e.pl layout: the identity (same
+  * builds keyring.json in the layout of erssi's e2e module: the identity (same
     fingerprint, so peers do not see a "new key"), trusted peers, channel
     sessions; when a channel exists in several variants (repartee: "#chan"
-    and "IRCnet\\x1f#chan") the newest session wins - rpe2e.pl does not
-    distinguish networks,
+    and "IRCnet\\x1f#chan") the newest session wins - erssi's keyring does
+    not distinguish networks,
   * writes atomically with mode 0600; an existing keyring only with --force
-    (a copy keyring.json.bak-<time> is made first),
+    (a copy keyring.json.bak-<time> is made first) - erssi's e2e module
+    creates an identity at its first start, so a keyring usually exists:
+    unload the module first (/unload e2e), run with --force, /load e2e,
   * with --channels-off moves keys and trust but leaves channels disabled -
     encryption starts only after /e2e on in the channel window.
 
@@ -148,7 +151,7 @@ def newest(rows, key, warnings, stamp="created_at"):
     """Of several variants of the same context the newest one stays (by the
     `stamp` column, created_at by default); on a tie the network-scoped
     variant wins (repartee always picks it, the old unscoped row is only a
-    fallback). rpe2e.pl does not tell networks apart, so the same context
+    fallback). erssi's keyring does not tell networks apart, so the same context
     from two different networks is reported with a warning."""
     best = {}
     nets = {}
@@ -292,8 +295,8 @@ def write_keyring(keyring, out_path, force):
     if os.path.exists(out_path):
         if not force:
             raise MigrationError(
-                f"{out_path} already exists (did rpe2e.pl create a new identity?) - "
-                "run with --force, a backup copy will be made"
+                f"{out_path} already exists (erssi's e2e module creates an identity at its first start) - "
+                "run with --force, a backup copy will be made (in erssi first: /unload e2e)"
             )
         backup = f"{out_path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
         shutil.copy2(out_path, backup)
@@ -338,7 +341,7 @@ def summary(keyring):
 
 def main(argv=None):
     home = os.path.expanduser("~")
-    parser = argparse.ArgumentParser(description="Moves E2E keys (RPE2E) from repartee to rpe2e.pl (irssi/erssi).")
+    parser = argparse.ArgumentParser(description="Moves E2E keys (RPE2E) from repartee to erssi's keyring (the e2e module).")
     parser.add_argument("--db", default=os.path.join(home, ".repartee", "logs", "messages.db"))
     parser.add_argument("--env", default=os.path.join(home, ".repartee", ".env"))
     parser.add_argument("--out", default=os.path.join(home, ".erssi", "rpe2e", "keyring.json"))
