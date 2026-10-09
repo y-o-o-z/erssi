@@ -280,7 +280,7 @@ abstracts = {
   # contents of the statusbar items of the default config (they hold no
   # colours themselves, so every theme can restyle them):
   #   sb_time          the clock ($Z)
-  #   sb_nick          your nick with its channel mode, @yooz
+  #   sb_nick          your nick with its channel mode, e.g. @nick
   #   sb_item          the window item, #channel or query nick
   #   sb_mode          user and channel modes, $* is "+" and the modes
   #   sb_lag           the lag item, $* is the lag in seconds
