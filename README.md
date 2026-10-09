@@ -16,7 +16,7 @@ who live on IRCnet: a polished default theme, help for every command, a
 signed installer that also updates, and a security review of the parts that
 face the network.
 
-![erssi Shellter Edition on #shellter (IRCnet): window list with networks, channels and a botnet partyline, the channel in the shellter theme, the nick list by rank and the botnet status in the statusbar](docs/images/erssi-shellter.png)
+![erssi Shellter Edition 1.3.10 at start in the shellter theme: the window list, the start banner (name and version, shellter.me, /connect IRCnet · /join #shellter · /help) and the statusbar](docs/images/erssi-shellter.png)
 
 ## Install
 
