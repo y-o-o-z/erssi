@@ -8,7 +8,7 @@ MARK%|
     Removes the old trackbar line from the active window and draws a new
     one at its bottom - same as /TRACKBAR MARK. Also works in windows
     listed in trackbar_ignore_windows. With trackbar_all_manual = ON this
-    is the only way to move the line. A command of the trackbar.pl script.
+    is the only way to move the line. Provided by the trackbar.pl script.
 
 %9Examples:%9
 

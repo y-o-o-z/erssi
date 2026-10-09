@@ -1,21 +1,21 @@
-# mentions.pl - okno "Mentions": wszystko, co dotyczy Twojego nicka
+# mentions.pl - a "Mentions" window: everything addressed to your nick
 #
-# Odpowiednik bufora Mentions z repartee. Do okna trafiaja:
-#   * wiadomosci i /me na kanalach, ktore erssi oznaczylo jako podswietlenie
-#     (Twoj nick gdziekolwiek w zdaniu przy hilight_nick_matches_everywhere ON,
-#     albo dowolna regula /hilight),
-#   * wiadomosci prywatne, prywatne NOTICE od ludzi, wiadomosci DCC CHAT
-#     (bez partyline botnetow z botnet.pl i bez tego, co lapie /ignore).
-# Kazdy wpis jest tez dopisywany do pliku (mentions_log_file), wiec to, co
-# pisano do Ciebie pod Twoja nieobecnosc, przetrwa restart erssi.
+# Like the Mentions buffer of repartee. The window gets:
+#   * channel messages and /me that erssi marked as a highlight (your nick
+#     anywhere in a sentence with hilight_nick_matches_everywhere ON, or any
+#     /hilight rule),
+#   * private messages, private NOTICEs from people, DCC CHAT messages
+#     (not botnet partylines from botnet.pl, not what /ignore catches).
+# Every entry is also appended to a file (mentions_log_file), so what was
+# written to you while you were away survives an erssi restart.
 #
-# Nick i tresc sa brane z sygnalu wiadomosci, a nie wycinane z gotowej linii
-# - dzieki temu dziala z kazdym motywem (kolumna nickow, separatory).
+# The nick and the text come from the message signal, not cut out of the
+# printed line - so it works with any theme (nick column, separators).
 #
-# Ustawienia: mentions_window ("Mentions"), mentions_log (ON),
-#             mentions_log_file ("~/.erssi/logs/mentions.log")
-# Komenda:    /mentions        - przejdz do okna
-#             /mentions clear  - wyczysc okno
+# Settings: mentions_window ("Mentions"), mentions_log (ON),
+#           mentions_log_file ("~/.erssi/logs/mentions.log")
+# Command:  /mentions        - go to the window
+#           /mentions clear  - clear the window
 
 use strict;
 use warnings;
@@ -48,21 +48,21 @@ Irssi::theme_register([
     'mentions_info',    '$0',
 ]);
 
-# Ostatnie wiadomosci kanalowe (nick + tresc), dopasowywane potem do
-# wypisanej linii. erssi wypisuje linie (sygnal "print text") dopiero PO
-# zakonczeniu "message public" - sprawdzone sonda na zywo - wiec zwykla
-# zmienna "biezacej wiadomosci" juz by nie istniala. Kolejka per kanal,
-# najwyzej 50 wpisow i 30 s.
-my %recent;    # lc("$tag\0$kanal") => [ { kind, tag, target, nick, msg, at } ]
+# Recent channel messages (nick + text), matched later against the printed
+# line. erssi prints the line ("print text") only AFTER "message public"
+# has finished - checked with a live probe - so a plain "current message"
+# variable would be gone by then. One queue per channel, at most 50
+# entries and 30 s.
+my %recent;    # lc("$tag\0$channel") => [ { kind, tag, target, nick, msg, at } ]
 my $RECENT_MAX = 50;
 my $RECENT_TTL = 30;
 
-# ── okno ─────────────────────────────────────────────────────────────
+# ── window ────────────────────────────────────────────────────────────
 
 sub window_name { Irssi::settings_get_str('mentions_window') || 'Mentions' }
 
-# Nowe okno rozpoznajemy po wskazniku (_irssi): erssi aktywuje okno
-# "hidden", a chansort przenumerowuje okna w chwili ich tworzenia.
+# The new window is recognised by its pointer (_irssi): erssi activates
+# the window "hidden", and chansort renumbers windows as they are created.
 sub window {
     my $name = window_name();
     my $window = Irssi::window_find_name($name);
@@ -74,7 +74,7 @@ sub window {
     ($window) = grep { !$before{ $_->{_irssi} } } Irssi::windows();
     $window //= Irssi::active_win();
     $window->set_name($name);
-    # okno stale: /window close go nie zamknie (zdejmuje: /window immortal off)
+    # immortal: /window close does not close it (undo: /window immortal off)
     $window->command('window immortal on');
     if (defined $active_ptr) {
         my ($previous) = grep { $_->{_irssi} eq $active_ptr } Irssi::windows();
@@ -89,7 +89,7 @@ sub is_mentions_window {
     return $win && $own && $win->{_irssi} eq $own->{_irssi};
 }
 
-# ── zapis ────────────────────────────────────────────────────────────
+# ── log ─────────────────────────────────────────────────────────────
 
 sub log_file {
     my $path = Irssi::settings_get_str('mentions_log_file');
@@ -101,21 +101,21 @@ sub to_log {
     my ($tag, $where, $nick, $text) = @_;
     return unless Irssi::settings_get_bool('mentions_log');
     my $path = log_file();
-    # katalog 0700 i plik od razu 0600 (sysopen) - bez chwili, w ktorej
-    # dziennik prywatnych wiadomosci jest czytelny dla innych
+    # directory 0700 and the file 0600 from the start (sysopen) - never a
+    # moment when the log of private messages is readable by others
     my ($dir) = $path =~ m{\A(.*)/};
     make_path($dir, { mode => 0700 }) if defined $dir && length $dir && !-d $dir;
     sysopen(my $fh, $path, O_WRONLY | O_APPEND | O_CREAT, 0600) or return;
     chmod 0600, $path;
-    # irssi oddaje skryptom bajty UTF-8 - zapis bez warstwy kodowania,
-    # inaczej polskie znaki bylyby zakodowane drugi raz.
+    # irssi hands scripts UTF-8 bytes - written without an encoding layer,
+    # otherwise non-ASCII characters would be encoded a second time.
     binmode($fh, ':raw');
     printf {$fh} "%s [%s] %s <%s> %s\n", strftime('%Y-%m-%d %H:%M:%S', localtime), $tag // '-',
         $where // '-', $nick // '?', $text // '';
     close $fh;
 }
 
-# Poziom HILIGHT: wpis zaznacza okno w panelu kolorem wzmianki.
+# Level HILIGHT: an entry marks the window in the panel in the mention colour.
 sub record {
     my ($format, $tag, $where, $nick, $text) = @_;
     $text = '' unless defined $text;
@@ -124,7 +124,7 @@ sub record {
     to_log($tag, $where, $nick, $text);
 }
 
-# ── sygnaly ──────────────────────────────────────────────────────────
+# ── signals ─────────────────────────────────────────────────────────
 
 sub recent_key { lc(($_[0] // '') . "\0" . ($_[1] // '')) }
 
@@ -142,8 +142,8 @@ sub remember {
     };
 }
 
-# Nick w czesci linii przed trescia: caly albo przyciety przez kolumne
-# nickow erssi (nick_column_width: poczatek nicka + "+").
+# The nick in the part of the line before the text: whole, or cut by
+# erssi's nick column (nick_column_width: the start of the nick + "+").
 sub nick_in_prefix {
     my ($prefix, $nick) = @_;
     return 0 unless defined $nick && length $nick;
@@ -154,10 +154,10 @@ sub nick_in_prefix {
     return 0;
 }
 
-# Wiadomosc z kolejki, ktora jest KONCEM wypisanej linii, a jej nadawca
-# stoi w linii przed trescia. Od najnowszej: tresc zawarta w srodku
-# linii albo taka sama tresc od kogos innego nie przypisze zdania
-# niewlasciwej osobie.
+# The queued message that is the END of the printed line, with its sender
+# in the line before the text. Newest first: text found in the middle of
+# the line, or the same text from someone else, does not attribute the
+# sentence to the wrong person.
 sub take_recent {
     my ($tag, $target, $line) = @_;
     my $queue = $recent{ recent_key($tag, $target) } or return;
@@ -182,7 +182,7 @@ sub sig_print_text {
     return if is_mentions_window($dest->{window});
 
     my $target = $dest->{target} // '';
-    # tylko kanaly - PM, prywatne /me i NOTICE maja wlasne handlery
+    # channels only - PMs, private /me and NOTICEs have their own handlers
     return unless $target =~ /\A[#&!+]/;
     my $tag = $dest->{server} ? $dest->{server}{tag} : undef;
     my $line = $stripped // $text // '';
@@ -191,14 +191,14 @@ sub sig_print_text {
         record($format, $msg->{tag}, $target, $msg->{nick}, Irssi::strip_codes($msg->{msg}));
         return;
     }
-    # Podswietlenie spoza wiadomosci (np. inny skrypt) - tekst linii bez nicka.
+    # A highlight not from a message (e.g. another script) - the line text without a nick.
     record('mentions_public', $tag, $target, '?', $line);
 }
 
-# Partyline botnetu (botnet.pl): hub mowi jak serwer IRC, a cala
-# partyline przychodzi jako rozmowa - to nie sa wzmianki. Botnety bierzemy
-# z ustawien botnet.pl tylko, gdy jest zaladowany (odczyt ustawienia,
-# ktorego nikt nie zarejestrowal, erssi zglasza jako blad).
+# A botnet partyline (botnet.pl): the hub talks like an IRC server and the
+# whole partyline arrives as a conversation - these are not mentions. The
+# botnets come from botnet.pl's settings only when it is loaded (erssi
+# reports reading a setting nobody registered as an error).
 sub is_botnet {
     my ($server) = @_;
     return 0 unless $server && Irssi::Script::botnet->can('partyline_nick');
@@ -207,8 +207,8 @@ sub is_botnet {
     return (grep { lc $_ eq $chatnet } split /[\s,]+/, Irssi::settings_get_str('botnet_chatnets')) ? 1 : 0;
 }
 
-# /ignore: PRIVMSG filtruje samo erssi (zatrzymuje "message private" przed
-# skryptami), NOTICE i /me - nie, wiec sprawdzamy sami.
+# /ignore: erssi filters PRIVMSG itself (it stops "message private" before
+# scripts), but not NOTICE and /me, so they are checked here.
 sub ignored {
     my ($server, $nick, $address, $target, $msg, $level) = @_;
     my $hit = eval { $server->ignore_check($nick // '', $address // '', $target // '', $msg // '', $level) };
@@ -221,7 +221,7 @@ sub sig_private {
     record('mentions_private', $server->{tag}, 'PM', $nick, $msg);
 }
 
-# Prywatne /me (cel = nasz nick) - kanalowe obsluguje sig_print_text.
+# Private /me (the target is our nick) - channel ones go through sig_print_text.
 sub sig_private_action {
     my ($server, $msg, $nick, $address, $target) = @_;
     return unless $server && defined $target && lc $target eq lc($server->{nick} // '');
@@ -232,8 +232,8 @@ sub sig_private_action {
 
 sub sig_notice {
     my ($server, $msg, $nick, $address, $target) = @_;
-    return if !defined $nick || !length $nick || index($nick, '.') >= 0;   # serwery
-    return if defined $target && $target =~ /\A[#&!+]/;                     # NOTICE na kanal
+    return if !defined $nick || !length $nick || index($nick, '.') >= 0;   # servers
+    return if defined $target && $target =~ /\A[#&!+]/;                     # NOTICE to a channel
     return if is_botnet($server);
     return if ignored($server, $nick, $address, $target, $msg, MSGLEVEL_NOTICES);
     record('mentions_notice', $server->{tag}, 'NOTICE', $nick, $msg);
@@ -263,14 +263,14 @@ Irssi::signal_add('message irc notice',       \&sig_notice);
 Irssi::signal_add('dcc chat message',         \&sig_dcc);
 Irssi::command_bind('mentions', \&cmd_mentions);
 
-# Okno tworzymy dopiero po starcie erssi: przy "irssi init finished" erssi
-# nadaje oknu nr 1 nazwe "Notices", a wbudowane sortowanie moze wczesniej
-# postawic nasze okno na pozycji 1 - nazwa "Mentions" zostalaby nadpisana.
-# Timer odpala sie juz w petli glownej (takze przy recznym /script load).
+# The window is made only after erssi has started: at "irssi init finished"
+# erssi names window 1 "Notices", and the built-in sorting could have put
+# our window at position 1 before that - "Mentions" would be overwritten.
+# The timer fires in the main loop (also on a manual /script load).
 Irssi::timeout_add_once(10, sub { window() }, undef);
 
-# Gdyby okno jednak zniknelo (np. /window immortal off + /window close),
-# powstaje od nowa - wzmianki nie gina w pustce.
+# Should the window disappear anyway (e.g. /window immortal off +
+# /window close), it is made again - mentions do not vanish.
 Irssi::signal_add('window destroyed', sub {
     my ($destroyed) = @_;
     return unless lc($destroyed->{name} // '') eq lc window_name();

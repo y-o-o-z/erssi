@@ -19,7 +19,10 @@ WEBJOURNAL%|
                                          shown in those windows,
       <dir>/<tag>/%%status.jsonl          the status window of network <tag>,
       <dir>/%%windows/<name>.jsonl        other named windows (Notices,
-                                         Mentions, skaner...).
+                                         Mentions...).
+
+    Quits and joins hidden by a netsplit summary (hide_netsplit_quits)
+    are written too, so the web client knows who left and came back.
 
     Names are stored in lower case, characters outside [a-z0-9#&+!._-] as
     %%XX. Messages ignored with /IGNORE are not written. A file larger than

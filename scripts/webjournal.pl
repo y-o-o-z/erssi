@@ -1,38 +1,47 @@
-# webjournal.pl - dziennik okien erssi dla klienta web (NexusIRC)
+# webjournal.pl - a journal of erssi windows for the web client (NexusIRC)
 #
-# Web laczy sie z erssi przez fe-web i dostaje zdarzenia tylko wtedy, gdy
-# jest polaczony. Ten skrypt zapisuje na dysk wszystko, co widac w oknach
-# erssi, zeby web po restarcie uzupelnil dziury i pokazal to samo co konsola:
+# The web client talks to erssi through fe-web and gets events only while it
+# is connected. This script writes everything shown in erssi windows to
+# disk, so that after a restart the web client can fill the gaps and show
+# the same as the terminal:
 #
-#   * kanaly i rozmowy - wpisy strukturalne (czas, rodzaj, nick, tresc),
-#     z ktorych web odtwarza zwykle wiadomosci,
-#   * okna bez kanalu (Notices, Mentions, skaner i inne nazwane okna oraz
-#     okno statusu sieci nazwane jak jej tag) - gotowe linie tekstu; web
-#     pokazuje je na zywo, czytajac koncowke pliku,
-#   * komunikaty klienta i skryptow w oknach kanalow (poziomy CLIENT*, np.
-#     "[E2E] ..." z rpe2e.pl) - tez jako linie tekstu w pliku kanalu; fe-web
-#     ich nie przesyla, a bez nich w webie nie byloby widac np. prosby
-#     o wymiane kluczy.
+#   * channels and queries - structured entries (time, kind, nick, text)
+#     from which the web client rebuilds ordinary messages,
+#   * windows without a channel (Notices, Mentions and other named windows,
+#     and the network status window named after its tag) - ready text
+#     lines; the web client shows them live by reading the end of the file,
+#   * client and script messages in channel windows (CLIENT* levels, e.g.
+#     "[E2E] ..." from rpe2e.pl) - also as text lines in the channel file;
+#     fe-web does not forward them, and without them the web client would
+#     not show e.g. a key exchange request.
 #
-# Uklad katalogu (webjournal_dir, domyslnie ~/.erssi/journal):
-#   <tag>/<kanal|nick>.jsonl     np. ircnet/#polska.jsonl
-#   <tag>/%status.jsonl          okno statusu sieci <tag>
-#   %windows/<nazwa okna>.jsonl  np. %windows/notices.jsonl
-# Nazwy: male litery ASCII, znaki spoza [a-z0-9#&+!._-] jako %XX (bajty
-# UTF-8). "%status" i "%windows" nie moga powstac z zakodowanej nazwy.
+# Netsplits: fe-netjoin stops "message quit" for split quits, "message join"
+# for rejoins after a split and "message irc mode" for the ops given back
+# then, and prints a summary instead. Its handlers are added again when
+# hide_netsplit_quits is turned off and on, and then run before a script's
+# handlers at the same priority, so ours are registered at -150 (before
+# signal_add_first): the web client still learns who left and came back.
 #
-# Wpis to jedna linia JSON (UTF-8), pola:
-#   t   czas (sekundy, ulamek)      k  rodzaj: msg action notice join part
-#   n   nick nadawcy                    quit kick topic mode nick text
-#   h   user@host                   x  tresc (bez kodow kolorow dla "text")
-#   s   1 = wlasna wiadomosc        hl 1 = podswietlenie (nick w tresci)
-#   tg  nick wyrzucony (kick)       nn nowy nick (nick)
-#   w   nazwa okna (linie tekstu, z oryginalna wielkoscia liter)
-# Plik wiekszy niz webjournal_max_kb przechodzi w <plik>.1 (poprzedni .1
-# znika), a zapis idzie od nowa - czytajacy wykrywa to po zmniejszeniu pliku.
+# Directory layout (webjournal_dir, ~/.erssi/journal by default):
+#   <tag>/<channel|nick>.jsonl   e.g. ircnet/#polska.jsonl
+#   <tag>/%status.jsonl          the status window of network <tag>
+#   %windows/<window name>.jsonl e.g. %windows/notices.jsonl
+# Names: ASCII lower case, characters outside [a-z0-9#&+!._-] as %XX (UTF-8
+# bytes). "%status" and "%windows" cannot come from an encoded name.
 #
-# Ustawienia: webjournal (ON), webjournal_dir, webjournal_max_kb (2048)
-# Komenda:    /webjournal - stan dziennika
+# An entry is one JSON line (UTF-8) with the fields:
+#   t   time (seconds, fraction)    k  kind: msg action notice join part
+#   n   sender's nick                   quit kick topic mode nick text
+#   h   user@host                   x  text (no colour codes for "text")
+#   s   1 = own message             hl 1 = highlight (nick in the text)
+#   tg  kicked nick (kick)          nn new nick (nick)
+#   w   window name (text lines, original case)
+# A file larger than webjournal_max_kb is renamed to <file>.1 (the previous
+# .1 is removed) and writing starts again - a reader notices that the file
+# got smaller.
+#
+# Settings: webjournal (ON), webjournal_dir, webjournal_max_kb (2048)
+# Command:  /webjournal - the journal's state
 
 use strict;
 use warnings;
@@ -43,7 +52,7 @@ use Time::HiRes ();
 use File::Path qw(make_path);
 use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
-our $VERSION = '1.2.4';
+our $VERSION = '1.2.5';
 our %IRSSI = (
     authors     => 'yooz',
     contact     => 'https://github.com/y-o-o-z',
@@ -60,15 +69,15 @@ Irssi::settings_add_int('webjournal',  'webjournal_max_kb', 2048);
 my $JSON = JSON::PP->new->utf8(1)->canonical(1);
 my %stats = (written => 0, rotated => 0, errors => 0, last_error => '');
 
-# Otwarte pliki (sciezka => uchwyt): dlugie wyjscia, np. /list w oknie
-# statusu, to tysiace linii - bez otwierania pliku na kazda z nich. Najwyzej
-# $FH_MAX naraz; nadmiar zamykany od najdawniej uzywanego.
+# Open files (path => handle): long outputs, e.g. /list in the status
+# window, are thousands of lines - no open() for each of them. At most
+# $FH_MAX at a time; the least recently used are closed first.
 my %fh;
 my %fh_used;
 my $FH_MAX = 64;
 my $fh_clock = 0;
 
-# ── nazwy plikow ─────────────────────────────────────────────────────
+# ── file names ───────────────────────────────────────────────────────
 
 sub encode_name {
     my ($name) = @_;
@@ -89,10 +98,10 @@ sub target_file { base_dir() . '/' . encode_name($_[0]) . '/' . encode_name($_[1
 sub status_file { base_dir() . '/' . encode_name($_[0]) . '/%status.jsonl' }
 sub window_file { base_dir() . '/%windows/' . encode_name($_[0]) . '.jsonl' }
 
-# ── zapis ────────────────────────────────────────────────────────────
+# ── writing ──────────────────────────────────────────────────────────
 
-# Tekst z irssi bywa ciagiem znakow (flaga UTF-8) albo surowymi bajtami.
-# Ujednolicamy na znaki, zeby JSON nie zakodowal bajtow UTF-8 drugi raz.
+# Text from irssi is either a character string (UTF-8 flag) or raw bytes.
+# Turn it into characters, so that JSON does not encode UTF-8 bytes twice.
 sub chars {
     my ($s) = @_;
     return undef unless defined $s;
@@ -126,15 +135,15 @@ sub append {
     }
 }
 
-# Plik tworzony od razu z prawami 0600 (sysopen), katalog 0700; zapis bez
-# buforowania, zeby czytajacy (Nexus) widzial cale linie od razu.
+# The file is created with mode 0600 right away (sysopen), the directory
+# 0700; writes are unbuffered, so a reader (Nexus) sees whole lines at once.
 sub handle_for {
     my ($file) = @_;
     $fh_used{$file} = ++$fh_clock;
     if (my $open = $fh{$file}) {
-        # Plik skasowany albo podmieniony z zewnatrz (rm, logrotate) przy
-        # otwartym uchwycie: zapis szedlby do niewidocznego juz pliku.
-        # Ten sam plik = to samo urzadzenie i i-wezel; inaczej otwieramy od nowa.
+        # The file was removed or replaced from outside (rm, logrotate)
+        # while open: writes would go to a file nobody can see any more.
+        # Same file = same device and inode; otherwise open it again.
         my @disk = stat $file;
         my @fd   = stat $open;
         return $open if @disk && @fd && $disk[0] == $fd[0] && $disk[1] == $fd[1];
@@ -172,7 +181,7 @@ sub rotate {
     $stats{rotated}++;
 }
 
-# ── kanaly i rozmowy ────────────────────────────────────────────────
+# ── channels and queries ────────────────────────────────────────────
 
 sub is_channel {
     my ($server, $target) = @_;
@@ -182,7 +191,7 @@ sub is_channel {
     return $target =~ /^[#&!+]/ ? 1 : 0;
 }
 
-# Jak hilight_nick_matches_everywhere: nick jako osobne slowo w tresci.
+# Like hilight_nick_matches_everywhere: the nick as a separate word in the text.
 sub mentions_me {
     my ($server, $text) = @_;
     my $nick = $server->{nick};
@@ -192,7 +201,7 @@ sub mentions_me {
 
 sub ignored {
     my ($server, $nick, $address, $target, $text, $level) = @_;
-    # brak adresu (wiadomosc od serwera) albo celu to celowo NULL dla irssi
+    # no address (a message from the server) or no target is a deliberate NULL for irssi
     no warnings 'uninitialized';
     my $hit = eval { $server->ignore_check($nick, $address, $target, $text, $level) };
     return $hit ? 1 : 0;
@@ -239,8 +248,8 @@ sub sig_own_action {
     log_target($server, $target, k => 'action', n => $server->{nick}, x => $msg, s => 1);
 }
 
-# Cel z prefiksem statusu (@#kanal, +#kanal - wiadomosc tylko dla opow lub
-# voice) zapisujemy w pliku kanalu.
+# A target with a status prefix (@#channel, +#channel - a message only for
+# ops or voiced users) goes to the channel's file.
 sub channel_of {
     my ($server, $target) = @_;
     return $target if is_channel($server, $target);
@@ -248,9 +257,9 @@ sub channel_of {
     return length $bare && $bare ne $target && is_channel($server, $bare) ? $bare : undef;
 }
 
-# NOTICE na kanal - do kanalu; prywatny do otwartej rozmowy z nadawca (erssi
-# pokazuje go wtedy w jej oknie), bez rozmowy - trafia do okna Notices i do
-# dziennika jako linia tekstu.
+# A channel NOTICE goes to the channel; a private one to an open query with
+# the sender (erssi then shows it in that window); without a query it goes
+# to the Notices window and into the journal as a text line.
 sub sig_notice {
     my ($server, $msg, $nick, $address, $target) = @_;
     my $channel = channel_of($server, $target);
@@ -268,7 +277,7 @@ sub sig_own_notice {
     log_target($server, $where, k => 'notice', n => $server->{nick}, x => $msg, s => 1);
 }
 
-# PRIVMSG @#kanal: erssi wysyla go jako "message irc op_public", nie "message public".
+# PRIVMSG @#channel: erssi emits it as "message irc op_public", not "message public".
 sub sig_op_public {
     my ($server, $msg, $nick, $address, $target) = @_;
     my $channel = channel_of($server, $target) // return;
@@ -302,13 +311,13 @@ sub sig_mode {
     log_target($server, $channel, k => 'mode', n => $nick, h => $address, x => $mode);
 }
 
-# QUIT i NICK nie maja kanalu - zapisujemy je we wszystkich kanalach, na
-# ktorych jest nick, oraz w otwartej rozmowie z nim. Sygnaly "message ..."
-# niosa tekst juz przekodowany (recode), tak jak widzi go erssi:
-#   message quit - lista nickow jeszcze z odchodzacym (fe-messages tez z niej
-#                  korzysta, zeby wypisac quit na kanalach),
-#   message nick - lista nickow juz z NOWYM nickiem, rozmowa bywa pod
-#                  nowym albo starym.
+# QUIT and NICK have no channel - they are written to every channel the
+# nick is on and to an open query with it. The "message ..." signals carry
+# text that is already recoded, as erssi shows it:
+#   message quit - the nick list still has the leaving nick (fe-messages
+#                  uses it too, to print the quit in the channels),
+#   message nick - the nick list already has the NEW nick; the query may be
+#                  under the new or the old one.
 sub windows_with_nick {
     my ($server, @nicks) = @_;
     my %seen;
@@ -339,7 +348,7 @@ sub sig_own_nick {
     log_target($server, $_, k => 'nick', n => $old, h => $address, nn => $new, s => 1) for windows_with_nick($server, $new, $old);
 }
 
-# ── okna bez kanalu ──────────────────────────────────────────────────
+# ── windows without a channel ────────────────────────────────────────
 
 sub window_has_items {
     my ($window) = @_;
@@ -351,19 +360,19 @@ sub sig_print_text {
     my ($dest, $text, $stripped) = @_;
     my $window = ref $dest ? $dest->{window} : undef;
     return unless $window;
-    # MSGLEVEL_NEVER: linie tylko na ekran (np. kreska trackbar.pl)
+    # MSGLEVEL_NEVER: lines for the screen only (e.g. the trackbar.pl line)
     return if ($dest->{level} // 0) & MSGLEVEL_NEVER;
 
     $stripped = Irssi::strip_codes($text // '') unless defined $stripped;
-    # wciecie kolumny z motywu (np. "        erssi │ ...") nie ma sensu w webie
+    # the theme's column indent (e.g. "        erssi │ ...") makes no sense on the web
     $stripped =~ s/^\s+//;
     $stripped =~ s/\s+$//;
     return unless length $stripped;
     my $hl = ($dest->{level} // 0) & MSGLEVEL_HILIGHT ? 1 : 0;
 
     if (window_has_items($window)) {
-        # Okno kanalu/rozmowy: wiadomosci ida wpisami strukturalnymi, tu tylko
-        # komunikaty klienta i skryptow.
+        # A channel/query window: messages go as structured entries, here
+        # only client and script messages.
         return unless ($dest->{level} // 0) & (MSGLEVEL_CLIENTNOTICE | MSGLEVEL_CLIENTCRAP | MSGLEVEL_CLIENTERROR);
         my $server = $dest->{server};
         my $target = $dest->{target};
@@ -385,13 +394,15 @@ sub sig_print_text {
     append($file, k => 'text', w => $name, x => $stripped, hl => $hl);
 }
 
-# ── komenda ──────────────────────────────────────────────────────────
+# ── command ──────────────────────────────────────────────────────────
 
 sub cmd_webjournal {
     my $state = Irssi::settings_get_bool('webjournal') ? 'enabled' : 'DISABLED (/set webjournal on)';
-    Irssi::print("webjournal $VERSION: $state, directory " . base_dir()
+    my $text = "webjournal $VERSION: $state, directory " . base_dir()
         . ", entries written: $stats{written}, rotations: $stats{rotated}, errors: $stats{errors}"
-        . ($stats{errors} ? " (last: $stats{last_error})" : ''), MSGLEVEL_CLIENTCRAP);
+        . ($stats{errors} ? " (last: $stats{last_error})" : '');
+    $text =~ s/%/%%/g;    # Irssi::print reads % as colour codes
+    Irssi::print($text, MSGLEVEL_CLIENTCRAP);
 }
 
 Irssi::signal_add('message public',        \&sig_public);
@@ -402,13 +413,14 @@ Irssi::signal_add('message irc action',    \&sig_action);
 Irssi::signal_add('message irc own_action', \&sig_own_action);
 Irssi::signal_add('message irc notice',    \&sig_notice);
 Irssi::signal_add('message irc own_notice', \&sig_own_notice);
-Irssi::signal_add('message join',          \&sig_join);
+# -150: always before fe-netjoin, which stops these for netsplits and netjoins
+Irssi::signal_add_priority('message join',     \&sig_join, -150);
 Irssi::signal_add('message part',          \&sig_part);
 Irssi::signal_add('message kick',          \&sig_kick);
 Irssi::signal_add('message topic',         \&sig_topic);
-Irssi::signal_add('message irc mode',      \&sig_mode);
+Irssi::signal_add_priority('message irc mode', \&sig_mode, -150);
 Irssi::signal_add('message irc op_public', \&sig_op_public);
-Irssi::signal_add('message quit',          \&sig_quit);
+Irssi::signal_add_priority('message quit',     \&sig_quit, -150);
 Irssi::signal_add('message nick',          \&sig_nick);
 Irssi::signal_add('message own_nick',      \&sig_own_nick);
 Irssi::signal_add('print text',            \&sig_print_text);
