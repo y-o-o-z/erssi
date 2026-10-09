@@ -40,9 +40,11 @@ pre-push: $PATTERNS is missing or unreadable - push refused,
 EOF
     exit 1
 fi
-# up to 3 lines of stdin that match a private pattern
+# up to 3 lines of stdin that match a private pattern (-a: a diff with
+# NUL or invalid UTF-8, e.g. fuzz corpora, is text too - without it grep
+# prints "binary file matches" and the check sees nothing)
 # (blank and # lines skipped: an empty pattern would match every line)
-private() { grep -iEf "$PATTERNS_CLEAN" | head -3; }
+private() { grep -a -iEf "$PATTERNS_CLEAN" | head -3; }
 PATTERNS_CLEAN=$(mktemp)
 trap 'rm -f "$PATTERNS_CLEAN"' EXIT
 grep -v -e '^[[:space:]]*$' -e '^#' "$PATTERNS" > "$PATTERNS_CLEAN" 2>/dev/null || true
@@ -72,7 +74,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             bad "$(git log -1 --format='%h %s' "$c"): AI attribution trailer"
         fi
         if [ "$check_private" = 1 ]; then
-            hits=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++ \(b/\|/dev/null\)' | private)
+            hits=$(git show --format= --unified=0 "$c" | grep -a '^+' | grep -a -v '^+++ \(b/\|/dev/null\)' | private)
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the diff: $hits"
             hits=$(git log -1 --format=%B "$c" | private)
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the commit message: $hits"
