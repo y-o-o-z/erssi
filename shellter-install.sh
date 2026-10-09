@@ -34,15 +34,15 @@ set -eu
 # release tag -> commit it must point to [signed] (one line per release;
 # "signed": the tag must be signed by RELEASE_SIGNER)
 RELEASES="
-shellter-v1.3.2 05a1ad752e6c701cb20e51be196ce880745008c4
-shellter-v1.3.3 e5f939902710b3a6f58218bb5a4acd3eec9080bf
-shellter-v1.3.4 eba342ff9c4b3eb0fd0d557fe0865b819e3c1fa6
-shellter-v1.3.5 cc6eac9cd09dfb088c5cc59978809fa0b7e83acb
-shellter-v1.3.6 6c92e621bba125ac1a9c7d050d769ee8b92d1de9
-shellter-v1.3.7 0c74bd9925fe366f598957f9012a83aa997056f9
-shellter-v1.3.8 f0d20f32f5c1e62d576c2418e7e7662d754f6bd7 signed
-shellter-v1.3.9 13bc3163ab794a1a025623c90e023cb6613a567d signed
-shellter-v1.3.10 2256e181f74d1c6fbd80bc281f0f3d7b51bcd47e signed
+shellter-v1.3.2 f29f28a7d5e782262232cb389a550bd5ee0ab3b6 signed
+shellter-v1.3.3 af29ea3f48eb25aa56ed54a84ef9bc4484dd05f9 signed
+shellter-v1.3.4 cedeaea6ed9832464b2e29e756bdd815f0ba174f signed
+shellter-v1.3.5 eca79190657383b4e649518fd72942087f932f02 signed
+shellter-v1.3.6 6fb0c2b6a399423aeac555a597cc2ceffa507efd signed
+shellter-v1.3.7 3740d2503fa8fb435f2e49194814c03e736ed3e2 signed
+shellter-v1.3.8 d97d9d96f222b501d13d86ab95e035e9d0ee5c18 signed
+shellter-v1.3.9 82f691cfc28b0377e06ba4a908b74b2989a1d24f signed
+shellter-v1.3.10 ae24cb24479b553a4ce3a251d03866d8e3065671 signed
 "
 # who signs the releases (git allowed_signers format; utils/allowed_signers).
 # A new key also changes the fingerprint checked in signed_tag().
