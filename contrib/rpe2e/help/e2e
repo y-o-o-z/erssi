@@ -68,9 +68,11 @@ E2E AUTOTRUST REMOVE %|<pattern>
                  or query; the new key is created with the next message and
                  sent to trusted people.
     EXPORT:      Writes the whole keyring, including private keys, to a
-                 JSON file (mode 0600).
+                 new JSON file (mode 0600); an existing file or a symlink
+                 is never overwritten.
     IMPORT:      REPLACES the whole keyring with the file's contents (no
-                 merging).
+                 merging); the previous one is kept as
+                 keyring.json.bak-<time>.
     AUTOTRUST:   Without an argument or with LIST - the list of rules. ADD
                  adds a rule: the scope is "global" or an exact channel
                  name, the pattern is ident@host with * and ?
@@ -96,7 +98,8 @@ E2E AUTOTRUST REMOVE %|<pattern>
     /MSG, /SAY, scripts) is encrypted. When encryption is not possible,
     the message is NOT sent, although it is shown locally, and an [E2E]
     message is printed. Exceptions: on a channel, lines starting with '.'
-    or '!' are sent in plain text (bot commands, with a warning), and CTCPs
+    or '!' followed by a letter (bot commands such as .op or !seen) are sent
+    in plain text, with a warning - "..." or "!!" are encrypted - and CTCPs
     other than ACTION are always sent in plain text.
 
     An encrypted message from a person without a trusted session is
@@ -106,6 +109,10 @@ E2E AUTOTRUST REMOVE %|<pattern>
     /E2E ACCEPT or /E2E DECLINE. Requests for a channel or query where
     encryption is off are ignored. Script messages are prefixed with
     [E2E].
+
+    A keyring that cannot be read is never overwritten, and messages are
+    not sent until it can be read again; one that is not valid JSON is
+    moved aside to keyring.json.corrupt-<time> and a new one is started.
 
     EXPORT and IMPORT do not expand '~' - give a full path.
 

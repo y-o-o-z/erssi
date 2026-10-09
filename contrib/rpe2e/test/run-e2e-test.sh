@@ -7,7 +7,9 @@
 # with its own --home and keyring, in a private tmux server (-L), so nothing
 # touches the user's running session. Same scenario as a conversation with
 # repartee: /e2e on, key exchange (handshake + accept on both sides), a plain
-# message, /me and /msg #channel (the path the web client uses), then:
+# message, /me, /msg #channel (the path the web client uses), non-ASCII text
+# (UTF-8 must reach the receiver unchanged), a line starting with "..." (not
+# a bot command, so encrypted) and /quote privmsg (lower case), then:
 #   - the receiver sees plain text (erssi autolog),
 #   - on the server every PRIVMSG to the channel is +RPE2E01 ciphertext.
 # With a built NexusIRC directory alice turns E2E on not from the terminal but
@@ -149,6 +151,9 @@ say alice "secret message from alice"
 say bob "reply from bob"
 say alice "/me waves"
 say alice "/msg $CHAN sent like from the web"
+say alice "zażółć gęślą jaźń"
+say alice "...an ellipsis line"
+say alice "/quote privmsg $CHAN :quoted in lower case"
 sleep 3
 
 check() {  # check <receiver> <text>
@@ -158,15 +163,18 @@ check bob "secret message from alice"
 check alice "reply from bob"
 check bob "alice waves"
 check bob "sent like from the web"
+check bob "zażółć gęślą jaźń"
+check bob "an ellipsis line"
+check bob "quoted in lower case"
 
 total=$(grep -c " PRIVMSG $CHAN :" "$WORK/wire.log" || true)
 cipher=$(grep -c " PRIVMSG $CHAN :+RPE2E01 " "$WORK/wire.log" || true)
-if [ "$total" -ge 4 ] && [ "$total" -eq "$cipher" ]; then
+if [ "$total" -ge 7 ] && [ "$total" -eq "$cipher" ]; then
     pass "server: $cipher/$total channel messages are ciphertext"
 else
     bad "server: only $cipher/$total channel messages encrypted"
 fi
-if grep -q "secret message\|reply from bob\|waves\|sent like from the web" "$WORK/wire.log"; then
+if grep -qi "secret message\|reply from bob\|waves\|sent like from the web\|ellipsis\|lower case\|zaż\|gęślą" "$WORK/wire.log"; then
     bad "plain text crossed the server"
 else
     pass "no plain text crossed the server"
