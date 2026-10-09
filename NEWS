@@ -62,6 +62,17 @@ erssi-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    default (-Dwith-e2e), loaded at start like otr. Unit tests with
 	    vectors made by rpe2e.pl and libsodium, fuzz corpora, and a live
 	    test against rpe2e.pl in both directions (RPE2E_SCRIPT)
+	  - e2e is stricter than rpe2e.pl and repartee where they could leak
+	    (found in a security review, each with a test): our key goes only
+	    to peers accepted with /e2e accept, autotrust or auto mode - in
+	    rpe2e.pl anyone who answered our automatic key request got it;
+	    a REKEY only replaces a trusted session and each one is used once;
+	    /upgrade, raw lines with CR/LF, DMs to a changed or unknown
+	    address and a corrupt keyring can no longer send clear text
+	    (/e2e reset after a lost keyring); keyless sessions are never
+	    trusted; growth of pending requests and unaccepted peers is
+	    capped. The wire format is unchanged; /help e2e lists every
+	    difference. Peers from an rpe2e.pl keyring need one /e2e accept
 	  - contrib/rpe2e keeps only rpe2e-from-repartee (moves a repartee
 	    identity into the keyring) and the MIT licence of the script the
 	    module is ported from; the script itself is no longer shipped
