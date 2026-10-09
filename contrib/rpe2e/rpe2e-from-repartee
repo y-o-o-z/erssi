@@ -43,7 +43,7 @@ import time
 
 FP_DOMAIN = b"RPE2E01-FP:"
 SECRET_BLOB_VERSION = 1
-SCOPE_SEP = "\x1f"  # repartee: "<siec>\x1f<kanal>" (scoping F3)
+SCOPE_SEP = "\x1f"  # repartee: "<network>\x1f<channel>" (scoping F3)
 
 
 class MigrationError(Exception):
@@ -111,7 +111,7 @@ def b64(data):
     return base64.b64encode(data).decode("ascii")
 
 
-# ── wejscie ─────────────────────────────────────────────────────────
+# ── input ───────────────────────────────────────────────────────────
 
 def read_env_key(path):
     try:
@@ -135,20 +135,21 @@ def read_env_key(path):
 
 
 def unscoped(channel):
-    """'IRCnet\\x1f#kanal' -> '#kanal'; rozmowy '@handle' i kanaly bez zakresu bez zmian."""
+    """'IRCnet\\x1f#chan' -> '#chan'; '@handle' queries and unscoped channels unchanged."""
     return channel.split(SCOPE_SEP, 1)[1] if SCOPE_SEP in channel else channel
 
 
 def network_of(channel):
-    """'IRCnet\\x1f#kanal' -> 'IRCnet'; bez zakresu -> None."""
+    """'IRCnet\\x1f#chan' -> 'IRCnet'; unscoped -> None."""
     return channel.split(SCOPE_SEP, 1)[0] if SCOPE_SEP in channel else None
 
 
-def newest(rows, key, warnings):
-    """Z kilku wariantow tego samego kontekstu zostaje najnowszy (created_at);
-    przy rownym czasie wariant z zakresem sieci (repartee wybiera go zawsze,
-    stary wpis bez zakresu to tylko zapas). rpe2e.pl nie rozroznia sieci, wiec
-    ten sam kanal z dwoch roznych sieci jest zglaszany ostrzezeniem."""
+def newest(rows, key, warnings, stamp="created_at"):
+    """Of several variants of the same context the newest one stays (by the
+    `stamp` column, created_at by default); on a tie the network-scoped
+    variant wins (repartee always picks it, the old unscoped row is only a
+    fallback). rpe2e.pl does not tell networks apart, so the same context
+    from two different networks is reported with a warning."""
     best = {}
     nets = {}
     for row in rows:
@@ -156,17 +157,18 @@ def newest(rows, key, warnings):
         net = network_of(row["channel"])
         if net:
             nets.setdefault(k, set()).add(net)
-        rank = (row["created_at"] or 0, 1 if net else 0)
+        rank = (row[stamp] or 0, 1 if net else 0)
         if k not in best or rank > best[k][0]:
             best[k] = (rank, row)
     for k, names in nets.items():
         if len(names) > 1:
-            warnings.append(f"{k}: sessions from several networks ({', '.join(sorted(names))}) - the newest was moved")
+            label = " on ".join(k) if isinstance(k, tuple) else k
+            warnings.append(f"{label}: sessions from several networks ({', '.join(sorted(names))}) - the newest was moved")
     return {k: row for k, (rank, row) in best.items()}
 
 
 def table_rows(db, table, columns="*"):
-    """Starsze bazy repartee nie maja wszystkich tabel - brak tabeli = brak wierszy."""
+    """Older repartee databases lack some tables - a missing table means no rows."""
     try:
         return [dict(r) for r in db.execute(f"SELECT {columns} FROM {table}")]
     except sqlite3.OperationalError as exc:
@@ -180,7 +182,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
     sodium = load_sodium()
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
-    # sekrety moga byc niezaszyfrowane (starsze wpisy) - wtedy klucz niepotrzebny
+    # secrets may be stored unencrypted (older rows) - then no key is needed
     key = read_env_key(env_path)
 
     def need_key(blob, size):
@@ -239,7 +241,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
         }
 
     in_rows = table_rows(db, "e2e_incoming_sessions")
-    for (handle, ctx), row in newest(in_rows, lambda r: (r["handle"], unscoped(r["channel"])), []).items():
+    for (handle, ctx), row in newest(in_rows, lambda r: (r["handle"], unscoped(r["channel"])), warnings).items():
         peer_fp = bytes(row["fingerprint"]).hex()
         if peer_fp not in keyring["peers"]:
             raise MigrationError(f"session {handle} on {ctx} points to an unknown peer {peer_fp}")
@@ -256,13 +258,14 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
         ctx = unscoped(row["channel"])
         current = keyring["channels"].get(ctx)
         enabled = 1 if row["enabled"] and not channels_off else 0
-        # wlaczony w ktorymkolwiek wariancie = wlaczony
+        # enabled in any variant = enabled
         if current is None or enabled > current["enabled"]:
             keyring["channels"][ctx] = {"enabled": enabled, "mode": row["mode"] or "normal"}
 
     rec_rows = table_rows(db, "e2e_outgoing_recipients")
-    for row in rec_rows:
-        ctx = unscoped(row["channel"])
+    # the newest first_sent_at wins, not whichever row came last
+    for (ctx, _handle), row in newest(rec_rows, lambda r: (unscoped(r["channel"]), r["handle"]), [],
+                                      "first_sent_at").items():
         keyring["outgoing_recipients"][f"{ctx}|{row['handle']}"] = {
             "channel": ctx,
             "handle": row["handle"],
@@ -277,12 +280,12 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
     return keyring
 
 
-# ── zapis ────────────────────────────────────────────────────────────
+# ── output ──────────────────────────────────────────────────────────
 
 def write_keyring(keyring, out_path, force):
     out_dir = os.path.dirname(os.path.abspath(out_path))
     if not os.path.isdir(out_dir):
-        # tylko katalog, ktory tworzymy sami - cudzego (np. $HOME) nie ruszamy
+        # only a directory we create ourselves - never chmod someone else's (e.g. $HOME)
         os.makedirs(out_dir, mode=0o700)
         os.chmod(out_dir, 0o700)
     backup = None
@@ -304,6 +307,15 @@ def write_keyring(keyring, out_path, force):
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, out_path)
+        # make the rename itself durable (best effort)
+        try:
+            dir_fd = os.open(out_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)

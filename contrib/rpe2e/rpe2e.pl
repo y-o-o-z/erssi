@@ -1,35 +1,60 @@
 #
 # rpe2e.pl — RPE2E v1.0 end-to-end encryption for irssi
 #
-# Copyright (c) 2026 repartee authors. MIT licensed.
+# Copyright (c) 2026 repartee authors. MIT licensed (erssi/y-o-o-z: the full
+# licence text is in LICENSE next to this file).
 #
 # Wire-compatible with the native repartee implementation and the weechat
 # rpe2e.py script.
 #
 # erssi/y-o-o-z: copy of scripts/irssi/rpe2e.pl from repartee (commit
-# 45a5bba, https://github.com/outragedevs/repartee) with five changes, each
-# marked "erssi/y-o-o-z", so it loads on erssi installed without root
-# (4 is an upstream fix, 5 a usage guide):
+# 45a5bba, https://github.com/outragedevs/repartee). The wire format is
+# unchanged; every change is marked "erssi/y-o-o-z (<n>)":
 #   1. modules from ~/perl5 (cpanm -l ~/perl5 Crypt::NaCl::Sodium FFI::Platypus),
-#   2. version gate: for erssi (binary named erssi*) the ABI date decides -
-#      erssi numbers its releases itself ($J is "1.3.x" on a codebase newer
-#      than irssi 1.4.1); plain irssi keeps upstream's $J check,
+#      added to @INC only when HOME is set and the directory exists,
+#   2. version gate: the ABI version decides first (46 = irssi 1.4.1, which
+#      has 'server outgoing modify'); erssi numbers its releases itself ($J
+#      is "1.3.x" on a newer codebase) and may run under any binary name,
 #   3. libsodium found also as a versioned soname (libsodium.so.23) when the
 #      unversioned libsodium.so from the -dev package is missing,
 #   4. RPL_HOSTHIDDEN sanity check: "@:" in /^[@:\-]/ was interpolated as an
-#      array (perl warned on every load), so "@"/":" hosts were not rejected,
+#      array, so the check silently never matched "@"/":" hosts,
 #   5. "/e2e" without arguments prints a step-by-step guide with the state
-#      of the current window (help text only, no protocol change).
-# Version 0.2.1 (erssi/y-o-o-z): the guide (5) is in English, like the rest
-# of the script; 0.2.0 is the repartee version this copy is based on.
-# The protocol code is untouched. Install and migration from repartee:
+#      of the current window (in a query it lists the peer's DM keys),
+#   6. outgoing text and context names are UTF-8 encoded ONCE: erssi hands
+#      scripts raw bytes, and encoding them again garbled every non-ASCII
+#      message at the receiver (and halved the chunk budget),
+#   7. the keyring is never replaced after a failed read, a corrupt file is
+#      moved aside (keyring.json.corrupt-<time>), writes are checked and
+#      fsync'ed, temporary files are created 0600; channel names stored as
+#      real Unicode (repartee export, migration) are read as UTF-8 bytes,
+#   8. RPEE2E NOTICEs write the keyring only when something changed, and
+#      KEYREQs from one sender are handled at most once per 10 s, so a flood
+#      turns neither into disk writes nor into a KEYRSP flood; rate-limit
+#      maps are pruned,
+#   9. only bot-command-shaped lines (".cmd", "!cmd": a letter after the
+#      prefix) bypass encryption on a channel - "...", "!!" are encrypted,
+#  10. the gate also catches lower-case "privmsg" (/quote) and lines with
+#      IRCv3 tags (kept on the ciphertext),
+#  11. /e2e export creates its file 0600 and never follows a symlink or
+#      overwrites a file; /e2e import keeps keyring.json.bak-<time>,
+#  12. "%" in printed text is escaped (no theme codes from channel names).
+# Version 0.2.2 (erssi/y-o-o-z); 0.2.0 is the repartee version this copy is
+# based on. Install and migration from repartee:
 # https://github.com/y-o-o-z/erssi/tree/main/contrib/rpe2e (README.md).
 #
 
 use strict;
 use warnings;
-# erssi/y-o-o-z (1): modules installed without root.
-use lib "$ENV{HOME}/perl5/lib/perl5";
+# erssi/y-o-o-z (1): modules installed without root, only when they exist
+# (no warning and no "/perl5/..." entry when HOME is unset).
+BEGIN {
+    my $dir = defined $ENV{HOME} ? "$ENV{HOME}/perl5/lib/perl5" : undef;
+    if (defined $dir && -d $dir) {
+        require lib;
+        lib->import($dir);
+    }
+}
 use Irssi;
 use Crypt::NaCl::Sodium qw(:utils);
 use MIME::Base64 qw(encode_base64 decode_base64);
@@ -40,10 +65,12 @@ use Digest::SHA qw(hmac_sha256);
 use DynaLoader ();
 use FFI::Platypus 2.00;
 use FFI::Platypus::Buffer qw(scalar_to_buffer grow);
+use Fcntl qw(O_WRONLY O_RDONLY O_CREAT O_EXCL);
+use IO::Handle ();
 
-our $VERSION = '0.2.1';
+our $VERSION = '0.2.2';
 our %IRSSI = (
-    authors     => 'repartee',
+    authors     => 'repartee; erssi changes: y-o-o-z',
     contact     => 'https://repart.ee',
     name        => 'rpe2e',
     description => 'RPE2E v1.0 end-to-end encryption (wire-compatible with repartee/weechat)',
@@ -89,6 +116,10 @@ my $MAX_CHUNKS               = 16;
 my $MAX_PT_PER_CHUNK         = 180;
 my $TS_TOLERANCE             = 300;
 my $KEYREQ_MIN_INTERVAL      = 30;
+# erssi/y-o-o-z (8): a KEYREQ from the same sender for the same context is
+# handled at most once per this many seconds (legitimate ones come at least
+# $KEYREQ_MIN_INTERVAL apart: the sender rate-limits itself).
+my $KEYREQ_INBOUND_MIN_INTERVAL = 10;
 my $PENDING_KEYREQ_TTL       = 120;
 my $HKDF_SALT                = 'RPE2E01-WRAP';
 my $CHANNEL_PREFIX_RE        = qr/^[#&!+]/;
@@ -102,6 +133,7 @@ my $keyring_path = File::Spec->catfile($rpe2e_dir, 'keyring.json');
 my $debug_log    = File::Spec->catfile($rpe2e_dir, 'rpe2e-debug.log');
 
 my %rate_limit_sent;
+my %keyreq_seen_at;   # erssi/y-o-o-z (8): "<sender handle>|<ctx>" -> time
 
 # Our own server-stamped ident@host, per server tag — the recipient-keyed DM
 # context (docs/rpe2e-dm-addendum.md): DMs we RECEIVE are keyed `@<own>`.
@@ -150,19 +182,25 @@ sub empty_keyring {
 }
 
 # Load the keyring, distinguishing a genuine read/parse error from an absent
-# file. Returns ($kr, $ok): $ok=0 means the file EXISTS but could not be read
-# or parsed — the outbound gate must fail closed on that (an enabled config may
-# be present but unreadable, so refusing beats risking plaintext). An absent
-# file is ($empty, 1): there is legitimately no E2E state.
+# file. Returns ($kr, $ok, $why, $err): $ok=0 means the file EXISTS but could
+# not be read ($why 'read') or parsed ($why 'parse') — the outbound gate must
+# fail closed on that (an enabled config may be present but unreadable, so
+# refusing beats risking plaintext). An absent file is ($empty, 1): there is
+# legitimately no E2E state.
 sub _load_keyring_checked {
-    return (empty_keyring(), 1) unless -f $keyring_path;
-    open my $fh, '<', $keyring_path or return (empty_keyring(), 0);
+    # erssi/y-o-o-z (7): -e, not -f — a path that exists but is no plain file
+    # is an error to report, not "no keyring".
+    return (empty_keyring(), 1) unless -e $keyring_path;
+    open my $fh, '<:raw', $keyring_path or return (empty_keyring(), 0, 'read', "$!");
     local $/;
     my $json = <$fh>;
+    my $read_err = "$!";
     close $fh;
+    return (empty_keyring(), 0, 'read', $read_err) unless defined $json;
     my $kr;
     eval { $kr = decode_json($json) };
-    return (empty_keyring(), 0) if $@ || ref($kr) ne 'HASH';
+    return (empty_keyring(), 0, 'parse', 'not valid JSON') if $@ || ref($kr) ne 'HASH';
+    _bytes_deep($kr);
     for my $k (qw(identity peers outgoing incoming channels pending outgoing_recipients pending_inbound)) {
         $kr->{$k} //= {};
     }
@@ -171,27 +209,116 @@ sub _load_keyring_checked {
     return ($kr, 1);
 }
 
+# erssi/y-o-o-z (6): erssi passes every string to scripts as raw bytes (no
+# Perl UTF-8 flag), and that is what this script works with throughout. Only
+# a string holding characters above 0xFF (decoded text, e.g. JSON written by
+# another program) is turned into its UTF-8 bytes; anything else already IS
+# bytes and is used as-is — encoding it again double-encodes.
+sub _utf8_bytes {
+    my ($s) = @_;
+    return $s unless defined $s;
+    return encode('UTF-8', $s) if $s =~ /[^\x00-\xff]/;
+    my $b = $s;
+    utf8::downgrade($b);
+    return $b;
+}
+
+# erssi/y-o-o-z (7): keyring.json written by rpe2e.pl holds the byte strings
+# irssi gave it; one written by repartee's exporter or the migration tool
+# holds real Unicode. Bring every key and value with characters above 0xFF
+# to UTF-8 bytes, so "#żaba" from either source matches the channel name
+# erssi passes in.
+sub _bytes_deep {
+    my ($node) = @_;
+    if (ref $node eq 'HASH') {
+        for my $k (keys %$node) {
+            my $v = $node->{$k};
+            if (ref $v) { _bytes_deep($v) } elsif (defined $v && $v =~ /[^\x00-\xff]/) { $node->{$k} = _utf8_bytes($v) }
+            next unless $k =~ /[^\x00-\xff]/;
+            my $bk = _utf8_bytes($k);
+            $node->{$bk} = delete $node->{$k} unless exists $node->{$bk};
+        }
+    } elsif (ref $node eq 'ARRAY') {
+        for my $v (@$node) {
+            if (ref $v) { _bytes_deep($v) } elsif (defined $v && $v =~ /[^\x00-\xff]/) { $v = _utf8_bytes($v) }
+        }
+    }
+    return $node;
+}
+
 sub load_keyring {
-    my ($kr, $ok) = _load_keyring_checked();
-    Irssi::print("[E2E] keyring corrupt, starting fresh") if !$ok;
+    my ($kr, $ok, $why, $err) = _load_keyring_checked();
+    return $kr if $ok;
+    # erssi/y-o-o-z (7): repartee printed "keyring corrupt, starting fresh"
+    # here for ANY failure, and the next save (ensure_identity at load) wrote
+    # a brand-new identity over the real file. A read error (EACCES, EMFILE)
+    # now leaves the file alone and blocks saving (save_keyring); a corrupt
+    # file is kept aside before starting fresh.
+    if ($why eq 'parse') {
+        my $aside = $keyring_path . '.corrupt-' . now_unix();
+        if (rename $keyring_path, $aside) {
+            _prnt_err(undef, "keyring $keyring_path is not valid JSON — moved aside to $aside, starting fresh");
+        } else {
+            _prnt_err(undef, "keyring $keyring_path is not valid JSON and cannot be moved aside ($!) — not saving until it is fixed");
+        }
+    } else {
+        _prnt_err(undef, "cannot read keyring $keyring_path: $err — E2E state not loaded, nothing is saved until it is readable");
+    }
     return $kr;
 }
 
+# erssi/y-o-o-z (7): write to a temporary file created 0600 (O_EXCL), check
+# every write, fsync, then rename — a full disk can no longer rename a
+# truncated keyring over the good one. Never replaces a keyring that exists
+# but cannot be read. Returns 1 on success, 0 otherwise.
 sub save_keyring {
     my ($kr) = @_;
+    if (-e $keyring_path) {
+        my (undef, $ok, undef, $err) = _load_keyring_checked();
+        unless ($ok) {
+            _prnt_err(undef, "keyring NOT saved: $keyring_path exists but cannot be read ($err) — fix it or move it aside");
+            return 0;
+        }
+    }
+    my $data = encode_json($kr);
     my $tmp_path = $keyring_path . '.tmp.' . $$ . '.' . now_unix();
-    open my $fh, '>', $tmp_path or do {
-        Irssi::print("[E2E] cannot write keyring: $!");
-        return;
+    sysopen(my $fh, $tmp_path, O_WRONLY | O_CREAT | O_EXCL, 0600) or do {
+        _prnt_err(undef, "cannot write keyring: $!");
+        return 0;
     };
-    print {$fh} encode_json($kr);
-    close $fh;
-    chmod 0600, $tmp_path;
-    rename $tmp_path, $keyring_path or do {
+    binmode $fh;
+    my $ok = print {$fh} $data;
+    $ok &&= $fh->flush;
+    $ok &&= $fh->sync;
+    my $err = "$!";
+    $ok = close($fh) && $ok;
+    $err = "$!" if !$ok && !length $err;
+    unless ($ok) {
         unlink $tmp_path;
-        Irssi::print("[E2E] cannot replace keyring: $!");
-        return;
+        _prnt_err(undef, "cannot write keyring ($err) — the previous keyring is kept");
+        return 0;
+    }
+    rename $tmp_path, $keyring_path or do {
+        my $rename_err = "$!";
+        unlink $tmp_path;
+        _prnt_err(undef, "cannot replace keyring: $rename_err");
+        return 0;
     };
+    _fsync_dir($rpe2e_dir);
+    return 1;
+}
+
+sub _fsync_dir {
+    my ($dir) = @_;
+    sysopen(my $dh, $dir, O_RDONLY) or return;
+    $dh->sync;
+    close $dh;
+}
+
+# A canonical snapshot of the keyring, to tell whether a handler changed it.
+sub _keyring_snapshot {
+    my ($kr) = @_;
+    return JSON::PP->new->canonical->encode($kr);
 }
 
 sub now_unix { return time(); }
@@ -248,7 +375,9 @@ sub ensure_identity {
         fp         => fingerprint_hex($fp),
         created_at => now_unix(),
     };
-    save_keyring($kr);
+    # erssi/y-o-o-z (7): an identity that cannot be stored would be a
+    # throw-away key peers pin and then see change — refuse instead.
+    save_keyring($kr) or die "cannot store a new E2E identity in $keyring_path\n";
     return ($pk, $sk, $fp);
 }
 
@@ -366,7 +495,8 @@ sub aead_decrypt {
 
 sub build_aad {
     my ($channel, $msgid, $ts, $part, $total) = @_;
-    my $chan = encode('UTF-8', $channel);
+    # erssi/y-o-o-z (6): the context name is already UTF-8 bytes.
+    my $chan = _utf8_bytes($channel);
     return $PROTO
         . pack('n', length($chan)) . $chan
         . pack('n', 8) . $msgid
@@ -422,7 +552,8 @@ sub split_plaintext {
 sub split_plaintext_budget {
     my ($text, $max_per_chunk) = @_;
     die "empty plaintext" unless defined $text && length $text;
-    my $bytes = encode('UTF-8', $text);
+    # erssi/y-o-o-z (6): erssi's outgoing line is already UTF-8 bytes.
+    my $bytes = _utf8_bytes($text);
     my @chunks;
     my $i = 0;
     while ($i < length($bytes)) {
@@ -772,9 +903,22 @@ sub _take_pending_trust_changes {
 
 sub _allow_outgoing_keyreq {
     my ($handle) = @_;
-    my $last = $rate_limit_sent{$handle} // 0;
-    return 0 if now_unix() - $last < $KEYREQ_MIN_INTERVAL;
-    $rate_limit_sent{$handle} = now_unix();
+    return _stamp_allow(\%rate_limit_sent, $handle, $KEYREQ_MIN_INTERVAL);
+}
+
+# erssi/y-o-o-z (8): one rate limiter for all per-key stamps: allows $key at
+# most once per $interval seconds. Expired stamps are dropped once the map
+# grows, so senders that come and go do not pile up for the whole session.
+sub _stamp_allow {
+    my ($map, $key, $interval) = @_;
+    my $now = now_unix();
+    if (keys %$map > 256) {
+        for my $k (keys %$map) {
+            delete $map->{$k} if $now - $map->{$k} >= $interval;
+        }
+    }
+    return 0 if exists $map->{$key} && $now - $map->{$key} < $interval;
+    $map->{$key} = $now;
     return 1;
 }
 
@@ -1151,28 +1295,31 @@ sub _notice_witem_for_ctx {
 
 sub _prnt_ok {
     my ($witem, $msg) = @_;
+    my $text = _escape_pct("[E2E] $msg");
     if ($witem) {
-        $witem->print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        $witem->print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     } else {
-        Irssi::print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        Irssi::print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     }
 }
 
 sub _prnt_warn {
     my ($witem, $msg) = @_;
+    my $text = _escape_pct("[E2E] $msg");
     if ($witem) {
-        $witem->print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        $witem->print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     } else {
-        Irssi::print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        Irssi::print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     }
 }
 
 sub _prnt_err {
     my ($witem, $msg) = @_;
+    my $text = _escape_pct("[E2E] $msg");
     if ($witem) {
-        $witem->print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        $witem->print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     } else {
-        Irssi::print("[E2E] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        Irssi::print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     }
 }
 
@@ -1180,11 +1327,20 @@ sub _prnt_dbg {
     my ($server, $ctx, $nick, $msg) = @_;
     return unless $DEBUG_BUFFER_ENABLED;
     my $witem = _notice_witem_for_ctx($server, $ctx, $nick);
+    my $text = _escape_pct("[E2E debug] $msg");
     if ($witem) {
-        $witem->print("[E2E debug] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        $witem->print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     } else {
-        Irssi::print("[E2E debug] $msg", Irssi::MSGLEVEL_CLIENTCRAP());
+        Irssi::print($text, Irssi::MSGLEVEL_CLIENTCRAP());
     }
+}
+
+# erssi/y-o-o-z (12): irssi's print reads "%" as a theme code; channel names,
+# nicks, hosts and paths are shown literally.
+sub _escape_pct {
+    my ($text) = @_;
+    $text =~ s/%/%%/g;
+    return $text;
 }
 
 sub _send_raw_notice {
@@ -1194,9 +1350,10 @@ sub _send_raw_notice {
 }
 
 sub _send_raw_privmsg {
-    my ($server, $target, $body) = @_;
+    my ($server, $target, $body, $tags) = @_;
     return unless $server;
-    $server->send_raw_now("PRIVMSG $target :$body");
+    # erssi/y-o-o-z (10): IRCv3 tags of the original line stay on the chunks.
+    $server->send_raw_now(($tags // '') . "PRIVMSG $target :$body");
 }
 
 sub _resolve_ctx_for_command {
@@ -1596,11 +1753,41 @@ sub cmd_export {
             values %{ $kr->{outgoing_recipients} || {} }
         ],
     };
-    open my $fh, '>', $path or return _prnt_err($witem, "export failed: $!");
-    print {$fh} JSON::PP->new->canonical->pretty->encode($doc);
-    close $fh;
-    chmod 0600, $path;
+    # erssi/y-o-o-z (11): the file holds private keys — create it 0600 from
+    # the start, and never follow a symlink or overwrite an existing file.
+    my $data = JSON::PP->new->canonical->pretty->encode($doc);
+    sysopen(my $fh, $path, O_WRONLY | O_CREAT | O_EXCL, 0600)
+        or return _prnt_err($witem, "export failed: $path: $!" . ($!{EEXIST} ? ' (choose a new file name)' : ''));
+    binmode $fh;
+    my $ok = print {$fh} $data;
+    $ok = close($fh) && $ok;
+    unless ($ok) {
+        my $err = "$!";
+        unlink $path;
+        return _prnt_err($witem, "export failed: $path: $err");
+    }
     _prnt_ok($witem, "exported keyring to $path");
+}
+
+# erssi/y-o-o-z (11): a private copy of the current keyring file, made before
+# /e2e import replaces it. Returns the copy's path, '' when there is no
+# keyring yet, undef on error.
+sub _backup_keyring {
+    return '' unless -e $keyring_path;
+    open my $in, '<:raw', $keyring_path or return undef;
+    local $/;
+    my $data = <$in>;
+    close $in;
+    return undef unless defined $data;
+    my $bak = $keyring_path . '.bak-' . now_unix();
+    sysopen(my $out, $bak, O_WRONLY | O_CREAT | O_EXCL, 0600) or return undef;
+    binmode $out;
+    my $ok = print {$out} $data;
+    $ok &&= $out->flush;
+    $ok &&= $out->sync;
+    $ok = close($out) && $ok;
+    unless ($ok) { unlink $bak; return undef }
+    return $bak;
 }
 
 sub cmd_import {
@@ -1647,8 +1834,12 @@ sub cmd_import {
         my $key = ($r->{channel} // '') . '|' . ($r->{handle} // '');
         $kr->{outgoing_recipients}{$key} = $r;
     }
-    save_keyring($kr);
-    _prnt_ok($witem, "imported keyring from $path");
+    _bytes_deep($kr);
+    my $bak = _backup_keyring();
+    return _prnt_err($witem, "import failed: cannot back up the current keyring ($!) — nothing changed")
+        unless defined $bak;
+    save_keyring($kr) or return _prnt_err($witem, 'import failed: keyring not saved' . (length $bak ? " (backup: $bak)" : ''));
+    _prnt_ok($witem, "imported keyring from $path" . (length $bak ? " (previous keyring: $bak)" : ''));
 }
 
 sub cmd_autotrust {
@@ -1694,13 +1885,24 @@ sub _cmd_guide {
     _prnt_ok($witem, "Your key fingerprint: $fp");
     if (defined $ctx) {
         my $cfg = $kr->{channels}{$ctx};
-        my @trusted = sort map { (split /\|/, $_, 2)[0] }
-            grep { (split /\|/, $_, 2)[1] eq $ctx && ($kr->{incoming}{$_}{status} // '') eq 'trusted' }
-            keys %{ $kr->{incoming} || {} };
+        # A query's real DM sessions are recipient-keyed under `@<own>`, its
+        # trust markers under `@<peer>` — look at both, for this peer only.
+        my %ctxs = map { $_ => 1 } _ctx_variants($witem, $ctx);
+        my $peer = $ctx =~ /^\@(.+)\z/s ? $1 : undef;
+        my %seen;
+        my @trusted = sort grep { !$seen{$_}++ } map { (split /\|/, $_, 2)[0] }
+            grep {
+                my ($h, $c) = split /\|/, $_, 2;
+                defined $c && $ctxs{$c} && (!defined $peer || $h eq $peer)
+                    && ($kr->{incoming}{$_}{status} // '') eq 'trusted'
+            } keys %{ $kr->{incoming} || {} };
         _prnt_ok($witem, "Here ($ctx): " . ($cfg && $cfg->{enabled}
             ? 'encryption ON, mode ' . ($cfg->{mode} // 'normal')
             : 'encryption off'));
         _prnt_ok($witem, 'Keys from: ' . (@trusted ? join(', ', @trusted) : 'nobody yet'));
+    } elsif ($witem && ($witem->{type} // '') eq 'QUERY') {
+        _prnt_ok($witem, "Here: the address (ident\@host) of $witem->{name} is not known yet - "
+            . 'wait for a message from them or join a common channel, then /e2e on.');
     } else {
         _prnt_ok($witem, 'Run /e2e in a channel or query window to see its state.');
     }
@@ -1779,7 +1981,7 @@ my $REFUSE_NO_HANDLE = "cannot encrypt PM without peer handle — wait for a mes
 my $REFUSE_KEYRING   = "cannot encrypt — keyring read failed; message NOT sent (E2E stays on)";
 my $REFUSE_ENCRYPT   = "encryption failed — message NOT sent as plaintext (use /e2e off to send cleartext)";
 my $REFUSE_AMBIGUOUS = "ambiguous target %s — E2E is enabled on both %s (STATUSMSG subset vs distinct channel); refusing to guess a context";
-my $BOT_BYPASS_WARN  = "bot-style message to %s sent in CLEARTEXT — channel lines starting with '.' or '!' bypass encryption for bots";
+my $BOT_BYPASS_WARN  = "bot-style message to %s sent in CLEARTEXT — channel lines starting with '.' or '!' and a letter bypass encryption for bots";
 
 # Encrypt plaintext under session key $sk for wire context $ctx; returns an
 # arrayref of wire lines (one per chunk). Shared by the plain and ACTION gate
@@ -1810,7 +2012,8 @@ sub _encrypt_ctcp_wire {
     my ($sk, $ctx, $frame) = @_;
     my $action_prefix = "\x01ACTION ";
     my $action_framing = length($action_prefix) + 1;   # +1 for trailing \x01
-    if (length(encode('UTF-8', $frame)) <= $MAX_PT_PER_CHUNK) {
+    # erssi/y-o-o-z (6): bytes in, bytes out — no encode/decode round trip.
+    if (length(_utf8_bytes($frame)) <= $MAX_PT_PER_CHUNK) {
         return _encrypt_plain_wire($sk, $ctx, $frame);
     }
     die "CTCP frame exceeds one encrypted chunk and cannot be split"
@@ -1820,8 +2023,7 @@ sub _encrypt_ctcp_wire {
     my $pieces = split_plaintext_budget($body, $budget);
     my @out;
     for my $piece (@$pieces) {
-        my $piece_str = decode('UTF-8', $piece);
-        push @out, @{ _encrypt_plain_wire($sk, $ctx, $action_prefix . $piece_str . "\x01") };
+        push @out, @{ _encrypt_plain_wire($sk, $ctx, $action_prefix . $piece . "\x01") };
     }
     return \@out;
 }
@@ -1907,7 +2109,9 @@ sub _gate_decide {
     # parse them. CHANNEL-ONLY and SINGLE-LINE; DMs never bypass. Warn whenever
     # we cannot POSITIVELY rule E2E out (enabled OR a keyring read error) so the
     # cleartext is never a silent surprise.
-    if ($is_channel && $body =~ /^[.!]/ && index($body, "\n") < 0) {
+    # erssi/y-o-o-z (9): only a command-shaped line — a letter right after the
+    # prefix. "...", "!!", ". " are ordinary chat and stay encrypted.
+    if ($is_channel && $body =~ /^[.!][A-Za-z]/ && index($body, "\n") < 0) {
         my $enabled = grep { my $c = $kr->{channels}{$_}; $c && ($c->{enabled} // 0) } @readings;
         my $warn = (!$ok || $enabled) ? sprintf($BOT_BYPASS_WARN, $chan) : undef;
         return ('bypass', $warn);
@@ -1992,8 +2196,10 @@ sub signal_server_outgoing {
     $line =~ s/\r*\n*\z//;   # the raw line may carry a trailing CRLF
     # Only PRIVMSG carries user message content. NOTICE (KEYREQ/KEYRSP/REKEY)
     # and every other command pass through untouched.
-    return unless $line =~ /^PRIVMSG\s+(\S+)\s+:?(.*)$/s;
-    my ($target, $body) = ($1, $2);
+    # erssi/y-o-o-z (10): commands are case-insensitive ("/quote privmsg …")
+    # and may carry IRCv3 tags ("@+draft/reply=… PRIVMSG …").
+    return unless $line =~ /^(\@\S+\s+)?PRIVMSG\s+(\S+)\s+:?(.*)$/si;
+    my ($tags, $target, $body) = ($1 // '', $2, $3);
     # Re-entrancy guard: a STRUCTURALLY valid wire chunk is our own re-emit from
     # _send_raw_privmsg. Keyed on parse_wire (not a bare +RPE2E01 prefix) so a
     # user command like "/msg bob +RPE2E01 secret" still goes through the gate
@@ -2016,7 +2222,7 @@ sub signal_server_outgoing {
     }
     # cipher: emit the encrypted chunks ourselves (in order, before the original
     # line is written), then blank the original so the plaintext never goes out.
-    _send_raw_privmsg($server, $target, $_) for @$payload;
+    _send_raw_privmsg($server, $target, $_, $tags) for @$payload;
     $$data = "";
     Irssi::signal_stop();
 }
@@ -2052,8 +2258,7 @@ sub _decrypt_wire_message {
             # direction. Drop; the peer's next message re-establishes once the
             # handle is known.
             my $wait_key = ($server->{tag} // '') . "|$nick";
-            if (now_unix() - ($own_wait_notice_at{$wait_key} // 0) >= $KEYREQ_MIN_INTERVAL) {
-                $own_wait_notice_at{$wait_key} = now_unix();
+            if (_stamp_allow(\%own_wait_notice_at, $wait_key, $KEYREQ_MIN_INTERVAL)) {
                 _prnt_warn(_notice_witem_for_ctx($server, $nick, $nick),
                            "encrypted DM from $nick held — own identity not learned yet (waiting for the WHOIS reply)");
             }
@@ -2093,9 +2298,7 @@ sub _decrypt_wire_message {
             my $aad2 = build_aad($octx, $wire->{msgid}, $wire->{ts}, $wire->{part}, $wire->{total});
             my $pt2 = aead_decrypt(b64d($out->{sk}), $wire->{nonce}, $aad2, $wire->{ct});
             next unless defined $pt2;
-            my $dec = eval { decode('UTF-8', $pt2, FB_DEFAULT) };
-            $dec = decode('UTF-8', $pt2) if !defined $dec;
-            return (1, $dec);
+            return (1, _utf8_clean($pt2));
         }
         _dbg("own-copy wire to $target undecryptable (rotated key?) — dropped");
         Irssi::signal_stop();
@@ -2143,9 +2346,18 @@ sub _decrypt_wire_message {
         Irssi::signal_stop();
         return (1, undef);
     }
-    my $decoded = eval { decode('UTF-8', $pt, FB_DEFAULT) };
-    $decoded = decode('UTF-8', $pt) if !defined $decoded;
-    return (1, $decoded);
+    return (1, _utf8_clean($pt));
+}
+
+# erssi/y-o-o-z (6): decrypted text goes back to erssi as UTF-8 BYTES
+# (invalid sequences replaced, as before). A decoded character string,
+# joined with the byte-string channel name, upgraded that name as Latin-1
+# and routed a message on "#żaba" to a channel named "#Å¼aba".
+sub _utf8_clean {
+    my ($bytes) = @_;
+    my $text = eval { decode('UTF-8', $bytes, FB_DEFAULT) };
+    $text = decode('UTF-8', $bytes) if !defined $text;
+    return encode('UTF-8', $text);
 }
 
 # Registration complete: RESET the own handle (the server may assign a
@@ -2267,13 +2479,23 @@ sub _handle_rpee2e_ctcp_reply {
     my $inner = $args =~ /^\Q$CTCP_TAG\E\s/ ? $args : ($CTCP_TAG . ' ' . $args);
     my $sender_handle = $host // '';
     my $kr = load_keyring();
+    # erssi/y-o-o-z (8): anyone can send these NOTICEs — write the keyring
+    # only when a handler actually changed it.
+    my $before = _keyring_snapshot($kr);
     if ($inner =~ /^\Q$CTCP_TAG\E\s+KEYREQ\s/) {
         my $parsed = parse_keyreq($inner);
         my $ctx = $parsed ? $parsed->{channel} : '';
+        # erssi/y-o-o-z (8): a KEYREQ flood must not become a KEYRSP flood
+        # (Excess Flood) or a stream of keyring writes.
+        unless (_stamp_allow(\%keyreq_seen_at, "$sender_handle|$ctx", $KEYREQ_INBOUND_MIN_INTERVAL)) {
+            _dbg("KEYREQ from $nick ($sender_handle) for $ctx dropped: rate limit");
+            Irssi::signal_stop();
+            return;
+        }
         _prnt_dbg($server, $ctx, $nick, "RX KEYREQ from $nick ($sender_handle) for $ctx") if $parsed;
         my ($rsp, $reciprocal, $ctx_unused) =
             handle_keyreq($kr, $sender_handle, $nick, $inner, _own_handle_for($server));
-        save_keyring($kr);
+        save_keyring($kr) if _keyring_snapshot($kr) ne $before;
         if ($parsed && !$rsp && exists $kr->{pending_inbound}{"$sender_handle|$ctx"}) {
             my $witem = _notice_witem_for_ctx($server, $ctx, $nick);
             _prnt_warn($witem, "Pending key exchange from $nick ($sender_handle) for $ctx. Run /e2e accept <nick> or /e2e decline <nick>.");
@@ -2295,7 +2517,7 @@ sub _handle_rpee2e_ctcp_reply {
         my $ctx = $parsed ? $parsed->{channel} : '';
         _prnt_dbg($server, $ctx, $nick, "RX KEYRSP from $nick ($sender_handle) for $ctx") if $parsed;
         my ($ok, $ctx_unused) = handle_keyrsp($kr, $sender_handle, $nick, $inner);
-        save_keyring($kr);
+        save_keyring($kr) if _keyring_snapshot($kr) ne $before;
         _prnt_dbg($server, $ctx, $nick, "KEYRSP from $nick ($sender_handle) installed session on $ctx") if $ok && $parsed;
         Irssi::signal_stop();
         return;
@@ -2304,7 +2526,7 @@ sub _handle_rpee2e_ctcp_reply {
         my $parsed = parse_keyrekey($inner);
         my $ctx = $parsed ? $parsed->{channel} : '';
         my ($ok, $ctx_unused) = handle_rekey($kr, $sender_handle, $nick, $inner);
-        save_keyring($kr);
+        save_keyring($kr) if _keyring_snapshot($kr) ne $before;
         _prnt_dbg($server, $ctx, $nick, "REKEY from $nick ($sender_handle) installed on $ctx") if $ok && $parsed;
         Irssi::signal_stop();
         return;
@@ -2337,15 +2559,13 @@ sub signal_default_ctcp_reply_generic {
 # in PLAINTEXT while the user believes E2E is on. Refuse to load instead
 # (fail-closed at load time).
 sub _require_signal_capable_irssi {
-    # erssi/y-o-o-z (2): erssi numbers its releases itself ($J "1.3.x" on a
-    # codebase newer than irssi 1.4.1), so for erssi the ABI date decides.
-    # Only for erssi: a plain irssi keeps upstream's $J check, because an old
-    # irssi snapshot built without .git carries the BUILD date as its stamp.
-    my $binary = eval { Irssi::get_irssi_binary() } // '';
-    if ($binary =~ m{(?:^|/)erssi[^/]*$}) {
-        my $abi_date = eval { Irssi::version() } // 0;
-        return if $abi_date >= 20220612;
-    }
+    # erssi/y-o-o-z (2): the ABI version is a compile-time constant of the
+    # codebase — unlike the binary name it survives a wrapper or `exec -a`,
+    # and unlike $J it is not erssi's own release number ("1.3.x" on a
+    # codebase newer than irssi 1.4.1). ABI 46 is irssi 1.4.1, which has the
+    # signal; erssi carries a higher one.
+    my $abi = eval { Irssi::parse_special('$abiversion') } // '';
+    return if $abi =~ /^\d+$/ && $abi >= 46;
     my $j = eval { Irssi::parse_special('$J') } // '';
     if ($j =~ /^(\d+)\.(\d+)(?:\.(\d+))?/) {
         my ($maj, $min, $pat) = ($1, $2, $3 // 0);
@@ -2355,17 +2575,20 @@ sub _require_signal_capable_irssi {
     } else {
         # Unparseable $J — fall back to the ABI date stamp: Irssi::version()
         # is "YYYYMMDD.HHMM", and 1.4.1 is dated 2022-06-12.
-        my $abi = eval { Irssi::version() } // 0;
-        return if $abi >= 20220612;
+        my $abi_date = eval { Irssi::version() } // 0;
+        return if $abi_date >= 20220612;
     }
-    die "rpe2e requires irssi >= 1.4.1 (found: " . ($j || 'unknown')
+    die "rpe2e requires irssi >= 1.4.1 or erssi (found: " . ($j || 'unknown')
+      . (length $abi ? ", ABI $abi" : '')
       . ") — the 'server outgoing modify' signal this script's outbound"
       . " encryption gate hooks does not exist on older irssi, so messages"
       . " would silently go out in PLAINTEXT. Not loading.\n";
 }
 
 _require_signal_capable_irssi();
-ensure_identity();
+# erssi/y-o-o-z (7): an unreadable keyring must not stop the script loading —
+# the outbound gate then refuses to send rather than send plaintext.
+eval { ensure_identity(); 1 } or _prnt_err(undef, "no identity loaded: $@");
 
 Irssi::command_bind('e2e', \&cmd_e2e);
 # THE single authoritative outbound fail-closed gate (F1): `server outgoing

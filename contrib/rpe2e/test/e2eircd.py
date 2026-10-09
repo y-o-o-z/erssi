@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Minimalny serwer IRC do testu rpe2e.pl miedzy dwoma klientami erssi.
+"""A minimal IRC server for testing rpe2e.pl between two erssi clients.
 
-Tylko 127.0.0.1. Obsluguje to, czego potrzebuja erssi i rpe2e.pl: rejestracje
-(CAP/NICK/USER), PING, JOIN z NAMES, MODE, TOPIC, PART, zmiana nicka, WHO, WHOIS (311 - rpe2e.pl uczy sie
-z niego wlasnego ident@host), PRIVMSG/NOTICE do kanalu i do nicka (takze CTCP,
-ktorym ida KEYREQ/KEYRSP). Kazda linia PRIVMSG/NOTICE trafia tez do pliku
---wire, zeby test mogl sprawdzic, co naprawde przeszlo przez serwer.
+127.0.0.1 only. It handles what erssi and rpe2e.pl need: registration
+(CAP/NICK/USER), PING, JOIN with NAMES, MODE, TOPIC, PART, nick changes, WHO,
+WHOIS (311 - rpe2e.pl learns its own ident@host from it), PRIVMSG/NOTICE to a
+channel and to a nick (CTCP too, which carries KEYREQ/KEYRSP). Every
+PRIVMSG/NOTICE line is also written to the --wire file, so the test can check
+what really crossed the server.
 """
 import argparse
 import asyncio
 
 SRV = "e2e.test"
 clients = {}   # nick (lower) -> Client
-channels = {}  # kanal (lower) -> set(nick lower)
+channels = {}  # channel (lower) -> set(nick lower)
 
 
 class Client:
@@ -62,7 +63,7 @@ async def handle(reader, writer, wire_path):
                 clients[me.nick.lower()] = me
             elif cmd == "USER":
                 me.user = args[0]
-                for num, msg in (("001", f"Witaj {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "dzis"),
+                for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
                                  ("004", f"{SRV} e2e io biklmnopstv")):
                     me.send(f":{SRV} {num} {me.nick} :{msg}")
                 me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK=E2ETest :are supported")
