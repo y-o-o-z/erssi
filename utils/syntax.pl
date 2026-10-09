@@ -52,8 +52,9 @@ while (<docs/help/in/*.in>) {
 	  $SYNTAX =~ s/ *$//; $SYNTAX =~ s/ *\n/\n/g;
 
 	  # add %| after "COMMAND SUB " so parameters will indent correctly
-	  $SYNTAX =~ s/^([A-Z ]+)/\1%|/;
-	  $SYNTAX =~ s/(\n[A-Z ]+)/\1%|/g;
+	  # (digits too: E2E)
+	  $SYNTAX =~ s/^([A-Z0-9 ]+)/\1%|/;
+	  $SYNTAX =~ s/(\n[A-Z0-9 ]+)/\1%|/g;
 	  # no need for this if there's no parameters
 	  $SYNTAX =~ s/%\|$//;
           $DATARIVI = $SYNTAX;
