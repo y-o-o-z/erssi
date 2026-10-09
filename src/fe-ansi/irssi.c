@@ -20,6 +20,9 @@
 
 #include "module.h"
 #include <glib/gstdio.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <irssi/src/fe-ansi/module-formats.h>
 #include "default-files-known.h"
 #include <irssi/src/core/modules-load.h>
@@ -439,6 +442,70 @@ static gboolean default_hash_known(const char *name, const char *hash)
 
 /* ~/.erssi/<name> from shipped_path: copied when missing, replaced while
  * unchanged by the user, otherwise kept (one note per new shipped version). */
+/* The contents of a regular file, never through a symbolic link: opened
+ * once with O_NOFOLLOW and checked on that descriptor, so a link swapped in
+ * after the lstat() is not followed */
+static gboolean read_regular_file(const char *path, char **data, gsize *len)
+{
+	GString *buf;
+	struct stat st;
+	char chunk[8192];
+	ssize_t n;
+	int fd;
+
+	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0)
+		return FALSE;
+	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+		close(fd);
+		return FALSE;
+	}
+	buf = g_string_sized_new(st.st_size + 1);
+	while ((n = read(fd, chunk, sizeof(chunk))) > 0 ||
+	       (n < 0 && errno == EINTR)) {
+		if (n > 0)
+			g_string_append_len(buf, chunk, n);
+	}
+	close(fd);
+	if (n < 0) {
+		g_string_free(buf, TRUE);
+		return FALSE;
+	}
+	*len = buf->len;
+	*data = g_string_free(buf, FALSE);
+	return TRUE;
+}
+
+/* Replaces path with data: a new file with the given mode from the start
+ * (no window with the umask's mode), renamed over the old one */
+static gboolean write_file_mode(const char *path, const char *data, gsize len, int mode)
+{
+	char *tmp = g_strconcat(path, ".XXXXXX", NULL);
+	gsize done = 0;
+	int fd, ok;
+
+	fd = g_mkstemp_full(tmp, O_WRONLY | O_CLOEXEC, mode);
+	if (fd < 0) {
+		g_free(tmp);
+		return FALSE;
+	}
+	ok = fchmod(fd, mode) == 0;
+	while (ok && done < len) {
+		ssize_t n = write(fd, data + done, len - done);
+		if (n < 0 && errno == EINTR)
+			continue;
+		ok = n > 0;
+		if (ok)
+			done += n;
+	}
+	ok = close(fd) == 0 && ok;
+	ok = ok && rename(tmp, path) == 0;
+	if (!ok)
+		unlink(tmp);
+	g_free(tmp);
+	return ok;
+}
+
 static void update_default_file(const char *shipped_path, const char *irssi_dir,
                                 const char *name, gboolean theme)
 {
@@ -454,20 +521,17 @@ static void update_default_file(const char *shipped_path, const char *irssi_dir,
 	dst_path = g_strdup_printf("%s/%s", irssi_dir, name);
 
 	if (g_lstat(dst_path, &st) != 0) {
-		if (errno == ENOENT && g_file_set_contents(dst_path, shipped, shipped_len, NULL)) {
-			chmod(dst_path, 0600);
+		if (errno == ENOENT && write_file_mode(dst_path, shipped, shipped_len, 0600))
 			default_hash_record(name, shipped_hash);
-		}
 	} else if (S_ISREG(st.st_mode) &&
-	           g_file_get_contents(dst_path, &current, &current_len, NULL)) {
+	           read_regular_file(dst_path, &current, &current_len)) {
 		current_hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (guchar *) current, current_len);
 		if (strcmp(current_hash, shipped_hash) == 0) {
 			default_hash_record(name, shipped_hash);
 		} else if ((recorded != NULL && strcmp(current_hash, recorded) == 0) ||
 		           default_hash_known(name, current_hash)) {
 			/* not changed since erssi installed it: the new version */
-			if (g_file_set_contents(dst_path, shipped, shipped_len, NULL)) {
-				chmod(dst_path, st.st_mode & 07777);
+			if (write_file_mode(dst_path, shipped, shipped_len, st.st_mode & 07777)) {
 				default_hash_record(name, shipped_hash);
 				default_themes_changed |= theme;
 			}
