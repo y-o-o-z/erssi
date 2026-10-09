@@ -9,33 +9,46 @@
                  of subcommands (same as /E2E without arguments).
     ON:          Turns encryption on in the current channel or query
                  (normal mode).
-    OFF:         Turns encryption off; the mode is remembered.
+    OFF:         Turns encryption off; the mode is remembered. In a query
+                 only for the person's current address (or, when it is
+                 not known, the one this query had); other addresses of
+                 that nick with encryption on are listed. With an
+                 ident@host or a channel name: turns it off for that
+                 address or channel, from any window.
     MODE:        Sets the mode and also turns encryption ON. Without an
                  argument: normal; "auto" = auto-accept.
-                   normal       a key request from a new person waits for
-                                /E2E ACCEPT,
+                   normal       a key request waits for /E2E ACCEPT,
+                                unless you accepted that person here
+                                before,
                    auto-accept  the key is sent back automatically,
-                   quiet        requests from untrusted people are
-                                dropped silently.
+                   quiet        requests from people whose key you do
+                                not have are dropped silently; the
+                                others wait for /E2E ACCEPT.
     FINGERPRINT: The full fingerprint of your key (creates the key if it
                  does not exist).
     STATUS:      Fingerprint, number of incoming sessions and number of
                  channels or queries with encryption on.
     LIST:        Sessions in the current channel or query: ident@host,
                  channel, start of the fingerprint, status (trusted,
-                 pending, revoked). -all: the whole keyring - known people
-                 and all sessions.
+                 pending, revoked, or "key held, not accepted": you can
+                 read them, but they do not get your key). -all: the whole
+                 keyring - known people and all sessions.
     HANDSHAKE:   Sends the person a key request (KEYREQ) for the current
-                 channel or query; encryption must be on here.
-    ACCEPT:      Accepts a pending key exchange: sends your key back
-                 (KEYRSP) and requests theirs in return. Without a pending
-                 exchange, marks an existing session as trusted.
+                 channel or query; encryption must be on here and their
+                 ident@host known (a common channel, a query).
+    ACCEPT:      Accepts the person: sends your key back (KEYRSP) to their
+                 pending request and requests theirs in return; their
+                 later requests here are answered without asking. Without
+                 a pending request, marks their session as trusted and
+                 accepts them - only when a real key from them is stored.
     DECLINE:     Declines a pending exchange; an existing session gets the
-                 revoked status.
+                 revoked status and the person is no longer accepted.
     REVOKE:      Withdraws trust in the current channel or query and
                  schedules a rotation of your key, so that person can no
-                 longer read along.
-    UNREVOKE:    Restores trust.
+                 longer read along; they are no longer accepted.
+    UNREVOKE:    Restores trust in their session (only when a real key
+                 from them is stored); to give them your key again,
+                 /E2E ACCEPT them.
     FORGET:      Removes the person's sessions in the current channel or
                  query; with -all (at the start or at the end) - everything
                  about them from the keyring.
@@ -58,6 +71,10 @@
                  name, the pattern is ident@host with * and ?
                  (case-insensitive); matching people are accepted
                  automatically. REMOVE removes the rules with that pattern.
+    RESET:       Only after a corrupt keyring was moved aside (see below):
+                 starts a new keyring with a new identity. Encryption is
+                 then off everywhere until /E2E ON, and your peers see a
+                 new key (/E2E REVERIFY on their side).
 
 %9Description:%9
 
@@ -93,16 +110,65 @@
 
     An encrypted message from a person without a trusted session is
     hidden, and a key request is sent to them (at most every 30 s) if
-    encryption is on here. When you receive a key request, in normal mode
-    "Pending key exchange from <nick>" is printed - reply with /E2E ACCEPT
-    or /E2E DECLINE. Requests for a channel or query where encryption is
-    off are ignored, and requests from one person for one context are
-    handled at most every 10 s. Messages of the module are prefixed with
-    [E2E]; with /SET e2e_debug ON it also explains what it drops.
+    encryption is on here; their answer lets you read them. Your own key
+    goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
+    auto-accept mode. Having their key is not enough - so in normal mode
+    each of you accepts the other once ("Pending key exchange from
+    <nick>" - reply with /E2E ACCEPT or /E2E DECLINE); later requests from
+    an accepted person are answered at once. Requests for a channel or
+    query where encryption is off are ignored, a request for a query must
+    come from the person it names, and each kind of request (KEYREQ,
+    KEYRSP, REKEY) from one person for one context is handled at most
+    every 10 s. A key change announced by a person (REKEY) only replaces
+    a key you already have from them, and each one is taken once (after
+    1024 of them from one person in one context the next key change goes
+    through a new key request instead). When your own key changes, only people you accepted get the
+    new one. At most 64 requests wait for /E2E ACCEPT, at most 256 of
+    your own key requests wait for an answer and at most 256 people you
+    never accepted are remembered, with their keys; the oldest go first
+    (people you accepted are always kept). Messages of the
+    module are prefixed with [E2E]; with /SET e2e_debug ON it also
+    explains what it drops. Line breaks in a decrypted message are shown
+    as spaces.
 
-    A keyring that cannot be read is never overwritten, and messages are
-    not sent until it can be read again; one that is not valid JSON is
-    moved aside to keyring.json.corrupt-<time> and a new one is started.
+    A message to a nick is not sent when encryption is on for that nick
+    at another ident@host (a new host, or someone else took the nick), or
+    when its address is not known at the moment (no query, no common
+    channel): /E2E ON in the query encrypts to the new address after a
+    new key exchange, /E2E OFF <ident@host> turns encryption off for the
+    old one.
+    A raw line holding several IRC lines (CR/LF, from a script) is not
+    sent when one of them is a PRIVMSG to an encrypted conversation, and
+    an encrypted line that would be longer than the server allows (a very
+    long channel name) is not sent either. /UPGRADE sends the messages
+    still waiting in the flood queue through the encryption as well.
+
+    Keyrings: a keyring that cannot be read is never overwritten, and
+    messages are not sent until it can be read again. One that is not
+    valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
+    state is then LOST: nothing is sent to any channel or query (except
+    bot commands) and nothing is saved, also after a restart, until you
+    run /E2E RESET (a new keyring) or /E2E IMPORT a keyring export.
+    Which people you accepted is stored in keyring.json as "accepted"
+    (rpe2e.pl keeps it, exports do not carry it): with a keyring from
+    rpe2e.pl, repartee or an import, a person asking for your key again
+    needs one /E2E ACCEPT, and does not get your new key when it rotates
+    before that.
+
+    Known limitations: channel names are compared case-insensitively in
+    ASCII (rfc1459) only - on a server with Unicode case mapping a
+    differently written non-ASCII name is another channel to the module.
+    NOTICEs, CTCPs other than ACTION, bot commands and IRCv3 message tags
+    are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY etc. are resolved
+    with the last nick stored in the keyring, which may meanwhile belong
+    to someone else - check the ident@host the command prints. As in
+    repartee, the server can replay an encrypted message within 5
+    minutes, and drop or reorder the parts of a long one. A key request
+    carries no ident@host: someone who forwards your peer's request before
+    the peer's first contact with you ties that key to their own address,
+    and the peer's own request is then held back as a changed address
+    until /E2E REVERIFY (nobody gets a key that way). The rpe2e.pl script
+    is recognised by its file name (rpe2e*.pl).
 
     EXPORT and IMPORT do not expand '~' - give a full path.
 
@@ -117,6 +183,8 @@
     /E2E FORGET -all bob
     /E2E AUTOTRUST ADD global *@*.example.org
     /E2E EXPORT /path/to/e2e-keyring.json
+    /E2E RESET
+    /E2E OFF bob@old.example.org
 
 %9See also:%9 MSG, QUERY, LOAD
 

@@ -39,6 +39,13 @@ If a peer knows you under a different `ident@host` (e.g. a new host), their
 client warns about the change; the key is the same, so after comparing
 fingerprints they run `/e2e reverify <your nick>`.
 
+The module gives your key only to people you accepted (`/e2e accept`, an
+autotrust rule or auto-accept mode) and keeps that decision in the keyring
+(`"accepted"`). repartee and `rpe2e.pl` have no such record, so after the
+move a peer that asks for your key again needs one `/e2e accept`, and a
+peer not accepted yet gets no REKEY when your key rotates (it asks again
+with its next undecryptable message).
+
 ## Tests
 
 - `python3 test_rpe2e_from_repartee.py` — migration on a synthetic repartee

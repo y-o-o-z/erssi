@@ -11,7 +11,10 @@
  The load/save rules of rpe2e.pl 0.2.2 (its change "erssi/y-o-o-z (7)"),
  with its messages: an existing file that cannot be read is never
  replaced, a corrupt one is kept aside, a write never leaves a truncated
- keyring behind.
+ keyring behind. One rule more: after a corrupt keyring was moved aside,
+ the missing file does not mean "no E2E anywhere" (rpe2e.pl started fresh
+ and the gate let everything out in clear text) - the keyring is LOST
+ until /e2e reset starts a new one (e2e_keyring_start_fresh).
 */
 
 #include "e2e-keyring.h"
@@ -37,7 +40,9 @@
 
 static const char *const object_members[] = {
 	"peers", "outgoing", "incoming", "channels", "pending",
-	"outgoing_recipients", "pending_inbound", NULL
+	"outgoing_recipients", "pending_inbound",
+	/* this client's own (rpe2e.pl keeps members it does not know) */
+	"accepted", "seen_rekeys", NULL
 };
 static const char *const array_members[] = {
 	"autotrust", "pending_trust_change", NULL
@@ -152,6 +157,33 @@ fail:
 	return NULL;
 }
 
+/* a keyring.json.corrupt-* next to path: one was moved aside */
+static gboolean corrupt_one_aside(const char *path)
+{
+	char *dir = g_path_get_dirname(path), *base = g_path_get_basename(path), *prefix;
+	const char *name;
+	gboolean found = FALSE;
+	GDir *d;
+
+	prefix = g_strconcat(base, ".corrupt-", NULL);
+	d = g_dir_open(dir, 0, NULL);
+	while (d != NULL && !found && (name = g_dir_read_name(d)) != NULL)
+		found = g_str_has_prefix(name, prefix);
+	if (d != NULL)
+		g_dir_close(d);
+	g_free(prefix);
+	g_free(base);
+	g_free(dir);
+	return found;
+}
+
+gboolean e2e_keyring_lost(const char *path)
+{
+	struct stat st;
+
+	return stat(path, &st) != 0 && errno == ENOENT && corrupt_one_aside(path);
+}
+
 E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, char **error)
 {
 	struct stat st;
@@ -162,6 +194,11 @@ E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, ch
 
 	*status = E2E_LOAD_OK;
 	if (stat(path, &st) != 0) {
+		if (errno == ENOENT && corrupt_one_aside(path)) {
+			*status = E2E_LOAD_LOST;
+			*error = g_strdup("the corrupt keyring was moved aside");
+			return e2e_keyring_new();
+		}
 		if (errno == ENOENT)
 			return e2e_keyring_new();
 		/* rpe2e.pl's -e would call this "absent"; a path that cannot even
@@ -195,13 +232,19 @@ E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, ch
 E2E_JSON *e2e_keyring_load(const char *path, char **notice)
 {
 	E2E_LOAD_STATUS status;
+
+	return e2e_keyring_load_status(path, &status, notice);
+}
+
+E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, char **notice)
+{
 	char *error = NULL, *aside;
 	E2E_JSON *kr;
 	int i;
 
 	*notice = NULL;
-	kr = e2e_keyring_load_checked(path, &status, &error);
-	if (status == E2E_LOAD_PARSE_ERROR) {
+	kr = e2e_keyring_load_checked(path, status, &error);
+	if (*status == E2E_LOAD_PARSE_ERROR) {
 		/* repartee's script started fresh here and the next save wrote a
 		   new identity over the real file; keep it for the user */
 		aside = g_strdup_printf("%s.corrupt-%ld", path, (long) time(NULL));
@@ -209,14 +252,19 @@ E2E_JSON *e2e_keyring_load(const char *path, char **notice)
 			g_free(aside);
 			aside = g_strdup_printf("%s.corrupt-%ld.%d", path, (long) time(NULL), i);
 		}
-		if (rename(path, aside) == 0)
-			*notice = g_strdup_printf("keyring %s is not valid JSON — moved aside to %s, starting fresh",
+		if (rename(path, aside) == 0) {
+			*status = E2E_LOAD_LOST;
+			*notice = g_strdup_printf("keyring %s is not valid JSON — moved aside to %s. " E2E_LOST_HINT,
 			                          path, aside);
-		else
+		} else {
 			*notice = g_strdup_printf("keyring %s is not valid JSON and cannot be moved aside (%s) — not saving until it is fixed",
 			                          path, g_strerror(errno));
+		}
 		g_free(aside);
-	} else if (status == E2E_LOAD_READ_ERROR) {
+	} else if (*status == E2E_LOAD_LOST) {
+		*notice = g_strdup_printf("keyring %s: the corrupt keyring was moved aside (%s.corrupt-*). " E2E_LOST_HINT,
+		                          path, path);
+	} else if (*status == E2E_LOAD_READ_ERROR) {
 		*notice = g_strdup_printf("cannot read keyring %s: %s — E2E state not loaded, nothing is saved until it is readable",
 		                          path, error);
 	}
@@ -279,7 +327,8 @@ static gboolean write_new(const char *path, const char *data, size_t len, int *e
 	return TRUE;
 }
 
-gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
+static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
+                              char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
@@ -288,6 +337,16 @@ gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
 	int fd, saved;
 	size_t len;
 
+	if (stat(path, &st) == 0) {
+		if (fresh) {
+			*error = g_strdup_printf("%s exists — there is nothing to reset", path);
+			return FALSE;
+		}
+	} else if (errno == ENOENT && !fresh && corrupt_one_aside(path)) {
+		/* a new keyring here would hide that the state was lost */
+		*error = g_strdup("keyring NOT saved: the corrupt keyring was moved aside and E2E state is lost — /e2e reset starts a new one");
+		return FALSE;
+	}
 	if (stat(path, &st) == 0 || errno != ENOENT) {
 		current = e2e_keyring_load_checked(path, &status, &err);
 		e2e_json_free(current);
@@ -340,6 +399,16 @@ fail:
 	g_free(data);
 	g_free(tmp);
 	return FALSE;
+}
+
+gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
+{
+	return keyring_write(path, kr, FALSE, error);
+}
+
+gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error)
+{
+	return keyring_write(path, kr, TRUE, error);
 }
 
 char *e2e_keyring_snapshot(const E2E_JSON *kr)

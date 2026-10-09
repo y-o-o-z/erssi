@@ -523,6 +523,99 @@ static void test_migration_tool_file(void)
 	remove_tree();
 }
 
+/* I4: once a corrupt keyring is moved aside, nothing is sent and nothing
+   saved until the user starts a new one */
+static void test_corrupt_fails_closed(void)
+{
+	E2E_LOAD_STATUS status;
+	E2E_GATE_RESULT g;
+	E2E_IDENTITY id;
+	gboolean created;
+	char *notice = NULL, *error = NULL;
+	E2E_JSON *kr, *fresh;
+
+	setup();
+	spew(path, "{\"channels\":{\"#secret\":{\"enabled\":1,\"mode\":\"normal\"}},");
+	kr = e2e_keyring_load(path, &notice);
+	g_assert_nonnull(notice);
+	e2e_json_free(kr);
+	g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+
+	/* the gate reads with load_checked: not "no keyring" */
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, "#secret", "hello", NULL, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	g_assert_cmpint(status, ==, E2E_LOAD_LOST);
+	g_free(error);
+	error = NULL;
+	/* and the user is told what to do */
+	g_assert_nonnull(strstr(notice, "/e2e reset"));
+	g_free(notice);
+	notice = NULL;
+	/* nothing saved over it - a new identity would hide the loss */
+	g_assert_true(e2e_identity_get(kr, &id, TRUE, &created, &error));
+	e2e_identity_wipe(&id);
+	g_assert_false(e2e_keyring_save(path, kr, &error));
+	g_assert_nonnull(strstr(error, "/e2e reset"));
+	g_free(error);
+	error = NULL;
+	g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+	/* still lost on the next load (a restart, /upgrade) */
+	e2e_json_free(kr);
+	kr = e2e_keyring_load(path, &notice);
+	g_assert_nonnull(notice);
+	g_free(notice);
+	e2e_json_free(kr);
+
+	/* /e2e reset: a new keyring, and everything works again */
+	fresh = e2e_keyring_new();
+	g_assert_true(e2e_keyring_start_fresh(path, fresh, &error));
+	e2e_json_free(fresh);
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, "#secret", "hello", NULL, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	/* only while there is no keyring */
+	fresh = e2e_keyring_new();
+	g_assert_false(e2e_keyring_start_fresh(path, fresh, &error));
+	g_free(error);
+	e2e_json_free(fresh);
+	e2e_json_free(kr);
+	remove_tree();
+}
+
+/* what this client adds to the file ("accepted", "seen_rekeys") is kept
+   by a load and save, as rpe2e.pl keeps members it does not know */
+static void test_own_members(void)
+{
+	E2E_LOAD_STATUS status;
+	char *error = NULL, *data;
+	E2E_JSON *kr;
+
+	setup();
+	spew(path, "{\"identity\":null,\"accepted\":{\"a@b|#c\":{\"fp\":\"00\",\"accepted_at\":1,\"by\":\"accept\"}},"
+	           "\"seen_rekeys\":{\"00|#c\":{\"AAAA\":1}}}");
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	data = slurp(path);
+	g_assert_nonnull(strstr(data, "\"accepted\":{\"a@b|#c\":{\"accepted_at\":1,\"by\":\"accept\",\"fp\":\"00\"}}"));
+	g_assert_nonnull(strstr(data, "\"seen_rekeys\":{\"00|#c\":{\"AAAA\":1}}"));
+	g_free(data);
+	e2e_json_free(kr);
+	/* an rpe2e.pl file without them: empty ones */
+	spew(path, "{\"identity\":null}");
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_cmpint(e2e_json_get(kr, "accepted")->type, ==, E2E_JSON_OBJECT);
+	g_assert_cmpint(e2e_json_get(kr, "seen_rekeys")->type, ==, E2E_JSON_OBJECT);
+	e2e_json_free(kr);
+	remove_tree();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -534,6 +627,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/keyring/absent", test_absent);
 	g_test_add_func("/e2e/keyring/save-load", test_save_load);
 	g_test_add_func("/e2e/keyring/corrupt", test_corrupt);
+	g_test_add_func("/e2e/keyring/corrupt-fails-closed", test_corrupt_fails_closed);
+	g_test_add_func("/e2e/keyring/own-members", test_own_members);
 	g_test_add_func("/e2e/keyring/unreadable", test_unreadable);
 	g_test_add_func("/e2e/keyring/wrong-layout", test_wrong_layout);
 	g_test_add_func("/e2e/keyring/partial-write", test_partial_write);
