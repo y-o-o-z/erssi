@@ -4,7 +4,10 @@ name: Shellter CI
 # release tag: the normal hardened build, a build with AddressSanitizer and
 # UndefinedBehaviorSanitizer running the same tests, and a check that the
 # installer is valid POSIX sh. The workflows inherited from erssi-org
-# (release binaries, ABI check, commit lint) are disabled in this fork.
+# (build, check, ABI check, fuzzing, commit lint) are kept for upstream
+# merges and switched off in this repository's Actions settings. GitHub
+# Actions are currently off here altogether; utils/pre-push runs the same
+# build, tests and release checks before every push.
 
 on:
   push:
@@ -55,7 +58,9 @@ jobs:
         run: meson setup Build $OPTIONS ${{ matrix.setup }} -Dprefix="$RUNNER_TEMP/erssi"
 
       - name: Build
+        shell: bash
         run: |
+          set -o pipefail
           ninja -C Build 2>&1 | tee build.log
           if grep -q 'warning:' build.log; then
             echo '::error::compiler warnings'; grep 'warning:' build.log; exit 1
@@ -83,7 +88,7 @@ jobs:
         run: |
           sh -n shellter-install.sh
           dash -n shellter-install.sh
-          shellcheck -s sh -S warning shellter-install.sh utils/pre-push
+          shellcheck -s sh -S style shellter-install.sh utils/pre-push utils/default-file-hashes.sh
       - name: Every pinned release points to its commit
         run: |
           git fetch --tags --force -q origin

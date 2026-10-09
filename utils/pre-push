@@ -41,7 +41,11 @@ EOF
     exit 1
 fi
 # up to 3 lines of stdin that match a private pattern
-private() { grep -iEf "$PATTERNS" | head -3; }
+# (blank and # lines skipped: an empty pattern would match every line)
+private() { grep -iEf "$PATTERNS_CLEAN" | head -3; }
+PATTERNS_CLEAN=$(mktemp)
+trap 'rm -f "$PATTERNS_CLEAN"' EXIT
+grep -v -e '^[[:space:]]*$' -e '^#' "$PATTERNS" > "$PATTERNS_CLEAN" 2>/dev/null || true
 
 pushed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -83,8 +87,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         # a release tag must be signed by the release key (utils/allowed_signers)
         case "$local_ref" in
             refs/tags/shellter-v*)
+                # the name inside the signed object must be this tag's
+                [ "$(git cat-file tag "$local_sha" | sed -n '1,/^$/s/^tag //p')" = "${local_ref#refs/tags/}" ] ||
+                    bad "$local_ref: the tag object names another tag"
                 git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ROOT/utils/allowed_signers" \
-                    -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
+                    -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
                     verify-tag "$local_sha" >/dev/null 2>&1 ||
                     bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)" ;;
         esac

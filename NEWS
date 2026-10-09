@@ -66,8 +66,9 @@ erssi-v1.3.8 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    "signed" (git verify-tag) before building, in addition to the
 	    recorded commit; a missing or foreign signature stops the install.
 	    Without git 2.34+ or ssh-keygen it warns and still checks the commit
-	  - the pre-push hook refuses an unsigned release tag; CI checks the
-	    signatures of all signed releases
+	  - the pre-push hook refuses an unsigned release tag; the CI workflow
+	    checks the signatures of all signed releases (GitHub Actions are
+	    switched off on this repository for now)
 
 erssi-v1.3.7 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.7
