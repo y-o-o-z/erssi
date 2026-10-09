@@ -24,6 +24,7 @@
 #include <irssi/src/core/misc.h>
 #include <irssi/src/fe-common/core/printtext.h>
 
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -894,6 +895,10 @@ static void sig_listen(void)
 		handle = socket_accept(listen_channel);
 	else
 		handle = net_accept(listen_channel, &ip, &port);
+	if (handle != NULL) {
+		/* not inherited by /exec children */
+		fcntl(g_io_channel_unix_get_fd(handle), F_SETFD, FD_CLOEXEC);
+	}
 	if (handle == NULL) {
 		/* Out of file descriptors: the connection stays queued and the
 		 * socket stays readable - pause instead of spinning. */
@@ -944,6 +949,7 @@ static void sig_listen(void)
 			}
 		}
 		if (logged_in >= FE_WEB_MAX_CLIENTS) {
+			log_refused_addr(addr, "too many web clients logged in");
 			g_free(addr);
 			net_disconnect(handle);
 			return;
@@ -1017,7 +1023,8 @@ static char *socket_path_expand(const char *value)
  * the offending component (to be freed). */
 static char *socket_path_untrusted(const char *dir)
 {
-	char **parts, *prefix;
+	char **parts, *prefix, *existing = NULL;
+	gboolean link_seen = FALSE;
 	int i;
 	uid_t me = getuid();
 
@@ -1040,10 +1047,14 @@ static char *socket_path_untrusted(const char *dir)
 			g_strfreev(parts);
 			return prefix;
 		}
+		g_free(existing);
+		existing = g_strdup(prefix);
 		if (st.st_uid != me && st.st_uid != 0)
 			goto bad;
-		if (S_ISLNK(st.st_mode))
+		if (S_ISLNK(st.st_mode)) {
+			link_seen = TRUE;
 			continue;
+		}
 		if (!S_ISDIR(st.st_mode))
 			goto bad;
 		if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (st.st_mode & S_ISVTX) == 0)
@@ -1051,10 +1062,24 @@ static char *socket_path_untrusted(const char *dir)
 		continue;
 bad:
 		g_strfreev(parts);
+		g_free(existing);
 		return prefix;
 	}
 	g_strfreev(parts);
 	g_free(prefix);
+	if (link_seen) {
+		/* a link of ours may still lead through a directory someone else
+		 * can change - check where the existing part really is */
+		char *real = realpath(existing, NULL), *bad;
+
+		if (real == NULL)
+			return existing;
+		bad = strcmp(real, existing) == 0 ? NULL : socket_path_untrusted(real);
+		free(real);
+		g_free(existing);
+		return bad;
+	}
+	g_free(existing);
 	return NULL;
 }
 
@@ -1091,6 +1116,20 @@ static gboolean socket_dir_check(const char *path)
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 			          "fe-web: Not starting: directory %s of fe_web_socket: %s", dir,
 			          errno ? g_strerror(errno) : "not created as a directory of yours");
+			g_free(dir);
+			return FALSE;
+		}
+		/* someone else may have made a missing directory above it
+		 * between the check and mkdir - check the path again */
+		parent = g_path_get_dirname(dir);
+		bad = socket_path_untrusted(parent);
+		g_free(parent);
+		if (bad != NULL) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: Not starting: %s in the fe_web_socket path can be changed by "
+			          "another user (it appeared while erssi created the directory)",
+			          bad);
+			g_free(bad);
 			g_free(dir);
 			return FALSE;
 		}
@@ -1312,8 +1351,9 @@ void fe_web_server_init(void)
 		return;
 	}
 
-	/* SECURITY: Verify SSL is initialized */
-	if (!fe_web_ssl_is_enabled()) {
+	/* SECURITY: TLS context (key and certificate made at the first start;
+	 * the Unix socket uses TLS too) */
+	if (!fe_web_ssl_prepare()) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: FATAL: SSL/TLS not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
@@ -1352,6 +1392,8 @@ void fe_web_server_init(void)
 
 	/* Create listening socket */
 	listen_channel = net_listen(bind_ip, &port);
+	if (listen_channel != NULL)
+		fcntl(g_io_channel_unix_get_fd(listen_channel), F_SETFD, FD_CLOEXEC);
 	g_free(bind_ip);
 
 	if (listen_channel == NULL) {

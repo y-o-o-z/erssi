@@ -38,9 +38,13 @@
             The password a client must give. The server refuses to start
             while it is empty.
 
-    Connections always use TLS (wss://) with a self-signed certificate that
-    is generated when the server starts, and the messages are additionally
-    encrypted with AES-256-GCM using a key derived from fe_web_password.
+    Connections always use TLS (wss://) with a self-signed certificate,
+    and the messages are additionally encrypted with AES-256-GCM using a
+    key derived from fe_web_password. The certificate and its key are made
+    the first time the server starts and kept in ~/.erssi/fe-web-cert.pem
+    and ~/.erssi/fe-web-key.pem (mode 0600); a key that other users can
+    read, or that is not yours, is replaced with a new one. Nothing is
+    written while fe_web_enabled is OFF.
 
     Keep fe_web_bind on 127.0.0.1 and put the web client behind a TLS proxy
     or tunnel if it has to be reached from elsewhere.

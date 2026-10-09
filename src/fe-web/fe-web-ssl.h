@@ -20,8 +20,12 @@ typedef struct _FE_WEB_SSL_CHANNEL FE_WEB_SSL_CHANNEL;
 /* Global SSL context (shared by all connections) */
 extern SSL_CTX *fe_web_ssl_ctx;
 
-/* Initialize SSL subsystem - generates self-signed certificate */
+/* Initialize the SSL library (no key or certificate yet) */
 void fe_web_ssl_init(void);
+
+/* Load or make the key and self-signed certificate and the TLS context
+ * (once, when the server starts); TRUE when TLS can be used */
+int fe_web_ssl_prepare(void);
 
 /* Cleanup SSL subsystem */
 void fe_web_ssl_deinit(void);

@@ -79,6 +79,12 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 	len = *p & 0x7F;
 	p++;
 
+	/* RFC 6455 5.5: control frames (close, ping, pong) carry at most 125
+	 * bytes and are never fragmented */
+	if ((*opcode & 0x08) != 0 && (len > 125 || !*fin)) {
+		return -1;
+	}
+
 	/* Extended payload length */
 	if (len == 126) {
 		if (data_len < 4) {
