@@ -160,8 +160,17 @@ void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json)
 				if (target != NULL && *target != '\0' && client->server != NULL)
 					item = window_item_find(SERVER(client->server), target);
 
+				/* The command may disconnect the client's own server
+				 * (/disconnect, /quit): keep it allocated until the
+				 * command returns and do not point the client back at
+				 * it afterwards. */
+				if (previous != NULL)
+					server_ref(SERVER(previous));
 				fe_web_client_execute_command(client, command, item);
-				client->server = previous;
+				client->server =
+				    previous != NULL && !previous->disconnected ? previous : NULL;
+				if (previous != NULL)
+					server_unref(SERVER(previous));
 			}
 		}
 		g_free(command);
