@@ -257,12 +257,17 @@ Keep fe-web on `127.0.0.1`; expose only the web client, behind TLS.
 
 ## End-to-end encryption
 
-[contrib/rpe2e](contrib/rpe2e/README.md) carries `rpe2e.pl`, the RPE2E v1.0
-script from [repartee](https://github.com/outragedevs/repartee), adapted to
-erssi. It is wire-compatible with repartee and WeeChat: `/e2e on` in a
-channel encrypts it (XChaCha20-Poly1305, per-sender keys, CTCP key exchange).
-A migration tool moves an existing repartee identity, so peers see no key
-change.
+erssi speaks RPE2E v1.0, the end-to-end encryption of
+[repartee](https://github.com/outragedevs/repartee), natively: the `e2e`
+module (`src/e2e`, built when OpenSSL is found - always, as erssi needs it -
+`-Dwith-e2e=no` leaves it out; loaded at start like `otr`). `/e2e on` in a
+channel or query encrypts it (XChaCha20-Poly1305, per-sender keys, CTCP key
+exchange), wire-compatible with repartee and its WeeChat (`rpe2e.py`) and
+irssi (`rpe2e.pl`) scripts. `/help e2e` has the commands. The keyring is the script's (`~/.erssi/rpe2e/keyring.json`),
+so moving from the script needs no new keys: unload the script; while it is
+loaded the module stays inactive and says so.
+[contrib/rpe2e](contrib/rpe2e/README.md) holds `rpe2e-from-repartee`, which
+moves an existing repartee identity, so peers see no key change.
 
 ## Development
 
@@ -294,4 +299,5 @@ upstream merges stay reviewable.
 - **RPE2E** — the repartee authors (MIT, [contrib/rpe2e/LICENSE](contrib/rpe2e/LICENSE)).
 - **Shellter Edition** — yooz, [y-o-o-z/erssi](https://github.com/y-o-o-z/erssi).
 
-GPL-2.0-or-later, like irssi and erssi. `contrib/rpe2e` is MIT.
+GPL-2.0-or-later, like irssi and erssi. The e2e module is a port of the
+MIT-licensed `rpe2e.pl` (licence in `contrib/rpe2e/LICENSE`).
