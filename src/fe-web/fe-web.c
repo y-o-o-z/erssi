@@ -175,7 +175,8 @@ void fe_web_init(void)
 	fe_web_signals_init();
 
 	/* SSL and encryption are ALWAYS enabled - no option to disable; the
-	 * key is derived when the server starts (only if fe_web_enabled) */
+	 * TLS key and the encryption key are made when the server starts
+	 * (only if fe_web_enabled) */
 	fe_web_ssl_init();
 
 	/* Watch for settings changes */
