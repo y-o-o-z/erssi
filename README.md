@@ -192,8 +192,8 @@ sanitizers.
   else on the box could use against you); 16 KB and 10 seconds to log in,
   with a separate limit for connections still logging in; at most 16
   clients; oversized frames and oversized or fragmented control frames
-  refused. The TLS certificate is kept in `~/.erssi/fe-web-cert.pem` and the
-  web client trusts exactly that certificate, so nothing else listening on
+  refused. The TLS certificate is kept in `~/.erssi/fe-web-cert.pem`, so a
+  web client can pin exactly that certificate and nothing else listening on
   the port can receive the password. The key is made only once fe-web is
   enabled, kept at mode 0600 and replaced if anyone else could read it. Web
   connections are not inherited by programs that scripts start.
