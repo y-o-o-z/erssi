@@ -12,9 +12,9 @@ erssi Shellter Edition is yooz's edition of
 Jerzy “kofany” Dąbrowski and the erssi-org team. It keeps everything erssi
 brings — sidepanels, mouse support, 24-bit colour, image preview, a web
 frontend and full irssi Perl script compatibility — and tunes it for people
-who live on IRCnet: a polished default theme, help for every command,
-operator and botnet tools, and a security review of the parts that face the
-network.
+who live on IRCnet: a polished default theme, help for every command, a
+signed installer that also updates, and a security review of the parts that
+face the network.
 
 ![erssi Shellter Edition on #shellter (IRCnet): window list with networks, channels and a botnet partyline, the channel in the shellter theme, the nick list by rank and the botnet status in the statusbar](docs/images/erssi-shellter.png)
 
@@ -35,11 +35,13 @@ the administrator. Without system `meson`/`ninja`
 it installs them into a private Python environment. It then builds the
 newest release recorded in the installer — only if its tag points to the
 recorded commit and, from 1.3.8 on, carries a valid signature by the release
-key — runs the test suite and installs to `~/.local/opt/erssi`, linked as
+key (checked with git 2.34+ and ssh-keygen; without them the installer warns
+and checks the commit only) — runs the test suite and installs to
+`~/.local/opt/erssi`, linked as
 `~/.local/bin/erssi`. Every step is one line; the build output goes to
 `~/.local/state/erssi/install.log`, shown when a step fails. Works on Linux
-and FreeBSD. Options: `--prefix`, `--ref <tag|branch>` (anything that is not
-a recorded release is built with a warning), `--no-test`, `--clean` (remove
+and FreeBSD. Options: `--prefix`, `--ref <tag|branch|commit>` (anything that
+is not a recorded release is built with a warning; a commit as the full SHA), `--no-test`, `--clean` (remove
 the build directory afterwards, for small disk quotas), `--yes`.
 
 ### Update
@@ -53,8 +55,10 @@ erssi --update           # build and install it
 takes the newest release on GitHub that carries a valid signature by the key
 of that installer (a tag pushed by anyone else is skipped), builds, tests
 and installs it into the same prefix, with the settings of the first install.
-Nothing is built when erssi is up to date. In a running erssi, `/upgrade`
-then loads the new version without disconnecting.
+A release of the installed version published again with changes (its
+signed tag moved to a new commit) counts as an update too. Nothing is built
+when erssi is up to date. In a running erssi, `/upgrade` then loads the new
+version without disconnecting.
 
 Releases are signed with an SSH key (ED25519,
 `SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`, public key in
@@ -90,7 +94,8 @@ meson setup Build -Dprefix="$HOME/.local/opt/erssi" -Dwith-proxy=yes
 ninja -C Build && meson test -C Build && ninja -C Build install
 ```
 
-Only GLib (2.32 or newer) and OpenSSL are required. Perl, utf8proc,
+GLib (2.32 or newer) and OpenSSL are required, and Perl to build (the
+build generates sources with it). Perl scripting (libperl), utf8proc,
 libcurl + chafa (image preview) and libotr + libgcrypt (OTR) are detected
 and used when present. For a system-wide install use
 `-Dprefix=/usr/local` and `sudo ninja -C Build install`.
@@ -121,8 +126,8 @@ and used when present. For a system-wide install use
 - **Rank colours** — `$nickmode` and `nick_mode_color_*` draw `@`, `+`, `%`
   and `~`/`&` in their own colours in messages and in the nick list;
   `nick_hash_colors` accepts 24-bit colours.
-- **Read marker in the column** — the trackbar branches off the separator
-  (`├────`) instead of cutting through timestamps and nicks.
+- **Read marker in the column** — the bundled trackbar branches off the
+  separator (`├────`) instead of cutting through timestamps and nicks.
 - **Activity that means something** — a quit or nick change marks only the
   windows where that nick is, not every window of the network.
 - **Clean windows** — network windows open without `/WINDOW` chatter and
@@ -138,26 +143,23 @@ and used when present. For a system-wide install use
 
 ### Help for every command
 
-`/help` covers every command: the erssi commands that had no help
+`/help` covers every command, including the erssi commands that had no help
 (`credential`, `fe_web`, `floodnet`, `foreach`, `image`, `nickhash`, …) and
-every command of the bundled scripts. Help files in `~/.erssi/help/` are read
-first — drop in a file named after a command to document your own scripts.
+the commands of the bundled scripts.
+Help files in `~/.erssi/help/` are read first — drop in a file named after a
+command to document your own scripts.
 
-### IRCnet tools
+### Bundled scripts
 
-Bundled in `<prefix>/share/irssi/scripts` and loaded on demand
-(`/script load <name>`, or a symlink in `~/.erssi/scripts/autorun/`). Their
-messages and `/help` are in English, and the shellter themes align their
-output to the same column as everything else.
+Installed in `<prefix>/share/irssi/scripts` next to the scripts erssi ships,
+loaded on demand (`/script load <name>`, or a symlink in
+`~/.erssi/scripts/autorun/`).
 
 | Script | What it does |
 |---|---|
-| `botnet.pl` | Botnet partylines that speak IRC (psotnic, pt-pojeby, eggdrop): one connection per botnet, a network window with the partyline window under it like a channel, a statusbar item with the state of every botnet (or only those in `botnet_statusbar_list`) and unread partyline lines, a retry limit for hubs that are down. `/bot`, `/bot <botnet>`, `/bot close`. |
-| `tk.pl` | Temporary K-lines for IRCnet operators (ircd 2.11 `TKLINE`): nick → WHOIS → mask, never a guessed host; refuses overly broad masks; `-dry` preview; JSONL audit log. `/tkl`, `/untkl`, `/tklist`, `/klist`. |
-| `skaner.pl` | Clones and IRC operators on a channel, reported after join, with an alert when a clone arrives. `/skaner`. |
-| `mentions.pl` | One *Mentions* window for highlights, private messages, notices and DCC, mirrored to a log file. |
-| `trackbar.pl` | The read marker of trackbar 2.9, drawn as `├────` from the theme's separator column. `/mark`, `/trackbar`. |
-| `webjournal.pl` | Journals every window so the web client shows the same history and windows as the terminal. |
+| `mentions.pl` | One *Mentions* window for highlights, private messages, notices and DCC, mirrored to a log file (0600). `/mentions`. |
+| `trackbar.pl` | The read marker of trackbar 2.9, drawn as `├────` from the theme's separator column when the theme has one. `/mark`, `/trackbar`. |
+| `webjournal.pl` | Journals every window (one JSON line per message, files only you can read) so a web client that reads the journal shows the same windows and history as the terminal. |
 
 ### Reliability
 
@@ -189,10 +191,12 @@ sanitizers.
   minute one login is checked every 2 s (a pace, not a lockout someone
   else on the box could use against you); 16 KB and 10 seconds to log in,
   with a separate limit for connections still logging in; at most 16
-  clients; oversized frames refused. The TLS certificate
-  is kept in `~/.erssi/fe-web-cert.pem` and the web client trusts exactly that
-  certificate, so nothing else listening on the port can receive the
-  password.
+  clients; oversized frames and oversized or fragmented control frames
+  refused. The TLS certificate is kept in `~/.erssi/fe-web-cert.pem` and the
+  web client trusts exactly that certificate, so nothing else listening on
+  the port can receive the password. The key is made only once fe-web is
+  enabled, kept at mode 0600 and replaced if anyone else could read it. Web
+  connections are not inherited by programs that scripts start.
 - **Image preview** — http and https only, public addresses only (also after
   redirects), a hard size limit, and no decoding of images too large to
   handle safely. The debug log of clicked URLs is off by default.
@@ -218,8 +222,6 @@ sanitizers.
 /set anti_floodnet_notices off            # hide Anti-Floodnet notices
 /set term_truecolor auto                  # on / off to override terminal detection
 /set theme shellter-light                 # for terminals with a light background
-/statusbar info add -after act botnet     # botnet states in the statusbar
-/set botnet_statusbar_list IRCnetBot      # only these botnets in it (empty = all)
 /set fe_web_socket ~/.erssi/fe-web.sock   # web frontend on a Unix socket (shared boxes)
 ```
 
@@ -227,20 +229,21 @@ In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`.
 
 ## Web client
 
-fe-web together with [NexusIRC](https://github.com/kofany/nexus) by kofany
-gives a browser view of the same erssi session — channels, queries, history
-and erssi's own windows — with every command executed by erssi.
+fe-web lets a web client such as [NexusIRC](https://github.com/kofany/nexus)
+by kofany show the same erssi session in a browser, with every command
+executed by erssi.
 
 ```
 /set fe_web_password <long random secret>
 /set fe_web_bind 127.0.0.1
 /set fe_web_enabled on
-/script load webjournal
+/script load webjournal                   # windows and history for the web client
 /save
 ```
 
 On a shared box, listen on a Unix socket instead of the loopback port,
-which every user of the box can connect to:
+which every user of the box can connect to (the web client has to support
+connecting to a socket):
 
 ```
 /set fe_web_socket ~/.erssi/fe-web.sock
@@ -250,11 +253,7 @@ The socket is readable and writable only by you (0600, in a directory only
 you can write to) and connections from other users' processes are refused;
 TLS and the password work as on TCP. `/help fe_web` has the details.
 
-[contrib/nexusirc](contrib/nexusirc/README.md) holds the NexusIRC patch series
-(Polish interface, terminal-like view, certificate pinning, the password in
-a header, connection over the Unix socket, working sessions and sign-out,
-Source Sans 3 / Source Code Pro) with build steps and reverse-proxy notes. Keep fe-web on `127.0.0.1`; expose only the web
-client, behind TLS.
+Keep fe-web on `127.0.0.1`; expose only the web client, behind TLS.
 
 ## End-to-end encryption
 
@@ -283,8 +282,8 @@ tests and checks the release tags before every push.
 sanitizer builds and the installer checks for GitHub Actions, which are
 switched off on this repository for now.
 
-Each change in this edition is a separate commit that explains the problem
-it solves, so upstream merges stay reviewable.
+Changes are kept in topic commits that explain the problem they solve, so
+upstream merges stay reviewable.
 
 ## Credits and license
 
@@ -292,7 +291,7 @@ it solves, so upstream merges stay reviewable.
   [erssi-org/erssi](https://github.com/erssi-org/erssi).
 - **irssi** — the irssi developers, [irssi.org](https://irssi.org).
 - **NexusIRC** — kofany, [kofany/nexus](https://github.com/kofany/nexus).
-- **RPE2E** — the repartee authors (MIT).
+- **RPE2E** — the repartee authors (MIT, [contrib/rpe2e/LICENSE](contrib/rpe2e/LICENSE)).
 - **Shellter Edition** — yooz, [y-o-o-z/erssi](https://github.com/y-o-o-z/erssi).
 
-GPL-2.0-or-later, like irssi and erssi. `contrib/rpe2e/rpe2e.pl` is MIT.
+GPL-2.0-or-later, like irssi and erssi. `contrib/rpe2e` is MIT.
