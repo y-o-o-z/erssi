@@ -260,6 +260,93 @@ static void test_paced_notice_once_a_minute(void)
 	g_free(printed);
 }
 
+/* One peer paced in between: "1 more peer" */
+static void test_paced_notice_singular(void)
+{
+	char *printed;
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt(other, "wrong"), HTTP_401));
+	g_free(fe_web_fuzz_take_printed());
+	fe_web_fuzz_set_clock(T + 61);
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt(third, "wrong"), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	assert_printed(printed, "fe-web: logins from 1 more peer paced since the last notice\n");
+	g_free(printed);
+}
+
+/* A clock that goes back does not silence the pacing notice */
+static void test_paced_notice_backward_clock(void)
+{
+	char *printed, *want;
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	g_free(fe_web_fuzz_take_printed());
+	fe_web_fuzz_set_clock(T - 100);
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt(other, "wrong"), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	want = g_strdup_printf("5 wrong passwords within a minute from %s", other);
+	assert_printed(printed, want);
+	g_free(want);
+	g_free(printed);
+}
+
+#define REFUSED_WRONG "fe-web: connection from fuzz:0 refused: wrong or missing password"
+
+/* Nor the once-a-minute line of refused connections */
+static void test_refused_log_backward_clock(void)
+{
+	char *printed;
+
+	setup();
+	g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	assert_printed(printed, REFUSED_WRONG);
+	g_free(printed);
+	/* within the minute: counted, not printed */
+	g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "refused"));
+	g_free(printed);
+	fe_web_fuzz_set_clock(T - 100);
+	g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	assert_printed(printed, "fe-web: 1 more connections refused");
+	assert_printed(printed, REFUSED_WRONG);
+	g_free(printed);
+}
+
+/* The owner is never paced, so it takes no place among the trusted
+ * peers either */
+static void test_owner_takes_no_trusted_slot(void)
+{
+	FE_WEB_PACING *p;
+	int i;
+
+	setup();
+	p = fe_web_fuzz_login_pacing();
+	for (i = 0; i < FE_WEB_PACING_MAX_TRUSTED; i++) {
+		char key[32];
+
+		g_snprintf(key, sizeof(key), "ip:192.0.2.%d", i);
+		fe_web_pacing_succeeded(p, key);
+	}
+	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
+	/* ip:192.0.2.0, the oldest, is still trusted: its failure is
+	 * counted in its own bucket, not in the table */
+	fe_web_pacing_failed(p, "ip:192.0.2.0", T);
+	g_assert_cmpuint(fe_web_pacing_table_size(p), ==, 0);
+}
+
 /* The overflow bucket paces every new peer: the notice says so */
 static void test_overflow_notice(void)
 {
@@ -343,6 +430,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/paced-notice-once-a-minute",
 	                test_paced_notice_once_a_minute);
 	g_test_add_func("/fe-web/login/overflow-notice", test_overflow_notice);
+	g_test_add_func("/fe-web/login/paced-notice-singular", test_paced_notice_singular);
+	g_test_add_func("/fe-web/login/paced-notice-backward-clock",
+	                test_paced_notice_backward_clock);
+	g_test_add_func("/fe-web/login/refused-log-backward-clock",
+	                test_refused_log_backward_clock);
+	g_test_add_func("/fe-web/login/owner-takes-no-trusted-slot",
+	                test_owner_takes_no_trusted_slot);
 	g_test_add_func("/fe-web/login/tcp-peer-key", test_tcp_peer_key);
 
 	ret = g_test_run();

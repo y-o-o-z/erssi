@@ -4,7 +4,9 @@
 /* Login pacing of fe-web, per peer, with a ceiling for all suspects.
  *
  * A peer is a string key (fe_web_peer_key_uid(), fe_web_peer_key_ip()).
- * erssi's own uid is never passed here (fe-web-server.c).
+ * erssi's own uid is never passed here: fe-web-server.c neither paces nor
+ * counts it, and does not make it trusted either (it needs no place among
+ * the trusted peers).
  *
  * Per peer: after FE_WEB_MAX_FAILS wrong passwords from one peer, with at
  * most FE_WEB_FAIL_WINDOW seconds between each and the one before, one
@@ -17,8 +19,8 @@
  * - trusted: it logged in with the right password (the last
  *   FE_WEB_PACING_MAX_TRUSTED such peers, the oldest replaced). Only its
  *   own bucket applies. Only a right password makes a peer trusted.
- * - suspect: it is in the table (a wrong password in the last
- *   FE_WEB_PEER_MEMORY seconds), or it shares the overflow bucket. Its own
+ * - suspect: it is in the table (a wrong password at most
+ *   FE_WEB_PEER_MEMORY seconds ago), or it shares the overflow bucket. Its own
  *   bucket (or the overflow bucket) applies, and so does the ceiling: once
  *   FE_WEB_GLOBAL_MAX_FAILS wrong passwords from all peers came within
  *   FE_WEB_FAIL_WINDOW seconds of each other, all suspects together get
@@ -28,15 +30,17 @@
  *   wrong password makes it a suspect.
  *
  * The table holds at most FE_WEB_PACING_MAX_PEERS peers. A peer is added
- * on its first wrong password and dropped FE_WEB_PEER_MEMORY seconds after
- * its last one (when the table is full or the peer is looked up), or when
- * it logs in. Nobody can push a peer still remembered out of the table by
- * sending wrong passwords from many addresses; a new peer that finds no
- * room shares the overflow bucket with every other such peer.
+ * on its first wrong password, and dropped when it logs in, or once more
+ * than FE_WEB_PEER_MEMORY seconds passed since its last one (601 s and
+ * later; when the table is full or the peer is looked up). Nobody can
+ * push a peer still remembered out of the table by sending wrong
+ * passwords from many addresses; a new peer that finds no room shares the
+ * overflow bucket with every other such peer.
  *
  * Bounds: one address gets FE_WEB_MAX_FAILS checks, then one every
  * FE_WEB_CHECK_INTERVAL seconds. Many addresses together get at most
- * FE_WEB_PACING_MAX_PEERS clean checks per FE_WEB_PEER_MEMORY seconds,
+ * FE_WEB_PACING_MAX_PEERS clean checks per FE_WEB_PEER_MEMORY + 1 seconds
+ * (a slot is free again only 601 s after the last failure in it),
  * plus FE_WEB_GLOBAL_MAX_FAILS, plus one every FE_WEB_GLOBAL_CHECK_INTERVAL
  * seconds (about 1/s). Clean and trusted peers are not held by them.
  *
