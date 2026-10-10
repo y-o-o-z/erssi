@@ -69,6 +69,8 @@ test_test_shellter_defaults = executable('test-shellter-defaults',
     libconfig_a,
     libcore_a,
     libfe_common_core_a,
+    libfe_common_irc_a,
+    libirc_core_a,
   ],
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',

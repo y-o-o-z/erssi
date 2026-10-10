@@ -468,7 +468,7 @@ void fe_settings_init(void)
 	command_bind("reload", NULL, (SIGNAL_FUNC) cmd_reload);
 	command_bind("save", NULL, (SIGNAL_FUNC) cmd_save);
 	command_set_options("set", "clear default section");
-	settings_add_str("misc", "hidden_settings", "translate_deepl_key");
+	settings_add_str("misc", "hidden_settings", "");
 
         signal_add("settings errors", (SIGNAL_FUNC) sig_settings_errors);
 }
