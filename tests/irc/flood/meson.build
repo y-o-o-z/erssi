@@ -19,8 +19,10 @@ test_test_796 = executable('test-796',
   implicit_include_directories : false,
   dependencies : dep
 )
+# Leak detection is off only here: irssi core state is not freed on deinit in
+# this test's server-destroy fixture.
 test('test-796 test', test_test_796,
-  env : test_env,
+  env : environment({'HOME': meson.build_root() / 'test-home', 'ASAN_OPTIONS': 'detect_leaks=0:abort_on_error=1'}),
   args : [
     '--tap',
   ],

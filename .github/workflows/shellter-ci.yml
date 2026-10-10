@@ -5,9 +5,10 @@ name: Shellter CI
 # UndefinedBehaviorSanitizer running the same tests, and a check that the
 # installer is valid POSIX sh. The workflows inherited from erssi-org
 # (build, check, ABI check, fuzzing, commit lint) are kept for upstream
-# merges and switched off in this repository's Actions settings. GitHub
-# Actions are currently off here altogether; utils/pre-push runs the same
-# build, tests and release checks before every push.
+# merges and switched off in this repository's Actions settings. The homelab
+# CI runs these jobs on every commit and reports commit statuses; this
+# workflow is kept for GitHub Actions. utils/pre-push runs the same build,
+# tests and release checks before every push.
 
 on:
   push:
@@ -68,7 +69,7 @@ jobs:
 
       - name: Test
         env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: meson test -C Build --print-errorlogs
 
