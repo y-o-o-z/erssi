@@ -37,6 +37,7 @@
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
 #include <irssi/src/fe-common/core/fe-settings.h>
+#include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <irssi/src/fe-common/core/themes.h>
 
 #include <irssi/src/fe-ansi/term.h>
@@ -620,6 +621,7 @@ int main(int argc, char **argv)
 		  "Show whether a newer signed release is available", NULL },
 		{ NULL }
 	};
+	char *note;
 	int loglev;
 
 	core_register_options();
@@ -671,6 +673,9 @@ int main(int argc, char **argv)
 	/* Temporarily raise the fatal level to abort on config errors. */
 	loglev = critical_fatal_section_begin();
 	textui_init();
+	note = shellter_defaults_note();
+	if (note != NULL)
+		default_notes = g_slist_append(default_notes, note);
 	
 	/* Copy default files (themes, startup) for erssi after directories are created */
 	copy_default_files();
