@@ -74,6 +74,7 @@ test_test_shellter_defaults = executable('test-shellter-defaults',
   ],
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+    def_sysconfdir,
   ],
   include_directories : rootinc,
   implicit_include_directories : false,

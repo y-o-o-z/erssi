@@ -299,6 +299,9 @@ static void test_note_percent_and_none(void)
 /* Integration: a real start of core and fe-common in a child process, with
    its own --home. */
 
+/* the home of the test, made by the parent for the child process */
+#define TEST_HOME_ENV "ERSSI_TEST_HOME"
+
 static void remove_tree(const char *path)
 {
 	GDir *dir;
@@ -319,24 +322,48 @@ static void remove_tree(const char *path)
 	g_remove(path);
 }
 
-/* makes a home with `config' (none when NULL) and starts erssi's core and
-   fe-common in it; returns the home */
-static char *start_in_home(const char *config)
+/* In the parent: makes a home with `config' (none when NULL), runs the
+   test in a child process with it, removes the home (also when the child
+   failed) and returns FALSE. In the child: returns TRUE. */
+static gboolean run_in_child(const char *config)
 {
 	GError *error = NULL;
 	char *home, *fname;
-	char *argv[] = { "test-shellter-defaults", "--home", NULL, NULL };
+
+	if (g_test_subprocess())
+		return TRUE;
 
 	home = g_dir_make_tmp("erssi-defaults-XXXXXX", &error);
 	g_assert_no_error(error);
 	if (config != NULL) {
 		fname = g_build_filename(home, "config", NULL);
 		g_file_set_contents(fname, config, -1, &error);
-		g_assert_no_error(error);
 		g_free(fname);
+		if (error != NULL)
+			remove_tree(home);
+		g_assert_no_error(error);
 	}
 
-	argv[2] = home;
+	g_setenv(TEST_HOME_ENV, home, TRUE);
+	g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
+	g_unsetenv(TEST_HOME_ENV);
+	remove_tree(home);
+	g_free(home);
+	g_test_trap_assert_passed();
+	return FALSE;
+}
+
+/* in the child: starts erssi's core and
+   fe-common in the home of the test; returns
+   the home */
+static char *start_in_home(void)
+{
+	const char *home;
+	char *argv[] = { "test-shellter-defaults", "--home", NULL, NULL };
+
+	home = g_getenv(TEST_HOME_ENV);
+	g_assert_nonnull(home);
+	argv[2] = (char *) home;
 	core_register_options();
 	fe_common_core_register_options();
 	args_execute(3, argv);
@@ -344,7 +371,7 @@ static char *start_in_home(const char *config)
 	core_init();
 	fe_common_core_init();
 	fe_whois_init();
-	return home;
+	return g_strdup(home);
 }
 
 static void assert_effective(const DEFAULT_ROW *rows, int count)
@@ -413,13 +440,16 @@ static void test_fresh_home(void)
 {
 	char *home, *fname, *note;
 
-	if (!g_test_subprocess()) {
-		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
-		g_test_trap_assert_passed();
+	if (!g_test_subprocess() &&
+	    g_file_test(SYSCONFDIR "/" IRSSI_GLOBAL_CONFIG, G_FILE_TEST_EXISTS)) {
+		g_test_skip(SYSCONFDIR "/" IRSSI_GLOBAL_CONFIG " exists: a home without a "
+		            "config reads it, not the built-in irssi.conf");
 		return;
 	}
+	if (!run_in_child(NULL))
+		return;
 
-	home = start_in_home(NULL);
+	home = start_in_home();
 	assert_effective(FRESH, G_N_ELEMENTS(FRESH));
 	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
 	g_assert_cmpint(settings_get_int("show_names_on_join_limit"), ==, 1);
@@ -449,7 +479,6 @@ static void test_fresh_home(void)
 	assert_default_bool("print_whois_rpl_in_server_window", FALSE);
 
 	g_free(fname);
-	remove_tree(home);
 	g_free(home);
 }
 
@@ -460,16 +489,13 @@ static void test_upgraded_home(void)
 	char *home, *fname, *contents, *note, *expected;
 	GError *error = NULL;
 
-	if (!g_test_subprocess()) {
-		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
-		g_test_trap_assert_passed();
+	if (!run_in_child("settings = { core = { nick = \"alice\"; }; "
+	                  "\"fe-text\" = { colors_ansi_24bit = \"no\"; };\n"
+	                  "  \"fe-common/core\" = { hilight_color = \"%Zbb9af7\"; "
+	                  "nick_column_width = \"10\"; }; };\n"))
 		return;
-	}
 
-	home = start_in_home("settings = { core = { nick = \"alice\"; }; "
-	                     "\"fe-text\" = { colors_ansi_24bit = \"no\"; };\n"
-	                     "  \"fe-common/core\" = { hilight_color = \"%Zbb9af7\"; "
-	                     "nick_column_width = \"10\"; }; };\n");
+	home = start_in_home();
 	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
 	g_assert_cmpint(settings_get_int("nick_column_width"), ==, 10);
 	g_assert_cmpstr(settings_get_str("hilight_color"), ==, "%Zbb9af7");
@@ -494,7 +520,6 @@ static void test_upgraded_home(void)
 	g_free(note);
 	g_free(contents);
 	g_free(fname);
-	remove_tree(home);
 	g_free(home);
 }
 
@@ -507,13 +532,10 @@ static void test_broken_config(void)
 	gsize length;
 	GError *error = NULL;
 
-	if (!g_test_subprocess()) {
-		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
-		g_test_trap_assert_passed();
+	if (!run_in_child(config))
 		return;
-	}
 
-	home = start_in_home(config);
+	home = start_in_home();
 	fname = g_build_filename(home, "config", NULL);
 	g_file_get_contents(fname, &contents, &length, &error);
 	g_assert_no_error(error);
@@ -531,7 +553,6 @@ static void test_broken_config(void)
 	g_free(note);
 	g_free(contents);
 	g_free(fname);
-	remove_tree(home);
 	g_free(home);
 }
 
