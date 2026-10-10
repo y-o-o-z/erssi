@@ -416,8 +416,9 @@ static int fe_web_verify_password(const char *data)
 }
 
 /* Notice that logins from peer are paced now; 'overflow': from every peer
- * of the overflow bucket */
-static void log_paced(const char *peer, gboolean overflow)
+ * of the overflow bucket; 'shared': the peer is an address other users of
+ * this machine have too */
+static void log_paced(const char *peer, gboolean overflow, gboolean shared)
 {
 	time_t now = time(NULL);
 
@@ -441,6 +442,11 @@ static void log_paced(const char *peer, gboolean overflow)
 		          "fe-web: %d wrong passwords within a minute from %s - "
 		          "checking one login from there every %d s",
 		          FE_WEB_MAX_FAILS, peer, FE_WEB_CHECK_INTERVAL);
+	if (shared)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: other users of this machine can reach this port - "
+		          "/SET fe_web_socket ~/.erssi/fe-web.sock lets only your own "
+		          "processes in");
 	paced_logged = now;
 	paced_unlogged = 0;
 }
@@ -502,7 +508,8 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		/* the owner's wrong passwords count nowhere: not in the
 		 * table, not towards the ceiling */
 		if (paced && fe_web_pacing_failed(login_pacing, peer, now))
-			log_paced(peer, fe_web_pacing_in_overflow(login_pacing, peer));
+			log_paced(peer, fe_web_pacing_in_overflow(login_pacing, peer),
+			          client->peer_shared);
 		log_refused(client, "wrong or missing password");
 
 		/* 401 Unauthorized; the caller closes once it is written */
@@ -939,6 +946,7 @@ static void sig_listen(void)
 	GIOChannel *handle;
 	char host[MAX_IP_LEN];
 	char *addr, *peer_key;
+	gboolean peer_shared = FALSE;
 	WEB_CLIENT_REC *client;
 	NET_SENDBUF_REC *sendbuf;
 
@@ -989,9 +997,21 @@ static void sig_listen(void)
 		peer_key = known > 0 ? fe_web_peer_key_uid((unsigned long) uid) :
 		                       g_strdup("uid:unknown");
 	} else {
+		uid_t uid = 0;
+
 		net_ip2host(&ip, host);
 		addr = g_strdup_printf("%s:%d", host, port);
-		peer_key = fe_web_peer_key_ip(&ip);
+		/* Every user of the machine can reach a loopback port, and
+		 * all of them have the same address there: on Linux the
+		 * peer counts as the uid of its socket (/proc/net/tcp). Any
+		 * other peer, or one whose uid is not known, counts as its
+		 * address, and on loopback that address is shared. */
+		if (fe_web_tcp_peer_uid(g_io_channel_unix_get_fd(handle), &uid) > 0) {
+			peer_key = fe_web_peer_key_uid((unsigned long) uid);
+		} else {
+			peer_key = fe_web_peer_key_ip(&ip);
+			peer_shared = fe_web_ip_is_loopback(&ip);
+		}
 	}
 
 	{
@@ -1036,6 +1056,7 @@ static void sig_listen(void)
 	/* Create client record */
 	client = fe_web_client_create(g_io_channel_unix_get_fd(handle), addr);
 	client->peer_key = peer_key;
+	client->peer_shared = peer_shared;
 
 	/* Create send buffer */
 	sendbuf = net_sendbuffer_create(handle, 0);
