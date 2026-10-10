@@ -7,12 +7,69 @@
     (at your option) any later version.
 */
 
+/* fe-web-server.c defines it too, the same way */
+#define _GNU_SOURCE
+
+/* Everything fe-web-server.c includes, before the stand-ins below are
+ * defined: its include guards then keep the macros out of the system and
+ * irssi headers. */
+#include <irssi/src/fe-web/module.h>
+#include <irssi/src/fe-web/fe-web.h>
+#include <irssi/src/fe-web/fe-web-ssl.h>
+#include <irssi/src/fe-web/fe-web-crypto.h>
+
+#include <irssi/src/core/network.h>
+#include <irssi/src/core/net-sendbuffer.h>
+#include <irssi/src/core/settings.h>
+#include <irssi/src/core/levels.h>
+#include <irssi/src/core/misc.h>
+#include <irssi/src/fe-common/core/printtext.h>
+
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+/* Stand-ins for the TLS layer and the clock of fe-web-server.c. The TLS
+ * stand-in is the plain socket, with scripted write results for the unit
+ * tests (tests/fe-web); the fuzz targets never make TLS clients, so for
+ * them nothing changes. The clock is the real one unless a test sets it. */
+static int fe_web_fuzz_ssl_prepare(void);
+static FE_WEB_SSL_CHANNEL *fe_web_fuzz_ssl_channel_create(GIOChannel *plain_channel);
+static void fe_web_fuzz_ssl_channel_free(FE_WEB_SSL_CHANNEL *chan);
+static int fe_web_fuzz_ssl_accept(FE_WEB_SSL_CHANNEL *chan);
+static int fe_web_fuzz_ssl_read(FE_WEB_SSL_CHANNEL *chan, char *buf, int len);
+static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len);
+static time_t fe_web_fuzz_time(time_t *t);
+
+#define fe_web_ssl_prepare fe_web_fuzz_ssl_prepare
+#define fe_web_ssl_channel_create fe_web_fuzz_ssl_channel_create
+#define fe_web_ssl_channel_free fe_web_fuzz_ssl_channel_free
+#define fe_web_ssl_accept fe_web_fuzz_ssl_accept
+#define fe_web_ssl_read fe_web_fuzz_ssl_read
+#define fe_web_ssl_write fe_web_fuzz_ssl_write
+#define time(t) fe_web_fuzz_time(t)
+
 /* The input path of a web client (client_input_once(), the handshake, the
  * password check, the frame loop) is static in fe-web-server.c. It is
  * compiled into the fuzz targets from here, unchanged, so they run the
  * real code without fe-web having to export anything for them. This file
  * must stay the only one that includes it. */
 #include <irssi/src/fe-web/fe-web-server.c>
+
+#undef fe_web_ssl_prepare
+#undef fe_web_ssl_channel_create
+#undef fe_web_ssl_channel_free
+#undef fe_web_ssl_accept
+#undef fe_web_ssl_read
+#undef fe_web_ssl_write
+#undef time
 
 #include <irssi/src/fe-fuzz/fe-web/fe-web-fuzz.h>
 #include <irssi/src/fe-fuzz/null-logger.h>
@@ -23,6 +80,7 @@
 #include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/servers-setup.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
+#include <irssi/src/fe-common/core/formats.h>
 #include <irssi/src/fe-ansi/sidepanels-activity.h>
 #include <irssi/src/fe-ansi/sidepanels-render.h>
 
@@ -45,6 +103,7 @@ static void fe_web_fuzz_settings(void)
 	settings_add_int("lookandfeel", "fe_web_port", 9001);
 	settings_add_str("lookandfeel", "fe_web_bind", "127.0.0.1");
 	settings_add_str("lookandfeel", "fe_web_password", "");
+	settings_add_str("lookandfeel", "fe_web_socket", "");
 	settings_set_str("fe_web_password", FE_WEB_FUZZ_PASSWORD);
 }
 
@@ -63,6 +122,20 @@ void redraw_left_panels_only(const char *event_name)
 static void sig_swallow(void)
 {
 	signal_stop();
+}
+
+/* stripped text of every "print text" since fe_web_fuzz_take_printed() */
+static GString *printed = NULL;
+
+static void sig_capture_printed(TEXT_DEST_REC *dest, const char *text)
+{
+	char *stripped;
+
+	(void) dest;
+	stripped = strip_codes(text);
+	g_string_append(printed, stripped);
+	g_string_append_c(printed, '\n');
+	g_free(stripped);
 }
 
 static char *fuzz_home = NULL;
@@ -99,6 +172,9 @@ static void remove_fuzz_home(void)
 		remove_tree(fuzz_home);
 	g_free(home_arg);
 	home_arg = NULL;
+	if (printed != NULL)
+		g_string_free(printed, TRUE);
+	printed = NULL;
 }
 
 void fe_web_fuzz_init(gboolean with_irc_signals)
@@ -133,6 +209,8 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 
 	signal_add_first("send command", (SIGNAL_FUNC) sig_swallow);
 	signal_add_first("save config", (SIGNAL_FUNC) sig_swallow);
+	printed = g_string_new(NULL);
+	signal_add_first("print text", (SIGNAL_FUNC) sig_capture_printed);
 
 	fe_web_fuzz_settings();
 	fe_web_crypto_init();
@@ -150,12 +228,21 @@ static int peer_fd = -1;
 /* what it got and did not show yet, and whether the HTTP part is over */
 static GByteArray *sent = NULL;
 static gboolean sent_http_done;
+/* everything it got (for the unit tests) */
+static GByteArray *received = NULL;
 
-WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
+/* results for the next TLS writes, see fe_web_fuzz_tls_write_script() */
+#define TLS_SCRIPT_MAX 64
+static int tls_script[TLS_SCRIPT_MAX];
+static gsize tls_script_len = 0, tls_script_pos = 0;
+
+WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logged_in,
+                                            gboolean tls)
 {
 	WEB_CLIENT_REC *client;
 	int sv[2];
 
+	(void) peer_key;
 	if (peer_fd != -1 || socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
 		abort();
 	fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
@@ -165,17 +252,32 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
 		sent = g_byte_array_new();
 	g_byte_array_set_size(sent, 0);
 	sent_http_done = logged_in;
+	if (received == NULL)
+		received = g_byte_array_new();
+	g_byte_array_set_size(received, 0);
+	tls_script_len = tls_script_pos = 0;
 
 	client = fe_web_client_create(sv[0], "fuzz:0");
 	client->handle = net_sendbuffer_create(i_io_channel_new(sv[0]), 0);
-	client->use_ssl = FALSE;
-	client->ssl_channel = NULL;
+	if (tls) {
+		client->use_ssl = TRUE;
+		client->ssl_channel =
+		    fe_web_fuzz_ssl_channel_create(net_sendbuffer_handle(client->handle));
+	} else {
+		client->use_ssl = FALSE;
+		client->ssl_channel = NULL;
+	}
 	client->encryption_enabled = TRUE;
 	if (logged_in) {
 		client->handshake_done = TRUE;
 		client->authenticated = TRUE;
 	}
 	return client;
+}
+
+WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
+{
+	return fe_web_fuzz_client_new_peer("fuzz", logged_in, FALSE);
 }
 
 gboolean fe_web_fuzz_client_alive(WEB_CLIENT_REC *client)
@@ -229,18 +331,36 @@ static void show_sent(void)
 	}
 }
 
-/* drop what fe-web sent to the browser */
-static void drain_peer(void)
+gsize fe_web_fuzz_read_peer(gsize max)
 {
 	char buf[16384];
+	gsize total = 0;
 	ssize_t n;
 
-	while ((n = read(peer_fd, buf, sizeof(buf))) > 0) {
+	if (peer_fd == -1)
+		return 0;
+	while (max == 0 || total < max) {
+		gsize want = sizeof(buf);
+
+		if (max != 0 && max - total < want)
+			want = max - total;
+		n = read(peer_fd, buf, want);
+		if (n <= 0)
+			break;
+		total += n;
+		g_byte_array_append(received, (const guchar *) buf, n);
 		if (verbose) {
 			g_byte_array_append(sent, (const guchar *) buf, n);
 			show_sent();
 		}
 	}
+	return total;
+}
+
+/* read what fe-web sent to the browser */
+static void drain_peer(void)
+{
+	fe_web_fuzz_read_peer(0);
 }
 
 void fe_web_fuzz_client_send(WEB_CLIENT_REC *client, const guchar *data, gsize len)
@@ -324,4 +444,165 @@ void fe_web_fuzz_reset_setup(void)
 int fe_web_fuzz_verify_password(const char *request)
 {
 	return fe_web_verify_password(request);
+}
+
+/* for the unit tests in tests/fe-web */
+
+const GByteArray *fe_web_fuzz_received(void)
+{
+	if (received == NULL)
+		received = g_byte_array_new();
+	return received;
+}
+
+void fe_web_fuzz_client_writable(WEB_CLIENT_REC *client)
+{
+	if (client->send_tag != -1)
+		output_ready(client);
+}
+
+void fe_web_fuzz_client_input(WEB_CLIENT_REC *client)
+{
+	client_input(client);
+}
+
+void fe_web_fuzz_peer_write(const void *data, gsize len)
+{
+	const char *p = data;
+
+	while (len > 0) {
+		ssize_t n = write(peer_fd, p, len);
+
+		if (n <= 0)
+			abort(); /* the tests write less than the socket takes */
+		p += n;
+		len -= n;
+	}
+}
+
+void fe_web_fuzz_tls_write_script(const int *results, gsize n)
+{
+	if (n > TLS_SCRIPT_MAX)
+		abort();
+	memcpy(tls_script, results, n * sizeof(*results));
+	tls_script_len = n;
+	tls_script_pos = 0;
+}
+
+static time_t fake_now = 0;
+
+void fe_web_fuzz_set_clock(time_t now)
+{
+	fake_now = now;
+}
+
+char *fe_web_fuzz_take_printed(void)
+{
+	char *text;
+
+	if (printed == NULL)
+		return g_strdup("");
+	text = g_string_free(printed, FALSE);
+	printed = g_string_new(NULL);
+	return text;
+}
+
+static gboolean iterate_done(gpointer data)
+{
+	*(gboolean *) data = TRUE;
+	return FALSE;
+}
+
+void fe_web_fuzz_iterate(int ms)
+{
+	gboolean done = FALSE;
+	int rounds;
+
+	g_timeout_add(ms, iterate_done, &done);
+	while (!done)
+		g_main_context_iteration(NULL, TRUE);
+	/* and what became ready at the same time */
+	for (rounds = 0; rounds < 100 && g_main_context_iteration(NULL, FALSE); rounds++)
+		;
+}
+
+int fe_web_fuzz_listen_port(void)
+{
+	return listen_port;
+}
+
+/* The stand-ins */
+
+static int fe_web_fuzz_ssl_prepare(void)
+{
+	return TRUE;
+}
+
+static FE_WEB_SSL_CHANNEL *fe_web_fuzz_ssl_channel_create(GIOChannel *plain_channel)
+{
+	FE_WEB_SSL_CHANNEL *chan = g_new0(FE_WEB_SSL_CHANNEL, 1);
+
+	chan->plain_channel = plain_channel;
+	chan->fd = g_io_channel_unix_get_fd(plain_channel);
+	chan->ssl = NULL;
+	chan->ssl_enabled = TRUE;
+	chan->handshake_done = TRUE;
+	return chan;
+}
+
+static void fe_web_fuzz_ssl_channel_free(FE_WEB_SSL_CHANNEL *chan)
+{
+	g_free(chan);
+}
+
+static int fe_web_fuzz_ssl_accept(FE_WEB_SSL_CHANNEL *chan)
+{
+	return chan != NULL && chan->handshake_done ? 1 : -1;
+}
+
+static int fe_web_fuzz_ssl_read(FE_WEB_SSL_CHANNEL *chan, char *buf, int len)
+{
+	ssize_t n = read(chan->fd, buf, len);
+
+	if (n >= 0)
+		return n;
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+		return -2;
+	chan->failed = 1;
+	return -1;
+}
+
+static int fe_web_fuzz_ssl_send(FE_WEB_SSL_CHANNEL *chan, const char *data, int len)
+{
+	ssize_t n = send(chan->fd, data, len, MSG_NOSIGNAL);
+
+	if (n >= 0)
+		return n;
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+		return FE_WEB_SSL_WANT_WRITE;
+	chan->failed = 1;
+	return -1;
+}
+
+static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len)
+{
+	int result;
+
+	if (tls_script_pos >= tls_script_len)
+		return fe_web_fuzz_ssl_send(chan, data, len);
+	result = tls_script[tls_script_pos++];
+	if (result > 0)
+		return fe_web_fuzz_ssl_send(chan, data, MIN(result, len));
+	if (result == -1)
+		chan->failed = 1;
+	return result;
+}
+
+static time_t fe_web_fuzz_time(time_t *t)
+{
+	if (fake_now == 0)
+		return time(t);
+	if (t != NULL)
+		*t = fake_now;
+	return fake_now;
 }
