@@ -462,19 +462,19 @@ static void assert_loopback_key(const char *bind, int family, const char *host,
 
 static void test_tcp_loopback_key_is_uid(void)
 {
-	assert_loopback_key("127.0.0.1", AF_INET, "127.0.0.1", "ip:127.0.0.1");
+	assert_loopback_key("127.0.0.1", AF_INET, "127.0.0.1", "ip:loopback");
 }
 
 static void test_tcp6_loopback_key_is_uid(void)
 {
-	assert_loopback_key("::1", AF_INET6, "::1", "ip:::/64");
+	assert_loopback_key("::1", AF_INET6, "::1", "ip:loopback");
 }
 
 /* Review Focus: fe_web_bind :: and a client on 127.0.0.1 (the peer is
  * ::ffff:127.0.0.1) */
 static void test_tcp_dual_stack_key_is_uid(void)
 {
-	assert_loopback_key("::", AF_INET, "127.0.0.1", "ip:127.0.0.1");
+	assert_loopback_key("::", AF_INET, "127.0.0.1", "ip:loopback");
 }
 
 /* A loopback peer whose uid is not known (it closed before fe-web took
@@ -509,7 +509,7 @@ static void test_tcp_unknown_uid_key_is_address(void)
 	}
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 1);
 	c = web_clients->data;
-	g_assert_cmpstr(c->peer_key, ==, "ip:127.0.0.1");
+	g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
 	g_assert_true(c->peer_shared);
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
@@ -547,7 +547,7 @@ static void test_shared_loopback_hint(void)
 
 	setup();
 	for (i = 0; i < 5; i++)
-		g_assert_true(test_starts_with(attempt_shared("ip:127.0.0.1", "wrong", TRUE),
+		g_assert_true(test_starts_with(attempt_shared("ip:loopback", "wrong", TRUE),
 		                               HTTP_401));
 	printed = fe_web_fuzz_take_printed();
 	g_assert_nonnull(strstr(printed, "fe_web_socket ~/.erssi/fe-web.sock"));
@@ -556,7 +556,7 @@ static void test_shared_loopback_hint(void)
 
 	/* not on every failure while paced */
 	fe_web_fuzz_set_clock(T + 2);
-	g_assert_true(test_starts_with(attempt_shared("ip:127.0.0.1", "wrong", TRUE), HTTP_401));
+	g_assert_true(test_starts_with(attempt_shared("ip:loopback", "wrong", TRUE), HTTP_401));
 	printed = fe_web_fuzz_take_printed();
 	g_assert_null(strstr(printed, "fe_web_socket"));
 	g_free(printed);
@@ -587,13 +587,144 @@ static void test_shared_hint_once_a_minute(void)
 
 	setup();
 	for (i = 0; i < 5; i++)
-		attempt_shared("ip:127.0.0.1", "wrong", TRUE);
+		attempt_shared("ip:192.0.2.1", "wrong", FALSE);
 	g_free(fe_web_fuzz_take_printed());
+	fe_web_fuzz_set_clock(T + 1);
 	for (i = 0; i < 5; i++)
-		attempt_shared("ip:127.0.0.2", "wrong", TRUE);
+		attempt_shared("ip:loopback", "wrong", TRUE);
 	printed = fe_web_fuzz_take_printed();
 	g_assert_null(strstr(printed, "fe_web_socket"));
 	g_free(printed);
+}
+
+/* fe-web listening on 127.0.0.1, port 0 (setup() first) */
+static void tcp_listen(void)
+{
+	settings_set_str("fe_web_socket", "");
+	settings_set_str("fe_web_bind", "127.0.0.1");
+	settings_set_int("fe_web_port", 0);
+	fe_web_server_init();
+	g_assert_cmpint(fe_web_fuzz_listen_port(), >, 0);
+}
+
+/* Connect from 'src' (any port) to fe-web; the new web client (fd in
+ * *fd, to be closed - its client is then closed too, so keep the fds of
+ * several open until the end) */
+static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
+{
+	struct sockaddr_in sa;
+	guint before = g_slist_length(web_clients);
+	int i;
+
+	*fd = socket(AF_INET, SOCK_STREAM, 0);
+	g_assert_cmpint(*fd, >=, 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	g_assert_cmpint(inet_pton(AF_INET, src, &sa.sin_addr), ==, 1);
+	g_assert_cmpint(bind(*fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	g_assert_cmpint(connect(*fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	for (i = 0; i < 200 && g_slist_length(web_clients) == before; i++)
+		fe_web_fuzz_iterate(5);
+	g_assert_cmpuint(g_slist_length(web_clients), ==, before + 1);
+	return g_slist_last(web_clients)->data;
+}
+
+#ifdef __linux__
+static gssize diag_fails(const void *req, gsize req_len, void *reply, gsize size)
+{
+	(void) req;
+	(void) req_len;
+	(void) reply;
+	(void) size;
+	return -1;
+}
+
+static int open_fds[8], open_count;
+
+/* The key of a new connection from 'src' (kept open until
+ * close_connections()) */
+static void assert_connect_key(const char *src, const char *want)
+{
+	WEB_CLIENT_REC *c;
+
+	g_assert_cmpint(open_count, <, G_N_ELEMENTS(open_fds));
+	c = connect_from(src, &open_fds[open_count++]);
+	g_assert_cmpstr(c->peer_key, ==, want);
+	g_assert_true(c->peer_shared == (strcmp(want, "ip:loopback") == 0));
+}
+
+static void close_connections(void)
+{
+	while (open_count > 0)
+		close(open_fds[--open_count]);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
+
+/* /proc is read at most twice a second for all peers; sock_diag answers
+ * do not count */
+static void test_tcp_proc_budget(void)
+{
+	setup();
+	tcp_listen();
+	/* sock_diag cannot answer: /proc twice, then not known */
+	fe_web_sock_diag_set_func(diag_fails);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", "ip:loopback");
+	/* the next second */
+	fe_web_fuzz_set_clock(T + 1);
+	assert_connect_key("127.0.0.1", own);
+	close_connections();
+
+	setup();
+	tcp_listen();
+	fe_web_sock_diag_set_func(NULL);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	fe_web_sock_diag_set_func(diag_fails);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", "ip:loopback");
+	fe_web_sock_diag_set_func(NULL);
+	close_connections();
+}
+#endif
+
+/* A loopback peer whose uid is not known is one peer, whatever 127/8
+ * source address it picks */
+static void test_tcp_loopback_sources_share_key(void)
+{
+	setup();
+	tcp_listen();
+#ifdef __linux__
+	fe_web_sock_diag_set_func(diag_fails);
+	/* the /proc budget used up */
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.2", "ip:loopback");
+	assert_connect_key("127.0.0.3", "ip:loopback");
+	assert_connect_key("127.1.2.3", "ip:loopback");
+	fe_web_sock_diag_set_func(NULL);
+	close_connections();
+#else
+	{
+		WEB_CLIENT_REC *c;
+		int fd;
+
+		c = connect_from("127.0.0.2", &fd);
+		g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+		close(fd);
+		c = connect_from("127.1.2.3", &fd);
+		g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+		close(fd);
+	}
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+#endif
 }
 
 int main(int argc, char **argv)
@@ -631,6 +762,11 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/shared-loopback-hint", test_shared_loopback_hint);
 	g_test_add_func("/fe-web/login/no-hint-unless-shared", test_no_hint_unless_shared);
 	g_test_add_func("/fe-web/login/shared-hint-once-a-minute", test_shared_hint_once_a_minute);
+#ifdef __linux__
+	g_test_add_func("/fe-web/login/tcp-proc-budget", test_tcp_proc_budget);
+#endif
+	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
+	                test_tcp_loopback_sources_share_key);
 
 	ret = g_test_run();
 	if (last != NULL)
