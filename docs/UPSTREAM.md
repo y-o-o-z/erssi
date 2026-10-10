@@ -146,11 +146,15 @@ Open at `4833f418`. Each item was checked in the code.
    loopback on shared machines. Unix-socket mode (`fe_web_socket`) is not
    affected. Fix: per-uid accounting for TCP loopback peers
    (`/proc/net/tcp`) or a strong hint to use the socket. Residual risk
-   that stays: during an attack that fills the table of 256 suspect
-   peers, a remote owner on an address that never logged in before shares
-   the overflow bucket and the ceiling with the attacker, so it may get
-   mostly 429. For remote access use the Unix socket through an SSH
-   tunnel (`ssh -L`), or log in once from the address beforehand.
+   that stays: during an attack, a peer that never logged in before and
+   sends one wrong password (a typo) from a new address is a suspect, and
+   the shared ceiling holds it for up to about 10 minutes, until its
+   table entry is forgotten (`FE_WEB_PEER_MEMORY`, 600 s after its last
+   wrong password). When the attack fills the table of 256 suspect peers,
+   such a peer on a new address shares the overflow bucket with the
+   attacker even without a typo. Either way a remote owner may get mostly
+   429. For remote access use the Unix socket through an SSH tunnel
+   (`ssh -L`), or log in once from the address beforehand.
 2. Duplicated code: `fe-ansi/sidepanels-text.c:49` and `:77` copy
    `unformat_24bit_line_color()` and `unformat()` from
    `fe-ansi/textbuffer-view.c:121` and `:165`. Export one helper. The

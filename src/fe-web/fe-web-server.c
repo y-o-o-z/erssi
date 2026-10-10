@@ -421,14 +421,15 @@ static void log_paced(const char *peer, gboolean overflow)
 {
 	time_t now = time(NULL);
 
+	/* a clock that went back counts as a minute passed */
 	if (now >= paced_logged && now - paced_logged < 60) {
 		paced_unlogged++;
 		return;
 	}
 	if (paced_unlogged > 0)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: logins from %d more peers paced since the last notice",
-		          paced_unlogged);
+		          "fe-web: logins from %d more %s paced since the last notice",
+		          paced_unlogged, paced_unlogged == 1 ? "peer" : "peers");
 	if (overflow)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: %d wrong passwords within a minute from new peers, last %s "
@@ -822,7 +823,10 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			fe_web_message_free(msg);
 
 			client->authenticated = TRUE;
-			if (login_pacing != NULL)
+			/* the owner is never paced: it needs no place among
+			 * the trusted peers */
+			if (login_pacing != NULL && own_peer_key != NULL &&
+			    strcmp(client_peer(client), own_peer_key) != 0)
 				fe_web_pacing_succeeded(login_pacing, client_peer(client));
 
 			/* Clear input buffer */
@@ -847,7 +851,10 @@ static void log_refused(WEB_CLIENT_REC *client, const char *reason)
 
 static void log_refused_addr(const char *addr, const char *reason)
 {
-	if (time(NULL) - refused_logged < 60) {
+	time_t now = time(NULL);
+
+	/* a clock that went back counts as a minute passed */
+	if (now >= refused_logged && now - refused_logged < 60) {
 		refused_unlogged++;
 		return;
 	}
@@ -856,7 +863,7 @@ static void log_refused_addr(const char *addr, const char *reason)
 		          "fe-web: %d more connections refused", refused_unlogged);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 	          "fe-web: connection from %s refused: %s", addr, reason);
-	refused_logged = time(NULL);
+	refused_logged = now;
 	refused_unlogged = 0;
 }
 

@@ -345,6 +345,39 @@ static void test_ceiling_spares_clean_and_trusted(void)
 	fe_web_pacing_free(p);
 }
 
+/* A trusted peer is held only by its own bucket, but its wrong passwords
+ * count towards the ceiling all the same */
+static void test_trusted_failures_count_towards_ceiling(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	int i;
+
+	fe_web_pacing_succeeded(p, "t");
+	for (i = 0; i < FE_WEB_GLOBAL_MAX_FAILS - 1; i++)
+		g_assert_false(fail_n(p, key_n("s", i), 1, T));
+	g_assert_false(fail_n(p, "t", 1, T));
+	g_assert_true(fe_web_pacing_may_check(p, "s0", T + 1));
+	g_assert_false(fe_web_pacing_may_check(p, "s1", T + 1));
+	/* and it is not held itself */
+	g_assert_true(fe_web_pacing_may_check(p, "t", T + 1));
+	fe_web_pacing_free(p);
+}
+
+/* A trusted peer that logs in again starts with a fresh bucket */
+static void test_trusted_refresh_resets_bucket(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+
+	fe_web_pacing_succeeded(p, "t");
+	g_assert_true(fail_n(p, "t", FE_WEB_MAX_FAILS, T));
+	g_assert_false(fe_web_pacing_may_check(p, "t", T + 1));
+	fe_web_pacing_succeeded(p, "t");
+	g_assert_true(fe_web_pacing_may_check(p, "t", T + 1));
+	g_assert_true(fe_web_pacing_may_check(p, "t", T + 1));
+	g_assert_false(fail_n(p, "t", FE_WEB_MAX_FAILS - 1, T + 1));
+	fe_web_pacing_free(p);
+}
+
 /* A check refused by one bucket is not recorded in the other */
 static void test_decide_then_record(void)
 {
@@ -592,6 +625,10 @@ int main(int argc, char **argv)
 	                test_ceiling_engages_for_suspects);
 	g_test_add_func("/fe-web/pacing/ceiling-spares-clean-and-trusted",
 	                test_ceiling_spares_clean_and_trusted);
+	g_test_add_func("/fe-web/pacing/trusted-failures-count-towards-ceiling",
+	                test_trusted_failures_count_towards_ceiling);
+	g_test_add_func("/fe-web/pacing/trusted-refresh-resets-bucket",
+	                test_trusted_refresh_resets_bucket);
 	g_test_add_func("/fe-web/pacing/decide-then-record", test_decide_then_record);
 	g_test_add_func("/fe-web/pacing/trusted-set-oldest-replaced",
 	                test_trusted_set_oldest_replaced);
