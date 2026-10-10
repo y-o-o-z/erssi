@@ -77,10 +77,10 @@ static int paced_unlogged = 0;
 /* /proc/net/tcp lookups of loopback peers (fe_web_tcp_peer_uid()) */
 static FE_WEB_PROC_BUDGET proc_budget;
 
-/* Connections still logging in have their own limit, so they can never
- * take the places of logged-in clients; when it is reached the oldest of
- * them makes room (idle connections cannot keep new logins out). */
-#define FE_WEB_MAX_PENDING 8
+/* Connections still logging in have their own limit (FE_WEB_MAX_PENDING,
+ * fe-web-pacing.h), so they can never take the places of logged-in
+ * clients; when it is reached one of them makes room
+ * (fe_web_pending_victim(): idle connections cannot keep new logins out). */
 static int refused_unlogged = 0;
 
 /* Output a client does not take yet is queued up to this much; a client
@@ -1027,19 +1027,14 @@ static void sig_listen(void)
 	}
 
 	{
-		WEB_CLIENT_REC *oldest = NULL;
-		int logged_in = 0, pending = 0;
+		WEB_CLIENT_REC *victim;
+		int logged_in = 0;
 		GSList *tmp;
 
 		for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
 			WEB_CLIENT_REC *c = tmp->data;
-			if (c->authenticated) {
+			if (c->authenticated)
 				logged_in++;
-			} else {
-				pending++;
-				if (oldest == NULL || c->connected_at < oldest->connected_at)
-					oldest = c;
-			}
 		}
 		if (logged_in >= FE_WEB_MAX_CLIENTS) {
 			log_refused_addr(addr, "too many web clients logged in");
@@ -1048,9 +1043,17 @@ static void sig_listen(void)
 			net_disconnect(handle);
 			return;
 		}
-		if (pending >= FE_WEB_MAX_PENDING && oldest != NULL) {
-			log_refused(oldest, "too many connections logging in, oldest closed");
-			fe_web_close_client(oldest);
+		/* The queue is full: the busiest peer loses its oldest
+		 * connection. The owner's uid and the trusted peers keep
+		 * theirs while anyone else is waiting, so a loop of new
+		 * connections, from one peer or from many, closes its own. */
+		if (own_peer_key == NULL)
+			own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
+		victim = fe_web_pending_victim(web_clients, FE_WEB_MAX_PENDING, own_peer_key,
+		                               login_pacing);
+		if (victim != NULL) {
+			log_refused(victim, "too many connections logging in, oldest closed");
+			fe_web_close_client(victim);
 		}
 	}
 

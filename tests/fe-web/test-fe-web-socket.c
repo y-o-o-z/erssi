@@ -13,6 +13,9 @@
 
 #include "fe-web-test.h"
 
+#include <irssi/src/fe-web/fe-web-pacing.h>
+
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -397,6 +400,144 @@ static void test_path_too_long(void)
 	teardown();
 }
 
+/* read what is there on a non-blocking socket; TRUE at end of file,
+ * FALSE when nothing more comes now */
+static gboolean reads_eof(int fd)
+{
+	char buf[4096];
+	ssize_t n;
+
+	while ((n = read(fd, buf, sizeof(buf))) > 0)
+		;
+	return n == 0;
+}
+
+/* Every connection on the Unix socket is the owner's: when 8 are logging
+ * in, the 9th closes the oldest */
+static void test_ninth_pending_evicts_oldest(void)
+{
+	char *path, *out;
+	int fds[9];
+	int i;
+
+	setup();
+	path = under("fe-web.sock");
+	out = test_start_unix(path);
+	assert_listening(out, path);
+	g_free(out);
+	/* refusals are logged once a minute: an hour since any before */
+	fe_web_fuzz_set_clock(time(NULL) + 3600);
+
+	for (i = 0; i < 9; i++) {
+		fds[i] = test_connect_unix(path);
+		g_assert_cmpint(fds[i], >=, 0);
+		g_assert_cmpint(fcntl(fds[i], F_SETFL, O_NONBLOCK), ==, 0);
+		fe_web_fuzz_iterate(20);
+		g_assert_cmpuint(g_slist_length(web_clients), ==, i < 8 ? i + 1 : 8);
+	}
+	g_assert_true(reads_eof(fds[0]));
+	for (i = 1; i < 9; i++)
+		g_assert_false(reads_eof(fds[i]));
+	out = fe_web_fuzz_take_printed();
+	assert_printed(out, "too many connections logging in, oldest closed");
+	g_free(out);
+	fe_web_fuzz_set_clock(0);
+	for (i = 0; i < 9; i++)
+		close(fds[i]);
+	g_free(path);
+	teardown();
+}
+
+/* Connect 'n' times; each connection is accepted before the next */
+static void connect_n(const char *path, int *fds, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		fds[i] = test_connect_unix(path);
+		g_assert_cmpint(fds[i], >=, 0);
+		g_assert_cmpint(fcntl(fds[i], F_SETFL, O_NONBLOCK), ==, 0);
+		fe_web_fuzz_iterate(20);
+	}
+}
+
+/* Is a client of peer_key connected. (A closed client's record may be
+ * reused for the next one, so its pointer says nothing.) */
+static gboolean peer_connected(const char *peer_key)
+{
+	GSList *tmp;
+
+	for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (g_strcmp0(c->peer_key, peer_key) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* With another peer waiting, a new connection of the owner closes that
+ * peer's, not the owner's oldest */
+static void test_full_queue_keeps_owner(void)
+{
+	char *path, *out;
+	int fds[8];
+	int i;
+
+	setup();
+	path = under("fe-web.sock");
+	out = test_start_unix(path);
+	assert_listening(out, path);
+	g_free(out);
+
+	connect_n(path, fds, 7);
+	fe_web_fuzz_client_new_peer("ip:192.0.2.1", FALSE, FALSE);
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
+	connect_n(path, fds + 7, 1);
+	g_assert_false(peer_connected("ip:192.0.2.1"));
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
+	for (i = 0; i < 8; i++)
+		g_assert_false(reads_eof(fds[i]));
+	/* only the browser end of the closed client is left */
+	fe_web_fuzz_client_free(NULL);
+	for (i = 0; i < 8; i++)
+		close(fds[i]);
+	g_free(path);
+	teardown();
+}
+
+/* A trusted peer (it logged in before) is kept like the owner: with only
+ * the two waiting, the busier one, the owner, loses its oldest */
+static void test_full_queue_keeps_trusted(void)
+{
+	WEB_CLIENT_REC *trusted;
+	char *path, *out;
+	int fds[8];
+	int i;
+
+	setup();
+	path = under("fe-web.sock");
+	out = test_start_unix(path);
+	assert_listening(out, path);
+	g_free(out);
+
+	fe_web_pacing_succeeded(fe_web_fuzz_login_pacing(), "ip:192.0.2.1");
+	trusted = fe_web_fuzz_client_new_peer("ip:192.0.2.1", FALSE, FALSE);
+	connect_n(path, fds, 8);
+	g_assert_true(fe_web_fuzz_client_alive(trusted));
+	g_assert_true(peer_connected("ip:192.0.2.1"));
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
+	g_assert_true(reads_eof(fds[0]));
+	for (i = 1; i < 8; i++)
+		g_assert_false(reads_eof(fds[i]));
+	fe_web_fuzz_client_free(trusted);
+	fe_web_fuzz_reset_login_state();
+	for (i = 0; i < 8; i++)
+		close(fds[i]);
+	g_free(path);
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	test_init(&argc, &argv);
@@ -416,6 +557,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/socket/peer-uid-own-accepted", test_peer_uid_own_accepted);
 	g_test_add_func("/fe-web/socket/removed-only-if-ours", test_removed_only_if_ours);
 	g_test_add_func("/fe-web/socket/path-too-long", test_path_too_long);
+	g_test_add_func("/fe-web/socket/ninth-pending-evicts-oldest",
+	                test_ninth_pending_evicts_oldest);
+	g_test_add_func("/fe-web/socket/full-queue-keeps-owner", test_full_queue_keeps_owner);
+	g_test_add_func("/fe-web/socket/full-queue-keeps-trusted", test_full_queue_keeps_trusted);
 
 	return g_test_run();
 }
