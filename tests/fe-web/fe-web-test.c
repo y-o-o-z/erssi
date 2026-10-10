@@ -9,7 +9,14 @@
 
 #include "fe-web-test.h"
 
+#include <irssi/src/core/settings.h>
+
+#include <errno.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 
 /* Warnings, criticals and errors go to stderr (meson shows it for a failed
  * test; stdout is the TAP stream); the fatal mask still applies after the
@@ -104,4 +111,91 @@ gboolean test_starts_with(const GByteArray *data, const char *prefix)
 gsize test_pending(WEB_CLIENT_REC *client)
 {
 	return client->output_buffer->len - client->output_pos;
+}
+
+char *test_tmpdir(void)
+{
+	const char *base = g_get_tmp_dir();
+	char *tmpl, *dir;
+
+	if (strlen(base) >= 40)
+		base = "/tmp";
+	tmpl = g_build_filename(base, "fws-XXXXXX", NULL);
+	dir = g_mkdtemp_full(tmpl, 0700);
+	g_assert_nonnull(dir);
+	return dir;
+}
+
+void test_rmtree(const char *path)
+{
+	struct stat st;
+
+	if (lstat(path, &st) < 0)
+		return;
+	if (S_ISDIR(st.st_mode)) {
+		GDir *dir;
+		const char *name;
+
+		/* a mode that lets us in */
+		chmod(path, 0700);
+		dir = g_dir_open(path, 0, NULL);
+		if (dir != NULL) {
+			while ((name = g_dir_read_name(dir)) != NULL) {
+				char *child = g_build_filename(path, name, NULL);
+
+				test_rmtree(child);
+				g_free(child);
+			}
+			g_dir_close(dir);
+		}
+		rmdir(path);
+	} else {
+		unlink(path);
+	}
+}
+
+static void unix_addr(struct sockaddr_un *sa, const char *path)
+{
+	g_assert_cmpuint(strlen(path), <, sizeof(sa->sun_path));
+	memset(sa, 0, sizeof(*sa));
+	sa->sun_family = AF_UNIX;
+	memcpy(sa->sun_path, path, strlen(path));
+}
+
+int test_connect_unix(const char *path)
+{
+	struct sockaddr_un sa;
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	g_assert_cmpint(fd, >=, 0);
+	unix_addr(&sa, path);
+	if (connect(fd, (struct sockaddr *) &sa, sizeof(sa)) < 0) {
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+int test_listening_socket(const char *path)
+{
+	struct sockaddr_un sa;
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+
+	g_assert_cmpint(fd, >=, 0);
+	unix_addr(&sa, path);
+	g_assert_cmpint(bind(fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	g_assert_cmpint(listen(fd, 5), ==, 0);
+	return fd;
+}
+
+void test_dead_socket(const char *path)
+{
+	close(test_listening_socket(path));
+}
+
+char *test_start_unix(const char *path)
+{
+	settings_set_str("fe_web_socket", path);
+	fe_web_server_init();
+	return fe_web_fuzz_take_printed();
 }

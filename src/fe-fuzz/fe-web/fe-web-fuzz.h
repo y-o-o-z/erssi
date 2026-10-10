@@ -94,6 +94,14 @@ void fe_web_fuzz_tls_write_script(const int *results, gsize n);
  * fe_web_fuzz_client_new_peer(): 0 or 1, -1 when none was freed */
 int fe_web_fuzz_tls_freed_failed(void);
 
+/* Unix sockets: with 'on' the peer of every accepted connection counts as
+ * a process of uid getuid() + 1 (SO_PEERCRED / getpeereid) */
+void fe_web_fuzz_fake_peer_other_uid(gboolean on);
+
+/* The next g_mkdir_with_parents() of fe-web-server.c first creates 'dir'
+ * with 'mode' (chmod after mkdir): another user who wins the race */
+void fe_web_fuzz_mkdir_first(const char *dir, int mode);
+
 /* time() in fe-web-server.c; 0 means the real clock */
 void fe_web_fuzz_set_clock(time_t now);
 
