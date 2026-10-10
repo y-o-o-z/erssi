@@ -105,14 +105,22 @@ static void signal_window_item_changed(WINDOW_REC *window, WI_ITEM_REC *item)
 	}
 }
 
+/* TRUE: a join prints only the count line instead of the nick table.
+   Too many nicks for the limit, or alone on the channel (a table with only
+   your own nick says nothing) unless show_names_on_join_alone is set. */
+gboolean fe_channels_join_count_only(int limit, int nicks, gboolean show_alone)
+{
+	return (limit > 0 && nicks > limit) || (nicks <= 1 && !show_alone);
+}
+
 static void sig_channel_joined(CHANNEL_REC *channel)
 {
 	if (settings_get_bool("show_names_on_join") && !channel->session_rejoin) {
 		int limit = settings_get_int("show_names_on_join_limit");
 		int flags = CHANNEL_NICKLIST_FLAG_ALL;
 		int size = g_hash_table_size(channel->nicks);
-		/* alone on the channel: a table with only your nick says nothing */
-		if ((limit > 0 && size > limit) || size <= 1) {
+		if (fe_channels_join_count_only(limit, size,
+		                                settings_get_bool("show_names_on_join_alone"))) {
 			flags |= CHANNEL_NICKLIST_FLAG_COUNT;
 		}
 		fe_channels_nicklist(channel, flags);
@@ -640,6 +648,9 @@ void fe_channels_init(void)
 	/* erssi: the nick list is in the right sidepanel, so a join prints the
 	   count line only ("12 nicks · 2 ops · ..."); /NAMES prints the table */
 	settings_add_int("lookandfeel", "show_names_on_join_limit", 1);
+	/* off: alone on a channel, a join prints the count line, not a table
+	   with your own nick */
+	settings_add_bool("lookandfeel", "show_names_on_join_alone", FALSE);
 	settings_add_int("lookandfeel", "names_max_columns", 6);
 	settings_add_int("lookandfeel", "names_max_width", 0);
 
