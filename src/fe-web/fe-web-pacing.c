@@ -18,64 +18,141 @@
 #include <sys/socket.h>
 
 typedef struct {
-	int fails;        /* wrong passwords in the window */
+	int fails;        /* wrong passwords in the window, at most the limit */
 	time_t last_fail; /* the window ends FE_WEB_FAIL_WINDOW s after it */
 	time_t last_check;
 } PACING_BUCKET;
 
+typedef struct {
+	char *key;
+	PACING_BUCKET bucket;
+} TRUSTED_PEER;
+
 struct _FE_WEB_PACING {
-	GHashTable *peers; /* key (char *) -> PACING_BUCKET * */
-	PACING_BUCKET overflow;
+	GHashTable *peers; /* suspects: key (char *) -> PACING_BUCKET * */
+	PACING_BUCKET overflow; /* suspects the table has no room for */
+	PACING_BUCKET global;   /* the ceiling: wrong passwords of all peers */
+	GQueue trusted;         /* TRUSTED_PEER *, the oldest first */
 };
+
+/* More than 'secs' seconds from 'then' to 'now'. A clock that went back
+ * (now < then) counts as long ago: nobody is locked out by it. */
+static gboolean older_than(time_t then, time_t now, int secs)
+{
+	return now < then || now - then > secs;
+}
+
+/* At least 'secs' seconds from 'then' to 'now', the same way */
+static gboolean at_least(time_t then, time_t now, int secs)
+{
+	return now < then || now - then >= secs;
+}
+
+/* Does the bucket let a check through now: fewer than max_fails wrong
+ * passwords in its window, or 'interval' seconds since its last check.
+ * Nothing is recorded but the end of a window. */
+static gboolean bucket_open(PACING_BUCKET *bucket, time_t now, int max_fails, int interval)
+{
+	if (older_than(bucket->last_fail, now, FE_WEB_FAIL_WINDOW))
+		bucket->fails = 0;
+	return bucket->fails < max_fails || at_least(bucket->last_check, now, interval);
+}
+
+/* A wrong password: TRUE when it is the one that reaches max_fails. Also
+ * while paced the window moves, so guessing on keeps the pacing on. */
+static gboolean bucket_fail(PACING_BUCKET *bucket, time_t now, int max_fails)
+{
+	if (older_than(bucket->last_fail, now, FE_WEB_FAIL_WINDOW))
+		bucket->fails = 0;
+	bucket->last_fail = now;
+	if (bucket->fails >= max_fails)
+		return FALSE;
+	return ++bucket->fails == max_fails;
+}
+
+static void trusted_free(gpointer data)
+{
+	TRUSTED_PEER *trusted = data;
+
+	g_free(trusted->key);
+	g_free(trusted);
+}
+
+static GList *trusted_link(FE_WEB_PACING *pacing, const char *peer)
+{
+	GList *link;
+
+	for (link = pacing->trusted.head; link != NULL; link = link->next) {
+		if (strcmp(((TRUSTED_PEER *) link->data)->key, peer) == 0)
+			return link;
+	}
+	return NULL;
+}
+
+static PACING_BUCKET *trusted_bucket(FE_WEB_PACING *pacing, const char *peer)
+{
+	GList *link = trusted_link(pacing, peer);
+
+	return link != NULL ? &((TRUSTED_PEER *) link->data)->bucket : NULL;
+}
 
 FE_WEB_PACING *fe_web_pacing_new(void)
 {
 	FE_WEB_PACING *pacing = g_new0(FE_WEB_PACING, 1);
 
 	pacing->peers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	g_queue_init(&pacing->trusted);
 	return pacing;
+}
+
+void fe_web_pacing_reset(FE_WEB_PACING *pacing)
+{
+	TRUSTED_PEER *trusted;
+
+	g_hash_table_remove_all(pacing->peers);
+	memset(&pacing->overflow, 0, sizeof(pacing->overflow));
+	memset(&pacing->global, 0, sizeof(pacing->global));
+	while ((trusted = g_queue_pop_head(&pacing->trusted)) != NULL)
+		trusted_free(trusted);
 }
 
 void fe_web_pacing_free(FE_WEB_PACING *pacing)
 {
 	if (pacing == NULL)
 		return;
+	fe_web_pacing_reset(pacing);
 	g_hash_table_destroy(pacing->peers);
 	g_free(pacing);
 }
 
-void fe_web_pacing_reset(FE_WEB_PACING *pacing)
+static gboolean bucket_forgotten(gpointer key, gpointer value, gpointer data)
 {
-	g_hash_table_remove_all(pacing->peers);
-	memset(&pacing->overflow, 0, sizeof(pacing->overflow));
-}
+	const PACING_BUCKET *bucket = value;
 
-static gboolean window_over(const PACING_BUCKET *bucket, time_t now)
-{
-	return now - bucket->last_fail > FE_WEB_FAIL_WINDOW;
-}
-
-static gboolean bucket_expired(gpointer key, gpointer value, gpointer data)
-{
 	(void) key;
-	return window_over(value, *(time_t *) data);
+	return older_than(bucket->last_fail, *(time_t *) data, FE_WEB_PEER_MEMORY);
 }
 
-/* The bucket of peer; NULL for a peer that is not in the table while
- * there is room for it. With 'add' a peer that is not in the table is
- * added when there is room. A full table first drops the peers whose
- * window is over, never one still counting; a peer that still finds no
- * room gets the overflow bucket. */
-static PACING_BUCKET *bucket_of(FE_WEB_PACING *pacing, const char *peer, time_t now,
-                                gboolean add)
+/* The bucket of a peer that is not trusted: its entry in the table, the
+ * overflow bucket when the table has no room for it, or NULL for a clean
+ * peer (not in the table, room for it). With 'add' a clean peer is added.
+ * Entries FE_WEB_PEER_MEMORY s after their last failure are forgotten,
+ * when looked up or to make room; never earlier, so a peer still
+ * remembered cannot be pushed out with new ones. */
+static PACING_BUCKET *suspect_bucket(FE_WEB_PACING *pacing, const char *peer, time_t now,
+                                     gboolean add)
 {
 	PACING_BUCKET *bucket;
 
 	bucket = g_hash_table_lookup(pacing->peers, peer);
+	if (bucket != NULL && bucket_forgotten(NULL, bucket, &now)) {
+		g_hash_table_remove(pacing->peers, peer);
+		bucket = NULL;
+	}
 	if (bucket != NULL)
 		return bucket;
 	if (g_hash_table_size(pacing->peers) >= FE_WEB_PACING_MAX_PEERS)
-		g_hash_table_foreach_remove(pacing->peers, bucket_expired, &now);
+		g_hash_table_foreach_remove(pacing->peers, bucket_forgotten, &now);
 	if (g_hash_table_size(pacing->peers) >= FE_WEB_PACING_MAX_PEERS)
 		return &pacing->overflow;
 	if (!add)
@@ -90,37 +167,77 @@ static PACING_BUCKET *bucket_of(FE_WEB_PACING *pacing, const char *peer, time_t 
 
 gboolean fe_web_pacing_may_check(FE_WEB_PACING *pacing, const char *peer, time_t now)
 {
-	PACING_BUCKET *bucket = bucket_of(pacing, peer, now, FALSE);
+	PACING_BUCKET *bucket;
 
+	bucket = trusted_bucket(pacing, peer);
+	if (bucket != NULL) {
+		/* trusted: its own bucket only */
+		if (!bucket_open(bucket, now, FE_WEB_MAX_FAILS, FE_WEB_CHECK_INTERVAL))
+			return FALSE;
+		bucket->last_check = now;
+		return TRUE;
+	}
+	bucket = suspect_bucket(pacing, peer, now, FALSE);
 	if (bucket == NULL)
-		return TRUE; /* no wrong password from there */
-	if (window_over(bucket, now))
-		bucket->fails = 0;
-	if (bucket->fails >= FE_WEB_MAX_FAILS && now - bucket->last_check < FE_WEB_CHECK_INTERVAL)
+		return TRUE; /* clean: no wrong password remembered */
+
+	/* a suspect: first decide with both buckets, then record in both */
+	if (!bucket_open(bucket, now, FE_WEB_MAX_FAILS, FE_WEB_CHECK_INTERVAL) ||
+	    !bucket_open(&pacing->global, now, FE_WEB_GLOBAL_MAX_FAILS,
+	                 FE_WEB_GLOBAL_CHECK_INTERVAL))
 		return FALSE;
 	bucket->last_check = now;
+	pacing->global.last_check = now;
 	return TRUE;
 }
 
 gboolean fe_web_pacing_failed(FE_WEB_PACING *pacing, const char *peer, time_t now)
 {
-	PACING_BUCKET *bucket = bucket_of(pacing, peer, now, TRUE);
+	PACING_BUCKET *bucket;
 
-	if (window_over(bucket, now))
-		bucket->fails = 0;
-	bucket->last_fail = now;
-	if (bucket->fails < FE_WEB_MAX_FAILS)
-		bucket->fails++;
-	else
-		return FALSE; /* paced already */
-	return bucket->fails == FE_WEB_MAX_FAILS;
+	/* every wrong password counts towards the ceiling */
+	bucket_fail(&pacing->global, now, FE_WEB_GLOBAL_MAX_FAILS);
+
+	bucket = trusted_bucket(pacing, peer);
+	if (bucket == NULL)
+		bucket = suspect_bucket(pacing, peer, now, TRUE);
+	return bucket_fail(bucket, now, FE_WEB_MAX_FAILS);
 }
 
 void fe_web_pacing_succeeded(FE_WEB_PACING *pacing, const char *peer)
 {
+	TRUSTED_PEER *trusted;
+	GList *link;
+
 	/* the overflow bucket is left as it is: the peers that share it
 	 * include the one guessing */
 	g_hash_table_remove(pacing->peers, peer);
+
+	link = trusted_link(pacing, peer);
+	if (link != NULL) {
+		/* the newest again, with a fresh bucket */
+		trusted = link->data;
+		g_queue_delete_link(&pacing->trusted, link);
+	} else {
+		if (g_queue_get_length(&pacing->trusted) >= FE_WEB_PACING_MAX_TRUSTED)
+			trusted_free(g_queue_pop_head(&pacing->trusted));
+		trusted = g_new0(TRUSTED_PEER, 1);
+		trusted->key = g_strdup(peer);
+	}
+	memset(&trusted->bucket, 0, sizeof(trusted->bucket));
+	g_queue_push_tail(&pacing->trusted, trusted);
+}
+
+gboolean fe_web_pacing_in_overflow(FE_WEB_PACING *pacing, const char *peer)
+{
+	return trusted_link(pacing, peer) == NULL &&
+	       g_hash_table_lookup(pacing->peers, peer) == NULL &&
+	       g_hash_table_size(pacing->peers) >= FE_WEB_PACING_MAX_PEERS;
+}
+
+guint fe_web_pacing_table_size(FE_WEB_PACING *pacing)
+{
+	return g_hash_table_size(pacing->peers);
 }
 
 char *fe_web_peer_key_uid(unsigned long uid)

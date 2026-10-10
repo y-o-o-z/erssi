@@ -496,8 +496,17 @@ void fe_web_fuzz_reset_login_state(void)
 {
 	if (login_pacing != NULL)
 		fe_web_pacing_reset(login_pacing);
+	paced_logged = 0;
+	paced_unlogged = 0;
 	refused_logged = 0;
 	refused_unlogged = 0;
+}
+
+FE_WEB_PACING *fe_web_fuzz_login_pacing(void)
+{
+	if (login_pacing == NULL)
+		login_pacing = fe_web_pacing_new();
+	return login_pacing;
 }
 
 void fe_web_fuzz_reset_setup(void)

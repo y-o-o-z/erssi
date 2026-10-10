@@ -64,6 +64,10 @@ static time_t refused_logged = 0;
  * the config anyway. Both are made on the first login. */
 static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
+/* the pacing notice is printed once a minute at most, the peers paced in
+ * between are counted */
+static time_t paced_logged = 0;
+static int paced_unlogged = 0;
 
 /* Connections still logging in have their own limit, so they can never
  * take the places of logged-in clients; when it is reached the oldest of
@@ -411,6 +415,35 @@ static int fe_web_verify_password(const char *data)
 	return result;
 }
 
+/* Notice that logins from peer are paced now; 'overflow': from every peer
+ * of the overflow bucket */
+static void log_paced(const char *peer, gboolean overflow)
+{
+	time_t now = time(NULL);
+
+	if (now >= paced_logged && now - paced_logged < 60) {
+		paced_unlogged++;
+		return;
+	}
+	if (paced_unlogged > 0)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: logins from %d more peers paced since the last notice",
+		          paced_unlogged);
+	if (overflow)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: %d wrong passwords within a minute from new peers, last %s "
+		          "(more than %d peers, counted together) - checking one login from "
+		          "all of them every %d s",
+		          FE_WEB_MAX_FAILS, peer, FE_WEB_PACING_MAX_PEERS, FE_WEB_CHECK_INTERVAL);
+	else
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: %d wrong passwords within a minute from %s - "
+		          "checking one login from there every %d s",
+		          FE_WEB_MAX_FAILS, peer, FE_WEB_CHECK_INTERVAL);
+	paced_logged = now;
+	paced_unlogged = 0;
+}
+
 /* Who the client counts as for login pacing */
 static const char *client_peer(WEB_CLIENT_REC *client)
 {
@@ -465,12 +498,10 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 
 	/* Verify password */
 	if (!fe_web_verify_password(data)) {
-		if (paced && fe_web_pacing_failed(login_pacing, peer, now)) {
-			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: %d wrong passwords within a minute from %s - "
-			          "checking one login from there every %d s",
-			          FE_WEB_MAX_FAILS, peer, FE_WEB_CHECK_INTERVAL);
-		}
+		/* the owner's wrong passwords count nowhere: not in the
+		 * table, not towards the ceiling */
+		if (paced && fe_web_pacing_failed(login_pacing, peer, now))
+			log_paced(peer, fe_web_pacing_in_overflow(login_pacing, peer));
 		log_refused(client, "wrong or missing password");
 
 		/* 401 Unauthorized; the caller closes once it is written */
@@ -943,7 +974,11 @@ static void sig_listen(void)
 			return;
 		}
 		/* no way to tell on this system: the socket file's mode lets
-		 * only our own processes in, but they are paced all the same */
+		 * only our own processes in, but they are paced all the same.
+		 * "uid:unknown" can never be own_peer_key, which is "uid:"
+		 * and digits (fe_web_peer_key_uid()), so it is never exempt;
+		 * Linux and the BSDs always know the uid, so no test reaches
+		 * this. */
 		peer_key = known > 0 ? fe_web_peer_key_uid((unsigned long) uid) :
 		                       g_strdup("uid:unknown");
 	} else {

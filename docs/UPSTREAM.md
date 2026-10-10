@@ -145,7 +145,12 @@ Open at `4833f418`. Each item was checked in the code.
    connections evicts the owner's pending one. This matters on TCP
    loopback on shared machines. Unix-socket mode (`fe_web_socket`) is not
    affected. Fix: per-uid accounting for TCP loopback peers
-   (`/proc/net/tcp`) or a strong hint to use the socket.
+   (`/proc/net/tcp`) or a strong hint to use the socket. Residual risk
+   that stays: during an attack that fills the table of 256 suspect
+   peers, a remote owner on an address that never logged in before shares
+   the overflow bucket and the ceiling with the attacker, so it may get
+   mostly 429. For remote access use the Unix socket through an SSH
+   tunnel (`ssh -L`), or log in once from the address beforehand.
 2. Duplicated code: `fe-ansi/sidepanels-text.c:49` and `:77` copy
    `unformat_24bit_line_color()` and `unformat()` from
    `fe-ansi/textbuffer-view.c:121` and `:165`. Export one helper. The
@@ -207,7 +212,11 @@ Open at `4833f418`. Each item was checked in the code.
 Fixed since `4833f418`:
 
 - fe-web login pacing is per peer: uid on the Unix socket, address (/64
-  for IPv6) on TCP; your own uid is never paced.
+  for IPv6) on TCP; your own uid is never paced. A ceiling holds all
+  suspect peers (a wrong password in the last 10 minutes) together to one
+  check every 2 s once 20 wrong passwords come within a minute, so many
+  addresses get about one check a second in all; clean peers and the
+  last 32 that logged in are not held by it.
 
 ## 6. How to take a change that is not in a pull request
 
