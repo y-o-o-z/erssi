@@ -7,7 +7,8 @@
 #include <irssi/src/fe-web/fe-web-ssl.h>
 
 /* g_test_init(), with warnings not fatal (net_transmit() warns when the
- * peer went away) and criticals still fatal, then fe_web_fuzz_init() */
+ * peer went away) and criticals still fatal, then fe_web_fuzz_init();
+ * warnings, criticals and errors are printed on stderr */
 void test_init(int *argc, char ***argv);
 
 /* A WebSocket frame (FIN set); 'masked' as a browser sends it, with the
