@@ -166,7 +166,7 @@ run_logged() {
 }
 
 # ── versions and signatures ──────────────────────────────────────────
-# "1.3.10" vs "1.3.9": 0 when $1 is newer than $2
+# "2026.10.0" vs "1.3.10", "1.3.10" vs "1.3.9": 0 when $1 is newer than $2
 newer() {
     awk -v a="$1" -v b="$2" 'BEGIN {
         n = split(a, x, "."); m = split(b, y, ".")
@@ -557,7 +557,7 @@ else
 fi
 if [ "$UPDATE" = 1 ]; then
     step "Finding the release"
-    can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-vX.Y.Z"
+    can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.0"
     rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
     [ "$rc" != 2 ] || die "cannot reach $REPO"
     [ "$rc" = 0 ] || die "no signed release newer than $INSTALLED found on $REPO"
