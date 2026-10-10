@@ -7,6 +7,17 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    find it as newer; $J and /version show 2026.10.0, erssi --version
 	    prints "erssi 2026.10.0 (DATE 1000)" ($versiontime is month*100+patch)
 
+	+ Defaults
+	  - the Shellter values of colors_ansi_24bit, print_whois_rpl_in_server_window,
+	    show_names_on_join_limit, nick_column_width, nick_hash_colors,
+	    nick_mode_color_*, hilight_color, hilight_act_color, hidden_settings and
+	    theme come from the default config; C has erssi's defaults
+	  - a config from before 2026.10.0 gets the values it used, written into it
+	    once at the first start (one note after the banner)
+	  - show_names_on_join_alone (off in the default config): a join while alone
+	    prints the count line, not a table with your own nick
+	  - /set -default and /reset give erssi's built-in value
+
 shellter-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.10
 
