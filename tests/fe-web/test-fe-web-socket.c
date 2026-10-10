@@ -338,6 +338,10 @@ static void test_peer_uid_own_accepted(void)
 	addr = g_strdup_printf("unix:%s", path);
 	g_assert_cmpstr(c->addr, ==, addr);
 	g_assert_false(c->authenticated);
+	/* login pacing counts it as erssi's own user */
+	g_free(addr);
+	addr = g_strdup_printf("uid:%lu", (unsigned long) getuid());
+	g_assert_cmpstr(c->peer_key, ==, addr);
 	close(fd);
 	g_free(addr);
 	g_free(path);

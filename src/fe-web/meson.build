@@ -14,6 +14,7 @@ fe_web_sources = files(
   'fe-web-ssl.c',
   'fe-web-crypto.c',
   'fe-web-netserver.c',
+  'fe-web-pacing.c',
 )
 
 shared_library('fe_web',

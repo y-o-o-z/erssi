@@ -68,6 +68,7 @@ void fe_web_client_destroy(WEB_CLIENT_REC *client)
 	/* Cleanup */
 	g_free(client->id);
 	g_free(client->addr);
+	g_free(client->peer_key);
 	g_free(client->websocket_key);
 
 	if (client->synced_channels != NULL) {
