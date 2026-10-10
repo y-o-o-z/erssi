@@ -81,6 +81,8 @@ $A .. $Z is important.
    $$         a literal '$'
 
    $versiontime         prints time of the irssi version in HHMM format
+                        (erssi Shellter Edition: month*100+patch of the calendar
+                        version, e.g. 1000 for 2026.10.0)
    $sysname             system name (eg. Linux)
    $sysrelease          system release (eg. 2.2.18)
    $sysarch             system architecture (eg. i686)

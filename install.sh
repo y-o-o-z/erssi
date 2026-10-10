@@ -336,14 +336,17 @@ show_completion_message() {
 main() {
    # Extract version from NEWS file
    if [[ -f "NEWS" ]]; then
-       # Try erssi-v format first (erssi releases), fallback to v format (irssi upstream)
-       VERSION_LINE=$(grep '^erssi-v' NEWS | head -1)
+       # Try shellter-v format first (erssi Shellter Edition), then erssi-v (erssi-org), then v (irssi upstream)
+       VERSION_LINE=$(grep '^shellter-v' NEWS | head -1)
+       if [ -z "$VERSION_LINE" ]; then
+           VERSION_LINE=$(grep '^erssi-v' NEWS | head -1)
+       fi
        if [ -z "$VERSION_LINE" ]; then
            VERSION_LINE=$(grep '^v' NEWS | head -1)
        fi
 
-       # Extract version number (e.g., 1.2.0)
-       VERSION=$(echo "$VERSION_LINE" | awk '{print $1}' | sed 's/^erssi-v//;s/^v//')
+       # Extract version number (e.g., 2026.10.0)
+       VERSION=$(echo "$VERSION_LINE" | awk '{print $1}' | sed 's/^shellter-v//;s/^erssi-v//;s/^v//')
    else
        VERSION="unknown"
    fi
