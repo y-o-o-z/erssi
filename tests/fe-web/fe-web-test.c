@@ -11,11 +11,34 @@
 
 #include <string.h>
 
+/* Warnings, criticals and errors go to stderr (meson shows it for a failed
+ * test; stdout is the TAP stream); the fatal mask still applies after the
+ * handler. Messages, info and debug are dropped, as the fuzz harness does. */
+static void test_log_handler(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                             gpointer data)
+{
+	const char *name;
+
+	(void) data;
+	if (level & G_LOG_LEVEL_ERROR)
+		name = "ERROR";
+	else if (level & G_LOG_LEVEL_CRITICAL)
+		name = "CRITICAL";
+	else if (level & G_LOG_LEVEL_WARNING)
+		name = "WARNING";
+	else
+		return;
+	g_printerr("%s%s%s: %s\n", domain != NULL ? domain : "", domain != NULL ? "-" : "", name,
+	           message);
+}
+
 void test_init(int *argc, char ***argv)
 {
 	g_test_init(argc, argv, NULL);
 	g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
 	fe_web_fuzz_init(FALSE);
+	/* after fe_web_fuzz_init(), which drops everything */
+	g_log_set_default_handler(test_log_handler, NULL);
 }
 
 GByteArray *test_frame(int opcode, const void *payload, gsize len, gboolean masked)

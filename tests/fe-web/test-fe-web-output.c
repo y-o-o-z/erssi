@@ -16,6 +16,9 @@
 #include <string.h>
 
 #define MB (1024 * 1024)
+/* not a power of two: the last chunk that fills the socket is usually
+ * written only in part */
+#define CHUNK 300007
 /* copies of the limits in fe-web-server.c */
 #define FE_WEB_MAX_OUTPUT (32 * MB)
 #define FE_WEB_LINGER_TIMEOUT 5
@@ -32,21 +35,41 @@ static void fill_patterns(void)
 		B[i] = i * 13 % 251;
 }
 
-/* Send 1 MB chunks to a client whose browser does not read, until some
- * are queued: the socket is full then. Returns what was sent. */
+/* byte 'pos' of what fill_socket() sends: never 0, period 251 */
+static guchar fill_byte(gsize pos)
+{
+	return pos % 251 + 1;
+}
+
+/* Send chunks to a client whose browser does not read, until some are
+ * queued: the socket is full then. Returns what was sent. */
 static gsize fill_socket(WEB_CLIENT_REC *c)
 {
-	guchar *chunk = g_malloc0(MB);
-	gsize sent = 0;
-	int i;
+	guchar *chunk = g_malloc(CHUNK);
+	gsize sent = 0, i;
+	int n;
 
-	for (i = 0; i < 64 && test_pending(c) == 0; i++) {
-		g_assert_true(fe_web_client_send_raw(c, chunk, MB));
-		sent += MB;
+	for (n = 0; n < 64 && test_pending(c) == 0; n++) {
+		for (i = 0; i < CHUNK; i++)
+			chunk[i] = fill_byte(sent + i);
+		g_assert_true(fe_web_client_send_raw(c, chunk, CHUNK));
+		sent += CHUNK;
 	}
 	g_assert_cmpuint(test_pending(c), >, 0);
 	g_free(chunk);
 	return sent;
+}
+
+/* Is data what fill_socket() sent, in order */
+static void assert_filled(const guchar *data, gsize len)
+{
+	gsize i;
+
+	for (i = 0; i < len; i++) {
+		if (data[i] != fill_byte(i))
+			g_error("byte %" G_GSIZE_FORMAT " of %" G_GSIZE_FORMAT
+			        " is %u, not %u", i, len, data[i], fill_byte(i));
+	}
 }
 
 /* A masked close frame with status 1000, from the browser */
@@ -161,6 +184,32 @@ static void test_write_error_closes_later(void)
 	g_assert_cmpuint(c->close_tag, !=, 0);
 	fe_web_fuzz_iterate(100);
 	g_assert_false(fe_web_fuzz_client_alive(c));
+	/* the TLS layer marks the channel: no close_notify after an error */
+	g_assert_cmpint(fe_web_fuzz_tls_freed_failed(), ==, 1);
+	fe_web_fuzz_client_free(c);
+}
+
+/* Over 32 MB queued for a TLS client: the channel is closed without a
+ * close_notify, as a record may be cut */
+static void test_overflow_cuts_tls_record(void)
+{
+	static const int script[] = { 100, FE_WEB_SSL_WANT_WRITE };
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, TRUE);
+	guchar *big;
+
+	fe_web_fuzz_tls_write_script(script, 2);
+	g_assert_true(fe_web_client_send_raw(c, A, 1000));
+	g_assert_cmpuint(test_pending(c), ==, 900);
+
+	big = g_malloc0(FE_WEB_MAX_OUTPUT);
+	g_assert_false(fe_web_client_send_raw(c, big, FE_WEB_MAX_OUTPUT));
+	g_free(big);
+	g_assert_true(c->output_failed);
+	g_free(fe_web_fuzz_take_printed());
+
+	fe_web_fuzz_iterate(100);
+	g_assert_false(fe_web_fuzz_client_alive(c));
+	g_assert_cmpint(fe_web_fuzz_tls_freed_failed(), ==, 1);
 	fe_web_fuzz_client_free(c);
 }
 
@@ -190,6 +239,7 @@ static void test_close_after_queued_output(void)
 	fe_web_fuzz_read_peer(0);
 
 	got = fe_web_fuzz_received();
+	assert_filled(got->data, MIN(got->len, sent));
 	g_assert_cmpuint(got->len, ==, sent + sizeof(close_reply));
 	g_assert_cmpmem(got->data + got->len - sizeof(close_reply), sizeof(close_reply),
 	                close_reply, sizeof(close_reply));
@@ -205,7 +255,11 @@ static void test_linger_timeout(void)
 	peer_sends_close(c);
 	g_assert_true(c->closing);
 	g_assert_true(fe_web_fuzz_client_alive(c));
-	fe_web_fuzz_iterate((FE_WEB_LINGER_TIMEOUT + 1) * 1000);
+	/* not before the timeout ... */
+	fe_web_fuzz_iterate((FE_WEB_LINGER_TIMEOUT - 1) * 1000);
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	/* ... and by then (GLib rounds the seconds up, by under one) */
+	fe_web_fuzz_iterate(2 * 1000);
 	g_assert_false(fe_web_fuzz_client_alive(c));
 	fe_web_fuzz_client_free(c);
 }
@@ -222,6 +276,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/output/overflow-closes", test_overflow_closes);
 	g_test_add_func("/fe-web/output/write-error-closes-later",
 	                test_write_error_closes_later);
+	g_test_add_func("/fe-web/output/overflow-cuts-tls-record",
+	                test_overflow_cuts_tls_record);
 	g_test_add_func("/fe-web/output/close-after-queued-output",
 	                test_close_after_queued_output);
 	g_test_add_func("/fe-web/output/linger-timeout", test_linger_timeout);

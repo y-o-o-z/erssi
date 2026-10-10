@@ -85,6 +85,7 @@ static time_t fe_web_fuzz_time(time_t *t);
 #include <irssi/src/fe-ansi/sidepanels-render.h>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -166,6 +167,44 @@ static void remove_tree(const char *path)
 	rmdir(path);
 }
 
+/* The home of a run that was killed or aborted is left behind; the next
+ * run removes it. Only directories named erssi-fe-web-fuzz-<pid>-*, owned
+ * by this user, real directories (not links) and whose process is gone. */
+#define FUZZ_HOME_PREFIX "erssi-fe-web-fuzz-"
+
+static void remove_stale_homes(void)
+{
+	const char *tmp = g_get_tmp_dir();
+	const char *name;
+	GDir *dir;
+
+	dir = g_dir_open(tmp, 0, NULL);
+	if (dir == NULL)
+		return;
+	while ((name = g_dir_read_name(dir)) != NULL) {
+		const char *p = name + strlen(FUZZ_HOME_PREFIX);
+		char *end, *path;
+		struct stat st;
+		long pid;
+
+		if (strncmp(name, FUZZ_HOME_PREFIX, strlen(FUZZ_HOME_PREFIX)) != 0)
+			continue;
+		errno = 0;
+		pid = strtol(p, &end, 10);
+		if (errno != 0 || end == p || *end != '-' || pid <= 0 || pid == getpid())
+			continue;
+		if (kill((pid_t) pid, 0) == 0 || errno != ESRCH)
+			continue; /* still running, or not ours to ask about */
+		path = g_build_filename(tmp, name, NULL);
+		if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid())
+			remove_tree(path);
+		g_free(path);
+	}
+	g_dir_close(dir);
+}
+
+static void free_tls_retry(void);
+
 static void remove_fuzz_home(void)
 {
 	if (fuzz_home != NULL)
@@ -175,6 +214,7 @@ static void remove_fuzz_home(void)
 	if (printed != NULL)
 		g_string_free(printed, TRUE);
 	printed = NULL;
+	free_tls_retry();
 }
 
 void fe_web_fuzz_init(gboolean with_irc_signals)
@@ -185,7 +225,13 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 	if (!verbose)
 		g_log_set_null_logger();
 
-	fuzz_home = g_dir_make_tmp("erssi-fe-web-fuzz-XXXXXX", NULL);
+	remove_stale_homes();
+	{
+		char *template = g_strdup_printf(FUZZ_HOME_PREFIX "%ld-XXXXXX", (long) getpid());
+
+		fuzz_home = g_dir_make_tmp(template, NULL);
+		g_free(template);
+	}
 	if (fuzz_home == NULL)
 		abort();
 	atexit(remove_fuzz_home);
@@ -235,6 +281,13 @@ static GByteArray *received = NULL;
 #define TLS_SCRIPT_MAX 64
 static int tls_script[TLS_SCRIPT_MAX];
 static gsize tls_script_len = 0, tls_script_pos = 0;
+/* What the last TLS write offered when it returned a WANT result: OpenSSL
+ * needs the next write on that channel to offer at least those bytes
+ * again (fe-web-ssl.h) */
+static FE_WEB_SSL_CHANNEL *tls_retry_chan = NULL;
+static GByteArray *tls_retry = NULL;
+/* the failed flag of the last TLS channel freed, -1 for none */
+static int tls_freed_failed = -1;
 
 WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logged_in,
                                             gboolean tls)
@@ -256,6 +309,7 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logge
 		received = g_byte_array_new();
 	g_byte_array_set_size(received, 0);
 	tls_script_len = tls_script_pos = 0;
+	tls_freed_failed = -1;
 
 	client = fe_web_client_create(sv[0], "fuzz:0");
 	client->handle = net_sendbuffer_create(i_io_channel_new(sv[0]), 0);
@@ -526,6 +580,19 @@ void fe_web_fuzz_iterate(int ms)
 		;
 }
 
+static void free_tls_retry(void)
+{
+	if (tls_retry != NULL)
+		g_byte_array_free(tls_retry, TRUE);
+	tls_retry = NULL;
+	tls_retry_chan = NULL;
+}
+
+int fe_web_fuzz_tls_freed_failed(void)
+{
+	return tls_freed_failed;
+}
+
 int fe_web_fuzz_listen_port(void)
 {
 	return listen_port;
@@ -552,6 +619,11 @@ static FE_WEB_SSL_CHANNEL *fe_web_fuzz_ssl_channel_create(GIOChannel *plain_chan
 
 static void fe_web_fuzz_ssl_channel_free(FE_WEB_SSL_CHANNEL *chan)
 {
+	if (chan == NULL)
+		return;
+	tls_freed_failed = chan->failed;
+	if (tls_retry_chan == chan)
+		tls_retry_chan = NULL;
 	g_free(chan);
 }
 
@@ -584,7 +656,7 @@ static int fe_web_fuzz_ssl_send(FE_WEB_SSL_CHANNEL *chan, const char *data, int 
 	return -1;
 }
 
-static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len)
+static int fe_web_fuzz_ssl_write_once(FE_WEB_SSL_CHANNEL *chan, const char *data, int len)
 {
 	int result;
 
@@ -595,6 +667,31 @@ static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int
 		return fe_web_fuzz_ssl_send(chan, data, MIN(result, len));
 	if (result == -1)
 		chan->failed = 1;
+	return result;
+}
+
+static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len)
+{
+	int result;
+
+	if (tls_retry_chan == chan &&
+	    ((gsize) len < tls_retry->len || memcmp(data, tls_retry->data, tls_retry->len) != 0)) {
+		/* OpenSSL fails such a write with "bad write retry" */
+		g_error("fe-web-fuzz: TLS write retry offers %d bytes, not the %u "
+		        "offered before%s",
+		        len, tls_retry->len,
+		        (gsize) len < tls_retry->len ? "" : " (other contents)");
+	}
+	tls_retry_chan = NULL;
+
+	result = fe_web_fuzz_ssl_write_once(chan, data, len);
+	if (result == FE_WEB_SSL_WANT_WRITE || result == FE_WEB_SSL_WANT_READ) {
+		if (tls_retry == NULL)
+			tls_retry = g_byte_array_new();
+		g_byte_array_set_size(tls_retry, 0);
+		g_byte_array_append(tls_retry, (const guchar *) data, len);
+		tls_retry_chan = chan;
+	}
 	return result;
 }
 

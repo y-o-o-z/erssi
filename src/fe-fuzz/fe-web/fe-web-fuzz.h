@@ -86,6 +86,14 @@ void fe_web_fuzz_peer_write(const void *data, gsize len);
  * FE_WEB_SSL_WANT_WRITE). */
 void fe_web_fuzz_tls_write_script(const int *results, gsize n);
 
+/* After a WANT result the stand-in TLS checks the OpenSSL retry rule: the
+ * next write on that channel offers at least the same bytes again, or the
+ * test fails (g_error). */
+
+/* The failed flag (no close_notify) of the last TLS channel freed since
+ * fe_web_fuzz_client_new_peer(): 0 or 1, -1 when none was freed */
+int fe_web_fuzz_tls_freed_failed(void);
+
 /* time() in fe-web-server.c; 0 means the real clock */
 void fe_web_fuzz_set_clock(time_t now);
 
