@@ -2,6 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
+[![CI](https://img.shields.io/github/checks-status/y-o-o-z/erssi/main?label=CI)](https://github.com/y-o-o-z/erssi/commits/main)
 [![Release](https://img.shields.io/badge/release-1.3.10-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
@@ -283,12 +284,22 @@ git fetch upstream && git merge upstream/main     # follow erssi
 Tests run with `HOME` inside the build directory, so building and testing
 never writes into your own `~/.erssi`. `utils/pre-push` builds, runs the
 tests and checks the release tags before every push.
-`.github/workflows/shellter-ci.yml` describes the same hardened and
-sanitizer builds and the installer checks for GitHub Actions, which are
-switched off on this repository for now.
 
 Changes are kept in topic commits that explain the problem they solve, so
 upstream merges stay reviewable.
+
+### Continuous integration
+
+Every commit on `main`, every release tag and the branches of the
+maintainer's pull requests are built and tested on the maintainer's own
+server: the hardened build with `meson test`, the ASan/UBSan build, live
+E2E interop with `rpe2e.pl`, libFuzzer runs on the fe-web and E2E parsers,
+the installer test and shellcheck. Each job is a commit status (the check
+mark next to a commit) that links to a summary page. Pull requests from
+other contributors are tested after the maintainer has reviewed them.
+
+`.github/workflows/shellter-ci.yml` describes the same jobs for GitHub
+Actions, which stay switched off on this repository.
 
 ## Credits and license
 
