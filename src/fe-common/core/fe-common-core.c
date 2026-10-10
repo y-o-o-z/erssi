@@ -49,6 +49,7 @@
 #include <irssi/src/fe-common/core/window-items.h>
 #include <irssi/src/fe-common/core/windows-layout.h>
 #include <irssi/src/fe-common/core/fe-recode.h>
+#include <irssi/src/fe-common/core/shellter-defaults.h>
 
 #include <signal.h>
 
@@ -150,6 +151,9 @@ void fe_common_core_register_options(void)
 void fe_common_core_init(void)
 {
 	const char *str;
+
+	/* before any setting is read: older configs keep the Shellter values */
+	shellter_defaults_init();
 
 	settings_add_bool("lookandfeel", "timestamps", TRUE);
 	settings_add_level("lookandfeel", "timestamp_level", "ALL");
