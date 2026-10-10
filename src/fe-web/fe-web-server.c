@@ -16,6 +16,7 @@
 #include "fe-web.h"
 #include "fe-web-ssl.h"
 #include "fe-web-crypto.h"
+#include "fe-web-pacing.h"
 
 #include <irssi/src/core/network.h>
 #include <irssi/src/core/net-sendbuffer.h>
@@ -52,17 +53,17 @@ static ino_t listen_ino;
 #define FE_WEB_HANDSHAKE_TIMEOUT 10
 static guint relisten_tag = 0;
 static time_t refused_logged = 0;
-/* After FE_WEB_MAX_FAILS wrong passwords within a minute, logins are paced:
- * one password is checked every FE_WEB_CHECK_INTERVAL seconds and requests
- * in between are refused unchecked (429), until a minute passes without a
- * wrong password. Not a full lockout: fe-web usually listens on a loopback
- * port every user of a shared box can reach, and a lockout would let any of
- * them keep the owner's web client out for good. */
-#define FE_WEB_MAX_FAILS 5
-#define FE_WEB_CHECK_INTERVAL 2
-static int login_fails = 0;
-static time_t login_last_fail = 0;
-static time_t login_last_check = 0;
+/* After FE_WEB_MAX_FAILS wrong passwords within a minute from one peer,
+ * logins from that peer are paced: one password is checked every
+ * FE_WEB_CHECK_INTERVAL seconds and requests in between are refused
+ * unchecked (429), until a minute passes without a wrong password
+ * (fe-web-pacing.h). Not a full lockout, and per peer: fe-web usually
+ * listens on a loopback port every user of a shared box can reach, and
+ * none of them may keep the owner's web client out. The owner's own
+ * processes (own_peer_key) are never paced: they can read the password in
+ * the config anyway. Both are made on the first login. */
+static FE_WEB_PACING *login_pacing = NULL;
+static char *own_peer_key = NULL;
 
 /* Connections still logging in have their own limit, so they can never
  * take the places of logged-in clients; when it is reached the oldest of
@@ -410,6 +411,12 @@ static int fe_web_verify_password(const char *data)
 	return result;
 }
 
+/* Who the client counts as for login pacing */
+static const char *client_peer(WEB_CLIENT_REC *client)
+{
+	return client->peer_key != NULL ? client->peer_key : "unknown";
+}
+
 /* Handle WebSocket handshake (RFC 6455) */
 static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 {
@@ -419,6 +426,8 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	char *accept_key;
 	GString *response;
 	time_t now;
+	const char *peer;
+	gboolean paced;
 
 	/* Look for Sec-WebSocket-Key header */
 	key_line = strstr(data, "Sec-WebSocket-Key:");
@@ -435,11 +444,17 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		return 0; /* Headers not complete */
 	}
 
-	/* Paced after too many wrong passwords: one check per interval */
+	/* Paced after too many wrong passwords from this peer: one check per
+	 * interval. A client without a peer key counts as one peer with all
+	 * the others that have none. */
 	now = time(NULL);
-	if (now - login_last_fail > 60)
-		login_fails = 0;
-	if (login_fails >= FE_WEB_MAX_FAILS && now - login_last_check < FE_WEB_CHECK_INTERVAL) {
+	if (login_pacing == NULL)
+		login_pacing = fe_web_pacing_new();
+	if (own_peer_key == NULL)
+		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
+	peer = client_peer(client);
+	paced = strcmp(peer, own_peer_key) != 0;
+	if (paced && !fe_web_pacing_may_check(login_pacing, peer, now)) {
 		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
 		                           "Retry-After: " G_STRINGIFY(FE_WEB_CHECK_INTERVAL) "\r\n"
 		                           "Content-Length: 0\r\n\r\n";
@@ -447,16 +462,14 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		log_refused(client, "too many wrong passwords, logins paced");
 		return -1;
 	}
-	login_last_check = now;
 
 	/* Verify password */
 	if (!fe_web_verify_password(data)) {
-		login_last_fail = now;
-		if (++login_fails == FE_WEB_MAX_FAILS) {
+		if (paced && fe_web_pacing_failed(login_pacing, peer, now)) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "fe-web: %d wrong passwords within a minute - "
-			          "checking one login every %d s",
-			          FE_WEB_MAX_FAILS, FE_WEB_CHECK_INTERVAL);
+			          "fe-web: %d wrong passwords within a minute from %s - "
+			          "checking one login from there every %d s",
+			          FE_WEB_MAX_FAILS, peer, FE_WEB_CHECK_INTERVAL);
 		}
 		log_refused(client, "wrong or missing password");
 
@@ -778,7 +791,8 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			fe_web_message_free(msg);
 
 			client->authenticated = TRUE;
-			login_fails = 0;
+			if (login_pacing != NULL)
+				fe_web_pacing_succeeded(login_pacing, client_peer(client));
 
 			/* Clear input buffer */
 			g_byte_array_set_size(client->input_buffer, 0);
@@ -886,7 +900,7 @@ static void sig_listen(void)
 	int port;
 	GIOChannel *handle;
 	char host[MAX_IP_LEN];
-	char *addr;
+	char *addr, *peer_key;
 	WEB_CLIENT_REC *client;
 	NET_SENDBUF_REC *sendbuf;
 
@@ -928,9 +942,14 @@ static void sig_listen(void)
 			net_disconnect(handle);
 			return;
 		}
+		/* no way to tell on this system: the socket file's mode lets
+		 * only our own processes in, but they are paced all the same */
+		peer_key = known > 0 ? fe_web_peer_key_uid((unsigned long) uid) :
+		                       g_strdup("uid:unknown");
 	} else {
 		net_ip2host(&ip, host);
 		addr = g_strdup_printf("%s:%d", host, port);
+		peer_key = fe_web_peer_key_ip(&ip);
 	}
 
 	{
@@ -951,6 +970,7 @@ static void sig_listen(void)
 		if (logged_in >= FE_WEB_MAX_CLIENTS) {
 			log_refused_addr(addr, "too many web clients logged in");
 			g_free(addr);
+			g_free(peer_key);
 			net_disconnect(handle);
 			return;
 		}
@@ -973,6 +993,7 @@ static void sig_listen(void)
 
 	/* Create client record */
 	client = fe_web_client_create(g_io_channel_unix_get_fd(handle), addr);
+	client->peer_key = peer_key;
 
 	/* Create send buffer */
 	sendbuf = net_sendbuffer_create(handle, 0);
@@ -1447,6 +1468,11 @@ void fe_web_server_deinit(void)
 	socket_remove();
 
 	listen_port = -1;
+
+	fe_web_pacing_free(login_pacing);
+	login_pacing = NULL;
+	g_free(own_peer_key);
+	own_peer_key = NULL;
 
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: WebSocket server stopped");

@@ -58,8 +58,9 @@ int fe_web_fuzz_verify_password(const char *request);
 /* New web client on a socketpair, as fe_web_fuzz_client_new(); with 'tls'
  * it has use_ssl set and a stand-in TLS channel, which is the plain socket
  * (see fe_web_fuzz_tls_write_script()). 'peer_key' is the peer the client
- * counts as (not used yet). Clears fe_web_fuzz_received() and the write
- * script. */
+ * counts as for login pacing (client->peer_key, e.g. "uid:1001");
+ * fe_web_fuzz_client_new() uses "fuzz". Clears fe_web_fuzz_received() and
+ * the write script. */
 WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logged_in,
                                             gboolean tls);
 

@@ -55,6 +55,11 @@ typedef struct {
 	char *id;   /* UUID or timestamp-counter */
 	char *addr; /* Client IP address (for logging) */
 	time_t connected_at;
+	/* who the client counts as for login pacing: "uid:1000" or
+	 * "ip:192.0.2.7" (fe-web-pacing.h) */
+	char *peer_key;
+	/* peer_key is an address other users of this machine share */
+	unsigned int peer_shared : 1;
 
 	/* WebSocket state */
 	unsigned int authenticated : 1;

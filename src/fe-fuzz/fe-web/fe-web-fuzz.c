@@ -309,7 +309,6 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logge
 	WEB_CLIENT_REC *client;
 	int sv[2];
 
-	(void) peer_key;
 	if (peer_fd != -1 || socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
 		abort();
 	fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
@@ -326,6 +325,7 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logge
 	tls_freed_failed = -1;
 
 	client = fe_web_client_create(sv[0], "fuzz:0");
+	client->peer_key = g_strdup(peer_key);
 	client->handle = net_sendbuffer_create(i_io_channel_new(sv[0]), 0);
 	if (tls) {
 		client->use_ssl = TRUE;
@@ -494,9 +494,8 @@ void fe_web_fuzz_client_free(WEB_CLIENT_REC *client)
 
 void fe_web_fuzz_reset_login_state(void)
 {
-	login_fails = 0;
-	login_last_fail = 0;
-	login_last_check = 0;
+	if (login_pacing != NULL)
+		fe_web_pacing_reset(login_pacing);
 	refused_logged = 0;
 	refused_unlogged = 0;
 }

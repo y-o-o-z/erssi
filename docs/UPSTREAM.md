@@ -139,13 +139,13 @@ Not meant for erssi main. 99 commits.
 
 Open at `4833f418`. Each item was checked in the code.
 
-1. fe-web login pacing is global, not per peer. `fe-web-server.c:442-450`:
-   one local user who sends a wrong password every 2 s takes every check
-   slot, so the owner mostly gets 429. `fe-web-server.c:957-960`: a loop
-   of new connections evicts the owner's pending one. This matters on
-   TCP loopback on shared machines. Unix-socket mode
-   (`fe_web_socket`) is not affected. Fix: per-uid accounting
-   (`SO_PEERCRED` / `getpeereid`) or a strong hint to use the socket.
+1. fe-web, the rest of the per-peer work (login pacing itself is fixed,
+   see below). On TCP loopback all local users are one address, so they
+   share one pacing bucket. `fe-web-server.c:957-960`: a loop of new
+   connections evicts the owner's pending one. This matters on TCP
+   loopback on shared machines. Unix-socket mode (`fe_web_socket`) is not
+   affected. Fix: per-uid accounting for TCP loopback peers
+   (`/proc/net/tcp`) or a strong hint to use the socket.
 2. Duplicated code: `fe-ansi/sidepanels-text.c:49` and `:77` copy
    `unformat_24bit_line_color()` and `unformat()` from
    `fe-ansi/textbuffer-view.c:121` and `:165`. Export one helper. The
@@ -203,6 +203,11 @@ Open at `4833f418`. Each item was checked in the code.
     `lag_min_show`, `term_force_colors`, `colors`, `actlist_sort`). Moving
     it to `"fe-ansi"` would change two values that users see (2000 lines,
     2), so it is left as is.
+
+Fixed since `4833f418`:
+
+- fe-web login pacing is per peer: uid on the Unix socket, address (/64
+  for IPv6) on TCP; your own uid is never paced.
 
 ## 6. How to take a change that is not in a pull request
 
