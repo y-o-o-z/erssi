@@ -46,6 +46,9 @@ void fe_web_fuzz_client_free(WEB_CLIENT_REC *client);
 /* Forget login failures so every input gets its password checked */
 void fe_web_fuzz_reset_login_state(void);
 
+/* The login pacing of fe-web-server.c (made if there is none yet) */
+struct _FE_WEB_PACING *fe_web_fuzz_login_pacing(void);
+
 /* Remove networks and servers that web clients added */
 void fe_web_fuzz_reset_setup(void);
 
