@@ -7,11 +7,13 @@
  * one end of a socketpair and the real client_input_once() of
  * fe-web-server.c reads and handles them from the other end (plain socket
  * instead of TLS - the TLS layer is OpenSSL's, fe-web parses what comes out
- * of it). Everything fe-web sends back is read and dropped. */
+ * of it). Everything fe-web sends back is read, and kept for the unit
+ * tests until the next client is made. */
 
 #include <glib.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 #include <irssi/src/fe-web/fe-web.h>
 
@@ -50,6 +52,52 @@ void fe_web_fuzz_reset_setup(void);
 /* fe_web_verify_password() of fe-web-server.c, on a NUL-terminated
  * request */
 int fe_web_fuzz_verify_password(const char *request);
+
+/* for the unit tests in tests/fe-web */
+
+/* New web client on a socketpair, as fe_web_fuzz_client_new(); with 'tls'
+ * it has use_ssl set and a stand-in TLS channel, which is the plain socket
+ * (see fe_web_fuzz_tls_write_script()). 'peer_key' is the peer the client
+ * counts as (not used yet). Clears fe_web_fuzz_received() and the write
+ * script. */
+WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logged_in,
+                                            gboolean tls);
+
+/* Everything the browser end read for the current client */
+const GByteArray *fe_web_fuzz_received(void);
+
+/* Read at most 'max' bytes (0: until nothing is left) at the browser end,
+ * into fe_web_fuzz_received(); returns how many */
+gsize fe_web_fuzz_read_peer(gsize max);
+
+/* What the writable watch of the client does: output_ready() when it has
+ * one (send_tag != -1) */
+void fe_web_fuzz_client_writable(WEB_CLIENT_REC *client);
+
+/* What the input watch of the client does: client_input() */
+void fe_web_fuzz_client_input(WEB_CLIENT_REC *client);
+
+/* The browser end writes; fe-web does not read it yet */
+void fe_web_fuzz_peer_write(const void *data, gsize len);
+
+/* Results for the next writes of the stand-in TLS: n > 0 writes at most
+ * n bytes, FE_WEB_SSL_WANT_WRITE, FE_WEB_SSL_WANT_READ or -1 (an error).
+ * Once the script is used up, writes go to the socket (a full socket gives
+ * FE_WEB_SSL_WANT_WRITE). */
+void fe_web_fuzz_tls_write_script(const int *results, gsize n);
+
+/* time() in fe-web-server.c; 0 means the real clock */
+void fe_web_fuzz_set_clock(time_t now);
+
+/* The text, without formatting codes, of every "print text" since the
+ * last call, one line each (to be freed) */
+char *fe_web_fuzz_take_printed(void);
+
+/* Run the default main context for 'ms' milliseconds */
+void fe_web_fuzz_iterate(int ms);
+
+/* The port fe-web-server.c listens on (-1: none) */
+int fe_web_fuzz_listen_port(void);
 
 /* the libFuzzer entry points every target defines */
 int LLVMFuzzerInitialize(int *argc, char ***argv);
