@@ -37,10 +37,34 @@ Merge order does not matter. The only overlap: #7 and #9 both add one
 line to `docs/help/meson.build` at the same place; keep both.
 
 Not in the pull requests, on purpose: the changes of section 3 (they
-change defaults), section 4 (fork-only), the rxvt-unicode 256-colour part
-of the scroll-arrow change (it needs the truecolor fallback of section 3),
+change behaviour in C), the defaults of the next subsection (not yet in a
+pull request), section 4 (fork-only), the rxvt-unicode 256-colour part
+of the scroll-arrow change (it needs the truecolor fallback of the next subsection),
 the /HELP CREDENTIAL text (it describes the fork's credential refusal) and
 the `~/.erssi/help` lookup order of /HELP.
+
+### Ready to take, not yet in a pull request: defaults back in C
+
+Since 2026.10.0 these changes keep erssi-org's default in C. The Shellter
+value is set in the default config (`irssi.conf`) of a new `~/.erssi`; a
+config from before 2026.10.0 gets it written once at the first start (the
+fork-only `shellter-defaults.c`, section 4). Each row can be taken as it is.
+
+| Commits | Change | Default in C (erssi-org) | Shellter value (irssi.conf) |
+|---|---|---|---|
+| `bdeb8084 47daae64` + `6c8c3adb` | 256-colour fallback for 24-bit colours (GNU Screen, Linux console, 8/16-colour terminals); new `term_truecolor auto/on/off` | `colors_ansi_24bit` OFF; with OFF, the fallback gives upstream users 256 colours. v1.3.1 wrote 24-bit codes at start whatever the setting said, so upstream should decide | `"fe-ansi"`: `colors_ansi_24bit` yes |
+| `0609e771` + `6c8c3adb` | WHOIS and WHOWAS replies go to the network's status window | `print_whois_rpl_in_server_window` OFF | ON |
+| `9e393a2d` + `6c8c3adb` | join prints only the nick count line | `show_names_on_join_limit` 18 | 1 |
+| `92c1a7ac` (fe-channels.c) + `ca68b1df` + `6c8c3adb` | alone on a channel: count line, no names table. `ca68b1df` replaces the hard-coded rule with the setting `show_names_on_join_alone` | `show_names_on_join_alone` ON, as v1.3.1 | no |
+| `f42ff98d` + `6c8c3adb` | `$nickmode` expando (mode prefix coloured by rank, new `nick_mode_color_*` settings), theme default, `nick_column_width`, `nick_hash_colors` | `theme` `default`, `nick_column_width` 10, `nick_hash_colors` "g r b m c y G C", `nick_mode_color_*` "". `$nickmode` itself is additive | theme `shellter`, width 13, the shellter palette, rank colours set |
+| `1ea1bd1f` + `6c8c3adb` | 24-bit hilight colours | `hilight_color` `%Y`, `hilight_act_color` `%M` | `%Zbb9af7`, `%ZFF7B72` |
+| `85e9a8c1` + `6c8c3adb` | `hidden_settings` default named a script's setting | `hidden_settings` "" (PR #6 already has `""`, checked with `gh pr diff 6`) | `translate_deepl_key` |
+
+`6c8c3adb` is the take commit for all rows; `0f11cb35` is its test
+follow-up (the defaults tests skip when a global `irssi.conf` is
+installed). `ca68b1df` touches `src/fe-common/core/fe-channels.h` and
+the setting. To see one feature, `git show 6c8c3adb -- <file>` (section 6),
+for example `git show 6c8c3adb -- src/fe-common/core/themes.c`.
 
 ## 3. Behind a setting
 
@@ -49,34 +73,30 @@ Line numbers are at `4833f418` (they may shift by a few lines in later commits).
 
 | Commit | Change in the fork | Where | Upstream default to keep |
 |---|---|---|---|
-| `bdeb8084`, `47daae64` | 256-colour fallback for 24-bit colours (GNU Screen, Linux console, 8/16-colour terminals). `colors_ansi_24bit` default ON; new `term_truecolor auto/on/off` | fe-ansi/term-ansi.c:623-624 | `colors_ansi_24bit` OFF. Note: in v1.3.1 the ANSI backend writes 24-bit codes whatever this setting says. Taking the fallback with the default OFF would move every user to 256 colours. Either keep ON with `term_truecolor=auto`, or make the fallback depend on `term_truecolor` alone. |
-| `0609e771` | WHOIS and WHOWAS replies go to the network's status window | fe-common/irc/fe-whois.c:453 | `print_whois_rpl_in_server_window` OFF |
-| `9e393a2d` | join prints only the nick count line | fe-common/core/fe-channels.c:642 | `show_names_on_join_limit` 18 |
-| `92c1a7ac` (fe-channels.c part) | alone on a channel: count line, no names table. Hard-coded, no setting | fe-common/core/fe-channels.c:115 | drop the `size <= 1` rule, or put it behind a setting |
-| `f42ff98d` | `$nickmode` expando (mode prefix coloured by rank, new `nick_mode_color_*` settings); also theme default `shellter`, `nick_column_width` 13, shellter `nick_hash_colors` | fe-common/core/fe-expandos.c, fe-messages.c:769-782, themes.c:1477 | `theme` default, `nick_column_width` 10, `nick_hash_colors` "g r b m c y G C", `nick_mode_color_*` empty. `$nickmode` itself is additive |
-| `1ea1bd1f` | 24-bit hilight colours | fe-common/core/hilight-text.c:790-791 | `hilight_color` %Y, `hilight_act_color` %M |
-| `85e9a8c1` | `hidden_settings` default names a script's setting (`translate_deepl_key`) | fe-common/core/fe-settings.c:471 | "" |
 | `69c0526e` (credential part) | credential encryption and the external file refused at runtime | core/credential.c:159, 199 | fix or remove the feature instead |
 | `dee9923b` | `buildtype=debugoptimized`, PIE, stack protector, RELRO/now, `_FORTIFY_SOURCE=2` by default | meson.build:4, 635-644 | meson defaults; hardening behind a meson option. It also replaces a packager's `_FORTIFY_SOURCE=3` with 2 |
 | `2336acab` | no server tag in any window bound to the line's server (also `/WINDOW SERVER -sticky` windows) | fe-common/core/formats.c | listed in 2.2; a setting is possible if upstream wants the tag there |
 | `9559dad6` (fe-help.c) | /HELP reads ~/.erssi/help before help_path | fe-common/core/fe-help.c | listed in 2.2; upstream may prefer it opt-in |
 
-Rule: keep upstream defaults in C. Ship the Shellter values in the
-Shellter theme or default config instead.
+Since 2026.10.0 the fork keeps erssi-org defaults in C (section 2); the rows below still change behaviour in C.
 
 ## 4. Fork-only
 
-Not meant for erssi main. 91 commits.
+Not meant for erssi main. 99 commits.
 
-- Branding and version (26): `/VERSION` text, start banner, topic bar,
+- Branding and version (31): `/VERSION` text, start banner, topic bar,
   `SV` alias, README, NEWS, screenshots, version numbers
-  1.3.2 to 1.3.10. Commits: `c49a9b71 e697af65 8cd5e5a2 9d37292d 49d719ca
+  1.3.2 to 1.3.10, calendar versions from 2026.10.0 (`786dd409 0656826a
+  f5874039 3aab4339 f5eb5c48`). Commits: `c49a9b71 e697af65 8cd5e5a2 9d37292d 49d719ca
   0c66fc9e 15cea05c 33515325 db97f998 226007b5 2a0f363c 68f397e3 af29ea3f
   3ca236a5 cee9c77f cedeaea6 2878fac3 eca79190 6fb0c2b6 3740d250 82f691cf
   f8338ca0 054b1d87 394a075c ead8d021 4833f418`.
   One neutral idea inside: v1.3.1 `/VERSION` prints a fixed "erssi
   v1.1.0" (fe-common/core/fe-core-commands.c). The fork prints
   `PACKAGE_VERSION` there.
+- Shellter values of former defaults (fork-only, 3): `src/fe-common/core/shellter-defaults.c`
+  writes them once into an older config (`5ad348a8 e8d46d0e`);
+  `irssi.conf` carries them for a new `~/.erssi` (`e33eae52`).
 - Shellter themes (13): `themes/shellter.theme`, `themes/shellter-light.theme`
   and `shellter` as the default theme. They could ship as extra themes
   after cleanup (section 5). Commits: `e4365483 7c067efc 1321d58a 640c686b
@@ -134,16 +154,16 @@ Open at `4833f418`. Each item was checked in the code.
    includes `fe-web-server.c` to reach its static functions;
    `fe-web/meson.build` lists that file apart. Upstream may prefer an
    internal header or a test-only static library.
-4. Version numbers collide with upstream: `meson.build:2` is `1.3.10`, and
-   NEWS has `erssi-v1.3.2` to `erssi-v1.3.10`. These are erssi-org's own
-   future numbers. (v1.3.1 itself says `1.3.0` in `meson.build`.) The
-   fork needs a suffixed or separate scheme.
+4. Resolved in 2026.10.0: calendar versions, NEWS headers `shellter-v…`
+   (`meson.build` is `2026.10.0`; NEWS has `shellter-v1.3.2` to
+   `shellter-v1.3.10` and `shellter-v2026.10.0`, no longer erssi-org's own
+   future numbers).
 5. FreeBSD stale-socket check: `fe-web-server.c:1215` treats
    `ECONNREFUSED` as "nobody listens" and removes the socket. FreeBSD
    also returns `ECONNREFUSED` when a listener's queue is full, so a busy
    erssi of the same user can lose its socket. Not tested on FreeBSD.
-6. Defaults in C: see section 3. The Shellter values are in C, not in a
-   theme or default config.
+6. Resolved in 2026.10.0: defaults in C. The Shellter values are in the
+   default config (section 2).
 7. Credential encryption is disabled at runtime (`core/credential.c:159`,
    `:199`), not fixed.
 8. `printtext()` expands `%` codes in its arguments. Strings from a web
@@ -178,6 +198,11 @@ Open at `4833f418`. Each item was checked in the code.
 16. Commit hygiene: `18851c12`, `4b56253e` and `d4e22458` are review-fix
     commits that mix several fixes. `92c1a7ac` and `69c0526e` mix a fix with
     a behaviour change. Take them per file (section 6).
+17. The `"fe-text"` block of `irssi.conf` is ignored since fe-text was
+    merged into fe-ansi (`scrollback_lines`, `paste_verify_line_count`,
+    `lag_min_show`, `term_force_colors`, `colors`, `actlist_sort`). Moving
+    it to `"fe-ansi"` would change two values that users see (2000 lines,
+    2), so it is left as is.
 
 ## 6. How to take a change that is not in a pull request
 

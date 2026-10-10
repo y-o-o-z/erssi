@@ -226,6 +226,8 @@ sanitizers.
 /set fe_web_socket ~/.erssi/fe-web.sock   # web frontend on a Unix socket (shared boxes)
 ```
 
+The Shellter values of these settings come from the default config (`irssi.conf`) of a new `~/.erssi`; a config from before 2026.10.0 gets them written once at the first start. `/set -default <name>` (and `/reset`) gives erssi's built-in value.
+
 In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`.
 
 ## Web client
