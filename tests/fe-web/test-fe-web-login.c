@@ -379,13 +379,112 @@ static void test_overflow_notice(void)
 	g_free(printed);
 }
 
-/* A client of the TCP listener counts as its address (until the uid of a
- * loopback peer is known) */
-static void test_tcp_peer_key(void)
+/* fe-web listening on TCP at 'bind' and a client connected to 'host'
+ * (of 'family'); the one web client, NULL and a skip when this system
+ * cannot (no IPv6). Close *fd and call fe_web_server_deinit() after. */
+static WEB_CLIENT_REC *tcp_client(const char *bind, int family, const char *host, int *fd)
+{
+	struct sockaddr_storage ss;
+	socklen_t len;
+
+	setup();
+	*fd = -1;
+	settings_set_str("fe_web_socket", "");
+	settings_set_str("fe_web_bind", bind);
+	settings_set_int("fe_web_port", 0);
+	fe_web_server_init();
+	if (fe_web_fuzz_listen_port() <= 0) {
+		fe_web_server_deinit();
+		g_free(fe_web_fuzz_take_printed());
+		g_test_skip("cannot listen there (no IPv6?)");
+		return NULL;
+	}
+
+	memset(&ss, 0, sizeof(ss));
+	if (family == AF_INET) {
+		struct sockaddr_in *sa = (struct sockaddr_in *) &ss;
+
+		sa->sin_family = AF_INET;
+		sa->sin_port = htons(fe_web_fuzz_listen_port());
+		g_assert_cmpint(inet_pton(AF_INET, host, &sa->sin_addr), ==, 1);
+		len = sizeof(*sa);
+	} else {
+		struct sockaddr_in6 *sa = (struct sockaddr_in6 *) &ss;
+
+		sa->sin6_family = AF_INET6;
+		sa->sin6_port = htons(fe_web_fuzz_listen_port());
+		g_assert_cmpint(inet_pton(AF_INET6, host, &sa->sin6_addr), ==, 1);
+		len = sizeof(*sa);
+	}
+	*fd = socket(family, SOCK_STREAM, 0);
+	if (*fd < 0 || connect(*fd, (struct sockaddr *) &ss, len) != 0) {
+		if (*fd >= 0)
+			close(*fd);
+		*fd = -1;
+		fe_web_server_deinit();
+		g_free(fe_web_fuzz_take_printed());
+		g_test_skip("cannot connect there (no IPv6?)");
+		return NULL;
+	}
+	fe_web_fuzz_iterate(100);
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 1);
+	return web_clients->data;
+}
+
+static void tcp_client_done(int fd)
+{
+	close(fd);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
+
+/* A TCP client on loopback counts as the uid of its process (Linux), or
+ * else as its address, which every user of the machine shares */
+static void assert_loopback_key(const char *bind, int family, const char *host,
+                                const char *key_elsewhere)
+{
+	WEB_CLIENT_REC *c;
+	int fd;
+
+	c = tcp_client(bind, family, host, &fd);
+	if (c == NULL)
+		return;
+#ifdef __linux__
+	g_assert_cmpstr(c->peer_key, ==, own);
+	g_assert_false(c->peer_shared);
+#else
+	g_assert_cmpstr(c->peer_key, ==, key_elsewhere);
+	g_assert_true(c->peer_shared);
+#endif
+	(void) key_elsewhere;
+	tcp_client_done(fd);
+}
+
+static void test_tcp_loopback_key_is_uid(void)
+{
+	assert_loopback_key("127.0.0.1", AF_INET, "127.0.0.1", "ip:127.0.0.1");
+}
+
+static void test_tcp6_loopback_key_is_uid(void)
+{
+	assert_loopback_key("::1", AF_INET6, "::1", "ip:::/64");
+}
+
+/* Review Focus: fe_web_bind :: and a client on 127.0.0.1 (the peer is
+ * ::ffff:127.0.0.1) */
+static void test_tcp_dual_stack_key_is_uid(void)
+{
+	assert_loopback_key("::", AF_INET, "127.0.0.1", "ip:127.0.0.1");
+}
+
+/* A loopback peer whose uid is not known (it closed before fe-web took
+ * the connection, so its socket is no longer ESTABLISHED) counts as its
+ * address, which other users share - never as some uid */
+static void test_tcp_unknown_uid_key_is_address(void)
 {
 	struct sockaddr_in sa;
 	WEB_CLIENT_REC *c;
-	int fd;
+	int fd, i;
 
 	setup();
 	settings_set_str("fe_web_socket", "");
@@ -393,7 +492,6 @@ static void test_tcp_peer_key(void)
 	settings_set_int("fe_web_port", 0);
 	fe_web_server_init();
 	g_assert_cmpint(fe_web_fuzz_listen_port(), >, 0);
-
 	fd = socket(AF_INET, SOCK_STREAM, 0);
 	g_assert_cmpint(fd, >=, 0);
 	memset(&sa, 0, sizeof(sa));
@@ -401,13 +499,101 @@ static void test_tcp_peer_key(void)
 	sa.sin_port = htons(fe_web_fuzz_listen_port());
 	sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	g_assert_cmpint(connect(fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
-	fe_web_fuzz_iterate(100);
+	close(fd);
+	g_usleep(20000);
+	/* only the accept: the client's input is not handled yet */
+	for (i = 0; i < 100 && web_clients == NULL; i++) {
+		g_main_context_iteration(NULL, FALSE);
+		if (web_clients == NULL)
+			g_usleep(1000);
+	}
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 1);
 	c = web_clients->data;
 	g_assert_cmpstr(c->peer_key, ==, "ip:127.0.0.1");
-	close(fd);
+	g_assert_true(c->peer_shared);
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
+}
+
+/* One login from 'peer' with peer_shared as given */
+static GByteArray *attempt_shared(const char *peer, const char *password, gboolean shared)
+{
+	WEB_CLIENT_REC *client;
+	char *request;
+
+	client = fe_web_fuzz_client_new_peer(peer, FALSE, FALSE);
+	client->peer_shared = shared;
+	request = test_request(password);
+	fe_web_fuzz_client_send(client, (const guchar *) request, strlen(request));
+	g_free(request);
+	if (last != NULL)
+		g_byte_array_unref(last);
+	last = g_byte_array_new();
+	g_byte_array_append(last, fe_web_fuzz_received()->data, fe_web_fuzz_received()->len);
+	fe_web_fuzz_client_free(client);
+	return last;
+}
+
+static const char SHARED_HINT[] =
+    "fe-web: other users of this machine can reach this port - /SET fe_web_socket "
+    "~/.erssi/fe-web.sock lets only your own processes in";
+
+/* Paced on a loopback address all users share: a hint to use the Unix
+ * socket, with the pacing notice */
+static void test_shared_loopback_hint(void)
+{
+	char *printed;
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt_shared("ip:127.0.0.1", "wrong", TRUE),
+		                               HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(printed, "fe_web_socket ~/.erssi/fe-web.sock"));
+	assert_printed(printed, SHARED_HINT);
+	g_free(printed);
+
+	/* not on every failure while paced */
+	fe_web_fuzz_set_clock(T + 2);
+	g_assert_true(test_starts_with(attempt_shared("ip:127.0.0.1", "wrong", TRUE), HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "fe_web_socket"));
+	g_free(printed);
+}
+
+/* No hint for a peer of its own (a uid, a remote address) */
+static void test_no_hint_unless_shared(void)
+{
+	char *printed;
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt_shared("ip:192.0.2.1", "wrong", FALSE),
+		                               HTTP_401));
+	printed = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(printed, "5 wrong passwords within a minute from ip:192.0.2.1"));
+	g_assert_null(strstr(printed, "fe_web_socket"));
+	g_free(printed);
+}
+
+/* The hint comes with the pacing notice, which is printed once a minute
+ * at most */
+static void test_shared_hint_once_a_minute(void)
+{
+	char *printed;
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		attempt_shared("ip:127.0.0.1", "wrong", TRUE);
+	g_free(fe_web_fuzz_take_printed());
+	for (i = 0; i < 5; i++)
+		attempt_shared("ip:127.0.0.2", "wrong", TRUE);
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "fe_web_socket"));
+	g_free(printed);
 }
 
 int main(int argc, char **argv)
@@ -437,7 +623,14 @@ int main(int argc, char **argv)
 	                test_refused_log_backward_clock);
 	g_test_add_func("/fe-web/login/owner-takes-no-trusted-slot",
 	                test_owner_takes_no_trusted_slot);
-	g_test_add_func("/fe-web/login/tcp-peer-key", test_tcp_peer_key);
+	g_test_add_func("/fe-web/login/tcp-loopback-key-is-uid", test_tcp_loopback_key_is_uid);
+	g_test_add_func("/fe-web/login/tcp6-loopback-key-is-uid", test_tcp6_loopback_key_is_uid);
+	g_test_add_func("/fe-web/login/tcp-dual-stack-key-is-uid", test_tcp_dual_stack_key_is_uid);
+	g_test_add_func("/fe-web/login/tcp-unknown-uid-key-is-address",
+	                test_tcp_unknown_uid_key_is_address);
+	g_test_add_func("/fe-web/login/shared-loopback-hint", test_shared_loopback_hint);
+	g_test_add_func("/fe-web/login/no-hint-unless-shared", test_no_hint_unless_shared);
+	g_test_add_func("/fe-web/login/shared-hint-once-a-minute", test_shared_hint_once_a_minute);
 
 	ret = g_test_run();
 	if (last != NULL)

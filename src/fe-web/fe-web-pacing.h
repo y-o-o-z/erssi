@@ -49,6 +49,8 @@
 
 #include <glib.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include <irssi/src/common.h>
 
@@ -97,5 +99,40 @@ char *fe_web_peer_key_uid(unsigned long uid);
 char *fe_web_peer_key_ip(const IPADDR *ip);
 /* 127/8, ::1, ::ffff:127/104 */
 gboolean fe_web_ip_is_loopback(const IPADDR *ip);
+
+/* The uid of a TCP peer on loopback, so that the users of one machine are
+ * told apart: on loopback they all have the same address.
+ *
+ * The peer's socket is the one line of /proc/net/tcp (or tcp6) in state
+ * ESTABLISHED (01) whose local address and port are the peer's and whose
+ * remote address and port are ours. Any other number of such lines (none,
+ * two), or a table that cannot be read whole, means: not known. A line the
+ * kernel would not print (a field too long, too short, not a number, the
+ * line not ended by a newline) is skipped. */
+
+/* longer lines are not read; the kernel's are about 150 (tcp6: 180) */
+#define FE_WEB_PROC_NET_LINE_MAX 512
+/* a table longer than this (about 100,000 sockets) is not read at all */
+#define FE_WEB_PROC_NET_MAX (16 * 1024 * 1024)
+
+/* the uid that owns the socket at (peer_addr, peer_port) connected to
+ * (local_addr, local_port), from the text of /proc/net/tcp (family AF_INET,
+ * struct in_addr) or /proc/net/tcp6 (AF_INET6, struct in6_addr); ports in
+ * host order. *uid is set only when TRUE. */
+gboolean fe_web_proc_net_tcp_uid(const char *table, int family, const void *peer_addr,
+                                 int peer_port, const void *local_addr, int local_port,
+                                 uid_t *uid);
+/* The same for the connection from 'peer' to 'local' (struct sockaddr_in
+ * or sockaddr_in6, IPv4-mapped counts as IPv4), from the files tcp and
+ * tcp6 of the directory 'proc_net' (/proc/net). An IPv4 connection is
+ * looked for in both: in tcp, and in tcp6 as IPv4-mapped (a client's
+ * dual-stack socket); a missing file has no lines. 1: found; 0: not
+ * found, or the peer is not on loopback, or the uid is 'unmapped' (what
+ * the kernel shows for a uid outside our user namespace) */
+int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *local,
+                            const char *proc_net, uid_t unmapped, uid_t *uid);
+/* 1: uid found; 0: not found or the peer is not on loopback; -1: no way on
+ * this system (not Linux) */
+int fe_web_tcp_peer_uid(int fd, uid_t *uid);
 
 #endif

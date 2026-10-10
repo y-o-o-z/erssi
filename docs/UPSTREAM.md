@@ -140,12 +140,11 @@ Not meant for erssi main. 99 commits.
 Open at `4833f418`. Each item was checked in the code.
 
 1. fe-web, the rest of the per-peer work (login pacing itself is fixed,
-   see below). On TCP loopback all local users are one address, so they
-   share one pacing bucket. `fe-web-server.c:957-960`: a loop of new
-   connections evicts the owner's pending one. This matters on TCP
-   loopback on shared machines. Unix-socket mode (`fe_web_socket`) is not
-   affected. Fix: per-uid accounting for TCP loopback peers
-   (`/proc/net/tcp`) or a strong hint to use the socket. Residual risk
+   see below). `fe-web-server.c:957-960`: a loop of new connections
+   evicts the owner's pending one. This matters on TCP loopback on shared
+   machines. Unix-socket mode (`fe_web_socket`) is not affected. Outside
+   Linux, TCP loopback users are still one address and share one pacing
+   bucket (fe-web prints a hint to use `fe_web_socket` then). Residual risk
    that stays: during an attack, a peer that never logged in before and
    sends one wrong password (a typo) from a new address is a suspect, and
    the shared ceiling holds it for up to about 10 minutes, until its
@@ -216,7 +215,9 @@ Open at `4833f418`. Each item was checked in the code.
 Fixed since `4833f418`:
 
 - fe-web login pacing is per peer: uid on the Unix socket, address (/64
-  for IPv6) on TCP; your own uid is never paced. A ceiling holds all
+  for IPv6) on TCP; on TCP loopback (Linux) the peer's uid; elsewhere the
+  address, with a hint to use fe_web_socket; your own uid is never
+  paced. A ceiling holds all
   suspect peers (a wrong password in the last 10 minutes) together to one
   check every 2 s once 20 wrong passwords come within a minute, so many
   addresses get about one check a second in all; clean peers and the
