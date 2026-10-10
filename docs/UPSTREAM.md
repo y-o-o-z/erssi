@@ -141,12 +141,14 @@ Open at `4833f418`. Each item was checked in the code.
 
 1. fe-web, the rest of the per-peer work (login pacing and the login
    queue are fixed, see below: a loop of new connections evicts its own
-   oldest pending connection). Outside Linux, or when the kernel cannot
-   tell a loopback peer's uid, every loopback peer is one peer
-   (`ip:loopback`, all of 127/8 and `::1`) and they share one pacing
-   bucket (fe-web prints a hint to use `fe_web_socket` then). A local user who connects to a non-loopback
-   address of the machine (its LAN or public IP) counts as that address,
-   not as a uid: only loopback peers are looked up. A proxy that runs as
+   oldest pending connection, and a peer that logged in once keeps only
+   its oldest one). Outside Linux, or when the kernel cannot tell a
+   loopback peer's uid, every loopback peer is one peer (`ip:loopback`,
+   all of 127/8 and `::1`) and they share one pacing bucket (fe-web
+   prints a hint to use `fe_web_socket` then). A local user who connects
+   to a non-loopback address of the machine (its LAN or public IP)
+   counts as that address, not as a uid: only loopback peers are looked
+   up. A proxy that runs as
    the owner's user (a reverse proxy, socat, an `ssh -L` tunnel other
    users can reach) connects as the owner, so every client behind it
    counts as the owner and is never paced: such a proxy must sign its own
@@ -231,12 +233,15 @@ Fixed since `4833f418`:
   addresses get about one check a second in all; clean peers and the
   last 32 that logged in are not held by it.
 - fe-web's login queue (8 connections that did not log in yet): a new
-  connection closes the oldest pending connection of the busiest peer,
-  not the oldest of anyone, so a loop of new connections evicts its own
-  (`fe_web_pending_victim()`). The owner's uid and the trusted peers are
-  never chosen while another peer is waiting, so many addresses with one
-  connection each, which tie with the owner, close each other's; when
-  only the owner and trusted peers wait, the same rule applies among them.
+  connection closes one that is already closing, else the oldest pending
+  connection of the busiest peer, not the oldest of anyone, so a loop of
+  new connections evicts its own (`fe_web_pending_victim()`). The
+  owner's uid is never chosen while another peer is waiting, so many
+  addresses with one connection each, which tie with the owner, close
+  each other's. A trusted peer (one that logged in) keeps only its
+  oldest pending connection, so an address it shares with others (NAT, a
+  /64, `ip:loopback`) cannot flood the queue and push the owner out; when
+  only kept connections wait, the same rule applies among them.
 
 ## 6. How to take a change that is not in a pull request
 

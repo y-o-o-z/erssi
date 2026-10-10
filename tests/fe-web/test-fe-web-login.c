@@ -20,6 +20,7 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/fe-web/fe-web-pacing.h>
 
+#include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -719,6 +720,54 @@ static void test_tcp_sock_diag_backoff(void)
 	fe_web_sock_diag_set_func(NULL);
 	close_connections();
 }
+
+/* The queue full of ip:loopback connections (sock_diag fails, the /proc
+ * budget is used up): a new one closes the oldest of them, never the
+ * owner's pending login. sig_listen protects erssi's own uid, not the
+ * key of the connection coming in. */
+static void test_tcp_full_queue_keeps_owner(void)
+{
+	WEB_CLIENT_REC *owner, *c;
+	struct sockaddr_in sa;
+	char buf[64];
+	int fds[8];
+	int i;
+
+	setup();
+	tcp_listen();
+	fe_web_sock_diag_set_func(diag_fails);
+	fe_web_fuzz_spend_proc_budget();
+	owner = fe_web_fuzz_client_new_peer(own, FALSE, FALSE);
+	for (i = 0; i < 7; i++) {
+		c = connect_from("127.0.0.1", &fds[i]);
+		g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+		g_assert_cmpint(fcntl(fds[i], F_SETFL, O_NONBLOCK), ==, 0);
+	}
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
+
+	fds[7] = socket(AF_INET, SOCK_STREAM, 0);
+	g_assert_cmpint(fds[7], >=, 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	g_assert_cmpint(connect(fds[7], (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	/* accepted once the oldest ip:loopback connection reads end of file */
+	for (i = 0; i < 200 && read(fds[0], buf, sizeof(buf)) != 0; i++)
+		fe_web_fuzz_iterate(5);
+	g_assert_cmpint(i, <, 200);
+	g_assert_true(fe_web_fuzz_client_alive(owner));
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
+	c = g_slist_last(web_clients)->data;
+	g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+
+	fe_web_fuzz_client_free(owner);
+	for (i = 0; i < 8; i++)
+		close(fds[i]);
+	fe_web_sock_diag_set_func(NULL);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
 #endif
 
 /* A loopback peer whose uid is not known is one peer, whatever 127/8
@@ -792,6 +841,8 @@ int main(int argc, char **argv)
 #ifdef __linux__
 	g_test_add_func("/fe-web/login/tcp-proc-budget", test_tcp_proc_budget);
 	g_test_add_func("/fe-web/login/tcp-sock-diag-backoff", test_tcp_sock_diag_backoff);
+	g_test_add_func("/fe-web/login/tcp-full-queue-keeps-owner",
+	                test_tcp_full_queue_keeps_owner);
 #endif
 	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
 	                test_tcp_loopback_sources_share_key);

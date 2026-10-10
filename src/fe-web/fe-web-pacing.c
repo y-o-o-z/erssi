@@ -259,29 +259,53 @@ static const char *pending_key(WEB_CLIENT_REC *client)
 	return client->peer_key != NULL ? client->peer_key : "unknown";
 }
 
-static gboolean pending_protected(WEB_CLIENT_REC *client, const char *own_key,
+/* the pending clients of key in clients */
+static int pending_count(GSList *clients, const char *key)
+{
+	GSList *tmp;
+	int count = 0;
+
+	for (tmp = clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (!c->authenticated && strcmp(pending_key(c), key) == 0)
+			count++;
+	}
+	return count;
+}
+
+/* Every client of own_key, and the oldest pending client of each trusted
+ * peer */
+static gboolean pending_protected(GSList *clients, WEB_CLIENT_REC *client, const char *own_key,
                                   FE_WEB_PACING *pacing)
 {
 	const char *key = pending_key(client);
+	GSList *tmp;
 
-	return (own_key != NULL && strcmp(key, own_key) == 0) ||
-	       (pacing != NULL && fe_web_pacing_is_trusted(pacing, key));
+	if (own_key != NULL && strcmp(key, own_key) == 0)
+		return TRUE;
+	if (pacing == NULL || !fe_web_pacing_is_trusted(pacing, key))
+		return FALSE;
+	for (tmp = clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (!c->authenticated && strcmp(pending_key(c), key) == 0)
+			return c == client;
+	}
+	return FALSE;
 }
 
-/* Is the client one of those counted: pending, and protected exactly
- * when all pending clients are */
-static gboolean pending_counted(WEB_CLIENT_REC *client, gboolean all_protected,
-                                const char *own_key, FE_WEB_PACING *pacing)
+/* already closing: a last answer queued, or its output failed */
+static gboolean pending_leaving(WEB_CLIENT_REC *client)
 {
-	return !client->authenticated &&
-	       pending_protected(client, own_key, pacing) == all_protected;
+	return client->closing || client->output_failed;
 }
 
 WEB_CLIENT_REC *fe_web_pending_victim(GSList *clients, int max_pending, const char *own_key,
                                       FE_WEB_PACING *pacing)
 {
-	WEB_CLIENT_REC *victim = NULL;
-	GSList *tmp, *other;
+	WEB_CLIENT_REC *victim = NULL, *leaving = NULL;
+	GSList *tmp;
 	gboolean all_protected = TRUE;
 	int pending = 0, best = 0;
 
@@ -291,31 +315,29 @@ WEB_CLIENT_REC *fe_web_pending_victim(GSList *clients, int max_pending, const ch
 		if (c->authenticated)
 			continue;
 		pending++;
-		if (!pending_protected(c, own_key, pacing))
+		if (leaving == NULL && pending_leaving(c))
+			leaving = c;
+		if (!pending_protected(clients, c, own_key, pacing))
 			all_protected = FALSE;
 	}
 	if (pending < max_pending)
 		return NULL;
+	/* on its way out anyway */
+	if (leaving != NULL)
+		return leaving;
 
-	/* The queue holds a few clients. Each client counts the pending
-	 * clients of its peer from itself on (they are all protected or
-	 * not, as it is), so a peer's oldest client counts them all and its
-	 * later ones fewer. Only more replaces the one found: the busiest
-	 * peer's oldest client, and of peers with as many the oldest
-	 * client. */
+	/* The queue holds a few clients. Of those that may be chosen, the
+	 * first of the peer with the most pending clients (the kept one of
+	 * a trusted peer counts too); only more replaces the one found, so
+	 * of peers with as many the oldest client wins. */
 	for (tmp = clients; tmp != NULL; tmp = tmp->next) {
 		WEB_CLIENT_REC *c = tmp->data;
-		const char *key = pending_key(c);
-		int count = 0;
+		int count;
 
-		if (!pending_counted(c, all_protected, own_key, pacing))
+		if (c->authenticated ||
+		    pending_protected(clients, c, own_key, pacing) != all_protected)
 			continue;
-		for (other = tmp; other != NULL; other = other->next) {
-			WEB_CLIENT_REC *o = other->data;
-
-			if (!o->authenticated && strcmp(pending_key(o), key) == 0)
-				count++;
-		}
+		count = pending_count(clients, pending_key(c));
 		if (count > best) {
 			best = count;
 			victim = c;

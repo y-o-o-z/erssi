@@ -37,10 +37,14 @@ void fe_web_fuzz_client_send(WEB_CLIENT_REC *client, const guchar *data, gsize l
 /* Send data cut into reads at FE_WEB_FUZZ_SPLIT */
 void fe_web_fuzz_client_send_split(WEB_CLIENT_REC *client, const guchar *data, gsize len);
 
-/* Is the client still connected (fe-web closes clients on bad input) */
+/* Is the client still connected (fe-web closes clients on bad input).
+ * 'client' is the one fe_web_fuzz_client_new*() made last (anything else
+ * is a test error), and FALSE once fe-web closed it, even when a new
+ * client got the same memory. NULL: FALSE. */
 gboolean fe_web_fuzz_client_alive(WEB_CLIENT_REC *client);
 
-/* Close the client if fe-web did not already */
+/* Close the client if fe-web did not already, and the browser end; the
+ * next fe_web_fuzz_client_new*() may follow. NULL: only the browser end. */
 void fe_web_fuzz_client_free(WEB_CLIENT_REC *client);
 
 /* Forget login failures so every input gets its password checked */
@@ -105,6 +109,11 @@ void fe_web_fuzz_fake_peer_other_uid(gboolean on);
 /* The next g_mkdir_with_parents() of fe-web-server.c first creates 'dir'
  * with 'mode' (chmod after mkdir): another user who wins the race */
 void fe_web_fuzz_mkdir_first(const char *dir, int mode);
+
+/* Use up the /proc lookups fe-web-server.c may make in this second of
+ * its time(): a TCP loopback peer whose uid sock_diag does not give is
+ * then ip:loopback */
+void fe_web_fuzz_spend_proc_budget(void);
 
 /* time() in fe-web-server.c; 0 means the real clock */
 void fe_web_fuzz_set_clock(time_t now);

@@ -53,6 +53,9 @@ typedef enum {
 typedef struct {
 	int fd;
 	char *id;   /* UUID or timestamp-counter */
+	/* different for every record made since start: a closed client's
+	 * memory may hold the next one */
+	guint64 serial;
 	char *addr; /* Client IP address (for logging) */
 	time_t connected_at;
 	/* who the client counts as for login pacing: "uid:1000" or

@@ -27,9 +27,11 @@
 /* Create new client record */
 WEB_CLIENT_REC *fe_web_client_create(int fd, const char *addr)
 {
+	static guint64 serial = 0;
 	WEB_CLIENT_REC *client;
 
 	client = g_new0(WEB_CLIENT_REC, 1);
+	client->serial = ++serial;
 	client->fd = fd;
 	client->id = fe_web_generate_message_id();
 	client->addr = g_strdup(addr);
