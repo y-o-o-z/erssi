@@ -632,12 +632,15 @@ static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
 }
 
 #ifdef __linux__
+static int diag_calls;
+
 static gssize diag_fails(const void *req, gsize req_len, void *reply, gsize size)
 {
 	(void) req;
 	(void) req_len;
 	(void) reply;
 	(void) size;
+	diag_calls++;
 	return -1;
 }
 
@@ -689,6 +692,30 @@ static void test_tcp_proc_budget(void)
 	assert_connect_key("127.0.0.1", own);
 	assert_connect_key("127.0.0.1", own);
 	assert_connect_key("127.0.0.1", "ip:loopback");
+	fe_web_sock_diag_set_func(NULL);
+	close_connections();
+}
+#endif
+
+#ifdef __linux__
+/* sock_diag failing on every accept: after 3, it is not asked for 60 s
+ * (fe-web's time()) */
+static void test_tcp_sock_diag_backoff(void)
+{
+	setup();
+	tcp_listen();
+	fe_web_sock_diag_set_func(diag_fails);
+	diag_calls = 0;
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", own);
+	assert_connect_key("127.0.0.1", "ip:loopback");
+	g_assert_cmpint(diag_calls, ==, FE_WEB_SOCK_DIAG_MAX_FAILS);
+	fe_web_fuzz_set_clock(T + 1);
+	assert_connect_key("127.0.0.1", own);
+	g_assert_cmpint(diag_calls, ==, FE_WEB_SOCK_DIAG_MAX_FAILS);
+	fe_web_fuzz_set_clock(T + FE_WEB_SOCK_DIAG_BACKOFF);
+	assert_connect_key("127.0.0.1", own);
+	g_assert_cmpint(diag_calls, ==, FE_WEB_SOCK_DIAG_MAX_FAILS + 1);
 	fe_web_sock_diag_set_func(NULL);
 	close_connections();
 }
@@ -764,6 +791,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/shared-hint-once-a-minute", test_shared_hint_once_a_minute);
 #ifdef __linux__
 	g_test_add_func("/fe-web/login/tcp-proc-budget", test_tcp_proc_budget);
+	g_test_add_func("/fe-web/login/tcp-sock-diag-backoff", test_tcp_sock_diag_backoff);
 #endif
 	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
 	                test_tcp_loopback_sources_share_key);

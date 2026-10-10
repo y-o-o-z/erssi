@@ -135,9 +135,11 @@ int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *
                             const char *proc_net, uid_t unmapped, uid_t *uid);
 
 /* /proc/net/tcp is generated anew on every read, about 2 us a socket, so
- * it is read at most FE_WEB_PROC_LOOKUPS_PER_SEC times a second for all
- * peers together (each second has the whole budget; a clock that went
- * back counts as a new second). Zeroed: the whole budget left. */
+ * it is read at most FE_WEB_PROC_LOOKUPS_PER_SEC times per second of
+ * time() for all peers together. This is a fixed window per time()
+ * second, not a sliding one: up to 2 in each second, so up to 4 within
+ * a real second across the boundary of two. A clock that went back
+ * starts a new window. Zeroed: the whole budget left. */
 #define FE_WEB_PROC_LOOKUPS_PER_SEC 2
 typedef struct {
 	int spent;
@@ -176,6 +178,26 @@ typedef gssize (*FE_WEB_SOCK_DIAG_FUNC)(const void *req, gsize req_len, void *re
                                         gsize size);
 /* for the tests: what asks the kernel (NULL: the kernel itself) */
 void fe_web_sock_diag_set_func(FE_WEB_SOCK_DIAG_FUNC func);
+
+/* What a reply says about sock_diag itself (its first message, of seq):
+ * ANSWER, a SOCK_DIAG_BY_FAMILY message - sock_diag works, whatever the
+ * socket; NOT_FOUND, NLMSG_ERROR -ENOENT - no such socket, or no
+ * inet_diag/tcp_diag module (the kernel answers both the same way);
+ * FAILED, anything else (another error, a reply cut short, not ours). */
+#define FE_WEB_DIAG_ANSWER 1
+#define FE_WEB_DIAG_NOT_FOUND 0
+#define FE_WEB_DIAG_FAILED -1
+int fe_web_sock_diag_status(const void *buf, gsize len, guint32 seq);
+
+/* Each question may make the kernel load a module (modprobe, in the
+ * accept path). After FE_WEB_SOCK_DIAG_MAX_FAILS questions in a row
+ * that show sock_diag does not work, it is not asked for
+ * FE_WEB_SOCK_DIAG_BACKOFF seconds (a clock that went back ends that),
+ * then tried again; a working answer sets the count back to 0. */
+#define FE_WEB_SOCK_DIAG_MAX_FAILS 3
+#define FE_WEB_SOCK_DIAG_BACKOFF 60
+/* forget the failures (for the tests) */
+void fe_web_sock_diag_reset(void);
 #endif
 
 #endif
