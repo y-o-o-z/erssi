@@ -90,6 +90,7 @@ test_test_term_defaults = executable('test-term-defaults',
   ],
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+    def_sysconfdir,
   ],
   include_directories : rootinc,
   implicit_include_directories : false,
