@@ -7,6 +7,8 @@
 #    y-o-o-z (noreply address) and carries no AI attribution trailer;
 #    annotated tags are tagged by y-o-o-z, and a release tag (shellter-v*)
 #    carries a valid SSH signature by the key in utils/allowed_signers;
+#    a calendar release tag (shellter-v2026.10.0) must also agree with
+#    meson.build and NEWS (utils/check-version.sh; shellter-v1.3.x is not checked);
 #    src/fe-ansi/default-files-known.h lists every shipped startup/theme
 # 3. nothing that the push publishes matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line, case
@@ -95,7 +97,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
                 git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ROOT/utils/allowed_signers" \
                     -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
                     verify-tag "$local_sha" >/dev/null 2>&1 ||
-                    bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)" ;;
+                    bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)"
+                # a calendar release (shellter-v2026.10.0) must match meson.build and NEWS
+                case "${local_ref#refs/tags/shellter-v}" in [0-9][0-9][0-9][0-9].*)
+                    sh "$ROOT/utils/check-version.sh" "$local_sha" "${local_ref#refs/tags/}" ||
+                        bad "$local_ref: meson.build, NEWS and the tag disagree (utils/check-version.sh)" ;;
+                esac ;;
         esac
         if [ "$check_private" = 1 ]; then
             # the message: everything after the header, without a signature (PGP or SSH)
