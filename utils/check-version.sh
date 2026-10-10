@@ -9,24 +9,42 @@
 
 set -u
 
-if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-  echo "usage: check-version.sh SOURCE [TAG]" >&2
+usage() {
+  echo "check-version: $1" >&2
+  echo "check-version: usage: check-version.sh SOURCE [TAG]" >&2
   exit 2
+}
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+  usage "expected 1 or 2 arguments"
 fi
 
 source=$1
-tag=${2:-}
+tag_mode=0
+tag=
+if [ $# -eq 2 ]; then
+  tag_mode=1
+  tag=$2
+  [ -n "$tag" ] || usage "the TAG argument is empty"
+fi
 
 read_file() {
   if [ -d "$source" ]; then
-    cat "$source/$1"
+    cat "$source/$1" 2>/dev/null
   else
-    git show "$source^{commit}:$1"
+    git show "$source^{commit}:$1" 2>/dev/null
   fi
 }
 
-meson_build=$(read_file meson.build) || exit 2
-news_first=$(read_file NEWS | head -n 1) || exit 2
+meson_build=$(read_file meson.build) || {
+  echo "check-version: cannot read meson.build from $source" >&2
+  exit 2
+}
+news=$(read_file NEWS) || {
+  echo "check-version: cannot read NEWS from $source" >&2
+  exit 2
+}
+news_first=$(printf '%s\n' "$news" | head -n 1)
 
 version=$(printf '%s\n' "$meson_build" |
   sed -n "s/^  version : '\\([^']*\\)',.*/\\1/p" | head -n 1)
@@ -44,17 +62,20 @@ if ! printf '%s\n' "$version" |
 fi
 
 header=${news_first%% *}
-if [ "$header" != "shellter-v$version" ]; then
+cr=$(printf '\r')
+if [ "$header" != "shellter-v$version" ] ||
+  [ "${news_first#*"$cr"}" != "$news_first" ]; then
   problem "NEWS: the first line is not the header of shellter-v$version"
 fi
 
-if [ -n "$tag" ]; then
+if [ "$tag_mode" = 1 ]; then
   if [ "$tag" != "shellter-v$version" ]; then
     problem "tag $tag does not name meson.build version $version"
   fi
 
   date=$(printf '%s\n' "$news_first" | cut -d ' ' -f 2)
-  if ! printf '%s\n' "$date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+  if ! printf '%s\n' "$date" |
+    grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'; then
     problem "NEWS: the release has no date ($date)"
   else
     year=${date%%-*}

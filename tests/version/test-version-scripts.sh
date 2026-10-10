@@ -93,6 +93,45 @@ cv 'erssi header' 2026.10.0 'erssi-v2026.10.0 2026-10-12' '' 1 \
 cv 'month mismatch' 2026.10.0 'shellter-v2026.10.0 2026-11-02' shellter-v2026.10.0 1 \
   'check-version: 2026.10.0 is not the month of its release date 2026-11-02'
 
+cv 'impossible release day' 2026.10.0 'shellter-v2026.10.0 2026-10-99' shellter-v2026.10.0 1 \
+  'check-version: NEWS: the release has no date (2026-10-99)'
+cv 'impossible release month' 2026.10.0 'shellter-v2026.10.0 2026-00-12' shellter-v2026.10.0 1 \
+  'check-version: NEWS: the release has no date (2026-00-12)'
+
+# Argument handling and unreadable input must fail with exit 2.
+# ex NAME WANT_STATUS ARGS...
+ex() {
+  name=$1; want=$2; shift 2
+  err=$(sh "$root/utils/check-version.sh" "$@" 2>&1 >/dev/null)
+  st=$?
+  case $err in
+    'check-version: '*) pfx=1 ;;
+    *) pfx=0 ;;
+  esac
+  if [ "$st" = "$want" ] && [ "$pfx" = 1 ]; then
+    pass "$name"
+  else
+    fail "$name" "status=$st stderr=$err"
+  fi
+}
+
+n=$((n + 1))
+d="$tmp/arg$n"
+mkfix "$d" 2026.10.0 'shellter-v2026.10.0 2026-10-xx'
+ex 'empty tag' 2 "$d" ''
+ex 'too many arguments' 2 "$d" shellter-v2026.10.0 extra
+ex 'no arguments' 2
+ex 'missing directory' 2 "$tmp/does-not-exist"
+
+# CRLF line endings in NEWS are not accepted.
+n=$((n + 1))
+d="$tmp/crlf$n"
+mkfix "$d" 2026.10.0 'shellter-v2026.10.0 2026-10-12'
+sed 's/$/\r/' "$d/NEWS" > "$d/NEWS.crlf" && mv "$d/NEWS.crlf" "$d/NEWS"
+err=$(sh "$root/utils/check-version.sh" "$d" shellter-v2026.10.0 2>&1 >/dev/null)
+st=$?
+if [ "$st" = 1 ] && [ -n "$err" ]; then pass 'CRLF NEWS'; else fail 'CRLF NEWS' "status=$st stderr=$err"; fi
+
 # Commit mode.
 if command -v git >/dev/null 2>&1; then
   d="$tmp/commit"
@@ -105,6 +144,17 @@ if command -v git >/dev/null 2>&1; then
     pass 'commit mode'
   else
     fail 'commit mode' "status=$st stderr=$err"
+  fi
+  err=$(cd "$d" && sh "$root/utils/check-version.sh" no-such-commit 2>&1 >/dev/null)
+  st=$?
+  case $err in
+    'check-version: '*) pfx=1 ;;
+    *) pfx=0 ;;
+  esac
+  if [ "$st" = 2 ] && [ "$pfx" = 1 ]; then
+    pass 'nonexistent commit'
+  else
+    fail 'nonexistent commit' "status=$st stderr=$err"
   fi
 fi
 
