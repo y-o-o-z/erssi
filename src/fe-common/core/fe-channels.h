@@ -10,6 +10,9 @@
 
 void fe_channels_nicklist(CHANNEL_REC *channel, int flags);
 
+/* TRUE: a join prints only the count line instead of the nick table */
+gboolean fe_channels_join_count_only(int limit, int nicks, gboolean show_alone);
+
 void fe_channels_init(void);
 void fe_channels_deinit(void);
 
