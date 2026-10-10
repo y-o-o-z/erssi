@@ -921,10 +921,30 @@ void fe_web_sock_diag_set_func(FE_WEB_SOCK_DIAG_FUNC func)
 	sock_diag_func = func != NULL ? func : sock_diag_kernel;
 }
 
+int fe_web_sock_diag_status(const void *buf, gsize len, guint32 seq)
+{
+	struct nlmsghdr h;
+	int error;
+
+	if (buf == NULL || len < NLMSG_HDRLEN)
+		return FE_WEB_DIAG_FAILED;
+	memcpy(&h, buf, sizeof(h));
+	if (h.nlmsg_len < NLMSG_HDRLEN || h.nlmsg_len > len || h.nlmsg_seq != seq)
+		return FE_WEB_DIAG_FAILED;
+	if (h.nlmsg_type == SOCK_DIAG_BY_FAMILY)
+		return FE_WEB_DIAG_ANSWER;
+	if (h.nlmsg_type != NLMSG_ERROR || h.nlmsg_len < NLMSG_LENGTH(sizeof(error)))
+		return FE_WEB_DIAG_FAILED;
+	/* struct nlmsgerr starts with the error */
+	memcpy(&error, (const guchar *) buf + NLMSG_HDRLEN, sizeof(error));
+	return error == -ENOENT ? FE_WEB_DIAG_NOT_FOUND : FE_WEB_DIAG_FAILED;
+}
+
 /* One sock_diag question: the socket at (src, sport) connected to (dst,
- * dport) */
+ * dport). 1 and *uid when it is the one asked for; *status what the
+ * reply says about sock_diag (FE_WEB_DIAG_*). */
 static int sock_diag_ask(int family, const void *src, int sport, const void *dst, int dport,
-                         uid_t unmapped, uid_t *uid)
+                         uid_t unmapped, uid_t *uid, int *status)
 {
 	static guint32 seq;
 	union {
@@ -938,6 +958,7 @@ static int sock_diag_ask(int family, const void *src, int sport, const void *dst
 	gsize req_len;
 	gssize n;
 
+	*status = FE_WEB_DIAG_FAILED;
 	seq++;
 	req_len = fe_web_sock_diag_request(req.bytes, sizeof(req.bytes), family, src, sport, dst,
 	                                   dport, seq);
@@ -946,21 +967,74 @@ static int sock_diag_ask(int family, const void *src, int sport, const void *dst
 	n = sock_diag_func(req.bytes, req_len, reply.bytes, sizeof(reply.bytes));
 	if (n <= 0 || (gsize) n > sizeof(reply.bytes))
 		return 0;
+	*status = fe_web_sock_diag_status(reply.bytes, n, seq);
 	return fe_web_sock_diag_reply(reply.bytes, n, family, src, sport, dst, dport, seq, unmapped,
 	                              uid);
 }
 
-/* The uid of the connection's peer from sock_diag: as IPv4, and for an
- * IPv4 one also as IPv4-mapped IPv6 */
-static int tcp_peer_diag_uid(const TCP_PEER *c, uid_t unmapped, uid_t *uid)
+/* sock_diag questions in a row that showed it does not work, and when
+ * the last of them was asked */
+static int diag_failures = 0;
+static time_t diag_failed_at = 0;
+
+void fe_web_sock_diag_reset(void)
 {
+	diag_failures = 0;
+	diag_failed_at = 0;
+}
+
+/* Not asking sock_diag now: it failed often enough, and not long ago (a
+ * clock that went back counts as long ago) */
+static gboolean sock_diag_paused(time_t now)
+{
+	if (diag_failures < FE_WEB_SOCK_DIAG_MAX_FAILS)
+		return FALSE;
+	return now >= diag_failed_at && now - diag_failed_at < FE_WEB_SOCK_DIAG_BACKOFF;
+}
+
+/* The uid of the connection's peer from sock_diag: as IPv4, and for an
+ * IPv4 one also as IPv4-mapped IPv6 when not found as IPv4.
+ *
+ * ENOENT means no such socket, but the kernel says the same when the
+ * inet_diag or tcp_diag module is missing. So then our own side of the
+ * connection is asked for: it exists while we hold the connection, and
+ * if it is not found either, sock_diag does not work. Only a
+ * SOCK_DIAG_BY_FAMILY answer (to the question or to that one) shows it
+ * works; every other result (another error, no reply, a reply cut short
+ * or not from the kernel, no netlink socket) counts as a failure. */
+static int tcp_peer_diag_uid(const TCP_PEER *c, uid_t unmapped, time_t now, uid_t *uid)
+{
+	int found, status;
+	uid_t ours;
+
+	if (sock_diag_paused(now))
+		return 0;
 	if (c->family == AF_INET) {
-		if (sock_diag_ask(AF_INET, &c->peer4, c->peer_port, &c->local4, c->local_port,
-		                  unmapped, uid) == 1)
-			return 1;
+		found = sock_diag_ask(AF_INET, &c->peer4, c->peer_port, &c->local4, c->local_port,
+		                      unmapped, uid, &status);
+		if (found != 1 && status == FE_WEB_DIAG_NOT_FOUND)
+			found = sock_diag_ask(AF_INET6, &c->peer6, c->peer_port, &c->local6,
+			                      c->local_port, unmapped, uid, &status);
+	} else {
+		found = sock_diag_ask(AF_INET6, &c->peer6, c->peer_port, &c->local6, c->local_port,
+		                      unmapped, uid, &status);
 	}
-	return sock_diag_ask(AF_INET6, &c->peer6, c->peer_port, &c->local6, c->local_port,
-	                     unmapped, uid);
+	if (found != 1 && status == FE_WEB_DIAG_NOT_FOUND) {
+		if (c->family == AF_INET)
+			sock_diag_ask(AF_INET, &c->local4, c->local_port, &c->peer4, c->peer_port,
+			              unmapped, &ours, &status);
+		else
+			sock_diag_ask(AF_INET6, &c->local6, c->local_port, &c->peer6, c->peer_port,
+			              unmapped, &ours, &status);
+	}
+	if (status == FE_WEB_DIAG_ANSWER) {
+		diag_failures = 0;
+	} else {
+		if (diag_failures < FE_WEB_SOCK_DIAG_MAX_FAILS)
+			diag_failures++;
+		diag_failed_at = now;
+	}
+	return found == 1 ? 1 : 0;
 }
 #endif
 
@@ -985,7 +1059,7 @@ int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *u
 		return 0;
 	unmapped = overflow_uid();
 	/* the kernel's answer for this one socket */
-	if (tcp_peer_diag_uid(&c, unmapped, uid) == 1)
+	if (tcp_peer_diag_uid(&c, unmapped, now, uid) == 1)
 		return 1;
 	/* else the tables of our network namespace, where a loopback peer
 	 * is - they take a while to read, so only within the budget */

@@ -1660,6 +1660,9 @@ static int fake_state = 1;
 static guint32 fake_uid = 4321;
 static int fake_enoent_for_inet; /* AF_INET requests get ENOENT */
 static int fake_sport_delta;
+static int fake_error;           /* every request gets NLMSG_ERROR -fake_error */
+static int fake_answer_sport;    /* only requests with this sport are answered,
+                                  * the others get ENOENT */
 
 static gssize diag_fails(const void *req, gsize req_len, void *reply, gsize size)
 {
@@ -1686,6 +1689,10 @@ static gssize diag_fake(const void *req, gsize req_len, void *reply, gsize size)
 		fake_families[fake_calls] = q.sdiag_family;
 	fake_calls++;
 	if (fake_enoent_for_inet && q.sdiag_family == AF_INET)
+		return put_error(reply, 0, h.nlmsg_seq, -ENOENT);
+	if (fake_error != 0)
+		return put_error(reply, 0, h.nlmsg_seq, -fake_error);
+	if (fake_answer_sport != 0 && ntohs(q.id.idiag_sport) != fake_answer_sport)
 		return put_error(reply, 0, h.nlmsg_seq, -ENOENT);
 	memset(&r, 0, sizeof(r));
 	r.seq = h.nlmsg_seq;
@@ -1714,7 +1721,10 @@ static void fake_reset(void)
 	fake_uid = 4321;
 	fake_enoent_for_inet = 0;
 	fake_sport_delta = 0;
+	fake_error = 0;
+	fake_answer_sport = 0;
 	fe_web_sock_diag_set_func(diag_fake);
+	fe_web_sock_diag_reset();
 }
 
 static int live_pair(const char *listen_host, int client_family, const char *connect_host,
@@ -1809,6 +1819,143 @@ static void test_sock_diag_live(void)
 	close(fd);
 }
 #endif
+
+/* What a reply says about sock_diag itself */
+static void test_sock_diag_status(void)
+{
+	DIAG_REPLY r = reply4();
+	struct nlmsghdr h;
+	guchar buf[512];
+	gsize len;
+
+	/* an answer, even one about a socket we do not use: it works */
+	len = put_reply(buf, 0, &r);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_ANSWER);
+	r.state = 6;
+	len = put_reply(buf, 0, &r);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_ANSWER);
+	/* no such socket - or no inet_diag/tcp_diag module: the kernel
+	 * says ENOENT for both */
+	len = put_error(buf, 0, 77, -ENOENT);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_NOT_FOUND);
+	/* everything else: it does not work */
+	len = put_error(buf, 0, 77, -EINVAL);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	len = put_error(buf, 0, 77, -EOPNOTSUPP);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	len = put_error(buf, 0, 77, -EPROTONOSUPPORT);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	len = put_error(buf, 0, 77, 0);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	/* not ours, cut short, an error too short for its code */
+	len = put_error(buf, 0, 78, -ENOENT);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	len = put_reply(buf, 0, &r);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 78), ==, FE_WEB_DIAG_FAILED);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, NLMSG_HDRLEN - 1, 77), ==, FE_WEB_DIAG_FAILED);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len - 1, 77), ==, FE_WEB_DIAG_FAILED);
+	len = put_error(buf, 0, 77, -ENOENT);
+	memcpy(&h, buf, sizeof(h));
+	h.nlmsg_len = NLMSG_HDRLEN + 2;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	h.nlmsg_type = NLMSG_DONE;
+	h.nlmsg_len = len;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(fe_web_sock_diag_status(buf, len, 77), ==, FE_WEB_DIAG_FAILED);
+	g_assert_cmpint(fe_web_sock_diag_status(NULL, len, 77), ==, FE_WEB_DIAG_FAILED);
+	g_assert_cmpint(fe_web_sock_diag_status(buf, 0, 77), ==, FE_WEB_DIAG_FAILED);
+}
+
+/* fe_web_tcp_peer_uid() at 'now' with no /proc lookup left: the number
+ * of times the kernel was asked */
+static int diag_calls_at(int fd, time_t now)
+{
+	FE_WEB_PROC_BUDGET spent = { FE_WEB_PROC_LOOKUPS_PER_SEC, now };
+	int before = fake_calls;
+	uid_t uid = 4242;
+
+	fe_web_tcp_peer_uid(fd, &spent, now, &uid);
+	return fake_calls - before;
+}
+
+/* After FE_WEB_SOCK_DIAG_MAX_FAILS failures in a row, sock_diag is not
+ * asked for FE_WEB_SOCK_DIAG_BACKOFF seconds (each question may make
+ * the kernel run modprobe) */
+static void test_sock_diag_backoff(void)
+{
+	int client, fd = live_pair("127.0.0.1", AF_INET, "127.0.0.1", &client);
+	int i;
+
+	g_assert_cmpint(fd, >=, 0);
+	fake_reset();
+	fe_web_sock_diag_set_func(diag_fails);
+	for (i = 0; i < FE_WEB_SOCK_DIAG_MAX_FAILS; i++)
+		g_assert_cmpint(diag_calls_at(fd, T + i), ==, 1);
+	/* the 4th within 60 s: not asked */
+	g_assert_cmpint(diag_calls_at(fd, T + 2), ==, 0);
+	g_assert_cmpint(diag_calls_at(fd, T + 2 + FE_WEB_SOCK_DIAG_BACKOFF - 1), ==, 0);
+	/* 60 s later: asked again, and when it fails, not asked again */
+	g_assert_cmpint(diag_calls_at(fd, T + 2 + FE_WEB_SOCK_DIAG_BACKOFF), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T + 3 + FE_WEB_SOCK_DIAG_BACKOFF), ==, 0);
+	/* a clock that went back counts as time passed */
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
+
+	/* a success sets the count back */
+	fake_reset();
+	fe_web_sock_diag_set_func(diag_fails);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	fe_web_sock_diag_set_func(diag_fake);
+	g_assert_cmpint(fake_uid_of(fd), ==, 4321);
+	fe_web_sock_diag_set_func(diag_fails);
+	fake_calls = 0;
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
+
+	/* errors other than ENOENT are failures */
+	fake_reset();
+	fake_error = EINVAL;
+	for (i = 0; i < FE_WEB_SOCK_DIAG_MAX_FAILS; i++)
+		g_assert_cmpint(diag_calls_at(fd, T), >=, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
+	fe_web_sock_diag_set_func(NULL);
+	close(fd);
+	close(client);
+}
+
+/* ENOENT for the peer: if the kernel finds our own side of the
+ * connection, sock_diag works and the peer's socket is just not there;
+ * if not, the module is missing and that is a failure */
+static void test_sock_diag_enoent(void)
+{
+	int client, fd = live_pair("127.0.0.1", AF_INET, "127.0.0.1", &client);
+	struct sockaddr_in local;
+	socklen_t len = sizeof(local);
+	int i;
+
+	g_assert_cmpint(fd, >=, 0);
+	g_assert_cmpint(getsockname(fd, (struct sockaddr *) &local, &len), ==, 0);
+	/* only our own side is found: never backed off */
+	fake_reset();
+	fake_answer_sport = ntohs(local.sin_port);
+	for (i = 0; i < 2 * FE_WEB_SOCK_DIAG_MAX_FAILS; i++) {
+		g_assert_cmpint(fake_uid_of(fd), ==, -1);
+		g_assert_cmpint(diag_calls_at(fd, T), >=, 1);
+	}
+	/* nothing is found, not even our own side: a failure */
+	fake_reset();
+	fake_error = ENOENT;
+	for (i = 0; i < FE_WEB_SOCK_DIAG_MAX_FAILS; i++)
+		g_assert_cmpint(diag_calls_at(fd, T), >=, 1);
+	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
+	fe_web_sock_diag_set_func(NULL);
+	close(fd);
+	close(client);
+}
 
 /* The file is read whole only if its last line ends */
 static void test_sockaddr_unterminated_file(void)
@@ -1911,6 +2058,7 @@ static void assert_live_own_uid(const char *listen_host, int client_family,
 		g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 0);
 		g_assert_cmpuint(uid, ==, 4242);
 		fe_web_sock_diag_set_func(NULL);
+		fe_web_sock_diag_reset();
 	}
 #else
 	g_assert_cmpint(r, ==, -1);
@@ -2047,6 +2195,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/peer/sock-diag-reply-malformed", test_sock_diag_reply_malformed);
 	g_test_add_func("/fe-web/peer/sock-diag-seam", test_sock_diag_seam);
 	g_test_add_func("/fe-web/peer/sock-diag-live", test_sock_diag_live);
+	g_test_add_func("/fe-web/peer/sock-diag-status", test_sock_diag_status);
+	g_test_add_func("/fe-web/peer/sock-diag-backoff", test_sock_diag_backoff);
+	g_test_add_func("/fe-web/peer/sock-diag-enoent", test_sock_diag_enoent);
 #endif
 
 	return g_test_run();

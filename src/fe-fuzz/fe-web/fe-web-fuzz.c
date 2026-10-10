@@ -499,6 +499,9 @@ void fe_web_fuzz_reset_login_state(void)
 	paced_logged = 0;
 	paced_unlogged = 0;
 	memset(&proc_budget, 0, sizeof(proc_budget));
+#ifdef __linux__
+	fe_web_sock_diag_reset();
+#endif
 	refused_logged = 0;
 	refused_unlogged = 0;
 }
