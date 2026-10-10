@@ -1473,8 +1473,7 @@ static THEME_REC *read_internal_theme(void)
 
 void themes_init(void)
 {
-	/* shellter (themes/shellter.theme) is the start theme of this fork */
-	settings_add_str("lookandfeel", "theme", "shellter");
+	settings_add_str("lookandfeel", "theme", "default");
 
 	default_formats = g_hash_table_new((GHashFunc) g_str_hash,
 					   (GCompareFunc) g_str_equal);

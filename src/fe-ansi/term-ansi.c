@@ -618,9 +618,9 @@ void term_common_init(void)
 
 	force_colors = FALSE;
 	term_use_colors = term_has_colors() && settings_get_bool("colors");
-	/* on: 24-bit colors where the terminal shows them, otherwise the
-	 * nearest of the 256-color palette (as irssi 1.4.5 with it off) */
-	settings_add_bool("lookandfeel", "colors_ansi_24bit", TRUE);
+	/* on: 24-bit colours where the terminal shows them (term_truecolor),
+	 * otherwise the nearest of the 256-colour palette */
+	settings_add_bool("lookandfeel", "colors_ansi_24bit", FALSE);
 	settings_add_choice("lookandfeel", "term_truecolor", 0, "auto;on;off");
 	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 	read_settings();

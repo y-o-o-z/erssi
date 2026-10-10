@@ -4,9 +4,19 @@
  * it lacks.
  */
 #include <irssi/src/common.h>
+#include <glib/gstdio.h>
+#include <irssi/src/core/args.h>
+#include <irssi/src/core/core.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/lib-config/iconfig.h>
+#include <irssi/src/fe-common/core/formats.h>
+#include <irssi/src/fe-common/core/fe-common-core.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
+
+#include <stdlib.h>
+#include <string.h>
+
+void fe_whois_init(void);
 
 typedef struct {
 	const char *module;
@@ -286,6 +296,245 @@ static void test_note_percent_and_none(void)
 	g_assert_null(shellter_defaults_format_note(0, SHELLTER_DEFAULTS_SAVED, "/x/config"));
 }
 
+/* Integration: a real start of core and fe-common in a child process, with
+   its own --home. */
+
+static void remove_tree(const char *path)
+{
+	GDir *dir;
+	const char *name;
+
+	if (g_file_test(path, G_FILE_TEST_IS_DIR) &&
+	    !g_file_test(path, G_FILE_TEST_IS_SYMLINK)) {
+		dir = g_dir_open(path, 0, NULL);
+		if (dir != NULL) {
+			while ((name = g_dir_read_name(dir)) != NULL) {
+				char *child = g_build_filename(path, name, NULL);
+				remove_tree(child);
+				g_free(child);
+			}
+			g_dir_close(dir);
+		}
+	}
+	g_remove(path);
+}
+
+/* makes a home with `config' (none when NULL) and starts erssi's core and
+   fe-common in it; returns the home */
+static char *start_in_home(const char *config)
+{
+	GError *error = NULL;
+	char *home, *fname;
+	char *argv[] = { "test-shellter-defaults", "--home", NULL, NULL };
+
+	home = g_dir_make_tmp("erssi-defaults-XXXXXX", &error);
+	g_assert_no_error(error);
+	if (config != NULL) {
+		fname = g_build_filename(home, "config", NULL);
+		g_file_set_contents(fname, config, -1, &error);
+		g_assert_no_error(error);
+		g_free(fname);
+	}
+
+	argv[2] = home;
+	core_register_options();
+	fe_common_core_register_options();
+	args_execute(3, argv);
+	core_preinit(argv[0]);
+	core_init();
+	fe_common_core_init();
+	fe_whois_init();
+	return home;
+}
+
+static void assert_effective(const DEFAULT_ROW *rows, int count)
+{
+	SETTINGS_REC *rec;
+	int i;
+
+	for (i = 0; i < count; i++) {
+		/* colors_ansi_24bit: fe-ansi is not started here, see
+		   tests/fe-ansi/test-term-defaults.c */
+		if (g_strcmp0(rows[i].module, "fe-ansi") == 0)
+			continue;
+		rec = settings_get_record(rows[i].key);
+		g_assert_nonnull(rec);
+		g_assert_cmpstr(rec->module, ==, rows[i].module);
+		switch (rec->type) {
+		case SETTING_TYPE_BOOLEAN:
+			g_assert_cmpint(settings_get_bool(rows[i].key), ==,
+			                g_strcmp0(rows[i].value, "yes") == 0);
+			break;
+		case SETTING_TYPE_INT:
+			g_assert_cmpint(settings_get_int(rows[i].key), ==, atoi(rows[i].value));
+			break;
+		case SETTING_TYPE_STRING:
+			g_assert_cmpstr(settings_get_str(rows[i].key), ==, rows[i].value);
+			break;
+		default:
+			g_assert_not_reached();
+		}
+	}
+}
+
+static void assert_default_str(const char *key, const char *value)
+{
+	SETTINGS_REC *rec;
+
+	rec = settings_get_record(key);
+	g_assert_nonnull(rec);
+	g_assert_cmpint(rec->type, ==, SETTING_TYPE_STRING);
+	g_assert_cmpstr(rec->default_value.v_string, ==, value);
+}
+
+static void assert_default_int(const char *key, int value)
+{
+	SETTINGS_REC *rec;
+
+	rec = settings_get_record(key);
+	g_assert_nonnull(rec);
+	g_assert_cmpint(rec->type, ==, SETTING_TYPE_INT);
+	g_assert_cmpint(rec->default_value.v_int, ==, value);
+}
+
+static void assert_default_bool(const char *key, int value)
+{
+	SETTINGS_REC *rec;
+
+	rec = settings_get_record(key);
+	g_assert_nonnull(rec);
+	g_assert_cmpint(rec->type, ==, SETTING_TYPE_BOOLEAN);
+	g_assert_cmpint(rec->default_value.v_bool, ==, value);
+}
+
+/* a new home: the Shellter values come from the built-in irssi.conf, the C
+   defaults are erssi's */
+static void test_fresh_home(void)
+{
+	char *home, *fname, *note;
+
+	if (!g_test_subprocess()) {
+		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
+		g_test_trap_assert_passed();
+		return;
+	}
+
+	home = start_in_home(NULL);
+	assert_effective(FRESH, G_N_ELEMENTS(FRESH));
+	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+	g_assert_cmpint(settings_get_int("show_names_on_join_limit"), ==, 1);
+	g_assert_false(settings_get_bool("show_names_on_join_alone"));
+	g_assert_cmpint(settings_get_int("nick_column_width"), ==, 13);
+	g_assert_true(settings_get_bool("print_whois_rpl_in_server_window"));
+	g_assert_cmpstr(settings_get_str("hilight_color"), ==, "%Zbb9af7");
+
+	note = shellter_defaults_note();
+	g_assert_null(note);
+	fname = g_build_filename(home, "config", NULL);
+	g_assert_false(g_file_test(fname, G_FILE_TEST_EXISTS));
+
+	assert_default_str("theme", "default");
+	assert_default_int("show_names_on_join_limit", 18);
+	assert_default_bool("show_names_on_join_alone", TRUE);
+	assert_default_int("nick_column_width", 10);
+	assert_default_str("nick_hash_colors", "g r b m c y G C");
+	assert_default_str("nick_mode_color_owner", "");
+	assert_default_str("nick_mode_color_op", "");
+	assert_default_str("nick_mode_color_halfop", "");
+	assert_default_str("nick_mode_color_voice", "");
+	assert_default_str("nick_mode_color_normal", "");
+	assert_default_str("hilight_color", "%Y");
+	assert_default_str("hilight_act_color", "%M");
+	assert_default_str("hidden_settings", "");
+	assert_default_bool("print_whois_rpl_in_server_window", FALSE);
+
+	g_free(fname);
+	remove_tree(home);
+	g_free(home);
+}
+
+/* a config from before 2026.10.0: the former defaults are written in it at
+   once, what the user set is kept */
+static void test_upgraded_home(void)
+{
+	char *home, *fname, *contents, *note, *expected;
+	GError *error = NULL;
+
+	if (!g_test_subprocess()) {
+		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
+		g_test_trap_assert_passed();
+		return;
+	}
+
+	home = start_in_home("settings = { core = { nick = \"alice\"; }; "
+	                     "\"fe-text\" = { colors_ansi_24bit = \"no\"; };\n"
+	                     "  \"fe-common/core\" = { hilight_color = \"%Zbb9af7\"; "
+	                     "nick_column_width = \"10\"; }; };\n");
+	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+	g_assert_cmpint(settings_get_int("nick_column_width"), ==, 10);
+	g_assert_cmpstr(settings_get_str("hilight_color"), ==, "%Zbb9af7");
+	g_assert_true(settings_get_bool("print_whois_rpl_in_server_window"));
+	g_assert_cmpint(settings_get_int("show_names_on_join_limit"), ==, 1);
+	g_assert_false(settings_get_bool("show_names_on_join_alone"));
+	g_assert_cmpstr(settings_get_str("hidden_settings"), ==, "translate_deepl_key");
+
+	fname = g_build_filename(home, "config", NULL);
+	g_file_get_contents(fname, &contents, NULL, &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(strstr(contents, "defaults_version = \"1\";"));
+	g_assert_nonnull(strstr(contents, "theme = \"shellter\";"));
+
+	note = shellter_defaults_note();
+	expected = g_strdup_printf("12 settings keep their Shellter Edition values, now "
+	                           "written in %s (they were built-in defaults before "
+	                           "2026.10.0)", fname);
+	g_assert_cmpstr(note, ==, expected);
+
+	g_free(expected);
+	g_free(note);
+	g_free(contents);
+	g_free(fname);
+	remove_tree(home);
+	g_free(home);
+}
+
+/* a config with errors is not written: the part not read would be lost */
+static void test_broken_config(void)
+{
+	static const char config[] =
+		"settings = { core = { nick = \"alice\"; }; };\nservers = ( { address = ";
+	char *home, *fname, *contents, *note, *expected;
+	gsize length;
+	GError *error = NULL;
+
+	if (!g_test_subprocess()) {
+		g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
+		g_test_trap_assert_passed();
+		return;
+	}
+
+	home = start_in_home(config);
+	fname = g_build_filename(home, "config", NULL);
+	g_file_get_contents(fname, &contents, &length, &error);
+	g_assert_no_error(error);
+	g_assert_cmpmem(contents, length, config, strlen(config));
+	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+
+	/* the part read has only core.nick, so all the rows are in memory */
+	note = shellter_defaults_note();
+	expected = g_strdup_printf("14 settings keep their Shellter Edition values for this "
+	                           "run only: %s has errors and was not changed; fix it "
+	                           "and restart erssi", fname);
+	g_assert_cmpstr(note, ==, expected);
+
+	g_free(expected);
+	g_free(note);
+	g_free(contents);
+	g_free(fname);
+	remove_tree(home);
+	g_free(home);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -303,6 +552,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/note_broken", test_note_broken);
 	g_test_add_func("/shellter_defaults/note_unsaved", test_note_unsaved);
 	g_test_add_func("/shellter_defaults/note_percent_and_none", test_note_percent_and_none);
+	g_test_add_func("/shellter_defaults/fresh_home", test_fresh_home);
+	g_test_add_func("/shellter_defaults/upgraded_home", test_upgraded_home);
+	g_test_add_func("/shellter_defaults/broken_config", test_broken_config);
 
 	return g_test_run();
 }
