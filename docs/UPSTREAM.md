@@ -139,14 +139,12 @@ Not meant for erssi main. 99 commits.
 
 Open at `4833f418`. Each item was checked in the code.
 
-1. fe-web, the rest of the per-peer work (login pacing itself is fixed,
-   see below). `fe-web-server.c:957-960`: a loop of new connections
-   evicts the owner's pending one. This matters on TCP loopback on shared
-   machines. Unix-socket mode (`fe_web_socket`) is not affected. Outside
-   Linux, or when the kernel cannot tell a loopback peer's uid, every
-   loopback peer is one peer (`ip:loopback`, all of 127/8 and `::1`) and
-   they share one pacing bucket (fe-web prints a hint to use
-   `fe_web_socket` then). A local user who connects to a non-loopback
+1. fe-web, the rest of the per-peer work (login pacing and the login
+   queue are fixed, see below: a loop of new connections evicts its own
+   oldest pending connection). Outside Linux, or when the kernel cannot
+   tell a loopback peer's uid, every loopback peer is one peer
+   (`ip:loopback`, all of 127/8 and `::1`) and they share one pacing
+   bucket (fe-web prints a hint to use `fe_web_socket` then). A local user who connects to a non-loopback
    address of the machine (its LAN or public IP) counts as that address,
    not as a uid: only loopback peers are looked up. A proxy that runs as
    the owner's user (a reverse proxy, socat, an `ssh -L` tunnel other
@@ -232,6 +230,13 @@ Fixed since `4833f418`:
   check every 2 s once 20 wrong passwords come within a minute, so many
   addresses get about one check a second in all; clean peers and the
   last 32 that logged in are not held by it.
+- fe-web's login queue (8 connections that did not log in yet): a new
+  connection closes the oldest pending connection of the busiest peer,
+  not the oldest of anyone, so a loop of new connections evicts its own
+  (`fe_web_pending_victim()`). The owner's uid and the trusted peers are
+  never chosen while another peer is waiting, so many addresses with one
+  connection each, which tie with the owner, close each other's; when
+  only the owner and trusted peers wait, the same rule applies among them.
 
 ## 6. How to take a change that is not in a pull request
 

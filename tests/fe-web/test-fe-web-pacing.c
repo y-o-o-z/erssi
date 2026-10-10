@@ -569,6 +569,279 @@ static void assert_key(const char *host, const char *want)
 	g_free(key);
 }
 
+/* The login queue (fe_web_pending_victim()). Clients are made up; list
+ * order is age, the oldest first. The counts below are for 8. */
+G_STATIC_ASSERT(FE_WEB_MAX_PENDING == 8);
+
+/* "uid:<getuid() + delta>", to be freed: delta 0 is erssi's own user */
+static char *uid_key(unsigned long delta)
+{
+	return fe_web_peer_key_uid((unsigned long) getuid() + delta);
+}
+
+/* append a client of 'peer_key' (NULL: none) */
+static GSList *add_client(GSList *list, const char *peer_key, gboolean logged_in)
+{
+	WEB_CLIENT_REC *c = g_new0(WEB_CLIENT_REC, 1);
+
+	c->peer_key = g_strdup(peer_key);
+	c->authenticated = logged_in;
+	return g_slist_append(list, c);
+}
+
+static GSList *add_n(GSList *list, const char *peer_key, int n, gboolean logged_in)
+{
+	while (n-- > 0)
+		list = add_client(list, peer_key, logged_in);
+	return list;
+}
+
+/* 'n' pending clients of "<prefix><i>", i = first .. first + n - 1 */
+static GSList *add_distinct(GSList *list, const char *prefix, int first, int n)
+{
+	int i;
+
+	for (i = first; i < first + n; i++)
+		list = add_client(list, key_n(prefix, i), FALSE);
+	return list;
+}
+
+static void client_rec_free(gpointer data)
+{
+	WEB_CLIENT_REC *c = data;
+
+	g_free(c->peer_key);
+	g_free(c);
+}
+
+/* the position of the victim in the list, -1 for NULL */
+static int victim_at(GSList *list, const char *own_key, FE_WEB_PACING *pacing)
+{
+	WEB_CLIENT_REC *victim;
+	int pos;
+
+	victim = fe_web_pending_victim(list, FE_WEB_MAX_PENDING, own_key, pacing);
+	if (victim == NULL)
+		return -1;
+	pos = g_slist_index(list, victim);
+	g_assert_cmpint(pos, >=, 0);
+	g_assert_false(victim->authenticated);
+	return pos;
+}
+
+static void test_pending_flooder_loses_own(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0), *other = uid_key(1);
+	GSList *list = NULL;
+
+	list = add_client(list, owner, FALSE);
+	list = add_n(list, other, 7, FALSE);
+	/* the busiest peer loses its oldest, owner or not */
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 1);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	g_free(other);
+	fe_web_pacing_free(p);
+}
+
+static void test_pending_below_limit(void)
+{
+	char *other = uid_key(1);
+	GSList *list = NULL;
+
+	g_assert_cmpint(victim_at(NULL, NULL, NULL), ==, -1);
+	list = add_n(list, other, 7, FALSE);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, -1);
+	list = add_client(list, other, FALSE);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 0);
+	g_slist_free_full(list, client_rec_free);
+	g_free(other);
+}
+
+static void test_pending_logged_in_ignored(void)
+{
+	char *owner = uid_key(0), *other = uid_key(1);
+	GSList *list = NULL;
+
+	/* 8 logged in of one peer, first; then 7 pending */
+	list = add_n(list, other, 8, TRUE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 7);
+	g_assert_cmpint(victim_at(list, owner, NULL), ==, -1);
+	/* the 8th pending: the logged-in ones are never counted nor chosen */
+	list = add_client(list, "ip:192.0.2.8", FALSE);
+	g_assert_cmpint(victim_at(list, owner, NULL), ==, 8);
+	g_slist_free_full(list, client_rec_free);
+
+	/* logged-in clients do not make their peer busier, nor are they
+	 * the oldest of the busiest peer */
+	list = NULL;
+	list = add_client(list, "ip:192.0.2.1", TRUE);
+	list = add_client(list, "ip:192.0.2.9", FALSE);
+	list = add_n(list, "ip:192.0.2.1", 2, FALSE);
+	list = add_n(list, "ip:192.0.2.9", 8, TRUE);
+	list = add_distinct(list, "ip:192.0.2.", 2, 5);
+	g_assert_cmpint(victim_at(list, owner, NULL), ==, 2);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	g_free(other);
+}
+
+static void test_pending_tie_oldest(void)
+{
+	GSList *list = NULL;
+
+	list = add_distinct(list, "ip:192.0.2.", 1, 8);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 0);
+	g_slist_free_full(list, client_rec_free);
+
+	/* two keys of 4: the one whose oldest is older */
+	list = NULL;
+	list = add_client(list, "ip:192.0.2.2", FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE);
+	list = add_n(list, "ip:192.0.2.1", 3, FALSE);
+	list = add_n(list, "ip:192.0.2.2", 3, FALSE);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 0);
+	g_slist_free_full(list, client_rec_free);
+
+	/* the busiest key that is not the oldest: its own oldest */
+	list = NULL;
+	list = add_distinct(list, "ip:192.0.2.", 1, 3);
+	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
+	list = add_client(list, "ip:192.0.2.9", FALSE);
+	list = add_n(list, "ip:2001:db8:1::/64", 2, FALSE);
+	list = add_client(list, "ip:192.0.2.10", FALSE);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 3);
+	g_slist_free_full(list, client_rec_free);
+
+	/* clients without a key count as one peer */
+	list = NULL;
+	list = add_distinct(list, "ip:192.0.2.", 1, 5);
+	list = add_n(list, NULL, 3, FALSE);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 5);
+	g_slist_free_full(list, client_rec_free);
+}
+
+static void test_pending_owner_kept_on_tie(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0);
+	GSList *list = NULL;
+
+	/* 7 attackers of one connection each tie with the owner */
+	list = add_client(list, owner, FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 7);
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 0); /* the plain rule */
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_assert_cmpint(victim_at(list, owner, NULL), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* the owner busiest of all: still kept */
+	list = NULL;
+	list = add_n(list, owner, 7, FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 7);
+	g_slist_free_full(list, client_rec_free);
+
+	/* other uids of this machine are not the owner */
+	list = NULL;
+	{
+		char *other = uid_key(1);
+
+		list = add_client(list, other, FALSE);
+		g_free(other);
+	}
+	list = add_client(list, owner, FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 6);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 0);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	fe_web_pacing_free(p);
+}
+
+static void test_pending_trusted_kept(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0);
+	GSList *list = NULL;
+
+	fe_web_pacing_succeeded(p, "ip:2001:db8:1::/64");
+	g_assert_true(fe_web_pacing_is_trusted(p, "ip:2001:db8:1::/64"));
+	g_assert_false(fe_web_pacing_is_trusted(p, "ip:192.0.2.1"));
+	/* a wrong password does not make a peer trusted */
+	fe_web_pacing_failed(p, "ip:192.0.2.1", T);
+	g_assert_false(fe_web_pacing_is_trusted(p, "ip:192.0.2.1"));
+
+	/* the oldest, and tied with the attackers */
+	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 7);
+	g_assert_cmpint(victim_at(list, owner, NULL), ==, 0); /* not known as trusted */
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* the busiest: kept all the same */
+	list = NULL;
+	list = add_n(list, "ip:2001:db8:1::/64", 4, FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 4);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 4);
+	g_slist_free_full(list, client_rec_free);
+
+	/* among the others the busiest loses its oldest: the owner and the
+	 * trusted peer are not counted */
+	list = NULL;
+	list = add_client(list, owner, FALSE);
+	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE);
+	list = add_client(list, "ip:192.0.2.2", FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE);
+	list = add_client(list, "ip:192.0.2.2", FALSE);
+	list = add_client(list, "ip:192.0.2.2", FALSE);
+	list = add_n(list, owner, 2, FALSE);
+	/* the plain rule: the owner, as old and as busy as the busiest */
+	g_assert_cmpint(victim_at(list, NULL, NULL), ==, 0);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 3);
+	g_slist_free_full(list, client_rec_free);
+
+	/* reset forgets the trusted peers */
+	fe_web_pacing_reset(p);
+	g_assert_false(fe_web_pacing_is_trusted(p, "ip:2001:db8:1::/64"));
+	g_free(owner);
+	fe_web_pacing_free(p);
+}
+
+static void test_pending_all_protected(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0);
+	GSList *list = NULL;
+
+	fe_web_pacing_succeeded(p, "ip:2001:db8:1::/64");
+	fe_web_pacing_succeeded(p, "ip:192.0.2.50");
+
+	/* the busiest of them */
+	list = add_n(list, owner, 3, FALSE);
+	list = add_n(list, "ip:2001:db8:1::/64", 5, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 3);
+	g_slist_free_full(list, client_rec_free);
+
+	/* tied: the oldest overall */
+	list = NULL;
+	list = add_n(list, owner, 4, FALSE);
+	list = add_n(list, "ip:192.0.2.50", 4, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 0);
+	g_slist_free_full(list, client_rec_free);
+
+	/* only the owner: its oldest */
+	list = NULL;
+	list = add_client(list, "ip:192.0.2.50", TRUE);
+	list = add_n(list, owner, 8, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	fe_web_pacing_free(p);
+}
+
 static void test_peer_key_ip4(void)
 {
 	assert_key("192.0.2.7", "ip:192.0.2.7");
@@ -2163,6 +2436,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/pacing/distributed-probe-bounded",
 	                test_distributed_probe_bounded);
 	g_test_add_func("/fe-web/pacing/single-address-probe", test_single_address_probe);
+	g_test_add_func("/fe-web/pending/flooder-loses-own", test_pending_flooder_loses_own);
+	g_test_add_func("/fe-web/pending/below-limit", test_pending_below_limit);
+	g_test_add_func("/fe-web/pending/logged-in-ignored", test_pending_logged_in_ignored);
+	g_test_add_func("/fe-web/pending/tie-oldest", test_pending_tie_oldest);
+	g_test_add_func("/fe-web/pending/owner-kept-on-tie", test_pending_owner_kept_on_tie);
+	g_test_add_func("/fe-web/pending/trusted-kept", test_pending_trusted_kept);
+	g_test_add_func("/fe-web/pending/all-protected", test_pending_all_protected);
 	g_test_add_func("/fe-web/peer-key/ip4", test_peer_key_ip4);
 	g_test_add_func("/fe-web/peer-key/ip6-prefix", test_peer_key_ip6_prefix);
 	g_test_add_func("/fe-web/peer-key/ip4-mapped", test_peer_key_ip4_mapped);

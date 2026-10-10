@@ -249,6 +249,81 @@ guint fe_web_pacing_table_size(FE_WEB_PACING *pacing)
 	return g_hash_table_size(pacing->peers);
 }
 
+gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer)
+{
+	return trusted_link(pacing, peer) != NULL;
+}
+
+static const char *pending_key(WEB_CLIENT_REC *client)
+{
+	return client->peer_key != NULL ? client->peer_key : "unknown";
+}
+
+static gboolean pending_protected(WEB_CLIENT_REC *client, const char *own_key,
+                                  FE_WEB_PACING *pacing)
+{
+	const char *key = pending_key(client);
+
+	return (own_key != NULL && strcmp(key, own_key) == 0) ||
+	       (pacing != NULL && fe_web_pacing_is_trusted(pacing, key));
+}
+
+/* Is the client one of those counted: pending, and protected exactly
+ * when all pending clients are */
+static gboolean pending_counted(WEB_CLIENT_REC *client, gboolean all_protected,
+                                const char *own_key, FE_WEB_PACING *pacing)
+{
+	return !client->authenticated &&
+	       pending_protected(client, own_key, pacing) == all_protected;
+}
+
+WEB_CLIENT_REC *fe_web_pending_victim(GSList *clients, int max_pending, const char *own_key,
+                                      FE_WEB_PACING *pacing)
+{
+	WEB_CLIENT_REC *victim = NULL;
+	GSList *tmp, *other;
+	gboolean all_protected = TRUE;
+	int pending = 0, best = 0;
+
+	for (tmp = clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (c->authenticated)
+			continue;
+		pending++;
+		if (!pending_protected(c, own_key, pacing))
+			all_protected = FALSE;
+	}
+	if (pending < max_pending)
+		return NULL;
+
+	/* The queue holds a few clients. Each client counts the pending
+	 * clients of its peer from itself on (they are all protected or
+	 * not, as it is), so a peer's oldest client counts them all and its
+	 * later ones fewer. Only more replaces the one found: the busiest
+	 * peer's oldest client, and of peers with as many the oldest
+	 * client. */
+	for (tmp = clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+		const char *key = pending_key(c);
+		int count = 0;
+
+		if (!pending_counted(c, all_protected, own_key, pacing))
+			continue;
+		for (other = tmp; other != NULL; other = other->next) {
+			WEB_CLIENT_REC *o = other->data;
+
+			if (!o->authenticated && strcmp(pending_key(o), key) == 0)
+				count++;
+		}
+		if (count > best) {
+			best = count;
+			victim = c;
+		}
+	}
+	return victim;
+}
+
 char *fe_web_peer_key_uid(unsigned long uid)
 {
 	return g_strdup_printf("uid:%lu", uid);

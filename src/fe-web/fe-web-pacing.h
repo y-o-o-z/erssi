@@ -53,6 +53,7 @@
 #include <sys/socket.h>
 
 #include <irssi/src/common.h>
+#include <irssi/src/fe-web/fe-web.h>
 
 #define FE_WEB_MAX_FAILS 5          /* moved from fe-web-server.c */
 #define FE_WEB_CHECK_INTERVAL 2
@@ -91,6 +92,25 @@ void fe_web_pacing_succeeded(FE_WEB_PACING *pacing, const char *peer);
 gboolean fe_web_pacing_in_overflow(FE_WEB_PACING *pacing, const char *peer);
 /* peers in the table (for the tests) */
 guint fe_web_pacing_table_size(FE_WEB_PACING *pacing);
+/* Is peer one of the trusted peers (it logged in); changes nothing */
+gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
+
+/* The login queue: at most this many clients that did not log in yet */
+#define FE_WEB_MAX_PENDING 8 /* moved from fe-web-server.c */
+
+/* The pending client to close for a new connection: NULL while fewer
+ * than max_pending of 'clients' (WEB_CLIENT_REC *, the oldest first) did
+ * not log in. A client without a peer key counts as the peer "unknown".
+ *
+ * Protected are the clients of own_key (erssi's own uid, NULL: none) and
+ * of the trusted peers of pacing (NULL: none). While any pending client is
+ * not protected, only those are counted and chosen; else all of them.
+ * Of those, the oldest client of the peer with the most of them; between
+ * peers with as many, the oldest client. So one peer, or many addresses
+ * with one connection each, close their own connections, not the owner's
+ * or a trusted peer's. */
+WEB_CLIENT_REC *fe_web_pending_victim(GSList *clients, int max_pending, const char *own_key,
+                                      FE_WEB_PACING *pacing);
 
 /* Peer keys, to be freed */
 /* "uid:1000" */
