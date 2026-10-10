@@ -143,8 +143,17 @@ Open at `4833f418`. Each item was checked in the code.
    see below). `fe-web-server.c:957-960`: a loop of new connections
    evicts the owner's pending one. This matters on TCP loopback on shared
    machines. Unix-socket mode (`fe_web_socket`) is not affected. Outside
-   Linux, TCP loopback users are still one address and share one pacing
-   bucket (fe-web prints a hint to use `fe_web_socket` then). Residual risk
+   Linux, or when the kernel cannot tell a loopback peer's uid, every
+   loopback peer is one peer (`ip:loopback`, all of 127/8 and `::1`) and
+   they share one pacing bucket (fe-web prints a hint to use
+   `fe_web_socket` then). A local user who connects to a non-loopback
+   address of the machine (its LAN or public IP) counts as that address,
+   not as a uid: only loopback peers are looked up. A proxy that runs as
+   the owner's user (a reverse proxy, socat, an `ssh -L` tunnel other
+   users can reach) connects as the owner, so every client behind it
+   counts as the owner and is never paced: such a proxy must sign its own
+   users in. NexusIRC on the Unix socket does (its own sign-in, the
+   fe-web password stored on its side). Residual risk
    that stays: during an attack, a peer that never logged in before and
    sends one wrong password (a typo) from a new address is a suspect, and
    the shared ceiling holds it for up to about 10 minutes, until its
@@ -215,9 +224,10 @@ Open at `4833f418`. Each item was checked in the code.
 Fixed since `4833f418`:
 
 - fe-web login pacing is per peer: uid on the Unix socket, address (/64
-  for IPv6) on TCP; on TCP loopback (Linux) the peer's uid; elsewhere the
-  address, with a hint to use fe_web_socket; your own uid is never
-  paced. A ceiling holds all
+  for IPv6) on TCP; on TCP loopback (Linux) the peer's uid, asked of the
+  kernel for the one socket (NETLINK_SOCK_DIAG), else from /proc/net/tcp
+  at most twice a second; elsewhere one shared `ip:loopback`, with a hint
+  to use fe_web_socket; your own uid is never paced. A ceiling holds all
   suspect peers (a wrong password in the last 10 minutes) together to one
   check every 2 s once 20 wrong passwords come within a minute, so many
   addresses get about one check a second in all; clean peers and the

@@ -95,7 +95,9 @@ guint fe_web_pacing_table_size(FE_WEB_PACING *pacing);
 /* Peer keys, to be freed */
 /* "uid:1000" */
 char *fe_web_peer_key_uid(unsigned long uid);
-/* "ip:192.0.2.7", "ip:2001:db8:1:2::/64"; IPv4-mapped as IPv4 */
+/* "ip:192.0.2.7", "ip:2001:db8:1:2::/64"; IPv4-mapped as IPv4. Every
+ * loopback address is "ip:loopback": a local user can pick any source
+ * address of 127/8, and all of them are this machine. */
 char *fe_web_peer_key_ip(const IPADDR *ip);
 /* 127/8, ::1, ::ffff:127/104 */
 gboolean fe_web_ip_is_loopback(const IPADDR *ip);
@@ -131,8 +133,49 @@ gboolean fe_web_proc_net_tcp_uid(const char *table, int family, const void *peer
  * the kernel shows for a uid outside our user namespace) */
 int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *local,
                             const char *proc_net, uid_t unmapped, uid_t *uid);
+
+/* /proc/net/tcp is generated anew on every read, about 2 us a socket, so
+ * it is read at most FE_WEB_PROC_LOOKUPS_PER_SEC times a second for all
+ * peers together (each second has the whole budget; a clock that went
+ * back counts as a new second). Zeroed: the whole budget left. */
+#define FE_WEB_PROC_LOOKUPS_PER_SEC 2
+typedef struct {
+	int spent;
+	time_t last;
+} FE_WEB_PROC_BUDGET;
+/* TRUE: a /proc lookup may be made now (and it is counted) */
+gboolean fe_web_proc_budget_take(FE_WEB_PROC_BUDGET *budget, time_t now);
+
 /* 1: uid found; 0: not found or the peer is not on loopback; -1: no way on
- * this system (not Linux) */
-int fe_web_tcp_peer_uid(int fd, uid_t *uid);
+ * this system (not Linux). On Linux the kernel is asked for the one socket
+ * (NETLINK_SOCK_DIAG); when it gives no answer, /proc/net/tcp and tcp6
+ * are read if 'budget' (NULL: no limit) allows it at 'now'. */
+int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *uid);
+
+#ifdef __linux__
+/* NETLINK_SOCK_DIAG, the parts tested on their own.
+ *
+ * The request for the TCP socket whose local side is (src, sport) and
+ * remote side (dst, dport): family AF_INET (struct in_addr) or AF_INET6
+ * (struct in6_addr, IPv4-mapped allowed), ports in host order. Written to
+ * buf; its length, 0 when it does not fit or the arguments are wrong. */
+gsize fe_web_sock_diag_request(void *buf, gsize size, int family, const void *src, int sport,
+                               const void *dst, int dport, guint32 seq);
+/* The reply to that request: 1 and *uid when it is exactly one socket
+ * (one SOCK_DIAG_BY_FAMILY message of 'seq', nothing else), ESTABLISHED,
+ * with the tuple asked for (IPv4 and IPv4-mapped count as the same), and
+ * its uid neither 'unmapped' nor -1. Anything else: 0. */
+int fe_web_sock_diag_reply(const void *buf, gsize len, int family, const void *src, int sport,
+                           const void *dst, int dport, guint32 seq, uid_t unmapped,
+                           uid_t *uid);
+/* the biggest reply read; a longer one is not used */
+#define FE_WEB_SOCK_DIAG_REPLY_MAX 8192
+/* Send the request to the kernel and read its reply into 'reply'; the
+ * reply's length (more than 'size' when it did not fit), -1 on error */
+typedef gssize (*FE_WEB_SOCK_DIAG_FUNC)(const void *req, gsize req_len, void *reply,
+                                        gsize size);
+/* for the tests: what asks the kernel (NULL: the kernel itself) */
+void fe_web_sock_diag_set_func(FE_WEB_SOCK_DIAG_FUNC func);
+#endif
 
 #endif

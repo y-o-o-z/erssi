@@ -23,6 +23,7 @@
 #include <irssi/src/core/network.h>
 
 #include <glib.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
@@ -30,6 +31,11 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <linux/inet_diag.h>
+#endif
 
 #define T 1000
 
@@ -578,6 +584,19 @@ static void test_peer_key_ip6_prefix(void)
 static void test_peer_key_ip4_mapped(void)
 {
 	assert_key("::ffff:192.0.2.7", "ip:192.0.2.7");
+}
+
+/* Every loopback address is one peer: they all are this machine, and a
+ * local user can pick any of 127/8 as the source */
+static void test_peer_key_loopback_shared(void)
+{
+	assert_key("127.0.0.1", "ip:loopback");
+	assert_key("127.0.0.2", "ip:loopback");
+	assert_key("127.255.1.2", "ip:loopback");
+	assert_key("::1", "ip:loopback");
+	assert_key("::ffff:127.9.9.9", "ip:loopback");
+	assert_key("192.0.2.8", "ip:192.0.2.8");
+	assert_key("2001:db8::2", "ip:2001:db8::/64");
 }
 
 static void test_peer_key_uid(void)
@@ -1276,6 +1295,542 @@ static void test_sockaddr_file_reading(void)
 	g_free(dir);
 }
 
+/* At most FE_WEB_PROC_LOOKUPS_PER_SEC /proc lookups a second, for all
+ * peers together */
+static void test_proc_budget(void)
+{
+	FE_WEB_PROC_BUDGET b;
+	int i;
+
+	memset(&b, 0, sizeof(b));
+	for (i = 0; i < FE_WEB_PROC_LOOKUPS_PER_SEC; i++)
+		g_assert_true(fe_web_proc_budget_take(&b, T));
+	g_assert_false(fe_web_proc_budget_take(&b, T));
+	g_assert_false(fe_web_proc_budget_take(&b, T));
+	/* the next second */
+	for (i = 0; i < FE_WEB_PROC_LOOKUPS_PER_SEC; i++)
+		g_assert_true(fe_web_proc_budget_take(&b, T + 1));
+	g_assert_false(fe_web_proc_budget_take(&b, T + 1));
+	/* a later second has the whole budget again */
+	g_assert_true(fe_web_proc_budget_take(&b, T + 5));
+	/* a clock that went back counts as time passed */
+	g_assert_true(fe_web_proc_budget_take(&b, T + 5));
+	g_assert_false(fe_web_proc_budget_take(&b, T + 5));
+	g_assert_true(fe_web_proc_budget_take(&b, T - 100));
+}
+
+#ifdef __linux__
+/* NETLINK_SOCK_DIAG: the kernel's answer for the one socket */
+
+typedef struct {
+	guint32 seq;
+	int family, state;
+	guint32 uid;
+	guchar src[16], dst[16]; /* IPv4: the first 4 bytes */
+	int sport, dport;
+} DIAG_REPLY;
+
+/* bytes after inet_diag_msg, as the kernel adds attributes */
+#define DIAG_ATTRS 28
+
+/* A reply at buf + off; the offset after it */
+static gsize put_reply(guchar *buf, gsize off, const DIAG_REPLY *r)
+{
+	struct nlmsghdr h;
+	struct inet_diag_msg d;
+
+	memset(&h, 0, sizeof(h));
+	memset(&d, 0, sizeof(d));
+	h.nlmsg_len = NLMSG_LENGTH(sizeof(d)) + DIAG_ATTRS;
+	h.nlmsg_type = SOCK_DIAG_BY_FAMILY;
+	h.nlmsg_seq = r->seq;
+	d.idiag_family = r->family;
+	d.idiag_state = r->state;
+	d.idiag_uid = r->uid;
+	d.id.idiag_sport = htons(r->sport);
+	d.id.idiag_dport = htons(r->dport);
+	memcpy(d.id.idiag_src, r->src, 16);
+	memcpy(d.id.idiag_dst, r->dst, 16);
+	memset(buf + off, 0, NLMSG_ALIGN(h.nlmsg_len));
+	memcpy(buf + off, &h, sizeof(h));
+	memcpy(buf + off + NLMSG_HDRLEN, &d, sizeof(d));
+	return off + NLMSG_ALIGN(h.nlmsg_len);
+}
+
+/* An NLMSG_ERROR with 'error' at buf + off */
+static gsize put_error(guchar *buf, gsize off, guint32 seq, int error)
+{
+	struct nlmsghdr h;
+	struct nlmsgerr e;
+
+	memset(&h, 0, sizeof(h));
+	memset(&e, 0, sizeof(e));
+	h.nlmsg_len = NLMSG_LENGTH(sizeof(e));
+	h.nlmsg_type = NLMSG_ERROR;
+	h.nlmsg_seq = seq;
+	e.error = error;
+	memcpy(buf + off, &h, sizeof(h));
+	memcpy(buf + off + NLMSG_HDRLEN, &e, sizeof(e));
+	return off + NLMSG_ALIGN(h.nlmsg_len);
+}
+
+/* the kernel's reply for 127.0.0.1:40000 connected to 127.0.0.1:9001 */
+static DIAG_REPLY reply4(void)
+{
+	DIAG_REPLY r;
+	struct in_addr a = addr4("127.0.0.1");
+
+	memset(&r, 0, sizeof(r));
+	r.seq = 77;
+	r.family = AF_INET;
+	r.state = 1;
+	r.uid = 1001;
+	memcpy(r.src, &a, 4);
+	memcpy(r.dst, &a, 4);
+	r.sport = 40000;
+	r.dport = 9001;
+	return r;
+}
+
+/* the uid fe_web_sock_diag_reply() takes from buf for that connection
+ * (asked as 'family': AF_INET, or AF_INET6 IPv4-mapped), or -1 */
+static long diag_uid_as(const guchar *buf, gsize len, int family)
+{
+	struct in_addr a = addr4("127.0.0.1");
+	struct in6_addr m = addr6("::ffff:127.0.0.1");
+	const void *addr = family == AF_INET ? (const void *) &a : (const void *) &m;
+	uid_t uid = 4242;
+
+	if (fe_web_sock_diag_reply(buf, len, family, addr, 40000, addr, 9001, 77, 65534, &uid) !=
+	    1) {
+		g_assert_cmpuint(uid, ==, 4242);
+		return -1;
+	}
+	return (long) uid;
+}
+
+static long diag_uid(const guchar *buf, gsize len)
+{
+	return diag_uid_as(buf, len, AF_INET);
+}
+
+static long diag_uid_of(const DIAG_REPLY *r)
+{
+	guchar buf[512];
+
+	return diag_uid(buf, put_reply(buf, 0, r));
+}
+
+static void test_sock_diag_request(void)
+{
+	guint32 buf[64];
+	struct nlmsghdr h;
+	struct inet_diag_req_v2 q;
+	struct in_addr p = addr4("127.0.0.1"), l = addr4("127.0.0.2");
+	struct in6_addr p6 = addr6("::1"), l6 = addr6("2001:db8::1");
+	gsize len;
+
+	len = fe_web_sock_diag_request(buf, sizeof(buf), AF_INET, &p, 40000, &l, 9001, 77);
+	g_assert_cmpuint(len, ==, NLMSG_LENGTH(sizeof(q)));
+	memcpy(&h, buf, sizeof(h));
+	memcpy(&q, (guchar *) buf + NLMSG_HDRLEN, sizeof(q));
+	g_assert_cmpuint(h.nlmsg_len, ==, len);
+	g_assert_cmpuint(h.nlmsg_type, ==, SOCK_DIAG_BY_FAMILY);
+	/* one socket, no dump */
+	g_assert_cmpuint(h.nlmsg_flags, ==, NLM_F_REQUEST);
+	g_assert_cmpuint(h.nlmsg_seq, ==, 77);
+	g_assert_cmpuint(h.nlmsg_pid, ==, 0);
+	g_assert_cmpuint(q.sdiag_family, ==, AF_INET);
+	g_assert_cmpuint(q.sdiag_protocol, ==, IPPROTO_TCP);
+	g_assert_cmpuint(q.idiag_ext, ==, 0);
+	g_assert_cmpuint(ntohs(q.id.idiag_sport), ==, 40000);
+	g_assert_cmpuint(ntohs(q.id.idiag_dport), ==, 9001);
+	g_assert_cmpmem(q.id.idiag_src, 4, &p, 4);
+	g_assert_cmpmem(q.id.idiag_dst, 4, &l, 4);
+	g_assert_cmpuint(q.id.idiag_src[1] | q.id.idiag_src[2] | q.id.idiag_src[3], ==, 0);
+	g_assert_cmpuint(q.id.idiag_if, ==, 0);
+	g_assert_cmpuint(q.id.idiag_cookie[0], ==, INET_DIAG_NOCOOKIE);
+	g_assert_cmpuint(q.id.idiag_cookie[1], ==, INET_DIAG_NOCOOKIE);
+
+	len = fe_web_sock_diag_request(buf, sizeof(buf), AF_INET6, &p6, 1, &l6, 65535, 78);
+	g_assert_cmpuint(len, ==, NLMSG_LENGTH(sizeof(q)));
+	memcpy(&q, (guchar *) buf + NLMSG_HDRLEN, sizeof(q));
+	g_assert_cmpuint(q.sdiag_family, ==, AF_INET6);
+	g_assert_cmpmem(q.id.idiag_src, 16, &p6, 16);
+	g_assert_cmpmem(q.id.idiag_dst, 16, &l6, 16);
+	g_assert_cmpuint(ntohs(q.id.idiag_sport), ==, 1);
+	g_assert_cmpuint(ntohs(q.id.idiag_dport), ==, 65535);
+
+	/* no room, no such family, no such port */
+	g_assert_cmpuint(fe_web_sock_diag_request(buf, NLMSG_LENGTH(sizeof(q)) - 1, AF_INET, &p,
+	                                          40000, &l, 9001, 77), ==, 0);
+	g_assert_cmpuint(
+	    fe_web_sock_diag_request(buf, sizeof(buf), AF_UNIX, &p, 40000, &l, 9001, 77), ==, 0);
+	g_assert_cmpuint(
+	    fe_web_sock_diag_request(buf, sizeof(buf), AF_INET, &p, 65536, &l, 9001, 77), ==, 0);
+	g_assert_cmpuint(fe_web_sock_diag_request(buf, sizeof(buf), AF_INET, &p, 40000, &l, -1, 77),
+	                 ==, 0);
+}
+
+static void test_sock_diag_reply(void)
+{
+	DIAG_REPLY r;
+	struct in6_addr a6 = addr6("::1"), m = addr6("::ffff:127.0.0.1");
+	guchar buf[512];
+	uid_t uid = 4242;
+	int state;
+
+	r = reply4();
+	g_assert_cmpint(diag_uid_of(&r), ==, 1001);
+
+	/* IPv6 */
+	r.family = AF_INET6;
+	memcpy(r.src, &a6, 16);
+	memcpy(r.dst, &a6, 16);
+	g_assert_cmpint(fe_web_sock_diag_reply(buf, put_reply(buf, 0, &r), AF_INET6, &a6, 40000,
+	                                       &a6, 9001, 77, 65534, &uid), ==, 1);
+	g_assert_cmpuint(uid, ==, 1001);
+	/* an IPv6 socket is not an IPv4 one */
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+
+	/* a dual-stack client: asked as IPv4, the socket is IPv6 with
+	 * mapped addresses */
+	memcpy(r.src, &m, 16);
+	memcpy(r.dst, &m, 16);
+	g_assert_cmpint(diag_uid_of(&r), ==, 1001);
+	/* asked as IPv4-mapped, the socket is IPv4 */
+	r = reply4();
+	g_assert_cmpint(diag_uid_as(buf, put_reply(buf, 0, &r), AF_INET6), ==, 1001);
+	/* asked for ::1, an IPv4 answer */
+	uid = 4242;
+	g_assert_cmpint(fe_web_sock_diag_reply(buf, put_reply(buf, 0, &r), AF_INET6, &a6, 40000,
+	                                       &a6, 9001, 77, 65534, &uid), ==, 0);
+	g_assert_cmpuint(uid, ==, 4242);
+
+	/* only ESTABLISHED: the kernel answers with a listener (10) on the
+	 * port, or a closed connection (FIN_WAIT2 5, TIME_WAIT 6) */
+	for (state = 0; state <= 0xff; state++) {
+		r = reply4();
+		r.state = state;
+		g_assert_cmpint(diag_uid_of(&r), ==, state == 1 ? 1001 : -1);
+	}
+	/* the socket the kernel found is the one asked for */
+	r = reply4();
+	r.sport = 40001;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	r = reply4();
+	r.dport = 0; /* a listener */
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	r = reply4();
+	r.src[3] = 2;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	r = reply4();
+	r.dst[0] = 0;
+	r.dst[3] = 0;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	/* an IPv6 socket whose addresses start with the 4 bytes of
+	 * 127.0.0.1 (and the rest zero) is not that IPv4 one */
+	r = reply4();
+	r.family = AF_INET6;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	/* IPv4 is the first 4 bytes only */
+	r = reply4();
+	r.src[4] = 1;
+	g_assert_cmpint(diag_uid_of(&r), ==, 1001);
+	/* our request */
+	r = reply4();
+	r.seq = 78;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	/* not a family the request had */
+	r = reply4();
+	r.family = AF_UNIX;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	/* the uid shown for one outside our user namespace, and -1 */
+	r = reply4();
+	r.uid = 65534;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	r.uid = 0xffffffff;
+	g_assert_cmpint(diag_uid_of(&r), ==, -1);
+	r.uid = 0;
+	g_assert_cmpint(diag_uid_of(&r), ==, 0);
+}
+
+/* Replies that are not one socket */
+static void test_sock_diag_reply_malformed(void)
+{
+	DIAG_REPLY r = reply4();
+	struct nlmsghdr h;
+	guchar buf[1024];
+	gsize len, one, i;
+
+	/* not found */
+	g_assert_cmpint(diag_uid(buf, put_error(buf, 0, 77, -ENOENT)), ==, -1);
+	g_assert_cmpint(diag_uid(buf, put_error(buf, 0, 77, 0)), ==, -1);
+	/* two sockets, or one and an error */
+	len = put_reply(buf, put_reply(buf, 0, &r), &r);
+	g_assert_cmpint(diag_uid(buf, len), ==, -1);
+	len = put_error(buf, put_reply(buf, 0, &r), 77, -ENOENT);
+	g_assert_cmpint(diag_uid(buf, len), ==, -1);
+	len = put_reply(buf, put_error(buf, 0, 77, -ENOENT), &r);
+	g_assert_cmpint(diag_uid(buf, len), ==, -1);
+
+	/* another type: NLMSG_DONE, NLMSG_NOOP, anything */
+	one = put_reply(buf, 0, &r);
+	memcpy(&h, buf, sizeof(h));
+	h.nlmsg_type = NLMSG_DONE;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	h.nlmsg_type = NLMSG_NOOP;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	h.nlmsg_type = 0x1234;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+
+	/* cut short anywhere */
+	one = put_reply(buf, 0, &r);
+	for (i = 0; i < one; i++)
+		g_assert_cmpint(diag_uid(buf, i), ==, -1);
+	g_assert_cmpint(diag_uid(buf, one), ==, 1001);
+	/* bytes after it */
+	memset(buf + one, 0, 16);
+	for (i = 1; i <= 16; i++)
+		g_assert_cmpint(diag_uid(buf, one + i), ==, -1);
+	/* nlmsg_len longer than what came, too short for the message, too
+	 * short for a header, 0 */
+	memcpy(&h, buf, sizeof(h));
+	h.nlmsg_len = one + 4;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	h.nlmsg_len = NLMSG_LENGTH(sizeof(struct inet_diag_msg)) - 1;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	g_assert_cmpint(diag_uid(buf, h.nlmsg_len), ==, -1);
+	h.nlmsg_len = NLMSG_LENGTH(sizeof(struct inet_diag_msg));
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, NLMSG_LENGTH(sizeof(struct inet_diag_msg))), ==, 1001);
+	/* a message whose length is not a multiple of 4, ending where the
+	 * reply ends: read, and nothing after it */
+	h.nlmsg_len = one - 1;
+	memcpy(buf, &h, sizeof(h));
+	memset(buf + one - 1, 0xff, 64);
+	g_assert_cmpint(diag_uid(buf, one - 1), ==, 1001);
+	h.nlmsg_len = sizeof(h) - 1;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	h.nlmsg_len = 0;
+	memcpy(buf, &h, sizeof(h));
+	g_assert_cmpint(diag_uid(buf, one), ==, -1);
+	/* a family the request cannot have */
+	{
+		struct in_addr a = addr4("127.0.0.1");
+		uid_t uid = 4242;
+
+		one = put_reply(buf, 0, &r);
+		g_assert_cmpint(fe_web_sock_diag_reply(buf, one, AF_UNIX, &a, 40000, &a, 9001, 77,
+		                                       65534, &uid), ==, 0);
+		g_assert_cmpuint(uid, ==, 4242);
+	}
+	/* no reply */
+	g_assert_cmpint(diag_uid(buf, 0), ==, -1);
+	g_assert_cmpint(diag_uid(NULL, one), ==, -1);
+	/* a reply at an odd place in memory */
+	one = put_reply(buf + 1, 0, &r);
+	g_assert_cmpint(diag_uid(buf + 1, one), ==, 1001);
+	/* every byte changed: no crash */
+	one = put_reply(buf, 0, &r);
+	for (i = 0; i < one; i++) {
+		static const guchar subst[] = { 0x00, 0x01, 0x7f, 0x80, 0xff };
+		gsize k;
+
+		for (k = 0; k < sizeof(subst); k++) {
+			guchar copy[512];
+
+			memcpy(copy, buf, one);
+			copy[i] = subst[k];
+			g_assert_cmpint(diag_uid(copy, one), >=, -1);
+		}
+	}
+}
+
+/* The sock_diag seam: what the fake kernel answers */
+static int fake_calls, fake_families[4];
+static int fake_ret;         /* 0: the reply's length */
+static int fake_state = 1;
+static guint32 fake_uid = 4321;
+static int fake_enoent_for_inet; /* AF_INET requests get ENOENT */
+static int fake_sport_delta;
+
+static gssize diag_fails(const void *req, gsize req_len, void *reply, gsize size)
+{
+	(void) req;
+	(void) req_len;
+	(void) reply;
+	(void) size;
+	fake_calls++;
+	return -1;
+}
+
+static gssize diag_fake(const void *req, gsize req_len, void *reply, gsize size)
+{
+	struct nlmsghdr h;
+	struct inet_diag_req_v2 q;
+	DIAG_REPLY r;
+	gsize len;
+
+	g_assert_cmpuint(req_len, ==, NLMSG_LENGTH(sizeof(q)));
+	g_assert_cmpuint(size, >=, 512);
+	memcpy(&h, req, sizeof(h));
+	memcpy(&q, (const guchar *) req + NLMSG_HDRLEN, sizeof(q));
+	if (fake_calls < 4)
+		fake_families[fake_calls] = q.sdiag_family;
+	fake_calls++;
+	if (fake_enoent_for_inet && q.sdiag_family == AF_INET)
+		return put_error(reply, 0, h.nlmsg_seq, -ENOENT);
+	memset(&r, 0, sizeof(r));
+	r.seq = h.nlmsg_seq;
+	r.family = q.sdiag_family;
+	r.state = fake_state;
+	r.uid = fake_uid;
+	memcpy(r.src, q.id.idiag_src, 16);
+	memcpy(r.dst, q.id.idiag_dst, 16);
+	r.sport = ntohs(q.id.idiag_sport) + fake_sport_delta;
+	r.dport = ntohs(q.id.idiag_dport);
+	len = put_reply(reply, 0, &r);
+	if (fake_ret == (int) size + 1) {
+		/* a message as long as what came: more than the buffer */
+		h.nlmsg_len = size + 1;
+		memcpy(reply, &h.nlmsg_len, sizeof(h.nlmsg_len));
+	}
+	return fake_ret != 0 ? fake_ret : (gssize) len;
+}
+
+static void fake_reset(void)
+{
+	fake_calls = 0;
+	memset(fake_families, 0, sizeof(fake_families));
+	fake_ret = 0;
+	fake_state = 1;
+	fake_uid = 4321;
+	fake_enoent_for_inet = 0;
+	fake_sport_delta = 0;
+	fe_web_sock_diag_set_func(diag_fake);
+}
+
+static int live_pair(const char *listen_host, int client_family, const char *connect_host,
+                     int *client);
+
+/* fe_web_tcp_peer_uid() with the fake kernel and no /proc lookup left */
+static long fake_uid_of(int fd)
+{
+	FE_WEB_PROC_BUDGET spent = { FE_WEB_PROC_LOOKUPS_PER_SEC, T };
+	uid_t uid = 4242;
+
+	if (fe_web_tcp_peer_uid(fd, &spent, T, &uid) != 1) {
+		g_assert_cmpuint(uid, ==, 4242);
+		return -1;
+	}
+	return (long) uid;
+}
+
+static void test_sock_diag_seam(void)
+{
+	int client, fd = live_pair("127.0.0.1", AF_INET, "127.0.0.1", &client);
+
+	g_assert_cmpint(fd, >=, 0);
+	/* the reply comes from the exchange: one request, AF_INET */
+	fake_reset();
+	g_assert_cmpint(fake_uid_of(fd), ==, 4321);
+	g_assert_cmpint(fake_calls, ==, 1);
+	g_assert_cmpint(fake_families[0], ==, AF_INET);
+	/* not found as IPv4: asked again as IPv4-mapped IPv6 */
+	fake_reset();
+	fake_enoent_for_inet = 1;
+	g_assert_cmpint(fake_uid_of(fd), ==, 4321);
+	g_assert_cmpint(fake_calls, ==, 2);
+	g_assert_cmpint(fake_families[1], ==, AF_INET6);
+	/* no answer, an error, nothing, too big for the buffer, or one
+	 * that is not the socket: not known (and with no /proc lookup
+	 * left, nothing else) */
+	fake_reset();
+	fe_web_sock_diag_set_func(diag_fails);
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	fake_reset();
+	fake_ret = -1;
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	fake_reset();
+	fake_ret = 0;
+	fake_state = 6;
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	fake_reset();
+	fake_ret = FE_WEB_SOCK_DIAG_REPLY_MAX + 1;
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	fake_reset();
+	fake_sport_delta = 1;
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	/* the overflow uid */
+	fake_reset();
+	fake_uid = 65534;
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	/* sock_diag is not used for peers not on loopback: none here, but
+	 * a Unix socket is never asked about */
+	{
+		int sv[2];
+
+		fake_reset();
+		g_assert_cmpint(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), ==, 0);
+		g_assert_cmpint(fake_uid_of(sv[0]), ==, -1);
+		g_assert_cmpint(fake_calls, ==, 0);
+		close(sv[0]);
+		close(sv[1]);
+	}
+	fe_web_sock_diag_set_func(NULL);
+	close(fd);
+	close(client);
+}
+
+/* The kernel itself, unprivileged: the socket of our own client */
+static void test_sock_diag_live(void)
+{
+	int client, fd = live_pair("127.0.0.1", AF_INET, "127.0.0.1", &client);
+	FE_WEB_PROC_BUDGET spent = { FE_WEB_PROC_LOOKUPS_PER_SEC, T };
+	uid_t uid = 4242;
+
+	g_assert_cmpint(fd, >=, 0);
+	fe_web_sock_diag_set_func(NULL);
+	g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 1);
+	g_assert_cmpuint(uid, ==, getuid());
+	/* the client closed: FIN_WAIT2 (uid 0), not ESTABLISHED */
+	close(client);
+	g_usleep(20000);
+	uid = 4242;
+	g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 0);
+	g_assert_cmpuint(uid, ==, 4242);
+	close(fd);
+}
+#endif
+
+/* The file is read whole only if its last line ends */
+static void test_sockaddr_unterminated_file(void)
+{
+	char *dir = test_tmpdir();
+	char *peer = line4(1, "127.0.0.1", 40000, "127.0.0.1", 9001, 0x01, 1001);
+	char *text;
+
+	text = g_strconcat(HEADER4, peer, NULL);
+	text[strlen(text) - 1] = '\0';
+	write_table(dir, "tcp", text);
+	g_assert_cmpint(sa_uid(dir, "127.0.0.1", 40000, "127.0.0.1", 9001), ==, -1);
+	g_free(text);
+	text = g_strconcat(HEADER4, peer, NULL);
+	write_table(dir, "tcp", text);
+	g_assert_cmpint(sa_uid(dir, "127.0.0.1", 40000, "127.0.0.1", 9001), ==, 1001);
+	g_free(text);
+	g_free(peer);
+	test_rmtree(dir);
+	g_free(dir);
+}
+
 /* Live sockets: a listener on 'listen_host', a client of 'family' that
  * connects to 'connect_host'; the accepted fd, the client's in *client
  * (-1 and a skip when the system cannot) */
@@ -1334,10 +1889,29 @@ static void assert_live_own_uid(const char *listen_host, int client_family,
 
 	if (fd < 0)
 		return;
-	r = fe_web_tcp_peer_uid(fd, &uid);
+	r = fe_web_tcp_peer_uid(fd, NULL, 0, &uid);
 #ifdef __linux__
 	g_assert_cmpint(r, ==, 1);
 	g_assert_cmpuint(uid, ==, getuid());
+	{
+		FE_WEB_PROC_BUDGET spent = { FE_WEB_PROC_LOOKUPS_PER_SEC, T };
+
+		/* sock_diag alone: no /proc lookup left */
+		uid = 4242;
+		g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 1);
+		g_assert_cmpuint(uid, ==, getuid());
+		g_assert_cmpint(spent.spent, ==, FE_WEB_PROC_LOOKUPS_PER_SEC);
+		/* /proc alone: sock_diag fails */
+		fe_web_sock_diag_set_func(diag_fails);
+		uid = 4242;
+		g_assert_cmpint(fe_web_tcp_peer_uid(fd, NULL, 0, &uid), ==, 1);
+		g_assert_cmpuint(uid, ==, getuid());
+		/* neither */
+		uid = 4242;
+		g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 0);
+		g_assert_cmpuint(uid, ==, 4242);
+		fe_web_sock_diag_set_func(NULL);
+	}
 #else
 	g_assert_cmpint(r, ==, -1);
 #endif
@@ -1381,9 +1955,9 @@ static void test_live_closed_peer(void)
 	close(client);
 	g_usleep(20000);
 #ifdef __linux__
-	g_assert_cmpint(fe_web_tcp_peer_uid(fd, &uid), ==, 0);
+	g_assert_cmpint(fe_web_tcp_peer_uid(fd, NULL, 0, &uid), ==, 0);
 #else
-	g_assert_cmpint(fe_web_tcp_peer_uid(fd, &uid), ==, -1);
+	g_assert_cmpint(fe_web_tcp_peer_uid(fd, NULL, 0, &uid), ==, -1);
 #endif
 	g_assert_cmpuint(uid, ==, 4242);
 	close(fd);
@@ -1397,10 +1971,10 @@ static void test_live_not_tcp(void)
 
 	g_assert_cmpint(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), ==, 0);
 #ifdef __linux__
-	g_assert_cmpint(fe_web_tcp_peer_uid(sv[0], &uid), ==, 0);
-	g_assert_cmpint(fe_web_tcp_peer_uid(-1, &uid), ==, 0);
+	g_assert_cmpint(fe_web_tcp_peer_uid(sv[0], NULL, 0, &uid), ==, 0);
+	g_assert_cmpint(fe_web_tcp_peer_uid(-1, NULL, 0, &uid), ==, 0);
 #else
-	g_assert_cmpint(fe_web_tcp_peer_uid(sv[0], &uid), ==, -1);
+	g_assert_cmpint(fe_web_tcp_peer_uid(sv[0], NULL, 0, &uid), ==, -1);
 #endif
 	g_assert_cmpuint(uid, ==, 4242);
 	close(sv[0]);
@@ -1445,6 +2019,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/peer-key/ip6-prefix", test_peer_key_ip6_prefix);
 	g_test_add_func("/fe-web/peer-key/ip4-mapped", test_peer_key_ip4_mapped);
 	g_test_add_func("/fe-web/peer-key/uid", test_peer_key_uid);
+	g_test_add_func("/fe-web/peer-key/loopback-shared", test_peer_key_loopback_shared);
 	g_test_add_func("/fe-web/peer-key/loopback", test_peer_key_loopback);
 	g_test_add_func("/fe-web/peer/proc-net-tcp-v4", test_proc_net_tcp_v4);
 	g_test_add_func("/fe-web/peer/proc-net-tcp-v6", test_proc_net_tcp_v6);
@@ -1464,6 +2039,15 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/peer/live-dual-stack-client", test_live_dual_stack_client);
 	g_test_add_func("/fe-web/peer/live-closed-peer", test_live_closed_peer);
 	g_test_add_func("/fe-web/peer/live-not-tcp", test_live_not_tcp);
+	g_test_add_func("/fe-web/peer/sockaddr-unterminated-file", test_sockaddr_unterminated_file);
+	g_test_add_func("/fe-web/peer/proc-budget", test_proc_budget);
+#ifdef __linux__
+	g_test_add_func("/fe-web/peer/sock-diag-request", test_sock_diag_request);
+	g_test_add_func("/fe-web/peer/sock-diag-reply", test_sock_diag_reply);
+	g_test_add_func("/fe-web/peer/sock-diag-reply-malformed", test_sock_diag_reply_malformed);
+	g_test_add_func("/fe-web/peer/sock-diag-seam", test_sock_diag_seam);
+	g_test_add_func("/fe-web/peer/sock-diag-live", test_sock_diag_live);
+#endif
 
 	return g_test_run();
 }

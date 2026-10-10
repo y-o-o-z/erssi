@@ -61,13 +61,21 @@ static time_t refused_logged = 0;
  * listens on a loopback port every user of a shared box can reach, and
  * none of them may keep the owner's web client out. The owner's own
  * processes (own_peer_key) are never paced: they can read the password in
- * the config anyway. Both are made on the first login. */
+ * the config anyway. Both are made on the first login.
+ *
+ * A proxy that runs as the owner's user (a reverse proxy, socat, an ssh -L
+ * tunnel others can use) connects as the owner, so every client behind it
+ * counts as the owner and is never paced: such a proxy must sign its own
+ * users in. NexusIRC on the Unix socket does (its own sign-in, with the
+ * fe-web password stored on its side). */
 static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
 /* the pacing notice is printed once a minute at most, the peers paced in
  * between are counted */
 static time_t paced_logged = 0;
 static int paced_unlogged = 0;
+/* /proc/net/tcp lookups of loopback peers (fe_web_tcp_peer_uid()) */
+static FE_WEB_PROC_BUDGET proc_budget;
 
 /* Connections still logging in have their own limit, so they can never
  * take the places of logged-in clients; when it is reached the oldest of
@@ -493,6 +501,8 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	if (own_peer_key == NULL)
 		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 	peer = client_peer(client);
+	/* the owner's uid is exempt - and so is whatever connects through a
+	 * proxy running as the owner (see login_pacing) */
 	paced = strcmp(peer, own_peer_key) != 0;
 	if (paced && !fe_web_pacing_may_check(login_pacing, peer, now)) {
 		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
@@ -1003,10 +1013,12 @@ static void sig_listen(void)
 		addr = g_strdup_printf("%s:%d", host, port);
 		/* Every user of the machine can reach a loopback port, and
 		 * all of them have the same address there: on Linux the
-		 * peer counts as the uid of its socket (/proc/net/tcp). Any
-		 * other peer, or one whose uid is not known, counts as its
-		 * address, and on loopback that address is shared. */
-		if (fe_web_tcp_peer_uid(g_io_channel_unix_get_fd(handle), &uid) > 0) {
+		 * peer counts as the uid of its socket (sock_diag, or
+		 * /proc/net/tcp within proc_budget). Any other peer, or one
+		 * whose uid is not known, counts as its address; every
+		 * loopback address is the one shared "ip:loopback". */
+		if (fe_web_tcp_peer_uid(g_io_channel_unix_get_fd(handle), &proc_budget, time(NULL),
+		                        &uid) > 0) {
 			peer_key = fe_web_peer_key_uid((unsigned long) uid);
 		} else {
 			peer_key = fe_web_peer_key_ip(&ip);

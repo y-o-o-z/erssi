@@ -19,6 +19,12 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#ifdef __linux__
+#include <netinet/tcp.h>
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <linux/inet_diag.h>
+#endif
 
 typedef struct {
 	int fails;        /* wrong passwords in the window, at most the limit */
@@ -274,6 +280,9 @@ char *fe_web_peer_key_ip(const IPADDR *ip)
 	struct in_addr v4;
 	struct in6_addr v6;
 
+	/* a local user may pick any 127/8 source address: one peer */
+	if (fe_web_ip_is_loopback(ip))
+		return g_strdup("ip:loopback");
 	if (ip_v4(ip, &v4)) {
 		if (inet_ntop(AF_INET, &v4, host, sizeof(host)) == NULL)
 			return g_strdup("ip:?");
@@ -536,14 +545,15 @@ static gboolean tcp_lookup_file(TCP_LOOKUP *t, const char *dir, const char *name
 	char buf[FE_WEB_PROC_NET_LINE_MAX * 8];
 	char *path;
 	gsize fill = 0, total = 0;
-	gboolean skipping = FALSE, ok = FALSE;
+	gboolean skipping = FALSE, ok = FALSE, missing;
 	int fd;
 
 	path = g_build_filename(dir, name, NULL);
 	fd = open(path, O_RDONLY | O_NOCTTY | O_CLOEXEC);
+	missing = fd < 0 && errno == ENOENT;
 	g_free(path);
 	if (fd < 0)
-		return errno == ENOENT;
+		return missing;
 
 	for (;;) {
 		ssize_t n = read(fd, buf + fill, sizeof(buf) - fill);
@@ -584,6 +594,14 @@ static gboolean tcp_lookup_file(TCP_LOOKUP *t, const char *dir, const char *name
 	return ok;
 }
 
+/* A TCP connection on loopback: the peer's side and ours */
+typedef struct {
+	int family;                    /* AF_INET (IPv4-mapped too) or AF_INET6 */
+	struct in_addr peer4, local4;   /* AF_INET */
+	struct in6_addr peer6, local6;  /* AF_INET6; for AF_INET: IPv4-mapped */
+	int peer_port, local_port;
+} TCP_PEER;
+
 static gboolean sockaddr_v4(const struct sockaddr *sa, struct in_addr *addr, int *port)
 {
 	if (sa->sa_family == AF_INET) {
@@ -617,51 +635,66 @@ static struct in6_addr mapped_v6(const struct in_addr *addr)
 	return a;
 }
 
-int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *local,
-                            const char *proc_net, uid_t unmapped, uid_t *uid)
+/* The connection from 'peer' to 'local': FALSE unless both are of one
+ * family (IPv4-mapped counts as IPv4) and the peer is on loopback */
+static gboolean tcp_peer_of(TCP_PEER *c, const struct sockaddr *peer,
+                            const struct sockaddr *local)
+{
+	memset(c, 0, sizeof(*c));
+	if (sockaddr_v4(peer, &c->peer4, &c->peer_port)) {
+		if (!sockaddr_v4(local, &c->local4, &c->local_port))
+			return FALSE;
+		if ((ntohl(c->peer4.s_addr) >> 24) != 127)
+			return FALSE;
+		c->family = AF_INET;
+		c->peer6 = mapped_v6(&c->peer4);
+		c->local6 = mapped_v6(&c->local4);
+		return TRUE;
+	}
+	if (peer->sa_family == AF_INET6) {
+		const struct sockaddr_in6 *ps = (const struct sockaddr_in6 *) peer;
+		const struct sockaddr_in6 *ls = (const struct sockaddr_in6 *) local;
+
+		if (local->sa_family != AF_INET6 || IN6_IS_ADDR_V4MAPPED(&ls->sin6_addr))
+			return FALSE;
+		if (!IN6_IS_ADDR_LOOPBACK(&ps->sin6_addr))
+			return FALSE;
+		c->family = AF_INET6;
+		c->peer6 = ps->sin6_addr;
+		c->local6 = ls->sin6_addr;
+		c->peer_port = ntohs(ps->sin6_port);
+		c->local_port = ntohs(ls->sin6_port);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* The uid from tcp and tcp6 of 'proc_net' */
+static int tcp_peer_proc_uid(const TCP_PEER *c, const char *proc_net, uid_t unmapped, uid_t *uid)
 {
 	TCP_LOOKUP t4, t6;
-	struct in_addr p4, l4;
-	struct in6_addr p6, l6;
-	int pport, lport = 0, matches;
+	int matches;
 	uid_t found;
 
-	memset(&l4, 0, sizeof(l4));
-
-	if (peer == NULL || local == NULL || proc_net == NULL || uid == NULL)
-		return 0;
-	if (sockaddr_v4(peer, &p4, &pport)) {
-		/* IPv4, or IPv4-mapped: the peer's socket is in tcp, or in
-		 * tcp6 as IPv4-mapped when it is a dual-stack one */
-		if (!sockaddr_v4(local, &l4, &lport))
-			return 0;
-		if ((ntohl(p4.s_addr) >> 24) != 127)
-			return 0;
-		p6 = mapped_v6(&p4);
-		l6 = mapped_v6(&l4);
-		if (!tcp_lookup_init(&t4, AF_INET, &p4, pport, &l4, lport) ||
-		    !tcp_lookup_init(&t6, AF_INET6, &p6, pport, &l6, lport) ||
+	if (c->family == AF_INET) {
+		/* the peer's socket is in tcp, or in tcp6 as IPv4-mapped
+		 * when it is a dual-stack one */
+		if (!tcp_lookup_init(&t4, AF_INET, &c->peer4, c->peer_port, &c->local4,
+		                     c->local_port) ||
+		    !tcp_lookup_init(&t6, AF_INET6, &c->peer6, c->peer_port, &c->local6,
+		                     c->local_port) ||
 		    !tcp_lookup_file(&t4, proc_net, "tcp") ||
 		    !tcp_lookup_file(&t6, proc_net, "tcp6"))
 			return 0;
 		matches = t4.matches + t6.matches;
 		found = t4.matches > 0 ? t4.uid : t6.uid;
-	} else if (peer->sa_family == AF_INET6) {
-		const struct sockaddr_in6 *ps = (const struct sockaddr_in6 *) peer;
-		const struct sockaddr_in6 *ls = (const struct sockaddr_in6 *) local;
-
-		if (local->sa_family != AF_INET6 || IN6_IS_ADDR_V4MAPPED(&ls->sin6_addr))
-			return 0;
-		if (!IN6_IS_ADDR_LOOPBACK(&ps->sin6_addr))
-			return 0;
-		if (!tcp_lookup_init(&t6, AF_INET6, &ps->sin6_addr, ntohs(ps->sin6_port),
-		                     &ls->sin6_addr, ntohs(ls->sin6_port)) ||
+	} else {
+		if (!tcp_lookup_init(&t6, AF_INET6, &c->peer6, c->peer_port, &c->local6,
+		                     c->local_port) ||
 		    !tcp_lookup_file(&t6, proc_net, "tcp6"))
 			return 0;
 		matches = t6.matches;
 		found = t6.uid;
-	} else {
-		return 0;
 	}
 	/* exactly one socket; and not the uid the kernel shows when it
 	 * cannot show the real one in our user namespace */
@@ -669,6 +702,31 @@ int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *
 		return 0;
 	*uid = found;
 	return 1;
+}
+
+int fe_web_tcp_sockaddr_uid(const struct sockaddr *peer, const struct sockaddr *local,
+                            const char *proc_net, uid_t unmapped, uid_t *uid)
+{
+	TCP_PEER c;
+
+	if (peer == NULL || local == NULL || proc_net == NULL || uid == NULL)
+		return 0;
+	if (!tcp_peer_of(&c, peer, local))
+		return 0;
+	return tcp_peer_proc_uid(&c, proc_net, unmapped, uid);
+}
+
+gboolean fe_web_proc_budget_take(FE_WEB_PROC_BUDGET *budget, time_t now)
+{
+	/* a new second, or a clock that went back: the whole budget */
+	if (now != budget->last) {
+		budget->spent = 0;
+		budget->last = now;
+	}
+	if (budget->spent >= FE_WEB_PROC_LOOKUPS_PER_SEC)
+		return FALSE;
+	budget->spent++;
+	return TRUE;
 }
 
 #ifdef __linux__
@@ -694,15 +752,227 @@ static uid_t overflow_uid(void)
 		return 65534;
 	return (uid_t) v;
 }
+
+/* NETLINK_SOCK_DIAG: the kernel looks the one socket up by its tuple
+ * (inet_diag_find_one_icsk()), however many sockets there are. For a
+ * tuple without a connection it may answer with a listener on that port,
+ * or with a closed connection (FIN_WAIT2, TIME_WAIT, uid 0): only an
+ * ESTABLISHED socket that has exactly the tuple asked for is used. */
+
+typedef struct {
+	struct nlmsghdr nlh;
+	struct inet_diag_req_v2 req;
+} SOCK_DIAG_REQUEST;
+
+gsize fe_web_sock_diag_request(void *buf, gsize size, int family, const void *src, int sport,
+                               const void *dst, int dport, guint32 seq)
+{
+	SOCK_DIAG_REQUEST m;
+	gsize addr_len;
+
+	if (buf == NULL || src == NULL || dst == NULL || size < sizeof(m) || sport < 0 ||
+	    sport > 0xffff || dport < 0 || dport > 0xffff)
+		return 0;
+	if (family == AF_INET)
+		addr_len = 4;
+	else if (family == AF_INET6)
+		addr_len = 16;
+	else
+		return 0;
+	memset(&m, 0, sizeof(m));
+	m.nlh.nlmsg_len = sizeof(m);
+	m.nlh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
+	/* one socket: no NLM_F_DUMP */
+	m.nlh.nlmsg_flags = NLM_F_REQUEST;
+	m.nlh.nlmsg_seq = seq;
+	m.req.sdiag_family = family;
+	m.req.sdiag_protocol = IPPROTO_TCP;
+	m.req.idiag_states = 1 << TCP_ESTABLISHED;
+	m.req.id.idiag_sport = htons(sport);
+	m.req.id.idiag_dport = htons(dport);
+	memcpy(m.req.id.idiag_src, src, addr_len);
+	memcpy(m.req.id.idiag_dst, dst, addr_len);
+	m.req.id.idiag_if = 0;
+	m.req.id.idiag_cookie[0] = INET_DIAG_NOCOOKIE;
+	m.req.id.idiag_cookie[1] = INET_DIAG_NOCOOKIE;
+	memcpy(buf, &m, sizeof(m));
+	return sizeof(m);
+}
+
+/* An address as the kernel echoes it (inet_diag_sockid, of a socket of
+ * 'family'), or as asked for: IPv4 or IPv4-mapped as 4 bytes, else 16.
+ * The length, 0 for a family that is neither. */
+static gsize diag_addr(int family, const void *addr, guchar out[16])
+{
+	const guchar *a = addr;
+
+	if (family == AF_INET) {
+		memcpy(out, a, 4);
+		return 4;
+	}
+	if (family != AF_INET6)
+		return 0;
+	if (IN6_IS_ADDR_V4MAPPED((const struct in6_addr *) addr)) {
+		memcpy(out, a + 12, 4);
+		return 4;
+	}
+	memcpy(out, a, 16);
+	return 16;
+}
+
+int fe_web_sock_diag_reply(const void *buf, gsize len, int family, const void *src, int sport,
+                           const void *dst, int dport, guint32 seq, uid_t unmapped,
+                           uid_t *uid)
+{
+	const guchar *p = buf;
+	guchar want_src[16], want_dst[16], got_src[16], got_dst[16];
+	gsize want_len, off = 0;
+	struct in6_addr a6;
+	int found = 0;
+	guint32 found_uid = 0;
+
+	if (buf == NULL || src == NULL || dst == NULL || uid == NULL ||
+	    (family != AF_INET && family != AF_INET6))
+		return 0;
+	/* an in_addr is not 16 bytes long: copy what the family has */
+	memset(&a6, 0, sizeof(a6));
+	memcpy(&a6, src, family == AF_INET ? 4 : 16);
+	want_len = diag_addr(family, &a6, want_src);
+	memset(&a6, 0, sizeof(a6));
+	memcpy(&a6, dst, family == AF_INET ? 4 : 16);
+	if (want_len == 0 || diag_addr(family, &a6, want_dst) != want_len)
+		return 0;
+
+	while (len - off >= NLMSG_HDRLEN) {
+		struct nlmsghdr h;
+		struct inet_diag_msg d;
+		gsize got_len;
+
+		memcpy(&h, p + off, sizeof(h));
+		if (h.nlmsg_len < NLMSG_HDRLEN || h.nlmsg_len > len - off)
+			return 0;
+		/* only one answer: no error, no other message */
+		if (h.nlmsg_seq != seq || h.nlmsg_type != SOCK_DIAG_BY_FAMILY ||
+		    h.nlmsg_len < NLMSG_LENGTH(sizeof(d)))
+			return 0;
+		memcpy(&d, p + off + NLMSG_HDRLEN, sizeof(d));
+		if (d.idiag_state != TCP_ESTABLISHED)
+			return 0;
+		got_len = diag_addr(d.idiag_family, d.id.idiag_src, got_src);
+		if (got_len != want_len ||
+		    diag_addr(d.idiag_family, d.id.idiag_dst, got_dst) != want_len)
+			return 0;
+		if (memcmp(got_src, want_src, want_len) != 0 ||
+		    memcmp(got_dst, want_dst, want_len) != 0 || ntohs(d.id.idiag_sport) != sport ||
+		    ntohs(d.id.idiag_dport) != dport)
+			return 0;
+		found++;
+		found_uid = d.idiag_uid;
+		/* the padding of the last message may be missing: it ends
+		 * the reply (and off never passes len) */
+		off += NLMSG_ALIGN(h.nlmsg_len);
+		if (off > len)
+			off = len;
+	}
+	/* bytes left that are no message */
+	if (off < len)
+		return 0;
+	if (found != 1 || (uid_t) found_uid != found_uid || (uid_t) found_uid == (uid_t) -1 ||
+	    (uid_t) found_uid == unmapped)
+		return 0;
+	*uid = (uid_t) found_uid;
+	return 1;
+}
+
+/* Ask the kernel; only a reply from the kernel itself (port id 0) is
+ * read. The reply was queued before sendto() returned. */
+static gssize sock_diag_kernel(const void *req, gsize req_len, void *reply, gsize size)
+{
+	struct sockaddr_nl kernel, from;
+	socklen_t from_len = sizeof(from);
+	ssize_t n;
+	int fd;
+
+	fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_SOCK_DIAG);
+	if (fd < 0)
+		return -1;
+	memset(&kernel, 0, sizeof(kernel));
+	kernel.nl_family = AF_NETLINK;
+	if (sendto(fd, req, req_len, 0, (struct sockaddr *) &kernel, sizeof(kernel)) !=
+	    (ssize_t) req_len) {
+		close(fd);
+		return -1;
+	}
+	memset(&from, 0, sizeof(from));
+	do {
+		n = recvfrom(fd, reply, size, MSG_DONTWAIT | MSG_TRUNC, (struct sockaddr *) &from,
+		             &from_len);
+	} while (n < 0 && errno == EINTR);
+	close(fd);
+	if (n < 0 || from.nl_family != AF_NETLINK || from.nl_pid != 0)
+		return -1;
+	return n;
+}
+
+static FE_WEB_SOCK_DIAG_FUNC sock_diag_func = sock_diag_kernel;
+
+void fe_web_sock_diag_set_func(FE_WEB_SOCK_DIAG_FUNC func)
+{
+	sock_diag_func = func != NULL ? func : sock_diag_kernel;
+}
+
+/* One sock_diag question: the socket at (src, sport) connected to (dst,
+ * dport) */
+static int sock_diag_ask(int family, const void *src, int sport, const void *dst, int dport,
+                         uid_t unmapped, uid_t *uid)
+{
+	static guint32 seq;
+	union {
+		struct nlmsghdr nlh;
+		guchar bytes[sizeof(SOCK_DIAG_REQUEST)];
+	} req;
+	union {
+		struct nlmsghdr nlh;
+		guchar bytes[FE_WEB_SOCK_DIAG_REPLY_MAX];
+	} reply;
+	gsize req_len;
+	gssize n;
+
+	seq++;
+	req_len = fe_web_sock_diag_request(req.bytes, sizeof(req.bytes), family, src, sport, dst,
+	                                   dport, seq);
+	if (req_len == 0)
+		return 0;
+	n = sock_diag_func(req.bytes, req_len, reply.bytes, sizeof(reply.bytes));
+	if (n <= 0 || (gsize) n > sizeof(reply.bytes))
+		return 0;
+	return fe_web_sock_diag_reply(reply.bytes, n, family, src, sport, dst, dport, seq, unmapped,
+	                              uid);
+}
+
+/* The uid of the connection's peer from sock_diag: as IPv4, and for an
+ * IPv4 one also as IPv4-mapped IPv6 */
+static int tcp_peer_diag_uid(const TCP_PEER *c, uid_t unmapped, uid_t *uid)
+{
+	if (c->family == AF_INET) {
+		if (sock_diag_ask(AF_INET, &c->peer4, c->peer_port, &c->local4, c->local_port,
+		                  unmapped, uid) == 1)
+			return 1;
+	}
+	return sock_diag_ask(AF_INET6, &c->peer6, c->peer_port, &c->local6, c->local_port,
+	                     unmapped, uid);
+}
 #endif
 
-int fe_web_tcp_peer_uid(int fd, uid_t *uid)
+int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *uid)
 {
 #ifdef __linux__
 	struct sockaddr_storage peer, local;
 	socklen_t plen = sizeof(peer), llen = sizeof(local);
+	TCP_PEER c;
+	uid_t unmapped;
 
-	if (getpeername(fd, (struct sockaddr *) &peer, &plen) < 0 ||
+	if (uid == NULL || getpeername(fd, (struct sockaddr *) &peer, &plen) < 0 ||
 	    getsockname(fd, (struct sockaddr *) &local, &llen) < 0)
 		return 0;
 	if (plen > sizeof(peer) || llen > sizeof(local) ||
@@ -711,14 +981,24 @@ int fe_web_tcp_peer_uid(int fd, uid_t *uid)
 	    (local.ss_family == AF_INET && llen < sizeof(struct sockaddr_in)) ||
 	    (local.ss_family == AF_INET6 && llen < sizeof(struct sockaddr_in6)))
 		return 0;
-	/* the tables of our network namespace, where a loopback peer is */
-	return fe_web_tcp_sockaddr_uid((struct sockaddr *) &peer, (struct sockaddr *) &local,
-	                               "/proc/net", overflow_uid(), uid);
+	if (!tcp_peer_of(&c, (struct sockaddr *) &peer, (struct sockaddr *) &local))
+		return 0;
+	unmapped = overflow_uid();
+	/* the kernel's answer for this one socket */
+	if (tcp_peer_diag_uid(&c, unmapped, uid) == 1)
+		return 1;
+	/* else the tables of our network namespace, where a loopback peer
+	 * is - they take a while to read, so only within the budget */
+	if (budget != NULL && !fe_web_proc_budget_take(budget, now))
+		return 0;
+	return tcp_peer_proc_uid(&c, "/proc/net", unmapped, uid);
 #else
 	/* The BSDs and macOS have no /proc/net; their socket tables
 	 * (net.inet.tcp.pcblist) are for root only, so the peer stays its
 	 * address */
 	(void) fd;
+	(void) budget;
+	(void) now;
 	(void) uid;
 	return -1;
 #endif
