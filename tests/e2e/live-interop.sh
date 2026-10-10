@@ -89,6 +89,11 @@ for nick in alice bob mallory carol; do
     mkdir -p "$home/modules" "$home/logs" "$home/scripts/autorun" "$WORK/home-$nick"
     for so in "$MODDIR"/*.so; do ln -s "$so" "$home/modules/"; done
     [ "$nick" = bob ] && ln -s "$SCRIPT" "$home/scripts/autorun/rpe2e.pl"
+    # the theme of this source tree, from --home: without it erssi reads
+    # the "shellter" theme from THEMESDIR (the prefix, not the --destdir
+    # tree), when one is installed there, and the log lines the long
+    # message check reads depend on what this machine has installed
+    cp "$SRC/themes/default.theme" "$home/default.theme"
     cat > "$home/config" <<EOF
 servers = ( { address = "127.0.0.1"; chatnet = "E2E"; port = "$PORT"; autoconnect = "yes"; } );
 chatnets = { E2E = { type = "IRC"; }; };
@@ -96,7 +101,7 @@ channels = ( { name = "$CHAN"; chatnet = "E2E"; autojoin = "yes"; } );
 logs = { "$home/all.log" = { auto_open = "yes"; level = "ALL"; }; };
 settings = {
   core = { real_name = "e2e test"; user_name = "$nick"; nick = "$nick"; };
-  "fe-common/core" = { autolog = "yes"; autolog_path = "$home/logs/\$0.log"; autolog_level = "ALL"; };
+  "fe-common/core" = { theme = "default"; autolog = "yes"; autolog_path = "$home/logs/\$0.log"; autolog_level = "ALL"; };
   "perl/core" = { perl_use_lib = "$PERLLIB"; };
 };
 EOF
