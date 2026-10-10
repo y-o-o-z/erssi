@@ -4,6 +4,7 @@
  * it lacks.
  */
 #include <irssi/src/common.h>
+#include <irssi/src/core/settings.h>
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 
@@ -27,6 +28,25 @@ static const DEFAULT_ROW UPGRADED[] = {
 	{ "fe-common/core", "nick_mode_color_halfop", "%Z3FB950%_" },
 	{ "fe-common/core", "nick_mode_color_voice", "%Z79C0FF%_" },
 	{ "fe-common/core", "hilight_color", "%ZFCD34D" },
+	{ "fe-common/core", "hilight_act_color", "%ZFF7B72" },
+	{ "fe-common/core", "hidden_settings", "translate_deepl_key" },
+};
+
+/* what a new ~/.erssi gets: UPGRADED with the hilight colour of irssi.conf */
+static const DEFAULT_ROW FRESH[] = {
+	{ "fe-ansi", "colors_ansi_24bit", "yes" },
+	{ "fe-common/irc", "print_whois_rpl_in_server_window", "yes" },
+	{ "fe-common/core", "theme", "shellter" },
+	{ "fe-common/core", "show_names_on_join_limit", "1" },
+	{ "fe-common/core", "show_names_on_join_alone", "no" },
+	{ "fe-common/core", "nick_column_width", "13" },
+	{ "fe-common/core", "nick_hash_colors",
+	  "#f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787" },
+	{ "fe-common/core", "nick_mode_color_owner", "%ZFF7B72%_" },
+	{ "fe-common/core", "nick_mode_color_op", "%ZF59E0B%_" },
+	{ "fe-common/core", "nick_mode_color_halfop", "%Z3FB950%_" },
+	{ "fe-common/core", "nick_mode_color_voice", "%Z79C0FF%_" },
+	{ "fe-common/core", "hilight_color", "%Zbb9af7" },
 	{ "fe-common/core", "hilight_act_color", "%ZFF7B72" },
 	{ "fe-common/core", "hidden_settings", "translate_deepl_key" },
 };
@@ -206,6 +226,22 @@ static void test_odd_shapes_untouched(void)
 	config_close(c);
 }
 
+static void test_builtin_config_fresh_values(void)
+{
+	CONFIG_REC *c;
+	int i, counter;
+
+	c = cfg_parse(default_config);
+	g_assert_cmpint(G_N_ELEMENTS(FRESH), ==, UPGRADED_COUNT);
+	for (i = 0; i < (int) G_N_ELEMENTS(FRESH); i++)
+		g_assert_cmpstr(cfg_get(c, FRESH[i].module, FRESH[i].key), ==, FRESH[i].value);
+	g_assert_cmpint(config_get_int(c, "erssi", "defaults_version", 0), ==, 1);
+	counter = c->modifycounter;
+	g_assert_cmpint(shellter_defaults_migrate(c), ==, 0);
+	g_assert_cmpint(c->modifycounter, ==, counter);
+	config_close(c);
+}
+
 static void test_note_saved(void)
 {
 	char *note;
@@ -261,6 +297,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/newer_marker", test_newer_marker);
 	g_test_add_func("/shellter_defaults/empty_config", test_empty_config);
 	g_test_add_func("/shellter_defaults/odd_shapes_untouched", test_odd_shapes_untouched);
+	g_test_add_func("/shellter_defaults/builtin_config_fresh_values",
+	                test_builtin_config_fresh_values);
 	g_test_add_func("/shellter_defaults/note_saved", test_note_saved);
 	g_test_add_func("/shellter_defaults/note_broken", test_note_broken);
 	g_test_add_func("/shellter_defaults/note_unsaved", test_note_unsaved);
