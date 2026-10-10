@@ -47,6 +47,13 @@ static int fe_web_fuzz_ssl_accept(FE_WEB_SSL_CHANNEL *chan);
 static int fe_web_fuzz_ssl_read(FE_WEB_SSL_CHANNEL *chan, char *buf, int len);
 static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len);
 static time_t fe_web_fuzz_time(time_t *t);
+static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len);
+static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode);
+#if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
+    defined(__NetBSD__) || defined(__APPLE__)
+static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
+#define getpeereid fe_web_fuzz_getpeereid
+#endif
 
 #define fe_web_ssl_prepare fe_web_fuzz_ssl_prepare
 #define fe_web_ssl_channel_create fe_web_fuzz_ssl_channel_create
@@ -55,6 +62,8 @@ static time_t fe_web_fuzz_time(time_t *t);
 #define fe_web_ssl_read fe_web_fuzz_ssl_read
 #define fe_web_ssl_write fe_web_fuzz_ssl_write
 #define time(t) fe_web_fuzz_time(t)
+#define getsockopt fe_web_fuzz_getsockopt
+#define g_mkdir_with_parents fe_web_fuzz_mkdir_with_parents
 
 /* The input path of a web client (client_input_once(), the handshake, the
  * password check, the frame loop) is static in fe-web-server.c. It is
@@ -70,6 +79,11 @@ static time_t fe_web_fuzz_time(time_t *t);
 #undef fe_web_ssl_read
 #undef fe_web_ssl_write
 #undef time
+#undef getsockopt
+#undef g_mkdir_with_parents
+#ifdef getpeereid
+#undef getpeereid
+#endif
 
 #include <irssi/src/fe-fuzz/fe-web/fe-web-fuzz.h>
 #include <irssi/src/fe-fuzz/null-logger.h>
@@ -544,6 +558,61 @@ void fe_web_fuzz_tls_write_script(const int *results, gsize n)
 }
 
 static time_t fake_now = 0;
+
+/* Unix socket seams: the peer's uid, and another user winning the race
+ * for a directory */
+static gboolean fake_peer_other = FALSE;
+static char *mkdir_first_dir = NULL;
+static int mkdir_first_mode = 0;
+
+void fe_web_fuzz_fake_peer_other_uid(gboolean on)
+{
+	fake_peer_other = on;
+}
+
+void fe_web_fuzz_mkdir_first(const char *dir, int mode)
+{
+	g_free(mkdir_first_dir);
+	mkdir_first_dir = g_strdup(dir);
+	mkdir_first_mode = mode;
+}
+
+static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len)
+{
+	int ret = getsockopt(fd, level, name, val, len);
+
+#if defined(__linux__) && defined(SO_PEERCRED)
+	if (ret == 0 && fake_peer_other && level == SOL_SOCKET && name == SO_PEERCRED &&
+	    *len == sizeof(struct ucred))
+		((struct ucred *) val)->uid = getuid() + 1;
+#endif
+	return ret;
+}
+
+#if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
+    defined(__NetBSD__) || defined(__APPLE__)
+static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid)
+{
+	int ret = getpeereid(fd, uid, gid);
+
+	if (ret == 0 && fake_peer_other)
+		*uid = getuid() + 1;
+	return ret;
+}
+#endif
+
+static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode)
+{
+	if (mkdir_first_dir != NULL) {
+		char *first = mkdir_first_dir;
+
+		mkdir_first_dir = NULL;
+		g_mkdir_with_parents(first, mkdir_first_mode);
+		chmod(first, mkdir_first_mode);
+		g_free(first);
+	}
+	return g_mkdir_with_parents(dir, mode);
+}
 
 void fe_web_fuzz_set_clock(time_t now)
 {
