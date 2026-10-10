@@ -285,6 +285,10 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 
 /* browser end of the socketpair of the current client */
 static int peer_fd = -1;
+/* the current client and its serial (its record may be reused once fe-web
+ * closed it) */
+static WEB_CLIENT_REC *current_client = NULL;
+static guint64 current_serial = 0;
 /* what it got and did not show yet, and whether the HTTP part is over */
 static GByteArray *sent = NULL;
 static gboolean sent_http_done;
@@ -325,6 +329,8 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new_peer(const char *peer_key, gboolean logge
 	tls_freed_failed = -1;
 
 	client = fe_web_client_create(sv[0], "fuzz:0");
+	current_client = client;
+	current_serial = client->serial;
 	client->peer_key = g_strdup(peer_key);
 	client->handle = net_sendbuffer_create(i_io_channel_new(sv[0]), 0);
 	if (tls) {
@@ -350,7 +356,12 @@ WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in)
 
 gboolean fe_web_fuzz_client_alive(WEB_CLIENT_REC *client)
 {
-	return g_slist_find(web_clients, client) != NULL;
+	if (client == NULL)
+		return FALSE;
+	if (client != current_client)
+		g_error("fe_web_fuzz_client_alive(): not the current client");
+	/* the serial is read only from a record still in the list */
+	return g_slist_find(web_clients, client) != NULL && client->serial == current_serial;
 }
 
 /* FE_WEB_FUZZ_VERBOSE: what the browser got, the HTTP response and then
@@ -490,6 +501,8 @@ void fe_web_fuzz_client_free(WEB_CLIENT_REC *client)
 		close(peer_fd);
 		peer_fd = -1;
 	}
+	current_client = NULL;
+	current_serial = 0;
 }
 
 void fe_web_fuzz_reset_login_state(void)
@@ -624,6 +637,14 @@ static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode)
 		g_free(first);
 	}
 	return g_mkdir_with_parents(dir, mode);
+}
+
+void fe_web_fuzz_spend_proc_budget(void)
+{
+	time_t now = fe_web_fuzz_time(NULL);
+
+	while (fe_web_proc_budget_take(&proc_budget, now))
+		;
 }
 
 void fe_web_fuzz_set_clock(time_t now)

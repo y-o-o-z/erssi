@@ -780,15 +780,26 @@ static void test_pending_trusted_kept(void)
 	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
 	g_slist_free_full(list, client_rec_free);
 
-	/* the busiest: kept all the same */
+	/* the busiest: only its oldest is kept, the others count as any
+	 * peer's (and all of them make it the busiest) */
 	list = NULL;
 	list = add_n(list, "ip:2001:db8:1::/64", 4, FALSE);
 	list = add_distinct(list, "ip:192.0.2.", 1, 4);
-	g_assert_cmpint(victim_at(list, owner, p), ==, 4);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* the kept one counts too: two of the trusted peer are busier than
+	 * one of another, older than its second */
+	list = NULL;
+	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE);
+	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
+	list = add_n(list, owner, 5, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 2);
 	g_slist_free_full(list, client_rec_free);
 
 	/* among the others the busiest loses its oldest: the owner and the
-	 * trusted peer are not counted */
+	 * trusted peer's one connection are not chosen */
 	list = NULL;
 	list = add_client(list, owner, FALSE);
 	list = add_client(list, "ip:2001:db8:1::/64", FALSE);
@@ -810,32 +821,108 @@ static void test_pending_trusted_kept(void)
 	fe_web_pacing_free(p);
 }
 
-static void test_pending_all_protected(void)
+/* A trusted peer is kept for its oldest pending connection only: one that
+ * logged in once cannot keep a flood of its own going (a shared address,
+ * NAT) and push everyone else out */
+static void test_pending_trusted_flooder_loses_own(void)
 {
 	FE_WEB_PACING *p = fe_web_pacing_new();
 	char *owner = uid_key(0);
 	GSList *list = NULL;
 
 	fe_web_pacing_succeeded(p, "ip:2001:db8:1::/64");
-	fe_web_pacing_succeeded(p, "ip:192.0.2.50");
-
-	/* the busiest of them */
+	list = add_n(list, "ip:2001:db8:1::/64", 4, FALSE);
+	list = add_client(list, "ip:192.0.2.1", FALSE); /* a newcomer */
 	list = add_n(list, owner, 3, FALSE);
-	list = add_n(list, "ip:2001:db8:1::/64", 5, FALSE);
-	g_assert_cmpint(victim_at(list, owner, p), ==, 3);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* the same with nobody else: its second oldest */
+	list = NULL;
+	list = add_n(list, "ip:2001:db8:1::/64", 8, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* a logged-in client of the peer is not its oldest pending one */
+	list = NULL;
+	list = add_client(list, "ip:2001:db8:1::/64", TRUE);
+	list = add_n(list, "ip:2001:db8:1::/64", 2, FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 1, 6);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 2);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	fe_web_pacing_free(p);
+}
+
+/* Only the owner and the oldest connection of each trusted peer wait:
+ * the plain rule among them */
+static void test_pending_all_protected(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0);
+	GSList *list = NULL;
+	int i;
+
+	for (i = 1; i <= 7; i++)
+		fe_web_pacing_succeeded(p, key_n("ip:192.0.2.", 50 + i));
+
+	/* the busiest of them, the owner */
+	list = add_client(list, "ip:192.0.2.51", FALSE);
+	list = add_n(list, owner, 7, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
 	g_slist_free_full(list, client_rec_free);
 
 	/* tied: the oldest overall */
 	list = NULL;
-	list = add_n(list, owner, 4, FALSE);
-	list = add_n(list, "ip:192.0.2.50", 4, FALSE);
+	for (i = 1; i <= 7; i++)
+		list = add_client(list, key_n("ip:192.0.2.", 50 + i), FALSE);
+	list = add_client(list, owner, FALSE);
 	g_assert_cmpint(victim_at(list, owner, p), ==, 0);
 	g_slist_free_full(list, client_rec_free);
 
 	/* only the owner: its oldest */
 	list = NULL;
-	list = add_client(list, "ip:192.0.2.50", TRUE);
+	list = add_client(list, "ip:192.0.2.51", TRUE);
 	list = add_n(list, owner, 8, FALSE);
+	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
+	g_slist_free_full(list, client_rec_free);
+	g_free(owner);
+	fe_web_pacing_free(p);
+}
+
+/* Clients already closing (a last answer queued, or output failed) go
+ * first: they are on their way out */
+static void test_pending_leaving_first(void)
+{
+	FE_WEB_PACING *p = fe_web_pacing_new();
+	char *owner = uid_key(0);
+	GSList *list = NULL;
+	WEB_CLIENT_REC *c;
+
+	/* one peer busiest, and an owner's connection closing */
+	list = add_n(list, "ip:192.0.2.1", 6, FALSE);
+	list = add_client(list, owner, FALSE);
+	list = add_client(list, owner, FALSE);
+	c = g_slist_nth_data(list, 7);
+	c->closing = TRUE;
+	g_assert_cmpint(victim_at(list, owner, p), ==, 7);
+	/* of two, the oldest; output_failed counts as closing */
+	c = g_slist_nth_data(list, 3);
+	c->output_failed = TRUE;
+	g_assert_cmpint(victim_at(list, owner, p), ==, 3);
+	/* below the limit, nobody */
+	list = g_slist_remove(list, c);
+	client_rec_free(c);
+	g_assert_cmpint(victim_at(list, owner, p), ==, -1);
+	g_slist_free_full(list, client_rec_free);
+
+	/* a logged-in client closing is not one of the queue */
+	list = NULL;
+	list = add_client(list, "ip:192.0.2.9", TRUE);
+	c = list->data;
+	c->closing = TRUE;
+	list = add_n(list, "ip:192.0.2.1", 2, FALSE);
+	list = add_distinct(list, "ip:192.0.2.", 2, 6);
 	g_assert_cmpint(victim_at(list, owner, p), ==, 1);
 	g_slist_free_full(list, client_rec_free);
 	g_free(owner);
@@ -2442,7 +2529,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/pending/tie-oldest", test_pending_tie_oldest);
 	g_test_add_func("/fe-web/pending/owner-kept-on-tie", test_pending_owner_kept_on_tie);
 	g_test_add_func("/fe-web/pending/trusted-kept", test_pending_trusted_kept);
+	g_test_add_func("/fe-web/pending/trusted-flooder-loses-own",
+	                test_pending_trusted_flooder_loses_own);
 	g_test_add_func("/fe-web/pending/all-protected", test_pending_all_protected);
+	g_test_add_func("/fe-web/pending/leaving-first", test_pending_leaving_first);
 	g_test_add_func("/fe-web/peer-key/ip4", test_peer_key_ip4);
 	g_test_add_func("/fe-web/peer-key/ip6-prefix", test_peer_key_ip6_prefix);
 	g_test_add_func("/fe-web/peer-key/ip4-mapped", test_peer_key_ip4_mapped);

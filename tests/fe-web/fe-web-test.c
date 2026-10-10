@@ -12,6 +12,7 @@
 #include <irssi/src/core/settings.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -173,6 +174,7 @@ int test_connect_unix(const char *path)
 		close(fd);
 		return -1;
 	}
+	g_assert_cmpint(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK), ==, 0);
 	return fd;
 }
 

@@ -102,13 +102,19 @@ gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
  * than max_pending of 'clients' (WEB_CLIENT_REC *, the oldest first) did
  * not log in. A client without a peer key counts as the peer "unknown".
  *
- * Protected are the clients of own_key (erssi's own uid, NULL: none) and
- * of the trusted peers of pacing (NULL: none). While any pending client is
- * not protected, only those are counted and chosen; else all of them.
- * Of those, the oldest client of the peer with the most of them; between
- * peers with as many, the oldest client. So one peer, or many addresses
- * with one connection each, close their own connections, not the owner's
- * or a trusted peer's. */
+ * The oldest pending client that is already closing (closing or
+ * output_failed) goes first: it is on its way out.
+ *
+ * Else, protected are every client of own_key (erssi's own uid, NULL:
+ * none) and the oldest pending client of each trusted peer of pacing
+ * (NULL: none); a trusted peer's other pending clients are not. While any
+ * pending client is not protected, only those may be chosen; else all of
+ * them. Of those, the oldest of the peer with the most pending clients
+ * (all of them, the protected one of a trusted peer too); between peers
+ * with as many, the oldest. So one peer, or many addresses with one
+ * connection each, close their own connections, not the owner's; and a
+ * peer that logged in once (perhaps an address others share) keeps one
+ * login waiting, not a flood. */
 WEB_CLIENT_REC *fe_web_pending_victim(GSList *clients, int max_pending, const char *own_key,
                                       FE_WEB_PACING *pacing);
 

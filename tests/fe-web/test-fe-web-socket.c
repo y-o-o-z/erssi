@@ -335,6 +335,7 @@ static void test_peer_uid_own_accepted(void)
 
 	fd = test_connect_unix(path);
 	g_assert_cmpint(fd, >=, 0);
+	g_assert_true(fcntl(fd, F_GETFL) & O_NONBLOCK);
 	fe_web_fuzz_iterate(100);
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 1);
 	c = web_clients->data;
@@ -431,7 +432,6 @@ static void test_ninth_pending_evicts_oldest(void)
 	for (i = 0; i < 9; i++) {
 		fds[i] = test_connect_unix(path);
 		g_assert_cmpint(fds[i], >=, 0);
-		g_assert_cmpint(fcntl(fds[i], F_SETFL, O_NONBLOCK), ==, 0);
 		fe_web_fuzz_iterate(20);
 		g_assert_cmpuint(g_slist_length(web_clients), ==, i < 8 ? i + 1 : 8);
 	}
@@ -456,13 +456,11 @@ static void connect_n(const char *path, int *fds, int n)
 	for (i = 0; i < n; i++) {
 		fds[i] = test_connect_unix(path);
 		g_assert_cmpint(fds[i], >=, 0);
-		g_assert_cmpint(fcntl(fds[i], F_SETFL, O_NONBLOCK), ==, 0);
 		fe_web_fuzz_iterate(20);
 	}
 }
 
-/* Is a client of peer_key connected. (A closed client's record may be
- * reused for the next one, so its pointer says nothing.) */
+/* Is a client of peer_key connected */
 static gboolean peer_connected(const char *peer_key)
 {
 	GSList *tmp;
@@ -480,6 +478,7 @@ static gboolean peer_connected(const char *peer_key)
  * peer's, not the owner's oldest */
 static void test_full_queue_keeps_owner(void)
 {
+	WEB_CLIENT_REC *other;
 	char *path, *out;
 	int fds[8];
 	int i;
@@ -491,15 +490,17 @@ static void test_full_queue_keeps_owner(void)
 	g_free(out);
 
 	connect_n(path, fds, 7);
-	fe_web_fuzz_client_new_peer("ip:192.0.2.1", FALSE, FALSE);
+	other = fe_web_fuzz_client_new_peer("ip:192.0.2.1", FALSE, FALSE);
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
 	connect_n(path, fds + 7, 1);
 	g_assert_false(peer_connected("ip:192.0.2.1"));
+	/* the new connection may have the closed one's record: still not
+	 * alive */
+	g_assert_false(fe_web_fuzz_client_alive(other));
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 8);
 	for (i = 0; i < 8; i++)
 		g_assert_false(reads_eof(fds[i]));
-	/* only the browser end of the closed client is left */
-	fe_web_fuzz_client_free(NULL);
+	fe_web_fuzz_client_free(other);
 	for (i = 0; i < 8; i++)
 		close(fds[i]);
 	g_free(path);
