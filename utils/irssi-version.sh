@@ -1,7 +1,11 @@
 #!/bin/sh
 
-# Try erssi-v format first (erssi releases), fallback to v format (irssi upstream)
-DATE=`grep '^erssi-v' "$1"/NEWS | head -1`
+# Header formats, tried in order: shellter-v (this fork, calendar versions),
+# erssi-v (older erssi releases), v (irssi upstream)
+DATE=`grep '^shellter-v' "$1"/NEWS | head -1`
+if [ -z "$DATE" ]; then
+    DATE=`grep '^erssi-v' "$1"/NEWS | head -1`
+fi
 if [ -z "$DATE" ]; then
     DATE=`grep '^v' "$1"/NEWS | head -1`
 fi
@@ -11,9 +15,19 @@ case $VERSION_DATE in
     VERSION_DATE=`date +%Y%m%d`
     ;;
 esac
-# Remove both 'erssi-v' and 'v' prefixes for version parsing
-VERSION_TIME=`echo "$DATE" | cut -f 1 -d ' ' | sed 's/^erssi-v//' | tr -d v | tr .- ' '`
-VERSION_TIME=`printf %d%d%02d $VERSION_TIME 2>/dev/null | cut -c 1-4`
+HEADER_VERSION=`echo "$DATE" | cut -f 1 -d ' '`
+case $HEADER_VERSION in
+  shellter-v[0-9][0-9][0-9][0-9].*)
+    # calendar version YYYY.M.PATCH: month*100+patch without a leading zero,
+    # C reads 0903 as octal
+    VERSION_TIME=`echo "$HEADER_VERSION" | sed 's/^shellter-v//' | awk -F. '{ printf "%d", $2 * 100 + $3 }'`
+    ;;
+  *)
+    # Remove the 'shellter-v', 'erssi-v' and 'v' prefixes for version parsing
+    VERSION_TIME=`echo "$HEADER_VERSION" | sed 's/^shellter-v//; s/^erssi-v//' | tr -d v | tr .- ' '`
+    VERSION_TIME=`printf %d%d%02d $VERSION_TIME 2>/dev/null | cut -c 1-4`
+    ;;
+esac
 
 if echo "${VERSION}" | grep -q -- -head; then
   # -head version, get extra details from git if we can

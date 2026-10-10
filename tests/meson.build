@@ -1,6 +1,7 @@
 subdir('fe-common')
 subdir('irc')
 subdir('fe-ansi')
+subdir('version')
 if have_e2e
   subdir('e2e')
 endif
