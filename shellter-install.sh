@@ -466,6 +466,21 @@ pm_hint() {   # what a user tells the administrator
         *) echo "sudo $(pm_install_cmd "$@" | sed 's/ -y//; s/ --noconfirm//; s/ --non-interactive//')" ;;
     esac
 }
+# FreeBSD: the OpenSSL of the base system (headers and libraries in /usr,
+# no openssl.pc) is enough; meson finds it without pkg-config. Prints its
+# version, or "unknown"; 1 when it is not there or the system is not
+# FreeBSD. SHELLTER_BASE_OPENSSL: another base directory (tests).
+base_openssl() {
+    [ "$OS" = FreeBSD ] || return 1
+    b=${SHELLTER_BASE_OPENSSL:-/usr}
+    [ -f "$b/include/openssl/ssl.h" ] && [ -f "$b/include/openssl/opensslv.h" ] &&
+        [ -e "$b/lib/libssl.so" ] && [ -e "$b/lib/libcrypto.so" ] || return 1
+    v=$(sed -n 's/.*OPENSSL_VERSION_TEXT[[:space:]]*"OpenSSL \([^[:space:]"]*\).*/\1/p' "$b/include/openssl/opensslv.h" | head -n 1)
+    echo "${v:-unknown}"
+}
+openssl_version() {
+    $PKGCONFIG --modversion openssl 2>/dev/null || echo "$(base_openssl) (base system)"
+}
 # missing features -> $REQ (needed) and $REC (recommended)
 check_system() {
     REQ="" REC=""
@@ -474,10 +489,11 @@ check_system() {
     PKGCONFIG=""
     for t in pkg-config pkgconf; do have "$t" && { PKGCONFIG=$t; break; }; done
     if [ -z "$PKGCONFIG" ]; then
-        REQ="$REQ pkgconf glib openssl"
+        REQ="$REQ pkgconf glib"
+        base_openssl >/dev/null || REQ="$REQ openssl"
     else
         $PKGCONFIG --exists 'glib-2.0 >= 2.32' && $PKGCONFIG --exists gmodule-2.0 && $PKGCONFIG --exists gio-2.0 || REQ="$REQ glib"
-        $PKGCONFIG --exists openssl || REQ="$REQ openssl"
+        $PKGCONFIG --exists openssl || base_openssl >/dev/null || REQ="$REQ openssl"
     fi
     have perl || REQ="$REQ perl"
     if ! have meson || ! have ninja; then
@@ -574,7 +590,7 @@ else
         fi
         PATH="$VENV/bin:$PATH"; export PATH
     fi
-    done_ "meson $("$MESON" --version) $S_SEP ninja $("$NINJA" --version) $S_SEP glib $($PKGCONFIG --modversion glib-2.0) $S_SEP openssl $($PKGCONFIG --modversion openssl)"
+    done_ "meson $("$MESON" --version) $S_SEP ninja $("$NINJA" --version) $S_SEP glib $($PKGCONFIG --modversion glib-2.0) $S_SEP openssl $(openssl_version)"
 fi
 
 # ── 2. the release ───────────────────────────────────────────────────
