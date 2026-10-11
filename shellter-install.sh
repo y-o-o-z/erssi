@@ -25,9 +25,12 @@
 # from <prefix>/share/irssi/shellter-install.conf; an erssi kept up to date
 # by another tool names it there as UPDATE_COMMAND, which --update runs.
 #
-# Inside a user namespace (rootless container, bwrap) root's directories
-# show as the overflow uid; SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts it
-# as root's above the parent of --src (safe_path).
+# Inside a user namespace (rootless container, bwrap) root's directories,
+# like those of every user the namespace does not map, show as the overflow
+# uid; SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts it as root's above the
+# parent of --src (safe_path). SHELLTER_PROC, SHELLTER_OS_RELEASE and
+# SHELLTER_BASE_OPENSSL are for the tests only (a stand-in /proc,
+# os-release and FreeBSD base OpenSSL).
 #
 # Build output goes to a log (~/.local/state/erssi/install.log), shown when a
 # step fails. Colours only on a terminal (NO_COLOR turns them off).
@@ -78,13 +81,16 @@ As root the installer lists the system packages erssi needs and installs
 them after you confirm; on a user account it lists them with the command
 for the administrator.
 
-The source directory, its venv and the directories above them must be
-yours or root's. In a user namespace (rootless container, bwrap, unshare)
-root's directories show as the overflow uid (65534):
+The source directory and its venv must be yours; the directories above
+them yours or root's. In a user namespace (rootless container, bwrap,
+unshare) root's directories, like those of every user it does not map,
+show as the overflow uid (65534), which may also be a user the namespace
+maps (rootless podman's nobody):
   SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
-                 count it as root's above the parent of --src (never the
-                 parent, --src or its venv); does nothing outside a user
-                 namespace or without /proc
+                 count that uid as root's above the parent of --src (so
+                 every unmapped user's directories there are trusted, not
+                 only root's; never the parent, --src or its venv); does
+                 nothing outside a user namespace or without /proc
 USAGE
 }
 
@@ -324,6 +330,7 @@ others_can_write() {
     return 1
 }
 safe_dir() {   # dir - when it exists: the user's, and only the user can write to it
+    mapped_self
     [ -e "$1" ] || [ -L "$1" ] || return 0
     [ ! -L "$1" ] || die "$1 is a symbolic link - use a directory of your own: --src DIR"
     o=$(owner "$1")
@@ -335,9 +342,12 @@ safe_dir() {   # dir - when it exists: the user's, and only the user can write t
 # In a user namespace (a rootless container, bwrap, unshare) the files of
 # every user it does not map, root's among them, show as the kernel's
 # overflow uid (65534). SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts that
-# uid as root's above the parent of --src; never for the parent, the source
-# directory or its venv. Outside a user namespace, and without /proc
-# (FreeBSD), it does nothing. SHELLTER_PROC: another /proc (tests).
+# uid as root's above the parent of --src - so the directories there of
+# every unmapped user, not only root's, and of a user the namespace maps to
+# that same uid (rootless podman maps its "nobody" to 65534); never for the
+# parent, the source directory or its venv. Outside a user namespace, and
+# without /proc (FreeBSD), it does nothing. SHELLTER_PROC (test-only, like
+# SHELLTER_OS_RELEASE and SHELLTER_BASE_OPENSSL): a stand-in /proc.
 in_userns() {   # 0 when /proc/self/uid_map is not the initial (identity) map
     um="${SHELLTER_PROC:-/proc}/self/uid_map"
     [ -r "$um" ] || return 1
@@ -349,6 +359,13 @@ overflow_uid() {   # the overflow uid inside a user namespace, else nothing
     case "$ov" in ''|*[!0-9]*|0) return 0 ;; esac
     printf '%s\n' "$ov"
 }
+# A namespace that does not map the user: id -u is the overflow uid as well,
+# so every unmapped user's directory would pass as the user's own - refused
+mapped_self() {
+    ov=$(overflow_uid)
+    [ -z "$ov" ] || [ "$(id -u)" != "$ov" ] ||
+        die "your uid is not mapped in this user namespace (id -u is the overflow uid $ov, which the files of every unmapped user show as, so no directory can be told to be yours) - run the installer where your uid is mapped (e.g. unshare --map-current-user, podman --userns=keep-id)"
+}
 # $1, the resolved parent of the source directory, and every directory above
 # it: the user's or root's, and nobody else can write to the parent; above
 # it only a sticky directory of root's (/tmp) may be open to others
@@ -357,6 +374,7 @@ overflow_uid() {   # the overflow uid inside a user namespace, else nothing
 safe_path() {
     d=$1
     hint="choose a --src under a directory only you can write"
+    mapped_self
     ovf=$(overflow_uid)
     trust=""
     [ "${SHELLTER_INSTALL_TRUST_OVERFLOW_UID:-}" != 1 ] || trust=$ovf

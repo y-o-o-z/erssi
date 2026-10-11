@@ -177,7 +177,8 @@ EOF
 
 # Another user, as far as the installer can tell: $W/lsfake holds "path uid
 # mode gid" lines ("-": as it is), and ls -ldn of such a path shows that
-# owner (foreign: 4242), mode string or group. id -un is "tester", id -gn
+# owner (foreign: 4242), mode string or group. id -u is $FAKE_UID when set
+# (the user's otherwise), id -un is "tester", id -gn
 # $FAKE_GROUP_NAME (default "tester": a user private group), and getent
 # group lists the members $FAKE_GROUP_MEMBERS (default none).
 another_user() {
@@ -198,6 +199,7 @@ EOF
     stand id <<'EOF'
 #!/bin/sh
 case "$*" in
+    -u) if [ -n "${FAKE_UID:-}" ]; then echo "$FAKE_UID"; else exec "$TEST_W/bin/id" -u; fi ;;
     -un) echo tester ;;
     -gn) echo "${FAKE_GROUP_NAME:-tester}" ;;
     *) exec "$TEST_W/bin/id" "$@" ;;
@@ -919,6 +921,38 @@ userns)
     run_install --src "$W/up/mine/erssi"
     no_fakes
     check "back in the user namespace, option: installed" [ "$RC" = 0 ]
+    # the user's own uid not mapped: id -u is the overflow uid too, so every
+    # unmapped user's directory would look like the user's - refused, with
+    # or without the option, before anything is made
+    FAKE_UID=65534; export FAKE_UID
+    mkdir -p "$W/um/mine"
+    for opt in 1 ""; do
+        SHELLTER_INSTALL_TRUST_OVERFLOW_UID=$opt
+        run_install --src "$W/um/mine/erssi"
+        check "own uid unmapped${opt:+, option}: refused" [ "$RC" = 1 ]
+        check "... named" grep -qF "your uid is not mapped in this user namespace" "$W/out"
+        check "... nothing made" none_exist "$W/um/mine/erssi" "$W/um/mine/erssi.lock"
+    done
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
+    # safe_dir on its own (the venv and --src checks): a directory of an
+    # unmapped user that looks like the user's
+    mkdir -p "$W/um/venv"
+    fake_owner "$W/um/venv" 65534
+    # shellcheck disable=SC2016 # run by sh
+    msg=$(SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init
+            owner() { ls -ldn "$1" 2>/dev/null | awk "{print \$3}"; }
+            safe_dir "$2"' sh "$SRC/shellter-install.sh" "$W/um/venv" 2>&1)
+    RC=$?
+    printf '%s\n' "$msg" > "$W/out"
+    check "own uid unmapped, safe_dir: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "your uid is not mapped in this user namespace" "$W/out"
+    # outside a user namespace a uid equal to the overflow uid is a real
+    # user (nobody): the usual rules
+    init_map
+    run_install --src "$W/um/mine/erssi"
+    check "uid 65534 outside a user namespace: not called unmapped" no_grep "not mapped" "$W/out"
+    no_fakes
+    unset FAKE_UID
     ;;
 userns-kernel)
     # the same in a real user namespace (unshare, only the user mapped):
@@ -929,6 +963,13 @@ userns-kernel)
     # shellcheck disable=SC2016 # run by sh in the namespace
     ns_root=$(in_ns sh -c 'echo "$(cat /proc/sys/kernel/overflowuid) $(ls -ldn / | awk "{print \$3}")"' 2>/dev/null) ||
         { echo "skip: no user namespace here (unshare --user --map-current-user)"; exit 77; }
+    case "$ns_root" in
+        [0-9]*" "[0-9]*) ;;
+        *) echo "skip: no overflow uid or owner of / in a user namespace ($ns_root)"; exit 77 ;;
+    esac
+    case "${ns_root% *}${ns_root#* }" in
+        *[!0-9]*) echo "skip: not numbers: overflow uid and owner of / ($ns_root)"; exit 77 ;;
+    esac
     [ "${ns_root% *}" = "${ns_root#* }" ] ||
         { echo "skip: / does not show as the overflow uid in a user namespace ($ns_root)"; exit 77; }
     mkdir -p "$W/mine"
@@ -950,6 +991,19 @@ userns-kernel)
     RC=$?
     check "user namespace, option, / as the parent: refused" [ "$RC" = 1 ]
     check "... named" grep -qF "/ belongs to another user (uid ${ns_root% *})" "$W/out"
+    # a namespace that does not map the user (unshare --user alone): id -u
+    # is the overflow uid, like every directory - refused, option or not
+    if [ "$("$UNSHARE" --user id -u 2>/dev/null)" = "${ns_root% *}" ]; then
+        rm -rf "$W/mine/erssi" "$W/mine/erssi.lock"
+        SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 "$UNSHARE" --user sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main \
+            --no-test --src "$W/mine/erssi" > "$W/out" 2>&1 < /dev/null
+        RC=$?
+        check "own uid unmapped, option: refused" [ "$RC" = 1 ]
+        check "... named" grep -qF "your uid is not mapped in this user namespace" "$W/out"
+        check "... nothing made" none_exist "$W/mine/erssi" "$W/mine/erssi.lock"
+    else
+        echo "skip: own uid unmapped (unshare --user without a map not allowed here)"
+    fi
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
