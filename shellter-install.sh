@@ -358,6 +358,21 @@ if [ "$UPDATE" = 1 ]; then
     [ -n "$INSTALLED" ] || die "no erssi in $PREFIX to update - install it first: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh"
 fi
 
+T_START=$(now)
+if [ "$UPDATE" = 1 ]; then header "update"; else header "install"; fi
+field "prefix" "$(tilde "$PREFIX")"
+field "source" "$(tilde "$SRC")"
+[ -n "$INSTALLED" ] && field "installed" "$INSTALLED"
+printf '\n'
+
+if [ "$CHECK" = 0 ]; then
+    # one installer at a time on this source directory, taken before
+    # anything is written: the log, the meson/ninja venv ($SRC.venv, step 1)
+    # and the checkout
+    mkdir -p "$(dirname "$SRC")"
+    mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
+    trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
+fi
 # root: never a user's XDG_STATE_HOME (su without -)
 if [ "$ROOT" = 1 ]; then STATE="$HOME/.local/state/erssi"; else STATE="${XDG_STATE_HOME:-$HOME/.local/state}/erssi"; fi
 mkdir -p "$STATE"
@@ -370,13 +385,6 @@ else
     ( umask 077; : > "$LOG" )
     mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
 fi
-T_START=$(now)
-
-if [ "$UPDATE" = 1 ]; then header "update"; else header "install"; fi
-field "prefix" "$(tilde "$PREFIX")"
-field "source" "$(tilde "$SRC")"
-[ -n "$INSTALLED" ] && field "installed" "$INSTALLED"
-printf '\n'
 
 # ── 1. the system ────────────────────────────────────────────────────
 # What erssi needs, as features; each maps to the package names of the
@@ -578,11 +586,7 @@ if [ "$CHECK" = 1 ]; then
     trap 'rm -rf "$WORK" "$LOG"' EXIT
     git init -q "$WORK"
 else
-    WORK=$SRC
-    # one installer at a time on this source directory
-    mkdir -p "$(dirname "$SRC")"
-    mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
-    trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
+    WORK=$SRC           # locked above
     if [ -d "$SRC/.git" ]; then
         [ -z "$(git -C "$SRC" status --porcelain --untracked-files=no)" ] ||
             die "$SRC has local changes - the installer would overwrite them; use another --src"
