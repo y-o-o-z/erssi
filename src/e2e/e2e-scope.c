@@ -237,6 +237,45 @@ static char *drop_marks_by_iota_take(char *s)
 }
 
 /*
+ The Turkish i. Full case folding takes U+0130 to i U+0307 and keeps
+ U+0131, while servers that map case per code point (C towlower and
+ towupper, Go's unicode.ToLower and ToUpper, an upper-case irccmp) take
+ U+0130 to plain i and U+0131 to I. So U+0131 becomes i, and a U+0307 in
+ the run of marks directly after an i goes: dotted, dotless and plain i
+ are one letter.
+*/
+static char *fold_turkish_i(const char *s)
+{
+	GString *out = g_string_sized_new(strlen(s));
+	gboolean after_i = FALSE;
+	const char *p;
+
+	for (p = s; *p != '\0'; p = g_utf8_next_char(p)) {
+		gunichar c = g_utf8_get_char(p);
+
+		if (c == 0x131)
+			c = 'i';
+		if (after_i && g_unichar_ismark(c)) {
+			if (c != 0x307)
+				g_string_append_unichar(out, c);
+			continue;
+		}
+		after_i = c == 'i';
+		g_string_append_unichar(out, c);
+	}
+	return g_string_free(out, FALSE);
+}
+
+/* fold_turkish_i(s), freeing s; NULL for NULL */
+static char *fold_turkish_i_take(char *s)
+{
+	char *result = s != NULL ? fold_turkish_i(s) : NULL;
+
+	g_free(s);
+	return result;
+}
+
+/*
  Unicode's compatibility caseless match (D146),
  NFKD(casefold(NFKD(casefold(NFD(x))))), with the invisible characters
  dropped first and NFKC at the end for one representative. Folding a
@@ -244,7 +283,8 @@ static char *drop_marks_by_iota_take(char *s)
  U+1FBC U+0342 compose around U+0345 differently and fold apart, and
  casefold leaves marks out of canonical order (U+01F0 U+0338 folds to
  j U+030C U+0338), which only a normalisation after it puts right.
- Then the marks around an iota go (drop_marks_by_iota), and NFKC.
+ Then the marks around an iota go (drop_marks_by_iota), the Turkish i
+ is merged with i (fold_turkish_i), and NFKC.
 */
 static char *fold_unicode(const char *name)
 {
@@ -259,6 +299,7 @@ static char *fold_unicode(const char *name)
 	s = casefold_take(s);
 	s = normalize_take(s, G_NORMALIZE_NFKD);
 	s = drop_marks_by_iota_take(s);
+	s = fold_turkish_i_take(s);
 	s = normalize_take(s, G_NORMALIZE_NFKC);
 	if (s == NULL)
 		return NULL;

@@ -8,7 +8,7 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope']
     implicit_include_directories : false,
     dependencies : dep,
   )
-  # scope sweeps every code point and 100k random names: ~45 s in ASan
+  # scope sweeps every code point and 100k random names: ~50 s in ASan
   test('test-e2e-' + name + ' test', exe,
     env : test_env,
     args : ['--tap'],
