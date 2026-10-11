@@ -228,6 +228,101 @@ static void test_unformat_24bit_truncated(void)
 	g_free(data);
 }
 
+/* decode one sequence at data, starting from color 'start' */
+static int unformat_one(int start, const unsigned char **end, const unsigned char *data)
+{
+	int color = start;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	*end = data;
+	textbuffer_unformat(end, &color, &fg24, &bg24);
+	return color;
+}
+
+static void test_unformat_styles(void)
+{
+	static const struct {
+		int code;
+		int attr;
+	} styles[] = {
+		{FORMAT_STYLE_BLINK, ATTR_BLINK},
+		{FORMAT_STYLE_UNDERLINE, ATTR_UNDERLINE},
+		{FORMAT_STYLE_REVERSE, ATTR_REVERSE},
+		{FORMAT_STYLE_ITALIC, ATTR_ITALIC},
+	};
+	unsigned int i;
+
+	for (i = 0; i < G_N_ELEMENTS(styles); i++) {
+		const unsigned char data[] = {styles[i].code, 'x', 0};
+		const unsigned char *end;
+
+		/* toggles on, then off again; other bits stay */
+		g_assert_cmpint(unformat_one(3, &end, data), ==, 3 | styles[i].attr);
+		g_assert(end == data + 1);
+		g_assert_cmpint(unformat_one(3 | styles[i].attr, &end, data), ==, 3);
+	}
+	{
+		const unsigned char data[] = {FORMAT_STYLE_DEFAULTS, 'x', 0};
+		const unsigned char *end;
+
+		g_assert_cmpint(unformat_one(ATTR_BOLD | 7, &end, data), ==, ATTR_RESET);
+		g_assert(end == data + 1);
+	}
+}
+
+static void test_unformat_ext23(void)
+{
+	static const struct {
+		int code;
+		int base;
+		gboolean bg;
+	} ext[] = {
+		{FORMAT_COLOR_EXT2, 0x60, FALSE},    {FORMAT_COLOR_EXT2_BG, 0x60, TRUE},
+		{FORMAT_COLOR_EXT3, 0xb0, FALSE},    {FORMAT_COLOR_EXT3_BG, 0xb0, TRUE},
+		{FORMAT_COLOR_EXT1_BG, 0x10, TRUE},
+	};
+	unsigned int i;
+
+	for (i = 0; i < G_N_ELEMENTS(ext); i++) {
+		const unsigned char data[] = {ext[i].code, FORMAT_COLOR_NOCHANGE + 5, 0};
+		const unsigned char *end;
+		int color = unformat_one(ATTR_BOLD | (ext[i].bg ? 2 : 3 << BG_SHIFT), &end, data);
+
+		if (ext[i].bg)
+			g_assert_cmpint(color, ==, ATTR_BOLD | 2 | ((ext[i].base + 5) << BG_SHIFT));
+		else
+			g_assert_cmpint(color, ==, ATTR_BOLD | (3 << BG_SHIFT) | (ext[i].base + 5));
+		g_assert(end == data + 2);
+	}
+}
+
+static void test_unformat_24bit_bg(void)
+{
+	char *s = format_string_expand("%z0550AE", NULL);
+	const unsigned char *ptr = (const unsigned char *) s + 1;
+	int color = ATTR_FGCOLOR24 | ATTR_BOLD;
+	unsigned int fg24 = 0x123456, bg24 = UINT_MAX;
+
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpuint(bg24, ==, 0x0550AE);
+	g_assert_cmpuint(fg24, ==, 0x123456);
+	g_assert_cmpint(color, ==, ATTR_BOLD | ATTR_FGCOLOR24 | ATTR_BGCOLOR24);
+	g_free(s);
+}
+
+static void test_unformat_reset_one_side(void)
+{
+	const unsigned char fgreset[] = {0xff, '4', 0};
+	const unsigned char bgreset[] = {'4', 0xff, 0};
+	const unsigned char *end;
+
+	g_assert_cmpint(unformat_one(ATTR_BOLD | 7, &end, fgreset), ==,
+	                ATTR_BOLD | ATTR_RESETFG | (4 << BG_SHIFT));
+	g_assert(end == fgreset + 2);
+	g_assert_cmpint(unformat_one(ATTR_BOLD | (7 << BG_SHIFT), &end, bgreset), ==,
+	                ATTR_BOLD | 4 | ATTR_RESETBG);
+}
+
 static void test_read_unichar_invalid(void)
 {
 	const unsigned char data[] = {0xC3, 0x28, 0};
@@ -252,6 +347,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/textbuffer/unformat/nochange-reset", test_unformat_nochange_reset);
 	g_test_add_func("/textbuffer/unformat/ext1", test_unformat_ext1);
 	g_test_add_func("/textbuffer/unformat/24bit", test_unformat_24bit);
+	g_test_add_func("/textbuffer/unformat/styles", test_unformat_styles);
+	g_test_add_func("/textbuffer/unformat/ext23", test_unformat_ext23);
+	g_test_add_func("/textbuffer/unformat/24bit-bg", test_unformat_24bit_bg);
+	g_test_add_func("/textbuffer/unformat/reset-one-side", test_unformat_reset_one_side);
 	g_test_add_func("/textbuffer/unformat/24bit-truncated", test_unformat_24bit_truncated);
 	g_test_add_func("/textbuffer/read-unichar/invalid", test_read_unichar_invalid);
 
