@@ -215,7 +215,10 @@
     message tags are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY
     etc. are resolved with the last nick stored in the keyring, which
     may meanwhile belong to someone else - check the ident@host the
-    command prints. As in repartee, the server can replay an encrypted
+    command prints. A keyring written with real Unicode (repartee's
+    export) that stores a nick whose letters all fit Latin-1 (kótek) is
+    read as Latin-1 bytes, so neither erssi nor rpe2e.pl finds that nick
+    by it (one with other letters, żbik, is found). As in repartee, the server can replay an encrypted
     message within 5 minutes, and drop or reorder the parts of a long
     one. A key request carries no ident@host: someone who forwards your
     peer's request before the peer's first contact with you ties that
