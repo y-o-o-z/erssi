@@ -101,3 +101,43 @@ test('test-term-defaults test', test_test_term_defaults,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_term_colors = executable('test-term-colors',
+  files(
+    '../../src/fe-ansi/gui-entry.c',
+    '../../src/fe-ansi/gui-gestures.c',
+    '../../src/fe-ansi/gui-mouse.c',
+    '../../src/fe-ansi/gui-printtext.c',
+    '../../src/fe-ansi/gui-windows.c',
+    '../../src/fe-ansi/mainwindows.c',
+    '../../src/fe-ansi/term-ansi.c',
+    '../../src/fe-ansi/sidepanels-core.c',
+    '../../src/fe-ansi/sidepanels-render.c',
+    '../../src/fe-ansi/sidepanels-text.c',
+    '../../src/fe-ansi/sidepanels-activity.c',
+    '../../src/fe-ansi/sidepanels-signals.c',
+    '../../src/fe-ansi/sidepanels-layout.c',
+    '../../src/fe-ansi/textbuffer-formats.c',
+    '../../src/fe-ansi/textbuffer-view.c',
+    '../../src/fe-ansi/textbuffer.c',
+    '../../src/fe-ansi/resize-debug.c',
+    'mock-irssi.c',
+    'test-term-colors.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-term-colors test', test_test_term_colors,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
