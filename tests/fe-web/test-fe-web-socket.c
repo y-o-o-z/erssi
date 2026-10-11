@@ -583,11 +583,18 @@ static void reset_lock_seams(void)
 {
 	fe_web_fuzz_fake_connect_errno(0);
 	fe_web_fuzz_fake_flock_errno(0);
-#ifdef __linux__
-	fe_web_fuzz_set_econnrefused_reliable(TRUE);
-#else
-	fe_web_fuzz_set_econnrefused_reliable(FALSE);
-#endif
+	fe_web_fuzz_reset_econnrefused_reliable();
+}
+
+/* The lowest fd number not in use: the same before and after a start that
+ * failed, or it left an fd open */
+static int lowest_free_fd(void)
+{
+	int fd = open("/dev/null", O_RDONLY);
+
+	g_assert_cmpint(fd, >=, 0);
+	close(fd);
+	return fd;
 }
 
 /* FreeBSD answers ECONNREFUSED for a listener whose queue is full: the
@@ -596,7 +603,7 @@ static void test_busy_erssi_kept(void)
 {
 	char *path, *want, *out;
 	ino_t old;
-	int fd, lock;
+	int fd, lock, free_fd;
 
 	setup();
 	path = under("fe-web.sock");
@@ -605,7 +612,9 @@ static void test_busy_erssi_kept(void)
 	lock = try_lock(path);
 	g_assert_cmpint(lock, >=, 0);
 	fe_web_fuzz_fake_connect_errno(ECONNREFUSED);
+	free_fd = lowest_free_fd();
 	out = test_start_unix(path);
+	g_assert_cmpint(lowest_free_fd(), ==, free_fd);
 	want = g_strdup_printf("another erssi is using unix:%s", path);
 	assert_printed(out, want);
 	g_assert_true(is_socket(path));
@@ -619,12 +628,13 @@ static void test_busy_erssi_kept(void)
 	teardown();
 }
 
-/* Without locks, where ECONNREFUSED may be a busy listener, the socket is
- * left alone */
-static void test_refused_unreliable_without_lock(void)
+/* Without locks (flock() fails with 'err'), where ECONNREFUSED may be a
+ * busy listener, the socket is left alone */
+static void refused_unreliable_without_lock(int err)
 {
 	char *path, *want, *out;
 	ino_t old;
+	int free_fd;
 
 	setup();
 	path = under("fe-web.sock");
@@ -632,9 +642,11 @@ static void test_refused_unreliable_without_lock(void)
 	old = inode_of(path);
 	pin_inode(path);
 	fe_web_fuzz_set_econnrefused_reliable(FALSE);
-	fe_web_fuzz_fake_flock_errno(EOPNOTSUPP);
+	fe_web_fuzz_fake_flock_errno(err);
 	fe_web_fuzz_fake_connect_errno(ECONNREFUSED);
+	free_fd = lowest_free_fd();
 	out = test_start_unix(path);
+	g_assert_cmpint(lowest_free_fd(), ==, free_fd);
 	want = g_strdup_printf("cannot tell whether unix:%s is still in use", path);
 	assert_printed(out, want);
 	g_assert_true(is_socket(path));
@@ -646,9 +658,14 @@ static void test_refused_unreliable_without_lock(void)
 	teardown();
 }
 
+static void test_refused_unreliable_without_lock(void)
+{
+	refused_unreliable_without_lock(EOPNOTSUPP);
+	refused_unreliable_without_lock(EINVAL);
+}
+
 /* Without locks on Linux, ECONNREFUSED means that nothing listens:
- * replaced. On Linux this is erssi's default (this test runs before any
- * other changes it). */
+ * replaced. On Linux this is erssi's own default. */
 static void test_refused_reliable_without_lock_is_stale(void)
 {
 	char *path, *out;
@@ -659,7 +676,9 @@ static void test_refused_reliable_without_lock_is_stale(void)
 	test_dead_socket(path);
 	old = inode_of(path);
 	pin_inode(path);
-#ifndef __linux__
+#ifdef __linux__
+	fe_web_fuzz_reset_econnrefused_reliable();
+#else
 	fe_web_fuzz_set_econnrefused_reliable(TRUE);
 #endif
 	fe_web_fuzz_fake_flock_errno(ENOLCK);
@@ -737,7 +756,9 @@ static void test_lock_symlink_refused(void)
 	elsewhere = under("elsewhere");
 	g_assert_cmpint(symlink(elsewhere, lock), ==, 0);
 	out = test_start_unix(path);
-	want = g_strdup_printf("fe-web: Not starting: cannot lock %s: ", lock);
+	want = g_strdup_printf("fe-web: Not starting: cannot lock %s: "
+	                       "it is a symbolic link - remove it",
+	                       lock);
 	assert_printed(out, want);
 	g_assert_false(g_file_test(elsewhere, G_FILE_TEST_EXISTS));
 	g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
@@ -756,18 +777,86 @@ static void test_lock_symlink_refused(void)
 static void test_lock_not_regular_refused(void)
 {
 	char *path, *lock, *want, *out;
+	int free_fd;
 
 	setup();
 	path = under("fe-web.sock");
 	lock = lock_path_of(path);
 	g_assert_cmpint(mkfifo(lock, 0600), ==, 0);
+	free_fd = lowest_free_fd();
 	out = test_start_unix(path);
-	want = g_strdup_printf("fe-web: Not starting: cannot lock %s: ", lock);
+	g_assert_cmpint(lowest_free_fd(), ==, free_fd);
+	want = g_strdup_printf("fe-web: Not starting: cannot lock %s: "
+	                       "it is not a regular file of yours - remove it",
+	                       lock);
 	assert_printed(out, want);
 	g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
 	g_free(want);
 	g_free(out);
 	g_free(lock);
+	g_free(path);
+	teardown();
+}
+
+/* A lock file others may open is refused: another user could hold the
+ * lock and keep erssi from starting. It is not changed. */
+static void test_lock_open_to_others_refused(void)
+{
+	char *path, *lock, *want, *out;
+	int fd;
+
+	setup();
+	path = under("fe-web.sock");
+	lock = lock_path_of(path);
+	fd = open(lock, O_RDWR | O_CREAT | O_EXCL, 0600);
+	g_assert_cmpint(fd, >=, 0);
+	close(fd);
+	g_assert_cmpint(chmod(lock, 0644), ==, 0);
+	out = test_start_unix(path);
+	want = g_strdup_printf("fe-web: Not starting: cannot lock %s: "
+	                       "others may open it (mode 0644) - chmod 600 %s",
+	                       lock, lock);
+	assert_printed(out, want);
+	g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+	g_assert_cmpint(mode_of(lock), ==, 0644);
+	g_free(want);
+	g_free(out);
+	g_free(lock);
+	g_free(path);
+	teardown();
+}
+
+/* A stop forgets the lock fd: a later stop, after a start that failed,
+ * must not close the fd number again - by then it is someone else's */
+static void test_lock_fd_closed_once(void)
+{
+	char *path, *out;
+	int fds[8];
+	int i, lock;
+
+	setup();
+	path = under("fe-web.sock");
+	out = test_start_unix(path);
+	assert_listening(out, path);
+	g_free(out);
+	fe_web_server_deinit();
+	/* the lowest free numbers, the lock fd's among them */
+	for (i = 0; i < 8; i++) {
+		fds[i] = open("/dev/null", O_RDONLY);
+		g_assert_cmpint(fds[i], >=, 0);
+	}
+	lock = try_lock(path);
+	g_assert_cmpint(lock, >=, 0);
+	out = test_start_unix(path);
+	assert_printed(out, "another erssi is using unix:");
+	g_free(out);
+	fe_web_server_deinit();
+	g_assert_cmpint(fcntl(lock, F_GETFD), !=, -1);
+	for (i = 0; i < 8; i++) {
+		g_assert_cmpint(fcntl(fds[i], F_GETFD), !=, -1);
+		close(fds[i]);
+	}
+	close(lock);
 	g_free(path);
 	teardown();
 }
@@ -895,17 +984,20 @@ int main(int argc, char **argv)
 	                test_ninth_pending_evicts_oldest);
 	g_test_add_func("/fe-web/socket/full-queue-keeps-owner", test_full_queue_keeps_owner);
 	g_test_add_func("/fe-web/socket/full-queue-keeps-trusted", test_full_queue_keeps_trusted);
-	g_test_add_func("/fe-web/socket/refused-reliable-without-lock-is-stale",
-	                test_refused_reliable_without_lock_is_stale);
 	g_test_add_func("/fe-web/socket/busy-erssi-kept", test_busy_erssi_kept);
 	g_test_add_func("/fe-web/socket/refused-unreliable-without-lock",
 	                test_refused_unreliable_without_lock);
+	g_test_add_func("/fe-web/socket/refused-reliable-without-lock-is-stale",
+	                test_refused_reliable_without_lock_is_stale);
 	g_test_add_func("/fe-web/socket/refused-unreliable-with-lock-is-stale",
 	                test_refused_unreliable_with_lock_is_stale);
 	g_test_add_func("/fe-web/socket/stale-lock-file-ignored", test_stale_lock_file_ignored);
 	g_test_add_func("/fe-web/socket/lock-symlink-refused", test_lock_symlink_refused);
 	g_test_add_func("/fe-web/socket/lock-not-regular-refused", test_lock_not_regular_refused);
 	g_test_add_func("/fe-web/socket/lock-held-while-listening", test_lock_held_while_listening);
+	g_test_add_func("/fe-web/socket/lock-open-to-others-refused",
+	                test_lock_open_to_others_refused);
+	g_test_add_func("/fe-web/socket/lock-fd-closed-once", test_lock_fd_closed_once);
 	g_test_add_func("/fe-web/socket/listen-failure-releases-lock",
 	                test_listen_failure_releases_lock);
 
