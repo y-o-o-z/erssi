@@ -38,7 +38,7 @@ stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
 use_tool() { for t in "$@"; do cp "$W/stand/$t" "$W/shim/$t"; done; }
 
 setup() {
-    W=$(mktemp -d) || exit 1
+    W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
     trap 'rm -rf "$W"' EXIT
     trap 'exit 1' HUP INT TERM
     TEST_W=$W; export TEST_W
@@ -69,7 +69,10 @@ esac
 exit 0
 EOF
     printf '#!/bin/sh\nexit 0\n' | stand cc
-    printf '#!/bin/sh\nexit 0\n' | stand perl
+    # perl runs in step 1 (check_system): FAKE_PLANT_VENV makes another
+    # user's venv ($W/planted) appear there, after the lock was taken
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\nif [ -n "${FAKE_PLANT_VENV:-}" ] && [ -d "$TEST_W/planted" ]; then\n    mv "$TEST_W/planted" "$FAKE_PLANT_VENV" && echo "$FAKE_PLANT_VENV 4242 -" >> "$TEST_W/lsfake"\nfi\nexit 0\n' | stand perl
     stand meson <<'EOF'
 #!/bin/sh
 case "$1" in
@@ -137,8 +140,8 @@ run_update_check() {
 
 # no meson or ninja in PATH, but a python3 that builds a venv with them; it
 # logs whether the source lock is held when it runs. Another user acting
-# while it runs: FAKE_VENV_FOREIGN=1 (the venv is theirs), FAKE_PLANT_SRC=1
-# or git (they make the source directory, empty or a git checkout)
+# while it runs: FAKE_PLANT_SRC=1 or git (they make the source directory,
+# empty or a git checkout)
 no_meson_python() {
     rm -f "$W/shim/meson" "$W/shim/ninja"
     # shellcheck disable=SC2016 # a stand-in script
@@ -148,29 +151,54 @@ no_meson_python() {
 if [ -d "$HOME/.local/src/erssi.lock" ]; then echo "venv locked"; else echo "venv unlocked"; fi >> "$TEST_W/py.log"
 [ "$1" = -m ] && [ "$2" = venv ] || exit 0
 mkdir -p "$3/bin" && cp "$TEST_W/stand/meson" "$TEST_W/stand/ninja" "$TEST_W/stand/pip" "$3/bin/"
-[ "${FAKE_VENV_FOREIGN:-0}" != 1 ] || echo "$3" >> "$TEST_W/foreign"
 case "${FAKE_PLANT_SRC:-0}" in
-    1) mkdir -p "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi" >> "$TEST_W/foreign" ;;
-    git) git -c init.defaultBranch=main init -q "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi" >> "$TEST_W/foreign" ;;
+    1) mkdir -p "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi 4242 -" >> "$TEST_W/lsfake" ;;
+    git) git -c init.defaultBranch=main init -q "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi 4242 -" >> "$TEST_W/lsfake" ;;
 esac
 exit 0
 EOF
     use_tool python3
 }
 
-# ls -ldn reports owner 4242 ("another user") for the paths listed in
-# $W/foreign; id -un is "tester", id -gn $FAKE_GROUP_NAME (default "tester":
-# a user private group)
+# Another user, as far as the installer can tell: $W/lsfake holds "path uid
+# mode gid" lines ("-": as it is), and ls -ldn of such a path shows that
+# owner (foreign: 4242), mode string or group. id -un is "tester", id -gn
+# $FAKE_GROUP_NAME (default "tester": a user private group), and getent
+# group lists the members $FAKE_GROUP_MEMBERS (default none).
 another_user() {
-    : >> "$W/foreign"
-    # shellcheck disable=SC2016 # stand-in scripts
-    printf '#!/bin/sh\nif [ "$1" = -ldn ] && grep -qxF "$2" "$TEST_W/foreign"; then\n    "$TEST_W/bin/ls" -ldn "$2" | awk %s\nelse\n    exec "$TEST_W/bin/ls" "$@"\nfi\n' \
-        "'{\$3 = \"4242\"; print}'" | stand ls
-    # shellcheck disable=SC2016
-    printf '#!/bin/sh\ncase "$*" in\n    -un) echo tester ;;\n    -gn) echo "${FAKE_GROUP_NAME:-tester}" ;;\n    *) exec "$TEST_W/bin/id" "$@" ;;\nesac\n' | stand id
-    use_tool ls id
+    : >> "$W/lsfake"
+    stand ls <<'EOF'
+#!/bin/sh
+if [ "$1" = -ldn ]; then
+    f=$(awk -v p="$2" '$1 == p {print $2, $3, ($4 == "" ? "-" : $4)}' "$TEST_W/lsfake" | tail -n 1)
+    if [ -n "$f" ]; then
+        set -- $f "$2"
+        "$TEST_W/bin/ls" -ldn "$4" | awk -v u="$1" -v m="$2" -v g="$3" \
+            '{ if (u != "-") $3 = u; if (m != "-") $1 = m; if (g != "-") $4 = g; print }'
+        exit
+    fi
+fi
+exec "$TEST_W/bin/ls" "$@"
+EOF
+    stand id <<'EOF'
+#!/bin/sh
+case "$*" in
+    -un) echo tester ;;
+    -gn) echo "${FAKE_GROUP_NAME:-tester}" ;;
+    *) exec "$TEST_W/bin/id" "$@" ;;
+esac
+EOF
+    stand getent <<'EOF'
+#!/bin/sh
+[ "$1" = group ] && echo "$2:x:$("$TEST_W/bin/id" -g):${FAKE_GROUP_MEMBERS:-}"
+EOF
+    use_tool ls id getent
 }
-foreign() { for f in "$@"; do printf '%s\n' "$f" >> "$W/foreign"; done; }
+foreign() { for f in "$@"; do printf '%s 4242 -\n' "$f" >> "$W/lsfake"; done; }
+fake_owner() { printf '%s %s -\n' "$1" "$2" >> "$W/lsfake"; }
+fake_mode() { printf '%s - %s\n' "$1" "$2" >> "$W/lsfake"; }
+fake_group() { printf '%s - - %s\n' "$1" "$2" >> "$W/lsfake"; }
+no_fakes() { : > "$W/lsfake"; }
 # a venv in $1 whose meson and ninja log to $W/ran-venv when run
 plant_venv() {
     mkdir -p "$1/bin"
@@ -446,8 +474,8 @@ freebsd-no-openssl)
     check "Linux: sudo apt install libssl-dev" grep -qF 'sudo apt install libssl-dev' "$W/out"
     ;;
 src-foreign)
-    # a venv or an empty source directory made by another user, or a parent
-    # directory of theirs: refused before anything in it runs
+    # a venv, a source directory or a directory above them that belongs to
+    # another user: refused before anything in it runs
     no_meson_python
     another_user
     V=$HOME/.local/src/erssi.venv
@@ -457,9 +485,27 @@ src-foreign)
     check "their venv: refused" [ "$RC" = 1 ]
     check "their venv: named" grep -qF "$V belongs to another user" "$W/out"
     check "their venv: nothing run" none_exist "$W/ran-venv" "$W/py.log" "$W/ran-pip"
-    check "their venv: lock released" [ ! -e "$HOME/.local/src/erssi.lock" ]
+    check "their venv: lock released" none_exist "$HOME/.local/src/erssi.lock"
+    # also when meson and ninja are in PATH (the venv is not needed)
+    use_tool meson ninja
+    run_install
+    rm -f "$W/shim/meson" "$W/shim/ninja"
+    check "their venv, meson in PATH: refused" [ "$RC" = 1 ]
+    # a link where the venv goes, even to a venv of ours (its mode as BSD
+    # shows it, so only the link itself gives it away)
+    no_fakes
+    mv "$V" "$W/myvenv"
+    ln -s "$W/myvenv" "$V"
+    fake_mode "$V" lrwxr-xr-x
+    run_install
+    no_fakes
+    check "venv is a link: refused" [ "$RC" = 1 ]
+    check "venv is a link: named" grep -qF "$V is a symbolic link" "$W/out"
+    check "venv is a link: nothing run" none_exist "$W/ran-venv"
+    rm -f "$V"
+    mv "$W/myvenv" "$V"
     # the same venv, ours: reused
-    : > "$W/foreign"
+    no_fakes
     run_install
     check "our venv: installed" [ "$RC" = 0 ]
     check "our venv: reused" [ -s "$W/ran-venv" ]
@@ -472,16 +518,26 @@ src-foreign)
     check "their source dir: refused" [ "$RC" = 1 ]
     check "their source dir: named" grep -qF "$HOME/.local/src/erssi belongs to another user" "$W/out"
     check "their source dir: nothing checked out, no venv" none_exist "$HOME/.local/src/erssi/.git" "$W/py.log"
-    # made by them while the venv is built (after the first check)
-    : > "$W/foreign"
+    # their venv appears after the lock was taken (during step 1)
+    no_fakes
+    rm -rf "$HOME/.local/src" "$W/ran-venv" "$W/py.log"
+    plant_venv "$W/planted"
+    FAKE_PLANT_VENV=$V; export FAKE_PLANT_VENV
+    run_install
+    unset FAKE_PLANT_VENV
+    check "venv made meanwhile: refused" [ "$RC" = 1 ]
+    check "venv made meanwhile: named" grep -qF "$V belongs to another user" "$W/out"
+    check "venv made meanwhile: nothing run" none_exist "$W/ran-venv" "$W/ran-pip"
+    # their source dir appears while the venv is built
+    no_fakes
     rm -rf "$HOME/.local/src"
     FAKE_PLANT_SRC=1; export FAKE_PLANT_SRC
     run_install
     unset FAKE_PLANT_SRC
     check "source dir made meanwhile: refused" [ "$RC" = 1 ]
-    check "source dir made meanwhile: nothing checked out" [ ! -e "$HOME/.local/src/erssi/.git" ]
+    check "source dir made meanwhile: nothing checked out" none_exist "$HOME/.local/src/erssi/.git"
     # ... as a git checkout of theirs
-    : > "$W/foreign"
+    no_fakes
     rm -rf "$HOME/.local/src"
     FAKE_PLANT_SRC=git; export FAKE_PLANT_SRC
     run_install
@@ -489,11 +545,17 @@ src-foreign)
     check "checkout made meanwhile: refused" [ "$RC" = 1 ]
     check "checkout made meanwhile: named" grep -qF "$HOME/.local/src/erssi belongs to another user" "$W/out"
     check "checkout made meanwhile: not fetched into" none_exist "$HOME/.local/src/erssi/.git/FETCH_HEAD"
-    # made by them just before the installer's own mkdir -p of it
-    : > "$W/foreign"
+    # made by them just before the installer's own mkdir of it
+    no_fakes
     rm -rf "$HOME/.local/src"
-    # shellcheck disable=SC2016 # a stand-in script
-    printf '#!/bin/sh\nif [ "$1" = -p ] && [ "$2" = "$FAKE_RACE_DIR" ]; then\n    "$TEST_W/bin/mkdir" -p "$2" && echo "$2" >> "$TEST_W/foreign"; exit\nfi\nexec "$TEST_W/bin/mkdir" "$@"\n' | stand mkdir
+    stand mkdir <<'EOF'
+#!/bin/sh
+for last in "$@"; do :; done
+if [ "$last" = "${FAKE_RACE_DIR:-}" ]; then
+    "$TEST_W/bin/mkdir" -p "$last" && echo "$last 4242 -" >> "$TEST_W/lsfake"
+fi
+exec "$TEST_W/bin/mkdir" "$@"
+EOF
     use_tool mkdir
     FAKE_RACE_DIR=$HOME/.local/src/erssi; export FAKE_RACE_DIR
     run_install
@@ -501,26 +563,26 @@ src-foreign)
     rm -f "$W/shim/mkdir"
     check "source dir made just before mkdir: refused" [ "$RC" = 1 ]
     check "source dir made just before mkdir: nothing checked out" none_exist "$HOME/.local/src/erssi/.git"
-    # the venv taken over while it is built: pip not run
-    : > "$W/foreign"
-    rm -rf "$HOME/.local/src" "$W/ran-pip"
-    FAKE_VENV_FOREIGN=1; export FAKE_VENV_FOREIGN
-    run_install
-    unset FAKE_VENV_FOREIGN
-    check "venv theirs after building: refused" [ "$RC" = 1 ]
-    check "venv theirs after building: pip not run" [ ! -e "$W/ran-pip" ]
     # a parent directory of theirs
-    : > "$W/foreign"
+    no_fakes
     mkdir -p "$W/other"
     foreign "$W/other"
     run_install --src "$W/other/erssi"
     check "their parent dir: refused" [ "$RC" = 1 ]
     check "their parent dir: named" grep -qF "$W/other belongs to another user" "$W/out"
     check "their parent dir: nothing made" none_exist "$W/other/erssi" "$W/other/erssi.lock"
+    # a directory of theirs further up: they could rename ours away
+    no_fakes
+    mkdir -p "$W/theirs/mine"
+    foreign "$W/theirs"
+    run_install --src "$W/theirs/mine/erssi"
+    check "theirs further up: refused" [ "$RC" = 1 ]
+    check "theirs further up: named" grep -qF "$W/theirs belongs to another user" "$W/out"
+    check "theirs further up: nothing made" none_exist "$W/theirs/mine/erssi" "$W/theirs/mine/erssi.lock"
     ;;
 src-writable)
     # a venv or source directory other users can write to: refused; group
-    # write by the user's own private group: allowed
+    # write by the user's own private group (no other members, no ACL): allowed
     no_meson_python
     another_user
     V=$HOME/.local/src/erssi.venv
@@ -528,37 +590,121 @@ src-writable)
     chmod g+w "$V"
     FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
     run_install
+    unset FAKE_GROUP_NAME
     check "group-writable venv, shared group: refused" [ "$RC" = 1 ]
     check "... named" grep -qF "$V can be changed by other users" "$W/out"
     check "... nothing run" none_exist "$W/ran-venv" "$W/py.log"
-    unset FAKE_GROUP_NAME
     run_install
     check "group-writable venv, private group: installed" [ "$RC" = 0 ]
     check "... reused" [ -s "$W/ran-venv" ]
-    chmod g-w,o+w "$V"
     rm -f "$W/ran-venv"
+    FAKE_GROUP_MEMBERS=tester,mallory; export FAKE_GROUP_MEMBERS
+    run_install
+    check "private group with another member: refused" [ "$RC" = 1 ]
+    check "... nothing run" none_exist "$W/ran-venv"
+    FAKE_GROUP_MEMBERS=tester
+    run_install
+    unset FAKE_GROUP_MEMBERS
+    check "private group listing only the user: installed" [ "$RC" = 0 ]
+    rm -f "$W/ran-venv"
+    fake_mode "$V" drwxrwxr-x+
+    run_install
+    no_fakes
+    check "private group with an ACL: refused" [ "$RC" = 1 ]
+    check "... nothing run" none_exist "$W/ran-venv"
+    rm -f "$W/shim/getent"
+    run_install
+    use_tool getent
+    check "private group, no getent: refused" [ "$RC" = 1 ]
+    fake_group "$V" 4243
+    run_install
+    no_fakes
+    check "group write by another group of the same name: refused" [ "$RC" = 1 ]
+    check "... nothing run" none_exist "$W/ran-venv"
+    chmod g-w,o+w "$V"
     run_install
     check "other-writable venv: refused" [ "$RC" = 1 ]
-    check "... nothing run" [ ! -e "$W/ran-venv" ]
+    check "... nothing run" none_exist "$W/ran-venv"
     chmod o-w "$V"
     chmod o+w "$HOME/.local/src/erssi"
     run_install
     check "other-writable source dir: refused" [ "$RC" = 1 ]
     check "... named" grep -qF "$HOME/.local/src/erssi can be changed by other users" "$W/out"
+    # umask 007 with a private group (directories 770): installs
+    rm -rf "$HOME/.local/src" "$HOME/.local/opt"
+    umask 007
+    run_install
+    check "umask 007, private group: installed" [ "$RC" = 0 ]
+    rm -rf "$HOME/.local/src"
+    FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
+    run_install
+    unset FAKE_GROUP_NAME
+    umask 022
+    check "umask 007, shared group: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$HOME/.local/src is writable by other users - choose a --src under a directory only you can write" "$W/out"
     ;;
 src-shared-parent)
-    # a sticky directory open to all (like /tmp): our own source dir is fine
+    # a directory others can write to, even sticky like /tmp: refused
+    another_user
     mkdir -p "$W/shared"
     chmod 1777 "$W/shared"
     run_install --src "$W/shared/erssi"
-    check "sticky parent: installed" [ "$RC" = 0 ]
-    check "sticky parent: checked out" [ -d "$W/shared/erssi/.git" ]
-    # the same without the sticky bit: others could replace it
+    check "sticky parent: refused" [ "$RC" = 1 ]
+    check "sticky parent: named" grep -qF "$W/shared is writable by other users - choose a --src under a directory only you can write" "$W/out"
+    check "sticky parent: nothing made" none_exist "$W/shared/erssi" "$W/shared/erssi.lock"
+    fake_owner "$W/shared" 0
+    run_install --src "$W/shared/erssi"
+    no_fakes
+    check "sticky parent of root's (/tmp): refused" [ "$RC" = 1 ]
+    check "... nothing made" none_exist "$W/shared/erssi" "$W/shared/erssi.lock"
     chmod 0777 "$W/shared"
     run_install --src "$W/shared/erssi"
-    check "open parent, not sticky: refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "$W/shared is writable by other users" "$W/out"
-    chmod 0755 "$W/shared"
+    check "open parent: refused" [ "$RC" = 1 ]
+    # further up: open, or sticky but not root's - refused; sticky and
+    # root's (like /tmp) - allowed
+    mkdir -p "$W/open/mine"
+    chmod 0777 "$W/open"
+    run_install --src "$W/open/mine/erssi"
+    check "open further up: refused" [ "$RC" = 1 ]
+    check "open further up: named" grep -qF "$W/open is writable by other users" "$W/out"
+    check "open further up: nothing made" none_exist "$W/open/mine/erssi" "$W/open/mine/erssi.lock"
+    chmod 1777 "$W/open"
+    run_install --src "$W/open/mine/erssi"
+    check "sticky further up, not root's: refused" [ "$RC" = 1 ]
+    fake_owner "$W/open" 0
+    run_install --src "$W/open/mine/erssi"
+    no_fakes
+    chmod 0755 "$W/open"
+    check "sticky further up, root's: installed" [ "$RC" = 0 ]
+    check "sticky further up, root's: checked out" [ -d "$W/open/mine/erssi/.git" ]
+    # links resolved once: a parent reached through a link
+    mkdir -p "$W/real"
+    ln -s "$W/real" "$W/via"
+    run_install --src "$W/via/erssi"
+    check "linked parent: installed" [ "$RC" = 0 ]
+    check "linked parent: checked out in the real directory" [ -d "$W/real/erssi/.git" ]
+    check "linked parent: the real path kept" grep -qx "SRC=$W/real/erssi" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
+    # the source directory itself a link of ours to a directory of ours
+    mkdir -p "$W/real2/erssi"
+    ln -s "$W/real2/erssi" "$W/srclink"
+    run_install --src "$W/srclink"
+    check "linked source dir: installed" [ "$RC" = 0 ]
+    check "linked source dir: checked out in the target" [ -d "$W/real2/erssi/.git" ]
+    # ... to a directory of theirs, or under an open directory: the target counts
+    mkdir -p "$W/real3/erssi"
+    foreign "$W/real3/erssi"
+    ln -s "$W/real3/erssi" "$W/srclink3"
+    run_install --src "$W/srclink3"
+    no_fakes
+    check "link to their directory: refused" [ "$RC" = 1 ]
+    check "link to their directory: named" grep -qF "$W/real3/erssi belongs to another user" "$W/out"
+    mkdir -p "$W/open2/erssi"
+    chmod 0777 "$W/open2"
+    ln -s "$W/open2/erssi" "$W/srclink4"
+    run_install --src "$W/srclink4"
+    chmod 0755 "$W/open2"
+    check "link into an open directory: refused" [ "$RC" = 1 ]
+    check "link into an open directory: named" grep -qF "$W/open2 is writable by other users" "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
