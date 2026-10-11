@@ -163,10 +163,10 @@ Open at `4833f418`. Each item was checked in the code.
    attacker even without a typo. Either way a remote owner may get mostly
    429. For remote access use the Unix socket through an SSH tunnel
    (`ssh -L`), or log in once from the address beforehand.
-2. Duplicated code: `fe-ansi/sidepanels-text.c:49` and `:77` copy
-   `unformat_24bit_line_color()` and `unformat()` from
-   `fe-ansi/textbuffer-view.c:121` and `:165`. Export one helper. The
-   include guard in `sidepanels-text.h:1` is still `IRSSI_FE_TEXT_...`.
+2. Resolved in 2026.10.0: the unformat code. `fe-ansi/textbuffer-unformat.h`
+   holds the one copy (`textbuffer_unformat()`, `textbuffer_read_unichar()`)
+   for `textbuffer-view.c` and `sidepanels-text.c`; the include guard of
+   `sidepanels-text.h` is `IRSSI_FE_ANSI_SIDEPANELS_TEXT_H`.
 3. The fuzz harness includes a .c file: `fe-fuzz/fe-web/fe-web-fuzz.c:15`
    includes `fe-web-server.c` to reach its static functions;
    `fe-web/meson.build` lists that file apart. Upstream may prefer an
