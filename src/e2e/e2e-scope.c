@@ -768,7 +768,8 @@ guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire)
 
 
 /* the old own contexts ("@<own>") of peer's sessions and of our requests to
-   peer: incoming "<peer>|@x", pending "@x|<peer>" */
+   peer: incoming "<peer>|@x", pending "@x|<peer>" - by the rows' "handle"
+   member where they have one */
 static void own_ctxs_of(const E2E_JSON *kr, const char *peer, GHashTable *out)
 {
 	E2E_JSON *store = e2e_json_get(kr, "incoming");
@@ -778,9 +779,14 @@ static void own_ctxs_of(const E2E_JSON *kr, const char *peer, GHashTable *out)
 
 	for (i = 0; i < keys->len; i++) {
 		const char *k = g_ptr_array_index(keys, i);
+		const char *handle = e2e_json_get_string(e2e_json_get(store, k), "handle");
 
-		if (strncmp(k, peer, pl) == 0 && k[pl] == '|' && k[pl + 1] == '@' &&
-		    strchr(k + pl + 1, E2E_SCOPE_SEP) == NULL)
+		if (strncmp(k, peer, pl) != 0 || k[pl] != '|' || k[pl + 1] != '@' ||
+		    strchr(k + pl + 1, E2E_SCOPE_SEP) != NULL)
+			continue;
+		/* the peer's own row: its "handle" member says so; without one
+		   the rest must be one "@<own>" ("bob@h|@z|@me" is "bob@h|@z"'s) */
+		if (handle != NULL ? strcmp(handle, peer) == 0 : strchr(k + pl + 1, '|') == NULL)
 			g_hash_table_add(out, g_strdup(k + pl + 1));
 	}
 	g_ptr_array_unref(keys);

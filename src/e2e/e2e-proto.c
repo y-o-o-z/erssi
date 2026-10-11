@@ -1079,6 +1079,34 @@ static E2E_JSON *row_or_twin(const E2E_JSON *kr, const E2E_NET *net, const char 
 	return row;
 }
 
+/* store's row ctx (channels, outgoing), else its old twin's */
+static E2E_JSON *ctx_row_or_twin(const E2E_JSON *kr, const E2E_NET *net, const char *store,
+                                 const char *ctx)
+{
+	E2E_JSON *row = e2e_json_get(e2e_json_get(kr, store), ctx);
+	char *twin;
+
+	if (row == NULL && (twin = legacy_twin(kr, net, ctx)) != NULL) {
+		row = e2e_json_get(e2e_json_get(kr, store), twin);
+		g_free(twin);
+	}
+	return row;
+}
+
+/* handle was accepted for ctx, or (mixed state) for its old twin */
+static gboolean accepted_or_twin(const E2E_JSON *kr, const E2E_NET *net, const char *handle,
+                                 const char *ctx, const char *fp_hex)
+{
+	char *twin;
+	gboolean ok = e2e_peer_accepted(kr, handle, ctx, fp_hex);
+
+	if (!ok && (twin = legacy_twin(kr, net, ctx)) != NULL) {
+		ok = e2e_peer_accepted(kr, handle, twin, fp_hex);
+		g_free(twin);
+	}
+	return ok;
+}
+
 /* "@<handle>" on net: the config of a DM with handle, where it is (an old
    one is not taken over); NULL: E2E cannot be on there - an old row on
    several networks */
@@ -1120,8 +1148,8 @@ static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
 		return NULL;
 	k = pipe_key(sender, rctx);
 	pk = pending_key(rctx, sender);
-	trusted = is_trusted(e2e_json_get(e2e_json_get(kr, "incoming"), k));
-	pending = e2e_json_get(e2e_json_get(kr, "pending"), pk) != NULL;
+	trusted = is_trusted(row_or_twin(kr, net, "incoming", sender, rctx, TRUE, NULL));
+	pending = row_or_twin(kr, net, "pending", sender, rctx, FALSE, NULL) != NULL;
 	if (!pending && !trusted && e2e_stamp_allow(stamps, sender, E2E_KEYREQ_MIN_INTERVAL))
 		out = e2e_build_keyreq(kr, id, rctx, sender, &error);
 	g_free(error);
@@ -1196,8 +1224,10 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	ctx = e2e_ctx_find(kr, net, req->channel);
 	if (ctx == NULL)
 		goto out;
-	/* requests for a context where E2E is off are ignored */
-	cfg = e2e_json_get(e2e_json_get(kr, "channels"), ctx);
+	/* requests for a context where E2E is off are ignored (the config,
+	   session and acceptance row by row in the mixed state of the only
+	   network, as e2e_adopt_legacy would keep them) */
+	cfg = ctx_row_or_twin(kr, net, "channels", ctx);
 	if (!e2e_json_truthy(e2e_json_get(cfg, "enabled")))
 		goto out;
 	fp_hex = e2e_fingerprint_hex(req->pub);
@@ -1212,7 +1242,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	if (autotrust)
 		mode = "auto-accept";
 	k = pipe_key(sender_handle, ctx);
-	sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
+	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
 	trusted = is_trusted(sess);
 	/* Our key goes only to someone the user accepted (/e2e accept,
 	   autotrust, auto-accept mode). Holding a trusted session FROM them
@@ -1220,7 +1250,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   KEYREQ to anyone who sends a wire (rpe2e.pl and repartee answer
 	   then, see the header). */
 	if (strcmp(mode, "auto-accept") != 0 &&
-	    !e2e_peer_accepted(kr, sender_handle, ctx, fp_hex)) {
+	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex)) {
 		/* quiet: a stranger's request is dropped silently */
 		if (strcmp(mode, "quiet") == 0 && !trusted)
 			goto out;
@@ -1245,7 +1275,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		goto out;
 	}
 	*rsp = e2e_build_keyrsp_for_req(kr, id, ctx, sender_handle, req->pub, req->eph);
-	if (*rsp != NULL && !e2e_peer_accepted(kr, sender_handle, ctx, fp_hex))
+	if (*rsp != NULL && !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
 		mark_accepted(kr, sender_handle, ctx, fp_hex,
 		              autotrust ? "autotrust" : "auto-accept");
 	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, net, ctx,
@@ -1374,8 +1404,8 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	PEER_CHANGE change;
 	unsigned char x_sk[32], key[32];
 	const char *old_fp;
-	char *fp_hex = NULL, *cfg_ctx, *k, *ctx = NULL, *twin, *s_nonce;
-	gboolean ok = FALSE, on;
+	char *fp_hex = NULL, *cfg_ctx, *k, *ctx = NULL, *twin, *s_nonce, *used_key = NULL;
+	gboolean ok = FALSE, on, from_twin;
 
 	rk = e2e_handshake_parse(body, E2E_HS_REKEY);
 	if (rk == NULL)
@@ -1398,7 +1428,11 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	/* it replaces a trusted session of this handle and context with this
 	   key; it never creates one (rpe2e.pl took it from anyone it had seen,
 	   even a peer still waiting for /e2e accept) */
-	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
+	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, &used_key);
+	k = pipe_key(sender_handle, ctx);
+	from_twin = strcmp(used_key, k) != 0;
+	g_free(k);
+	g_free(used_key);
 	if (!is_trusted(sess) || g_strcmp0(e2e_json_get_string(sess, "fp"), fp_hex) != 0)
 		goto out;
 	if (classify_peer_change(kr, fp_hex, sender_handle, &old_fp) == CHANGE_NEW)
@@ -1421,6 +1455,19 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	}
 	if (!consume_rekey_nonce(kr, fp_hex, ctx, rk->nonce))
 		goto out;
+	/* taken through the old session: its rows still count where they are
+	   (another network alone later) - the nonce is used for them too */
+	if (from_twin && (twin = legacy_twin(kr, net, ctx)) != NULL) {
+		E2E_JSON *seen;
+
+		k = pipe_key(fp_hex, twin);
+		seen = e2e_json_object_member(e2e_json_object_member(kr, "seen_rekeys"), k);
+		s_nonce = e2e_b64_encode(rk->nonce, 16);
+		e2e_json_set_int(seen, s_nonce, e2e_now());
+		g_free(s_nonce);
+		g_free(k);
+		g_free(twin);
+	}
 	if (!e2e_ed25519_sk_to_x25519(x_sk, id->sk))
 		goto out;
 	ok = unwrap(rk, x_sk, REKEY_INFO, key);

@@ -985,6 +985,34 @@ static void test_ctx_adopted_elsewhere(void)
 	e2e_json_free(kr);
 }
 
+/* item 3: the rows taken along with a peer are its own: a handle that
+   starts like the peer's ("bob@h|@z") or a row naming another handle */
+static void test_adopt_peer_sessions_own_only(void)
+{
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT), *row;
+
+	put_row(kr, "incoming", "bob@h|@me@x");
+	put_row(kr, "incoming", "bob@h|@z|@me@x");
+	put_row(kr, "incoming", "bob@h|@other@x");
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@other@x"), "handle", "bob@h|@other");
+	put_row(kr, "incoming", "bob@h|@named@x");
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@named@x"), "handle", "bob@h");
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(row, "handle", "bob@h");
+	e2e_json_set(store_of(kr, "pending"), "@me@x|bob@h", row);
+	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h"), ==, 3);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|IRCnet\x1f@me@x"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|IRCnet\x1f@named@x"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "pending"), "IRCnet\x1f@me@x|bob@h"));
+	/* not bob's */
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@z|@me@x"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@other@x"));
+	/* the other handle's own rows go with it */
+	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h|@z"), ==, 1);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@z|IRCnet\x1f@me@x"));
+	e2e_json_free(kr);
+}
+
 static void test_ctx_resolve(void)
 {
 	E2E_NET one = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, TRUE };
@@ -1153,6 +1181,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
 	g_test_add_func("/e2e/scope/ctx-lookup", test_ctx_lookup);
 	g_test_add_func("/e2e/scope/ctx-resolve", test_ctx_resolve);
+	g_test_add_func("/e2e/scope/adopt-peer-sessions-own-only", test_adopt_peer_sessions_own_only);
 	g_test_add_func("/e2e/scope/ctx-adopted-elsewhere", test_ctx_adopted_elsewhere);
 	g_test_add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
 
