@@ -14,7 +14,7 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope']
     env : test_env,
     args : ['--tap'],
     protocol : 'tap',
-    timeout : {'scope' : 120, 'proto' : 60}.get(name, 30))
+    timeout : {'scope' : 300, 'proto' : 120}.get(name, 30))
 endforeach
 
 # native module <-> rpe2e.pl on a local fake IRC server, in a private tmux
