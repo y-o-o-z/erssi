@@ -1,6 +1,6 @@
 # Unit tests of the RPE2E protocol code (src/e2e), with fixed vectors from
 # libsodium and from the rpe2e.pl script.
-foreach name : ['crypto', 'wire', 'keyring', 'proto']
+foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope']
   exe = executable('test-e2e-' + name,
     files('test-e2e-' + name + '.c'),
     link_with : libe2e_proto_a,
