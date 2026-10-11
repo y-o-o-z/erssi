@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -45,6 +46,18 @@ static int listen_tag = -1;
 static char *listen_path = NULL;
 static dev_t listen_dev;
 static ino_t listen_ino;
+/* flock() on "<socket>.lock", held for as long as the socket listens, so
+ * that another erssi can tell a busy erssi's socket from a stale one
+ * (socket_lock()); -1 when not held */
+static int listen_lock_fd = -1;
+
+/* Linux reports a listener whose queue is full with EAGAIN; the BSDs and
+ * macOS report ECONNREFUSED, as for no listener */
+#ifdef __linux__
+static gboolean econnrefused_means_no_listener = TRUE;
+#else
+static gboolean econnrefused_means_no_listener = FALSE;
+#endif
 
 /* Limits for clients that have not logged in yet: one password guess per
  * connection, a few KB of request and a few seconds to send it. */
@@ -1044,9 +1057,11 @@ static void sig_listen(void)
 			return;
 		}
 		/* The queue is full: the busiest peer loses its oldest
-		 * connection. The owner's uid and the trusted peers keep
-		 * theirs while anyone else is waiting, so a loop of new
-		 * connections, from one peer or from many, closes its own. */
+		 * connection, so a loop of new connections, from one peer or
+		 * from many, closes its own. The owner's uid keeps its
+		 * connections while anyone else is waiting; a trusted peer
+		 * keeps only its oldest pending one, and its lingering
+		 * connections go first (fe_web_pending_victim()). */
 		if (own_peer_key == NULL)
 			own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 		victim = fe_web_pending_victim(web_clients, FE_WEB_MAX_PENDING, own_peer_key,
@@ -1270,9 +1285,80 @@ static void socket_addr_set(struct sockaddr_un *sa, const char *path)
 	strncpy(sa->sun_path, path, sizeof(sa->sun_path) - 1);
 }
 
+/* Lock "<path>.lock" (made 0600 when missing), so that only one erssi
+ * uses the socket path. flock(), on Linux and the BSDs: the kernel drops
+ * the lock when the process dies, so a lock file left by a killed erssi
+ * holds no start, and the lock belongs to the open file - an fcntl() lock
+ * is dropped by any close() of that file in the process, and one process
+ * never conflicts with itself. The lock file is never removed: an erssi
+ * that opened it just before could then lock a file no one else sees.
+ * A symbolic link is refused, not followed (O_NOFOLLOW), and the file must
+ * be a regular file of the user's own; not inherited by /exec children.
+ * Returns the fd; -1 when another process holds the lock; -2 when the
+ * file system has no locks; -3 on any other error (errno set). */
+static int socket_lock(const char *path)
+{
+	struct stat st;
+	char *lock_path;
+	int fd, err;
+
+	lock_path = g_strconcat(path, ".lock", NULL);
+	/* O_NONBLOCK: a FIFO put there must not hang erssi in open() */
+	fd = open(lock_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
+	err = errno;
+	g_free(lock_path);
+	if (fd < 0) {
+		errno = err;
+		return -3;
+	}
+	if (fstat(fd, &st) < 0)
+		err = errno;
+	else if (!S_ISREG(st.st_mode) || st.st_uid != getuid())
+		err = EPERM;
+	else
+		err = 0;
+	if (err != 0) {
+		close(fd);
+		errno = err;
+		return -3;
+	}
+	if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+		err = errno;
+		close(fd);
+		if (err == EWOULDBLOCK || err == EAGAIN)
+			return -1;
+		if (err == EOPNOTSUPP || err == ENOLCK || err == EINVAL)
+			return -2;
+		errno = err;
+		return -3;
+	}
+	return fd;
+}
+
+/* Why socket_lock() failed with 'err', for the message */
+static void socket_lock_failed(const char *path, int err)
+{
+	struct stat st;
+	char *lock_path;
+	const char *why = g_strerror(err);
+
+	lock_path = g_strconcat(path, ".lock", NULL);
+	if (lstat(lock_path, &st) == 0) {
+		if (S_ISLNK(st.st_mode))
+			why = "it is a symbolic link - remove it";
+		else if (!S_ISREG(st.st_mode) || st.st_uid != getuid())
+			why = "it is not a regular file of yours - remove it";
+	}
+	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR, "fe-web: Not starting: cannot lock %s: %s",
+	          lock_path, why);
+	g_free(lock_path);
+}
+
 /* A socket file left by an erssi that did not stop cleanly is removed - but
- * only a socket of the user's own that nothing listens on any more. */
-static gboolean socket_stale_remove(const char *path)
+ * only a socket of the user's own that nothing listens on any more. With
+ * 'locked' this erssi holds the lock of the path (socket_lock()), so no
+ * other erssi uses it. */
+static gboolean socket_stale_remove(const char *path, gboolean locked)
 {
 	struct sockaddr_un sa;
 	struct stat st;
@@ -1315,6 +1401,15 @@ static gboolean socket_stale_remove(const char *path)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Not starting: cannot check the old socket %s: %s", path,
 		          g_strerror(err));
+		return FALSE;
+	}
+	/* outside Linux this may be an erssi whose queue is full: only the
+	 * lock tells it is not */
+	if (!locked && !econnrefused_means_no_listener) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: cannot tell whether unix:%s is still in use - "
+		          "remove it if no erssi uses it",
+		          path);
 		return FALSE;
 	}
 	if (unlink(path) < 0 && errno != ENOENT) {
@@ -1386,6 +1481,7 @@ static void socket_remove(void)
 static void server_listen_unix(const char *value)
 {
 	char *path;
+	int lock_fd;
 
 	path = socket_path_expand(value);
 	{
@@ -1400,7 +1496,27 @@ static void server_listen_unix(const char *value)
 			return;
 		}
 	}
-	if (!socket_dir_check(path) || !socket_stale_remove(path)) {
+	if (!socket_dir_check(path)) {
+		g_free(path);
+		return;
+	}
+	/* the lock first: only its holder may decide that the socket there
+	 * is stale and remove it */
+	lock_fd = socket_lock(path);
+	if (lock_fd == -1) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web: Not starting: another erssi is using unix:%s", path);
+		g_free(path);
+		return;
+	}
+	if (lock_fd == -3) {
+		socket_lock_failed(path, errno);
+		g_free(path);
+		return;
+	}
+	if (!socket_stale_remove(path, lock_fd >= 0)) {
+		if (lock_fd >= 0)
+			close(lock_fd);
 		g_free(path);
 		return;
 	}
@@ -1409,10 +1525,13 @@ static void server_listen_unix(const char *value)
 	if (listen_channel == NULL) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Failed to listen on unix:%s: %s", path, g_strerror(errno));
+		if (lock_fd >= 0)
+			close(lock_fd);
 		g_free(path);
 		return;
 	}
 	listen_path = path;
+	listen_lock_fd = lock_fd >= 0 ? lock_fd : -1;
 
 	listen_tag = i_input_add(listen_channel, I_INPUT_READ,
 	                         (GInputFunction) sig_listen, NULL);
@@ -1544,6 +1663,11 @@ void fe_web_server_deinit(void)
 		listen_channel = NULL;
 	}
 	socket_remove();
+	/* releases the lock; the lock file stays (socket_lock()) */
+	if (listen_lock_fd >= 0) {
+		close(listen_lock_fd);
+		listen_lock_fd = -1;
+	}
 
 	listen_port = -1;
 

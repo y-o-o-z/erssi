@@ -33,6 +33,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -49,6 +50,8 @@ static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int
 static time_t fe_web_fuzz_time(time_t *t);
 static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len);
 static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode);
+static int fe_web_fuzz_connect(int fd, const struct sockaddr *addr, socklen_t len);
+static int fe_web_fuzz_flock(int fd, int op);
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
     defined(__NetBSD__) || defined(__APPLE__)
 static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
@@ -64,6 +67,8 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
 #define time(t) fe_web_fuzz_time(t)
 #define getsockopt fe_web_fuzz_getsockopt
 #define g_mkdir_with_parents fe_web_fuzz_mkdir_with_parents
+#define connect fe_web_fuzz_connect
+#define flock fe_web_fuzz_flock
 
 /* The input path of a web client (client_input_once(), the handshake, the
  * password check, the frame loop) is static in fe-web-server.c. It is
@@ -81,6 +86,8 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
 #undef time
 #undef getsockopt
 #undef g_mkdir_with_parents
+#undef connect
+#undef flock
 #ifdef getpeereid
 #undef getpeereid
 #endif
@@ -637,6 +644,44 @@ static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode)
 		g_free(first);
 	}
 	return g_mkdir_with_parents(dir, mode);
+}
+
+/* connect() and flock() of fe-web-server.c: 0 is the real call, else it
+ * fails with that errno */
+static int fake_connect_errno = 0;
+static int fake_flock_errno = 0;
+
+void fe_web_fuzz_fake_connect_errno(int err)
+{
+	fake_connect_errno = err;
+}
+
+void fe_web_fuzz_fake_flock_errno(int err)
+{
+	fake_flock_errno = err;
+}
+
+void fe_web_fuzz_set_econnrefused_reliable(gboolean reliable)
+{
+	econnrefused_means_no_listener = reliable;
+}
+
+static int fe_web_fuzz_connect(int fd, const struct sockaddr *addr, socklen_t len)
+{
+	if (fake_connect_errno != 0) {
+		errno = fake_connect_errno;
+		return -1;
+	}
+	return connect(fd, addr, len);
+}
+
+static int fe_web_fuzz_flock(int fd, int op)
+{
+	if (fake_flock_errno != 0) {
+		errno = fake_flock_errno;
+		return -1;
+	}
+	return flock(fd, op);
 }
 
 void fe_web_fuzz_spend_proc_budget(void)

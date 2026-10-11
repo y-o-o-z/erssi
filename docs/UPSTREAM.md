@@ -175,10 +175,8 @@ Open at `4833f418`. Each item was checked in the code.
    (`meson.build` is `2026.10.0`; NEWS has `shellter-v1.3.2` to
    `shellter-v1.3.10` and `shellter-v2026.10.0`, no longer erssi-org's own
    future numbers).
-5. FreeBSD stale-socket check: `fe-web-server.c:1215` treats
-   `ECONNREFUSED` as "nobody listens" and removes the socket. FreeBSD
-   also returns `ECONNREFUSED` when a listener's queue is full, so a busy
-   erssi of the same user can lose its socket. Not tested on FreeBSD.
+5. Fixed: the stale-socket check on FreeBSD (see below). Not tested on
+   FreeBSD itself.
 6. Resolved in 2026.10.0: defaults in C. The Shellter values are in the
    default config (section 2).
 7. Credential encryption is disabled at runtime (`core/credential.c:159`,
@@ -242,6 +240,15 @@ Fixed since `4833f418`:
   oldest pending connection, so an address it shares with others (NAT, a
   /64, `ip:loopback`) cannot flood the queue and push the owner out; when
   only kept connections wait, the same rule applies among them.
+- fe-web holds a lock on <socket>.lock; an old socket is removed only
+  when the lock is free (or, on Linux, nothing listens). The lock is a
+  `flock()` the kernel drops when erssi dies, so a lock file left by a
+  killed erssi holds no start; a lock file that is a symbolic link or not
+  a regular file of the user's is refused, not followed. Before, an
+  `ECONNREFUSED` meant "nobody listens", and FreeBSD (like the other BSDs
+  and macOS) also returns it when a listener's queue is full, so a second
+  erssi removed the socket of a busy one. Without file locks (some network
+  file systems) the BSDs keep an old socket and say so.
 
 ## 6. How to take a change that is not in a pull request
 
