@@ -137,6 +137,11 @@ void fe_web_fuzz_set_clock(time_t now);
  * last call, one line each (to be freed) */
 char *fe_web_fuzz_take_printed(void);
 
+/* With TRUE, commands sent by web clients run (the unit tests of what a
+ * command may do); FALSE swallows them again, as fe_web_fuzz_init() does.
+ * Saving the config stays swallowed. */
+void fe_web_fuzz_allow_commands(gboolean allow);
+
 /* Run the default main context for 'ms' milliseconds */
 void fe_web_fuzz_iterate(int ms);
 

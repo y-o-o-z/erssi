@@ -161,6 +161,11 @@ void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json);
 void fe_web_client_sync_server(WEB_CLIENT_REC *client, const char *server_tag);
 void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, WI_ITEM_REC *item);
 
+/* The guard for what a web client's command must not do while fe-web runs
+ * it (/UNLOAD of fe-web): fe_web_init() and fe_web_deinit() call these */
+void fe_web_client_commands_init(void);
+void fe_web_client_commands_deinit(void);
+
 /* Signal handlers */
 void fe_web_signals_init(void);
 void fe_web_signals_deinit(void);

@@ -146,6 +146,19 @@ static void sig_swallow(void)
 	signal_stop();
 }
 
+static gboolean commands_allowed = FALSE;
+
+void fe_web_fuzz_allow_commands(gboolean allow)
+{
+	if (allow == commands_allowed)
+		return;
+	commands_allowed = allow;
+	if (allow)
+		signal_remove("send command", (SIGNAL_FUNC) sig_swallow);
+	else
+		signal_add_first("send command", (SIGNAL_FUNC) sig_swallow);
+}
+
 /* stripped text of every "print text" since fe_web_fuzz_take_printed() */
 static GString *printed = NULL;
 

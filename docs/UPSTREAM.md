@@ -187,8 +187,8 @@ Open at `4833f418`. Each item was checked in the code.
    reproduced here.
 8. Fixed: unmasked client frames (see below). This was older than the
    fork.
-9. `/UNLOAD fe_web` sent from a web client deinitialises fe-web while
-    that client's frame loop runs. Older than the fork.
+9. Fixed: `/UNLOAD` of fe-web sent from a web client (see below). This
+    was older than the fork.
 10. Capsicum: after `/capsicum enter`, a fe-web restart cannot bind or
     write its certificate. Not documented in `/help fe_web`.
 11. image-preview: the address filter (`image-preview-fetch.c:194`) does
@@ -258,6 +258,19 @@ Fixed since `4833f418`:
   is gone is not read. Before, an unmasked text or binary frame was
   ignored, an unmasked ping was answered and an unmasked close echoed.
   Browsers always mask, so does the `ws` client of NexusIRC.
+- fe-web refuses `/UNLOAD` of itself (`/unload web`, `/unload web fe`)
+  while a web client's command runs, with a message in the window the
+  command was for. Before, it deinitialised fe-web, which freed the
+  client whose frame loop was running the command, and closed fe-web's
+  code under it: any logged-in web client could crash erssi. The guard is
+  a `command_bind_first("unload")` handler that acts only while
+  `fe_web_client_execute_command()` is on the stack (a depth counter),
+  so an alias, `/EVAL`, an abbreviation (`/UNL`), upper case, another
+  command character or a script's `signal_emit("command unload")` from
+  that command are refused too. Typed in erssi, `/unload web` still
+  runs; `/unload` of other modules from a web client is not changed.
+  `/QUIT` and `/UPGRADE` from a web client were safe already: they only
+  ask the main loop to stop, and the modules are unloaded after it.
 
 ## 6. How to take a change that is not in a pull request
 
