@@ -693,7 +693,13 @@ gboolean e2e_autotrust_matches(const E2E_JSON *kr, const char *handle, const cha
 		const char *scope = e2e_json_get_string(rule, "scope");
 		const char *pattern = e2e_json_get_string(rule, "handle_pattern");
 
-		if (scope == NULL || (strcmp(scope, "global") != 0 && strcmp(scope, ctx) != 0))
+		/* "global"; a rule of this network ("<label>\x1f<wire>") for
+		   exactly ctx; an old rule (a bare name, rpe2e.pl's) for that
+		   name on every network */
+		if (scope == NULL || ctx == NULL)
+			continue;
+		if (strcmp(scope, "global") != 0 && strcmp(scope, ctx) != 0 &&
+		    (strchr(scope, E2E_SCOPE_SEP) != NULL || strcmp(scope, e2e_ctx_wire(ctx)) != 0))
 			continue;
 		if (e2e_glob_match(pattern != NULL ? pattern : "", handle))
 			return TRUE;
@@ -893,10 +899,11 @@ char *e2e_build_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, const char *ctx,
 	row = e2e_json_get(pending, key);
 	if (row != NULL) {
 		if (is_fresh(e2e_json_get_int(row, "created_at", 0), E2E_PENDING_KEYREQ_TTL)) {
-			char *shown = pending_key(e2e_ctx_wire(ctx), handle);
+			char *where = e2e_ctx_display(ctx), *shown = pending_key(where, handle);
 
 			*error = g_strdup_printf("key exchange already pending for %s", shown);
 			g_free(shown);
+			g_free(where);
 			g_free(key);
 			return NULL;
 		}
@@ -1734,8 +1741,11 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 		   handed the old one to whoever held a session): the others are
 		   no recipients any more */
 		if (handle == NULL || !e2e_peer_accepted(kr, handle, ctx, fp)) {
+			char *where = e2e_ctx_display(ctx);
+
 			add_warning(res, g_strdup_printf("rekey to %s skipped: never accepted on %s (a keyring of rpe2e.pl or repartee?) — they no longer get your key; /e2e accept them when they ask",
-			                                 handle != NULL ? handle : "?", e2e_ctx_wire(ctx)));
+			                                 handle != NULL ? handle : "?", where));
+			g_free(where);
 			g_ptr_array_add(dropped, g_strdup(g_ptr_array_index(keys, i)));
 			continue;
 		}

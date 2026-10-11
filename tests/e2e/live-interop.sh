@@ -543,6 +543,96 @@ say alice "/join -E2E $CHAN"
 say alice "back on the first network"
 check "$WORK/bob/logs/E2E/$CHAN.log" "back on the first network"
 
+# ---- an old keyring on two networks: refused until /e2e adopt ----
+# alice's E2E entries become old ones of no network (as rpe2e.pl or erssi
+# before the scope wrote them); E2E2's stay. alice uses two networks, so
+# erssi cannot know where they belong: never clear text, never another
+# network's rows, until /e2e adopt in the window
+python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/alice-scoped.json" <<'PY' || bad "the legacy rewrite of alice's keyring failed"
+import json, re, sys, shutil
+path, keep = sys.argv[1], sys.argv[2]
+shutil.copyfile(path, keep)
+k = json.load(open(path, encoding="utf-8"))
+bare = lambda t: re.sub(r"(^|\|)E2E\x1f", r"\1", t)
+def walk(v):
+    if isinstance(v, dict):
+        return {bare(key): (bare(x) if key == "channel" and isinstance(x, str) else walk(x)) for key, x in v.items()}
+    if isinstance(v, list):
+        return [walk(x) for x in v]
+    return v
+k = walk(k)
+assert "#test" in k["channels"] and "E2E2\x1f#test" in k["channels"]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(k, fh)
+PY
+say alice "/join -E2E $CHAN"
+say alice "after legacy rewrite"
+sleep 1
+if grep -aqF "after legacy rewrite" "$WORK/wire.log" "$WORK/wire2.log"; then
+    bad "an old entry on two networks went out in plain text"
+else
+    pass "an old entry on two networks is not sent in plain text"
+fi
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "/e2e adopt in this window binds it to E2E" 5; then
+    pass "alice is told about /e2e adopt"
+else
+    bad "alice is not told about /e2e adopt"
+fi
+say alice "/e2e adopt"
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "adopted $CHAN for E2E" 5; then
+    pass "/e2e adopt binds the old #test entries to E2E"
+else
+    bad "/e2e adopt did not adopt #test"
+fi
+say alice "after adopt"
+check "$WORK/bob/logs/E2E/$CHAN.log" "after adopt"
+# in the query: bob's config and his sessions to alice ("@<own>")
+say alice "/query bob"
+say alice "/e2e adopt"
+if wait_for "$WORK/alice/logs/E2E/bob.log" "adopted @bob@127.0.0.1 for E2E" 5; then
+    pass "/e2e adopt in the query binds bob's old entries to E2E"
+else
+    bad "/e2e adopt did not adopt the query"
+fi
+say alice "dm after adopt"
+say bob "/query alice"
+say bob "dm back after adopt"
+check "$WORK/bob/logs/E2E/alice.log" "dm after adopt"
+check "$WORK/alice/logs/E2E/bob.log" "dm back after adopt"
+say alice "/window close"
+python3 - "$WORK/alice-scoped.json" "$WORK/alice/rpe2e/keyring.json" "$WORK/wire.log" "$WORK/wire2.log" <<'PY' && pass "adopted: E2E's keys as before, E2E2's entries untouched, nothing in clear" || bad "the adoption changed keys or another network's entries"
+import json, sys
+old, new = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+s, s2 = "E2E\x1f#test", "E2E2\x1f#test"
+assert new["outgoing"][s]["sk"] == old["outgoing"][s]["sk"]
+assert new["channels"][s]["adopted"] == "E2E"
+assert new["incoming"]["bob@127.0.0.1|" + s]["sk"] == old["incoming"]["bob@127.0.0.1|" + s]["sk"]
+assert new["incoming"]["bob@127.0.0.1|E2E\x1f@alice@127.0.0.1"]["sk"] == old["incoming"]["bob@127.0.0.1|E2E\x1f@alice@127.0.0.1"]["sk"]
+for store in ("channels", "outgoing"):
+    assert new[store][s2] == old[store][s2], store
+assert "#test" not in new["channels"] and "#test" not in new["outgoing"]
+for w in sys.argv[3:5]:
+    for l in open(w, encoding="utf-8", errors="replace"):
+        assert "after adopt" not in l and "legacy rewrite" not in l, l
+PY
+# what the user reads: "<network>:<name>", never the raw separator
+say alice "/join -E2E $CHAN"
+say alice "/e2e status"
+say alice "/e2e list -all"
+say alice "/e2e autotrust add $CHAN bob@127.0.0.1"
+say alice "/e2e autotrust list"
+say alice "/e2e autotrust remove bob@127.0.0.1"
+if wait_for "$WORK/alice/all.log" "autotrust add E2E:$CHAN bob@127.0.0.1" 5 &&
+   grep -qF "encrypted: " "$WORK/alice/all.log" &&
+   grep -F "encrypted: " "$WORK/alice/all.log" | grep -qF "E2E2:$CHAN" &&
+   grep -qE "bob@127.0.0.1  E2E:$CHAN  \[trusted\]" "$WORK/alice/all.log" &&
+   ! grep -aqE "E2E2?$CHAN" "$WORK/alice/all.log" && ! grep -aq $'\x1f' "$WORK/alice/all.log"; then
+    pass "status, list -all and autotrust show <network>:<name>"
+else
+    bad "status, list -all or autotrust do not show <network>:<name>"
+    grep -aE "encrypted:|autotrust|E2E:#|E2E#" "$WORK/alice/all.log" | tail -n 8 | sed 's/^/    /'
+fi
+
 # ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
 say alice "/join -E2E $CHAN"
 say alice "/set cmds_max_at_once 1"
@@ -563,6 +653,16 @@ check "$WORK/bob/logs/E2E/$CHAN.log" "upgrade queued three"
 # ---- rpe2e.pl keeps what only the module writes ----
 # bob's rpe2e.pl loads and saves alice's keyring: "accepted" and
 # "seen_rekeys" are the module's own members, rpe2e.pl keeps them
+# until now bob's keyring is rpe2e.pl's own (no per-network entries):
+# the native module says nothing about it - not in the log, nor on the
+# screen of the status window (where it would land while erssi starts)
+say bob "/window 1"
+if grep -qF "does not know the per-network entries" "$WORK/bob/all.log" ||
+   tmux -L "$SOCK" capture-pane -p -J -t bob -S -1000 | grep -qF "does not know the per-network entries"; then
+    bad "bob: a downgrade warning on rpe2e.pl's own keyring"
+else
+    pass "bob: no downgrade warning on rpe2e.pl's own keyring"
+fi
 cp "$WORK/bob/rpe2e/keyring.json" "$WORK/bob-keyring.json"
 cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
@@ -577,6 +677,14 @@ assert b.get("accepted") == a["accepted"], "accepted changed"
 assert b.get("seen_rekeys") == a.get("seen_rekeys"), "seen_rekeys changed"
 assert b["identity"] == a["identity"]
 PY
+# the downgrade: rpe2e.pl on a keyring with per-network entries cannot
+# see them - the native module (inactive) warns
+say bob "after copy"
+if wait_for "$WORK/bob/all.log" "does not know the per-network entries" 5; then
+    pass "bob: the native module warns that rpe2e.pl cannot see the per-network entries"
+else
+    bad "bob: no downgrade warning with rpe2e.pl on a scoped keyring"
+fi
 
 # ---- one network, an old keyring: nothing to do ----
 # bob unloads rpe2e.pl, his own (unscoped) keyring comes back, and the

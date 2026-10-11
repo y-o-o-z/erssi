@@ -27,12 +27,15 @@
     FINGERPRINT: The full fingerprint of your key (creates the key if it
                  does not exist).
     STATUS:      Fingerprint, number of incoming sessions and number of
-                 channels or queries with encryption on.
+                 channels or queries with encryption on, then where it is
+                 on as <network>:<name> (old entries of no network by
+                 their name alone, with a hint to /E2E ADOPT).
     LIST:        Sessions in the current channel or query: ident@host,
                  channel, start of the fingerprint, status (trusted,
                  pending, revoked, or "key held, not accepted": you can
                  read them, but they do not get your key). -all: the whole
-                 keyring - known people and all sessions.
+                 keyring - known people and all sessions. Channels and
+                 queries are shown as <network>:<name>.
     HANDSHAKE:   Sends the person a key request (KEYREQ) for the current
                  channel or query; encryption must be on here and their
                  ident@host known (a common channel, a query).
@@ -68,9 +71,24 @@
                  keyring.json.bak-<time>.
     AUTOTRUST:   Without an argument or with LIST - the list of rules. ADD
                  adds a rule: the scope is "global" or an exact channel
-                 name, the pattern is ident@host with * and ?
-                 (case-insensitive); matching people are accepted
-                 automatically. REMOVE removes the rules with that pattern.
+                 name (or "@ident@host" of a query), the pattern is
+                 ident@host with * and ? (case-insensitive); matching
+                 people are accepted automatically. A channel added here
+                 is the one of the window's network (listed as
+                 <network>:<name>); rules from rpe2e.pl or from erssi
+                 before networks were kept apart name a channel of every
+                 network (listed with "(every network)"). REMOVE removes
+                 the rules with that pattern.
+    ADOPT:       Binds the old entries of the current channel or query
+                 (from rpe2e.pl or from erssi before networks were kept
+                 apart) to the window's network; in a query also the
+                 person's keys for their messages to you. Needed when
+                 erssi uses several networks: until then E2E there is
+                 refused. When another network took the old entries
+                 over already, they stay there and this network gets
+                 encryption of its own (on, normal mode; keys are
+                 exchanged anew). When the network has entries of its
+                 own for the name, nothing changes.
     RESET:       Only after a corrupt keyring was moved aside (see below):
                  starts a new keyring with a new identity. Encryption is
                  then off everywhere until /E2E ON, and your peers see a
@@ -87,7 +105,12 @@
 
     If the rpe2e.pl script is loaded too, the module stays inactive and
     says so; unload the script (/SCRIPT UNLOAD rpe2e, and remove it from
-    scripts/autorun) to use the module.
+    scripts/autorun) to use the module. The script does not know the
+    module's per-network entries (see Networks): a channel or query that
+    only the module set up is NOT encrypted by the script, and the module
+    warns about it once while the script is loaded. Going back to
+    rpe2e.pl after the module wrote such entries is a downgrade; /E2E
+    EXPORT keeps a copy.
 
     Subcommands work in the context of the active window: in a channel
     window it is the channel, in a query window - the person identified by
@@ -178,8 +201,9 @@
     from rpe2e.pl or from erssi before this (one entry per name, for any
     network) is used as it is while erssi uses one network (counting the
     servers connected, connecting, waiting to reconnect and set to
-    autoconnect), and becomes that network's with the first message you
-    send there - messages and key requests from others never move it.
+    autoconnect) - nothing to do - and becomes that network's with the
+    first message you send there (or /E2E ADOPT) - messages and key
+    requests from others never move it.
     In a query, your first message to the person also takes along the
     keys of their messages to you; those of other people stay old until
     you write to them while erssi uses one network - on several networks
@@ -190,7 +214,10 @@
     /E2E ADOPT in its window binds the old entries to that network, or
     /E2E OFF turns encryption off for it on that network. Once old entries
     belong to one network, the same name on any other network is refused
-    the same way until it is set up there (/E2E ADOPT, /E2E OFF).
+    the same way until it is set up there (/E2E ADOPT, /E2E OFF); the
+    entries of one network never move to another. EXPORT and IMPORT keep
+    the per-network entries as they are (repartee's exports use the same
+    form).
     A network without a chatnet is labelled by its server tag, which can
     change when tags collide - set a chatnet for stable E2E scopes.
     A channel or address whose name holds the control character U+001F
@@ -209,6 +236,7 @@
     /E2E LIST -all
     /E2E FORGET -all bob
     /E2E AUTOTRUST ADD global *@*.example.org
+    /E2E ADOPT
     /E2E EXPORT /path/to/e2e-keyring.json
     /E2E RESET
     /E2E OFF bob@old.example.org

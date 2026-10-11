@@ -86,6 +86,11 @@ static gint64 lost_notice_at;
 
 static gboolean script_seen;
 static guint script_check_id;
+/* rpe2e.pl loaded on a keyring with rows of the network scope: told once
+   while it is loaded; the file is read again only when it changed */
+static gboolean scoped_warned;
+static gboolean scoped_stat_valid;
+static struct stat scoped_stat;
 
 /* ---- printing ---- */
 
@@ -194,6 +199,40 @@ static gboolean script_loaded(void)
 	return FALSE;
 }
 
+/* the same file as at the last look (stat: device, inode, size, mtime) */
+static gboolean same_file(const struct stat *a, const struct stat *b)
+{
+	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec;
+}
+
+/* rpe2e.pl cannot see rows of the network scope: where only those say E2E
+   is on, the script sends in clear text. Said loudly, once while the
+   script is loaded; the keyring is read (without side effects) only when
+   the file changed since the last look. */
+static void warn_scoped_for_script(void)
+{
+	E2E_LOAD_STATUS status;
+	struct stat st;
+	E2E_JSON *kr;
+	char *error = NULL;
+
+	if (scoped_warned || keyring_file == NULL || stat(keyring_file, &st) != 0)
+		return;
+	if (scoped_stat_valid && same_file(&st, &scoped_stat))
+		return;
+	scoped_stat = st;
+	scoped_stat_valid = TRUE;
+	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	if (status == E2E_LOAD_OK && e2e_keyring_has_scoped(kr)) {
+		scoped_warned = TRUE;
+		printformat(NULL, NULL, MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_MESSAGE,
+		            "WARNING: " E2E_SCRIPT_SCOPED_WARN);
+	}
+	g_free(error);
+	e2e_json_free(kr);
+}
+
 gboolean e2e_native_active(void)
 {
 	gboolean script = script_loaded();
@@ -204,6 +243,13 @@ gboolean e2e_native_active(void)
 	} else if (!script && script_seen) {
 		script_seen = FALSE;
 		e2e_print_item(NULL, "rpe2e.pl is no longer loaded: the native e2e module encrypts now (same keyring)");
+	}
+	if (script) {
+		warn_scoped_for_script();
+	} else {
+		/* loaded again later: told again */
+		scoped_warned = FALSE;
+		scoped_stat_valid = FALSE;
 	}
 	return !script;
 }
@@ -960,11 +1006,13 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 		if (res.debug != NULL)
 			e2e_print_debug(server, res.ctx, nick, "%s", res.debug);
 		if (res.keyreq != NULL) {
+			char *shown = e2e_ctx_display(res.ctx);
+
 			e2e_send_notice(server, nick, res.keyreq);
 			e2e_print_item(e2e_notice_item(server, res.ctx, nick), "KEYREQ sent to %s for %s",
-			               nick, e2e_ctx_wire(res.ctx));
-			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick,
-			                e2e_ctx_wire(res.ctx));
+			               nick, shown);
+			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
+			g_free(shown);
 		}
 		/* a KEYREQ of ours waits for its answer; old rows taken over */
 		if (res.save_needed)
@@ -1211,6 +1259,8 @@ void e2e_core_deinit(void)
 	g_free(keyring_dir);
 	keyring_file = keyring_dir = NULL;
 	script_seen = FALSE;
+	scoped_warned = FALSE;
+	scoped_stat_valid = FALSE;
 }
 
 void e2e_core_abicheck(int *version)

@@ -213,4 +213,39 @@ guint e2e_adopt_legacy_peer_sessions(E2E_JSON *kr, const char *label, const char
    Writers of those rows keep it. */
 #define E2E_ADOPTED_MEMBER "adopted"
 
+typedef enum {
+	E2E_ADOPT_MOVED,	/* old rows of the name are this network's now */
+	E2E_ADOPT_OWN,		/* no old rows: another network took the name over,
+				   this one got a config of its own (E2E on) */
+	E2E_ADOPT_ALREADY,	/* this network has a config of the name: nothing changed */
+	E2E_ADOPT_NONE,		/* no old rows of the name: nothing changed */
+	E2E_ADOPT_UNSCOPABLE	/* the name cannot be kept per network (0x1F, no
+				   label): nothing changed */
+} E2E_ADOPT_RESULT;
+
+/*
+ /e2e adopt: the user binds wire to net, on any number of networks.
+  - net has a config of wire ("<label>\x1f<wire>" in channels): ALREADY,
+    the old rows stay;
+  - old rows of wire: e2e_adopt_legacy(); for a DM ("@<peer>") also the
+    peer's sessions to us, its used nonces and our requests to it under
+    every old "@<own>" (e2e_adopt_legacy_peer_sessions) - not those of
+    other peers: MOVED, *moved the rows;
+  - none, but another network took the name over (BLOCKED here): a
+    config of this network, E2E on in normal mode ("nick" for a DM): OWN.
+    The other network's rows are never touched or copied; networks
+    other than net stay BLOCKED;
+  - else NONE.
+ nick: the query's nick for a DM (stored with an OWN config), or NULL.
+*/
+E2E_ADOPT_RESULT e2e_adopt_explicit(E2E_JSON *kr, const E2E_NET *net, const char *wire,
+                                    const char *nick, guint *moved);
+
+/* some channels, outgoing or incoming key holds 0x1F: the keyring has
+   rows of the network scope, which rpe2e.pl cannot see */
+gboolean e2e_keyring_has_scoped(const E2E_JSON *kr);
+
+/* what the module says when rpe2e.pl is loaded on such a keyring */
+#define E2E_SCRIPT_SCOPED_WARN "rpe2e.pl does not know the per-network entries of this keyring (written by the e2e module): conversations encrypted there are NOT encrypted by the script. Unload the script to use them (/e2e export keeps a copy)"
+
 #endif
