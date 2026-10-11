@@ -17,7 +17,9 @@
  it as it is. Everything on the wire (c=, the AAD, the HKDF info of a
  wrap, what is signed) is the bare e2e_ctx_wire(ctx). The handlers and
  the gate take the network (const E2E_NET *) and find the storage
- context with e2e_ctx_lookup / e2e_ctx_resolve; an old unscoped context
+ context with e2e_ctx_lookup / e2e_ctx_find (old rows used in place);
+ only the gate takes old rows over (e2e_ctx_resolve), for a line it
+ encrypts. An old unscoped context
  that may not be used there (BLOCKED) is treated as E2E off by the
  handlers and refused by the gate. A NULL net is the behaviour before the
  scope: every context as it is.
@@ -32,6 +34,8 @@
 #define E2E_PENDING_KEYREQ_TTL          120
 /* growth limits of what anyone can make us store */
 #define E2E_MAX_PENDING_INBOUND         64
+/* all networks together */
+#define E2E_MAX_PENDING_INBOUND_ALL     (4 * E2E_MAX_PENDING_INBOUND)
 #define E2E_MAX_UNACCEPTED_PEERS        256
 #define E2E_MAX_PENDING_OUT             256
 #define E2E_MAX_TRUST_CHANGES           128

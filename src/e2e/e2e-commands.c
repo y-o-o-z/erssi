@@ -73,14 +73,14 @@ static void print_blocked(WI_ITEM_REC *item, const E2E_NET *net, const char *wir
 	g_free(scoped);
 }
 
-/* _resolve_ctx_for_command: the context of the window on its network
-   (old rows taken over, and saved, while erssi uses one network). NULL
-   when there is none; *refused: the reason is printed already (E2E there
-   was set up before networks were kept apart, or no server) */
+/* _resolve_ctx_for_command: the context of the window on its network;
+   old rows are used where they are while erssi uses one network (only
+   the user's own line, or /e2e adopt, takes them over). NULL when there
+   is none; *refused: the reason is printed already (E2E there was set up
+   before networks were kept apart, or no server) */
 static char *resolve_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick, gboolean *refused)
 {
 	E2E_NET net;
-	gboolean changed = FALSE;
 	char *wire, *ctx;
 
 	*refused = FALSE;
@@ -94,9 +94,7 @@ static char *resolve_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick, gboo
 		return NULL;
 	}
 	e2e_server_net(item->server, &net);
-	ctx = e2e_ctx_resolve(kr, &net, wire, &changed);
-	if (changed)
-		e2e_save(kr);
+	ctx = e2e_ctx_find(kr, &net, wire);
 	if (ctx == NULL) {
 		print_blocked(item, &net, wire);
 		*refused = TRUE;
@@ -111,10 +109,9 @@ static char *resolve_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick, gboo
    the old one here); for a name that cannot be scoped the old row itself */
 static char *off_ctx(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *on)
 {
-	gboolean changed = FALSE;
 	char *ctx;
 
-	ctx = e2e_ctx_resolve(kr, net, wire, &changed);
+	ctx = e2e_ctx_find(kr, net, wire);
 	if (ctx == NULL) {
 		*on = e2e_ctx_enabled(kr, wire);
 		ctx = e2e_ctx_scoped(net, wire);
@@ -132,27 +129,23 @@ static char *resolve_handle(const E2E_JSON *kr, const char *who)
 	return g_strdup(e2e_find_handle_by_nick(kr, who));
 }
 
-/* e2e_incoming_ctx_for: "@<own>" on the network of ctx; its old rows
-   (the DM sessions of every peer) are taken over first while erssi uses
-   one network, so a trust change reaches them */
-static char *own_ctx(E2E_JSON *kr, SERVER_REC *server, const char *ctx)
+/* "@<own>" on the network of ctx, where its rows are: the old ones (the
+   DM sessions of every peer) while erssi uses one network, so a trust
+   change reaches them; this network's when old ones cannot be used here */
+static char *own_ctx(const E2E_JSON *kr, SERVER_REC *server, const char *ctx)
 {
-	char *own = e2e_incoming_ctx_for(server, ctx), *taken, *found = NULL;
+	char *own = e2e_incoming_ctx_for(server, ctx), *found;
 	E2E_NET net;
-	gboolean changed = FALSE;
 
 	if (own == NULL || server == NULL || strcmp(own, ctx) == 0)
 		return own;
 	e2e_server_net(server, &net);
-	if (e2e_ctx_lookup(kr, &net, e2e_ctx_wire(own), &found) == E2E_CTX_LEGACY) {
-		taken = e2e_ctx_resolve(kr, &net, e2e_ctx_wire(own), &changed);
-		if (changed)
-			e2e_save(kr);
-		g_free(taken);
-	}
-	g_free(found);
+	found = e2e_ctx_find(kr, &net, e2e_ctx_wire(own));
 	e2e_net_clear(&net);
-	return own;
+	if (found == NULL)
+		return own;
+	g_free(own);
+	return found;
 }
 
 /* the "@<own>" context a DM trust change must touch as well; NULL (and the
@@ -269,11 +262,16 @@ static void set_channel(E2E_JSON *kr, const char *ctx, int enabled, const char *
                         const char *nick)
 {
 	E2E_JSON *cfg = e2e_json_new(E2E_JSON_OBJECT);
+	const char *adopted = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "channels"), ctx),
+	                                          E2E_ADOPTED_MEMBER);
 
 	e2e_json_set_int(cfg, "enabled", enabled);
 	e2e_json_set_string(cfg, "mode", mode);
 	if (nick != NULL && *e2e_ctx_wire(ctx) == '@')
 		e2e_json_set_string(cfg, "nick", nick);
+	/* the network that took the name over stays marked */
+	if (adopted != NULL)
+		e2e_json_set_string(cfg, E2E_ADOPTED_MEMBER, adopted);
 	e2e_json_set(e2e_json_get(kr, "channels"), ctx, cfg);
 }
 

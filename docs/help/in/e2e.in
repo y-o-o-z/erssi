@@ -176,13 +176,19 @@
     their own (in keyring.json as "<network>" U+001F "#test"; on the wire
     only the bare name is used, as rpe2e.pl and repartee do). A keyring
     from rpe2e.pl or from erssi before this (one entry per name, for any
-    network) is taken over automatically while erssi uses one network
-    (counting the servers connected, connecting, waiting to reconnect and
-    set to autoconnect). With several networks erssi cannot know which
-    network an old entry belongs to: a message to such a channel or query
-    is NOT sent (you are told why), and nothing is decrypted or answered
-    for it there, until /E2E ADOPT in its window binds the old entries to
-    that network, or /E2E OFF turns encryption off for it on that network.
+    network) is used as it is while erssi uses one network (counting the
+    servers connected, connecting, waiting to reconnect and set to
+    autoconnect), and becomes that network's with the first message you
+    send there - messages and key requests from others never move it.
+    With several networks erssi cannot know which network an old entry
+    belongs to: a message to such a channel or query is NOT sent (you are
+    told why), and nothing is decrypted or answered for it there, until
+    /E2E ADOPT in its window binds the old entries to that network, or
+    /E2E OFF turns encryption off for it on that network. Once old entries
+    belong to one network, the same name on any other network is refused
+    the same way until it is set up there (/E2E ADOPT, /E2E OFF).
+    A network without a chatnet is labelled by its server tag, which can
+    change when tags collide - set a chatnet for stable E2E scopes.
     A channel or address whose name holds the control character U+001F
     cannot be kept per network: nothing is encrypted for it, and a
     message to it is not sent while an old entry may have encryption on.
