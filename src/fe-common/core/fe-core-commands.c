@@ -143,11 +143,12 @@ static void cmd_cat(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 
 #ifdef HAVE_CAPSICUM
 	fd = capsicum_open_wrapper(fname, O_RDONLY, 0);
-	if (fd > 0)
-		handle = g_io_channel_unix_new(fd);
-	else
-		handle = NULL;
 	open_errno = errno;
+	if (fd >= 0) {
+		handle = g_io_channel_unix_new(fd);
+		g_io_channel_set_close_on_unref(handle, TRUE);
+	} else
+		handle = NULL;
 #else
 	handle = g_io_channel_new_file(fname, "r", NULL);
 	open_errno = errno;
