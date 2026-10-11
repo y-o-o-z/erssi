@@ -110,6 +110,18 @@ void fe_web_fuzz_fake_peer_other_uid(gboolean on);
  * with 'mode' (chmod after mkdir): another user who wins the race */
 void fe_web_fuzz_mkdir_first(const char *dir, int mode);
 
+/* connect() of fe-web-server.c fails with 'err' (the check of an old
+ * socket file); 0 means the real connect() */
+void fe_web_fuzz_fake_connect_errno(int err);
+
+/* flock() of fe-web-server.c (the lock file of fe_web_socket) fails with
+ * 'err'; 0 means the real flock() */
+void fe_web_fuzz_fake_flock_errno(int err);
+
+/* Does ECONNREFUSED from connect() mean that nothing listens (TRUE on
+ * Linux; elsewhere a listener with a full queue says so too) */
+void fe_web_fuzz_set_econnrefused_reliable(gboolean reliable);
+
 /* Use up the /proc lookups fe-web-server.c may make in this second of
  * its time(): a TCP loopback peer whose uid sock_diag does not give is
  * then ip:loopback */
