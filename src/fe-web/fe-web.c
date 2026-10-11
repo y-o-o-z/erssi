@@ -170,6 +170,7 @@ void fe_web_init(void)
 	/* Register commands */
 	command_bind("fe_web", NULL, (SIGNAL_FUNC) cmd_fe_web);
 	command_bind("fe_web status", NULL, (SIGNAL_FUNC) cmd_fe_web_status);
+	fe_web_client_commands_init();
 
 	/* Initialize subsystems */
 	fe_web_signals_init();
@@ -200,6 +201,7 @@ void fe_web_deinit(void)
 	}
 	command_unbind("fe_web", (SIGNAL_FUNC) cmd_fe_web);
 	command_unbind("fe_web status", (SIGNAL_FUNC) cmd_fe_web_status);
+	fe_web_client_commands_deinit();
 
 	if (applied_enabled)
 		fe_web_server_deinit();

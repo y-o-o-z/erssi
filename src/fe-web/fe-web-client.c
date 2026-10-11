@@ -13,6 +13,8 @@
 #include "fe-web.h"
 
 #include <irssi/src/core/signals.h>
+#include <irssi/src/core/commands.h>
+#include <irssi/src/core/modules.h>
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/queries.h>
 #include <irssi/src/fe-common/core/printtext.h>
@@ -347,6 +349,11 @@ void fe_web_client_sync_server(WEB_CLIENT_REC *client, const char *server_tag)
 	fe_web_dump_state(client);
 }
 
+/* How many commands of web clients are running: more than one when such a
+ * command runs another (an alias, /EVAL). While one runs, fe-web's input
+ * handling of that client is on the stack. */
+static int web_command_depth = 0;
+
 /* Execute IRC command for client */
 void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, WI_ITEM_REC *item)
 {
@@ -361,5 +368,75 @@ void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, 
 	 * Commands that require a server will emit CMDERR_NOT_CONNECTED automatically.
 	 */
 	/* Signal: "send command", cmd, SERVER_REC, active_item (may be NULL) */
+	web_command_depth++;
 	signal_emit("send command", 3, command, client->server, item);
+	web_command_depth--;
+}
+
+/* Would "/UNLOAD <data>" unload a file of fe-web: all files of the module,
+ * or the one named, parsed as cmd_unload() (fe-common/core/fe-modules.c)
+ * parses them */
+static gboolean unload_hits_fe_web(const char *data)
+{
+	MODULE_REC *module;
+	MODULE_FILE_REC *file;
+	char *rootmodule, *submodule;
+	void *free_arg;
+	gboolean hit = FALSE;
+	GSList *tmp;
+
+	/* cmd_unload() does nothing either when this fails */
+	if (!cmd_get_params(data, &free_arg, 2, &rootmodule, &submodule))
+		return FALSE;
+
+	module = module_find(rootmodule);
+	if (module != NULL && *submodule == '\0') {
+		for (tmp = module->files; tmp != NULL; tmp = tmp->next) {
+			file = tmp->data;
+			if (g_strcmp0(file->defined_module_name, MODULE_NAME) == 0)
+				hit = TRUE;
+		}
+	} else if (module != NULL) {
+		file = module_file_find(module, submodule);
+		hit = file != NULL && g_strcmp0(file->defined_module_name, MODULE_NAME) == 0;
+	}
+
+	cmd_params_free(free_arg);
+	return hit;
+}
+
+#define UNLOAD_REFUSED                                                                    \
+	"fe-web: /UNLOAD of fe-web from a web client is refused (it would remove fe-web " \
+	"while it runs the command) - run it in erssi itself, or /SET fe_web_enabled OFF"
+
+/* /UNLOAD of fe-web while a web client's command runs would deinitialise
+ * fe-web - which frees that client - and close fe-web's code, both still
+ * in use on the way back. Refused whatever way the command came (an alias,
+ * /EVAL, an abbreviation, a script): it is the "command unload" signal
+ * itself. Typed in erssi (no web command running) it runs. */
+static void cmd_unload_from_web(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
+{
+	WINDOW_REC *window;
+
+	if (web_command_depth <= 0 || !unload_hits_fe_web(data))
+		return;
+
+	/* in the window the command was given for, which the web client
+	 * shows (webjournal.pl journals client errors there) */
+	window = item != NULL ? window_item_window(item) : NULL;
+	if (window != NULL)
+		printtext_window(window, MSGLEVEL_CLIENTERROR, "%s", UNLOAD_REFUSED);
+	else
+		printtext(server, NULL, MSGLEVEL_CLIENTERROR, "%s", UNLOAD_REFUSED);
+	signal_stop();
+}
+
+void fe_web_client_commands_init(void)
+{
+	command_bind_first("unload", NULL, (SIGNAL_FUNC) cmd_unload_from_web);
+}
+
+void fe_web_client_commands_deinit(void)
+{
+	command_unbind("unload", (SIGNAL_FUNC) cmd_unload_from_web);
 }
