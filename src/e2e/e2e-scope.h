@@ -63,15 +63,21 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
   - ASCII: A-Z -> a-z;
   - STRICT_RFC1459: ASCII and [ ] \ -> { } |;
   - RFC1459: STRICT_RFC1459 and ~ -> ^;
+  - UNICODE, pure ASCII: the RFC1459 fold (what the steps below give).
   - UNICODE, valid UTF-8, in this order:
       1. drop the invisible characters (general category Cf, variation
          selectors U+FE00-U+FE0F and U+E0100-U+E01EF, the Mongolian free
-         variation selectors U+180B-U+180D and U+180F, U+034F, the Hangul
-         fillers U+115F, U+1160, U+3164, U+FFA0), as NFKC_Casefold does;
-      2. NFD, full case folding, NFKD, full case folding: Unicode's
+         variation selectors U+180B-U+180D and U+180F, the Khmer inherent
+         vowels U+17B4 and U+17B5, U+034F, the Hangul fillers U+115F,
+         U+1160, U+3164, U+FFA0), as NFKC_Casefold does;
+      2. NFD, full case folding, NFKD, full case folding, NFKD: Unicode's
          compatibility caseless match (D146);
-      3. NFKC, for one representative;
-      4. the RFC1459 specials.
+      3. drop the run of combining marks (g_unichar_ismark) directly
+         before and directly after every U+03B9: U+0345 folds to that iota,
+         and servers that case fold before normalising leave the marks on
+         the iota where D146 leaves them on the letter;
+      4. NFKC, for one representative;
+      5. the RFC1459 specials.
     Full case folding is g_utf8_casefold() followed by a fix for GLib's
     Cherokee: a code point whose fold is a single other code point folding
     back to it becomes the smaller of the two (CaseFolding.txt's target).
@@ -80,6 +86,10 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
  Bytes above 0x7f are left alone by the exact maps. fold(fold(x)) == fold(x).
  U+0130 and U+0131 follow full case folding (U+0130 -> i U+0307), not the
  simple case mapping to and from plain i.
+
+ Never persist the output of e2e_casefold() (it may change with the
+ Unicode tables or this fold): persist the original name and fold both
+ sides at comparison time.
 */
 char *e2e_casefold(const char *name, E2E_CASEMAP map);
 /* e2e_casefold(), and *exact (if not NULL) says whether the fold is the

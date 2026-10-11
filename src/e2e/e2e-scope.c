@@ -145,14 +145,14 @@ static char *fold_cycles(const char *s)
  Invisible characters, dropped as NFKC_Casefold drops Default_Ignorable
  code points: format characters (Cf: soft hyphen, zero width space and
  joiners, bidi marks, word joiner, BOM, tags), the variation selectors,
- the Mongolian free variation selectors, the combining grapheme joiner
- and the Hangul fillers.
+ the Mongolian free variation selectors, the Khmer inherent vowels, the
+ combining grapheme joiner and the Hangul fillers.
 */
 static gboolean is_ignorable(gunichar c)
 {
 	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
 	       (c >= 0xe0100 && c <= 0xe01ef) || (c >= 0x180b && c <= 0x180d) || c == 0x180f ||
-	       c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
+	       c == 0x17b4 || c == 0x17b5 || c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
 }
 
 static char *drop_ignorables(const char *s)
@@ -196,6 +196,47 @@ static char *casefold_take(char *s)
 }
 
 /*
+ U+0345 (ypogegrammeni) is the one combining mark whose case fold is a base
+ character, iota. NFD sorts it after the other marks of its letter, a
+ server that case folds first puts the iota before them, so the marks end
+ on the letter in one and on the iota in the other. Servers disagree, so
+ the run of marks directly before and directly after every iota is
+ dropped. That over-folds only marks next to a Greek iota.
+*/
+static char *drop_marks_by_iota(const char *s)
+{
+	glong i, j, len;
+	gunichar *cps = g_utf8_to_ucs4_fast(s, -1, &len);
+	gboolean *drop = g_new0(gboolean, len + 1);
+	GString *out = g_string_sized_new(strlen(s));
+
+	for (i = 0; i < len; i++) {
+		if (cps[i] != 0x3b9)
+			continue;
+		for (j = i - 1; j >= 0 && g_unichar_ismark(cps[j]); j--)
+			drop[j] = TRUE;
+		for (j = i + 1; j < len && g_unichar_ismark(cps[j]); j++)
+			drop[j] = TRUE;
+	}
+	for (i = 0; i < len; i++) {
+		if (!drop[i])
+			g_string_append_unichar(out, cps[i]);
+	}
+	g_free(cps);
+	g_free(drop);
+	return g_string_free(out, FALSE);
+}
+
+/* drop_marks_by_iota(s), freeing s; NULL for NULL */
+static char *drop_marks_by_iota_take(char *s)
+{
+	char *result = s != NULL ? drop_marks_by_iota(s) : NULL;
+
+	g_free(s);
+	return result;
+}
+
+/*
  Unicode's compatibility caseless match (D146),
  NFKD(casefold(NFKD(casefold(NFD(x))))), with the invisible characters
  dropped first and NFKC at the end for one representative. Folding a
@@ -203,6 +244,7 @@ static char *casefold_take(char *s)
  U+1FBC U+0342 compose around U+0345 differently and fold apart, and
  casefold leaves marks out of canonical order (U+01F0 U+0338 folds to
  j U+030C U+0338), which only a normalisation after it puts right.
+ Then the marks around an iota go (drop_marks_by_iota), and NFKC.
 */
 static char *fold_unicode(const char *name)
 {
@@ -215,13 +257,23 @@ static char *fold_unicode(const char *name)
 	s = casefold_take(s);
 	s = normalize_take(s, G_NORMALIZE_NFKD);
 	s = casefold_take(s);
-	/* NFKC of the final NFKD is the NFKC of its input */
+	s = normalize_take(s, G_NORMALIZE_NFKD);
+	s = drop_marks_by_iota_take(s);
 	s = normalize_take(s, G_NORMALIZE_NFKC);
 	if (s == NULL)
 		return NULL;
 	/* the specials are ASCII, so this keeps the string valid UTF-8 */
 	fold_bytes(s, E2E_CASEMAP_RFC1459);
 	return s;
+}
+
+static gboolean is_ascii(const char *s)
+{
+	for (; *s != '\0'; s++) {
+		if ((unsigned char) *s >= 0x80)
+			return FALSE;
+	}
+	return TRUE;
 }
 
 char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
@@ -232,6 +284,8 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 		*exact = FALSE;
 	if (name == NULL)
 		return NULL;
+	if (map == E2E_CASEMAP_UNICODE && is_ascii(name))
+		map = E2E_CASEMAP_RFC1459; /* the Unicode fold of ASCII, faster */
 	if (map == E2E_CASEMAP_UNICODE) {
 		result = fold_unicode(name);
 		if (result != NULL) {
