@@ -147,6 +147,24 @@ EOF
     use_tool python3
 }
 
+# uname says FreeBSD, no os-release, no openssl.pc; the base OpenSSL is
+# looked for in $W/base
+freebsd() {
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\necho "${FAKE_UNAME:-Linux}"\n' | stand uname
+    use_tool uname
+    FAKE_UNAME=FreeBSD FAKE_NO_OPENSSL_PC=1 SHELLTER_OS_RELEASE=$W/none SHELLTER_BASE_OPENSSL=$W/base
+    export FAKE_UNAME FAKE_NO_OPENSSL_PC SHELLTER_OS_RELEASE SHELLTER_BASE_OPENSSL
+}
+# the four files of a base OpenSSL in $1; opensslv.h holds the line $2
+base_openssl_files() {
+    mkdir -p "$1/include/openssl" "$1/lib"
+    : > "$1/include/openssl/ssl.h"
+    printf '%s\n' '#ifndef OPENSSL_OPENSSLV_H' "$2" '#endif' > "$1/include/openssl/opensslv.h"
+    : > "$1/lib/libssl.so"
+    : > "$1/lib/libcrypto.so"
+}
+
 # shellcheck disable=SC2317 # called through check
 ascii_only() { [ "$(LC_ALL=C tr -d '\000-\177' < "$1" | wc -c)" -eq 0 ]; }
 # shellcheck disable=SC2317
@@ -314,6 +332,57 @@ lock-held-during-venv)
     check "venv built under the lock" [ "$(head -n 1 "$W/py.log" 2>/dev/null)" = "venv locked" ]
     check "meson from the venv" grep -q 'meson 1.12.1' "$W/out"
     check "the lock is gone afterwards" [ ! -e "$HOME/.local/src/erssi.lock" ]
+    ;;
+freebsd-base-openssl)
+    # FreeBSD: OpenSSL of the base system, no openssl.pc
+    freebsd
+    base_openssl_files "$W/base" '# define OPENSSL_VERSION_TEXT "OpenSSL 3.0.15 3 Sep 2024"'
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "base OpenSSL named" grep -qF 'openssl 3.0.15 (base system)' "$W/out"
+    check "no package asked for" no_grep 'pkg install' "$W/out"
+    # FreeBSD 13: OpenSSL 1.1.1, two spaces before the text
+    base_openssl_files "$W/base" '#  define OPENSSL_VERSION_TEXT  "OpenSSL 1.1.1w-freebsd  11 Sep 2023"'
+    run_install
+    check "1.1.1: installed" [ "$RC" = 0 ]
+    check "1.1.1: version" grep -qF 'openssl 1.1.1w-freebsd (base system)' "$W/out"
+    # a header without the version text
+    base_openssl_files "$W/base" '/* nothing */'
+    run_install
+    check "no version text: installed" [ "$RC" = 0 ]
+    check "no version text: unknown" grep -qF 'openssl unknown (base system)' "$W/out"
+    # no pkg-config at all: pkgconf and glib needed, but not openssl
+    rm -f "$W/shim/pkg-config"
+    run_install
+    check "no pkg-config: refused" [ "$RC" = 1 ]
+    check "no pkg-config: pkgconf and glib only" grep -qF 'pkg install pkgconf glib   (as root)' "$W/out"
+    ;;
+freebsd-no-openssl)
+    # FreeBSD without the base OpenSSL files: the package is still needed
+    freebsd
+    mkdir -p "$W/base"
+    run_install
+    check "refused" [ "$RC" = 1 ]
+    check "pkg install openssl" grep -qF 'pkg install openssl   (as root)' "$W/out"
+    # one of the four files missing
+    base_openssl_files "$W/base" '# define OPENSSL_VERSION_TEXT "OpenSSL 3.0.15 3 Sep 2024"'
+    rm -f "$W/base/lib/libcrypto.so"
+    run_install
+    check "no libcrypto.so: refused" [ "$RC" = 1 ]
+    check "no libcrypto.so: pkg install openssl" grep -qF 'pkg install openssl   (as root)' "$W/out"
+    # no pkg-config and no base OpenSSL: pkgconf, glib and openssl
+    rm -f "$W/shim/pkg-config"
+    run_install
+    check "no pkg-config: pkgconf glib openssl" grep -qF 'pkg install pkgconf glib openssl   (as root)' "$W/out"
+    use_tool pkg-config
+    # Linux with the same files: the fallback is FreeBSD only
+    base_openssl_files "$W/base" '# define OPENSSL_VERSION_TEXT "OpenSSL 3.0.15 3 Sep 2024"'
+    FAKE_UNAME=Linux
+    printf 'ID=debian\n' > "$W/os-release"
+    SHELLTER_OS_RELEASE=$W/os-release
+    run_install
+    check "Linux: refused" [ "$RC" = 1 ]
+    check "Linux: sudo apt install libssl-dev" grep -qF 'sudo apt install libssl-dev' "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
