@@ -1,5 +1,5 @@
-#ifndef IRSSI_FE_TEXT_SIDEPANELS_TEXT_H
-#define IRSSI_FE_TEXT_SIDEPANELS_TEXT_H
+#ifndef IRSSI_FE_ANSI_SIDEPANELS_TEXT_H
+#define IRSSI_FE_ANSI_SIDEPANELS_TEXT_H
 
 #include <glib.h>
 #include <irssi/src/core/utf8.h>

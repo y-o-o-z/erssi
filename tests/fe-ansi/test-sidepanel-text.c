@@ -2,6 +2,7 @@
 #include <irssi/src/fe-common/core/formats.h>
 #include <irssi/src/fe-ansi/term.h>
 #include <irssi/src/fe-ansi/sidepanels-text.h>
+#include <irssi/src/fe-ansi/textbuffer-unformat.h>
 
 /* A side panel line is themed once, by format_get_text_theme*(): the
  * format's colour codes are expanded into \004 sequences and the arguments
@@ -140,6 +141,104 @@ static void test_stop(void)
 	g_free(text);
 }
 
+
+/* textbuffer_unformat(): the decoder shared with the text view */
+
+static void test_unformat_bold(void)
+{
+	const unsigned char data[] = {FORMAT_STYLE_BOLD, 'x', 0};
+	const unsigned char *ptr = data;
+	int color = 0;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpint(color, ==, ATTR_BOLD);
+	g_assert(ptr == data + 1);
+}
+
+static void test_unformat_fg_bg(void)
+{
+	const unsigned char data[] = {'1', '2', 'x', 0};
+	const unsigned char *ptr = data;
+	int color = 0;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpint(color, ==, 1 | (2 << BG_SHIFT));
+	g_assert(ptr == data + 2);
+}
+
+static void test_unformat_nochange_reset(void)
+{
+	const unsigned char nochange[] = {FORMAT_COLOR_NOCHANGE, '3', 0};
+	const unsigned char reset[] = {0xff, 0xff, 0};
+	const unsigned char *ptr = nochange;
+	int color = 5;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpint(color, ==, 5 | (3 << BG_SHIFT));
+
+	ptr = reset;
+	color = 0;
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpint(color, ==, ATTR_RESETFG | ATTR_RESETBG);
+}
+
+static void test_unformat_ext1(void)
+{
+	const unsigned char data[] = {FORMAT_COLOR_EXT1, FORMAT_COLOR_NOCHANGE + 5, 0};
+	const unsigned char *ptr = data;
+	int color = 0;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpint(color, ==, 0x15);
+}
+
+static void test_unformat_24bit(void)
+{
+	char *s = format_string_expand("%Z0550AE", NULL);
+	const unsigned char *ptr = (const unsigned char *) s + 1;
+	int color = 0;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	g_assert_cmpint((unsigned char) s[0], ==, 4);
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpuint(fg24, ==, 0x0550AE);
+	g_assert(color & ATTR_FGCOLOR24);
+	g_free(s);
+}
+
+static void test_unformat_24bit_truncated(void)
+{
+	/* heap copy, so that ASan sees a read past the NUL */
+	unsigned char *data = g_malloc(3);
+	const unsigned char *ptr;
+	int color = 0;
+	unsigned int fg24 = UINT_MAX, bg24 = UINT_MAX;
+
+	data[0] = FORMAT_COLOR_24;
+	data[1] = 'a';
+	data[2] = 0;
+	ptr = data;
+	textbuffer_unformat(&ptr, &color, &fg24, &bg24);
+	g_assert_cmpuint(fg24, ==, UINT_MAX);
+	g_assert_cmpint(color, ==, 0);
+	g_free(data);
+}
+
+static void test_read_unichar_invalid(void)
+{
+	const unsigned char data[] = {0xC3, 0x28, 0};
+	const unsigned char *next = NULL;
+	int width = 0;
+
+	g_assert_cmpuint(textbuffer_read_unichar(data, &next, &width), ==, 0xFFFD);
+	g_assert(next == data + 1);
+	g_assert_cmpint(width, ==, 1);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -148,6 +247,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/test/sidepanel_text/all_channel_bytes", test_all_channel_bytes);
 	g_test_add_func("/test/sidepanel_text/percent_in_arguments", test_percent_in_arguments);
 	g_test_add_func("/test/sidepanel_text/stop", test_stop);
+	g_test_add_func("/textbuffer/unformat/bold", test_unformat_bold);
+	g_test_add_func("/textbuffer/unformat/fg-bg", test_unformat_fg_bg);
+	g_test_add_func("/textbuffer/unformat/nochange-reset", test_unformat_nochange_reset);
+	g_test_add_func("/textbuffer/unformat/ext1", test_unformat_ext1);
+	g_test_add_func("/textbuffer/unformat/24bit", test_unformat_24bit);
+	g_test_add_func("/textbuffer/unformat/24bit-truncated", test_unformat_24bit_truncated);
+	g_test_add_func("/textbuffer/read-unichar/invalid", test_read_unichar_invalid);
 
 #if GLIB_CHECK_VERSION(2,38,0)
 	g_test_set_nonfatal_assertions();
