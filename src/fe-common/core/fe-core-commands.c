@@ -130,6 +130,7 @@ static void cmd_cat(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 #ifdef HAVE_CAPSICUM
 	int fd;
 #endif
+	int open_errno;
 
 	g_return_if_fail(data != NULL);
 
@@ -146,15 +147,18 @@ static void cmd_cat(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 		handle = g_io_channel_unix_new(fd);
 	else
 		handle = NULL;
+	open_errno = errno;
 #else
 	handle = g_io_channel_new_file(fname, "r", NULL);
+	open_errno = errno;
 #endif
 	g_free(fname);
 
 	if (handle == NULL) {
 		/* file not found */
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			  "%s", g_strerror(errno));
+			  "%s", g_strerror(open_errno));
+		cmd_params_free(free_arg);
 		return;
 	}
 
