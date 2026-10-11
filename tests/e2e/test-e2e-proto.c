@@ -4825,6 +4825,36 @@ static void test_casemap_single_bare_nick(void)
 	e2e_json_free(kr);
 }
 
+/* the keyring's cache only (what a NULL kr asks for: the live handle,
+   which there is none of here) */
+static char *cache_resolve(const char *nick, const E2E_JSON *kr, void *data)
+{
+	const char *c = kr != NULL ? e2e_find_handle_by_nick(kr, nick) : NULL;
+
+	return c != NULL && *c != '\0' ? g_strdup(c) : NULL;
+}
+
+/* the live handle BOB (an open query) */
+static char *live_resolve_bob(const char *nick, const E2E_JSON *kr, void *data)
+{
+	return g_strdup(BOB);
+}
+
+static E2E_GATE_ACTION guard_msg(E2E_JSON *kr, const E2E_NET *net, const char *line,
+                                 E2E_RESOLVE_FUNC resolve, char **msg)
+{
+	char *t = NULL, *m = NULL;
+	E2E_GATE_ACTION a = e2e_script_guard(kr, TRUE, FALSE, FALSE, net, line, strlen(line), resolve,
+	                                     NULL, &m, &t);
+
+	g_free(t);
+	if (msg != NULL)
+		*msg = m;
+	else
+		g_free(m);
+	return a;
+}
+
 /* an empty address is none */
 static char *empty_resolve(const char *nick, const E2E_JSON *kr, void *data)
 {
@@ -4851,6 +4881,7 @@ static void test_casemap_script_single_nick(void)
 		                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
 		g_assert_nonnull(strstr(m, "does not find it under that name"));
 		g_assert_nonnull(strstr(m, "for bob in"));
+		g_assert_nonnull(strstr(m, "write the nick as bob"));
 		g_assert_cmpstr(t, ==, "BOB");
 		g_free(m);
 		g_free(t);
@@ -4885,8 +4916,183 @@ static void test_casemap_script_single_nick(void)
 	p.kr = kr;
 	enable(&p, "@" BOB, "normal");
 	cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob{", BOB);
-	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob[ :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	{
+		char *msg = NULL;
+
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob[ :hi", no_resolve, &msg), ==,
+		                E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "for @" BOB " in"));
+		g_assert_nonnull(strstr(msg, "write the nick as bob{"));
+		g_free(msg);
+	}
 	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG bob[ :hi", no_resolve), ==, E2E_GATE_PASS);
+	/* a query known by its "nick" only: no name the script finds */
+	e2e_json_remove(e2e_json_get(kr, "peers"), "00112233445566778899aabbccddeeff");
+	e2e_json_set_string(path_get(kr, "channels", "@" BOB, NULL), "nick", "bob{");
+	{
+		char *msg = NULL;
+
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob[ :hi", no_resolve, &msg), ==,
+		                E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "cannot find it now"));
+		g_free(msg);
+	}
+	e2e_json_free(kr);
+}
+
+/* rpe2e.pl compares a non-ASCII nick with the keyring's last_nick by
+   Perl's lc() on a string it decoded from JSON, not on the bytes irssi
+   gives it: it may not find the peer, and sends in clear text. A
+   non-ASCII nick resolved only through the keyring's cache counts as not
+   resolved for the script (R-E30); a live address is the script's own. */
+static void test_casemap_script_nonascii_cache(void)
+{
+	static const char *const nicks[] = {
+		"\xc5\xbc" "bik",			/* żbik */
+		"\xd0\xb1\xd0\xbe\xd0\xb1",		/* боб */
+		"k\xc3\xb3tek",				/* kótek */
+		"\xe4\xb8\xad" "bob",			/* 中bob */
+		NULL
+	};
+	E2E_NET u = { (char *) "E2E", E2E_CASEMAP_UNICODE, TRUE };
+	int i;
+
+	for (i = 0; nicks[i] != NULL; i++) {
+		E2E_JSON *kr = e2e_keyring_new();
+		PEER p = { .kr = kr };
+		char line[64], *msg = NULL;
+		E2E_GATE_RESULT g;
+
+		enable(&p, "@" BOB, "normal");
+		cm_set_peer(kr, "00112233445566778899aabbccddeeff", nicks[i], BOB);
+		g_snprintf(line, sizeof(line), "PRIVMSG %s :secret", nicks[i]);
+		/* the module itself encrypts (on a copy: it takes the old rows
+		   over) */
+		{
+			E2E_JSON *copy = e2e_json_copy(kr);
+
+			e2e_gate_decide(copy, TRUE, NULL, &u, nicks[i], "secret", cache_resolve, NULL, &g);
+			g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+			e2e_gate_result_clear(&g);
+			e2e_json_free(copy);
+		}
+		g_assert_cmpint(guard_msg(kr, &u, line, cache_resolve, &msg), ==, E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "cannot find it now"));
+		g_assert_nonnull(strstr(msg, "open a query with"));
+		g_free(msg);
+		/* a live address: the script finds it as well */
+		g_assert_cmpint(guard_msg(kr, &u, line, live_resolve_bob, NULL), ==, E2E_GATE_PASS);
+		e2e_json_free(kr);
+	}
+	/* the remedy names a spelling only when the script finds that one:
+	   ASCII, and not the very name it did not find */
+	{
+		E2E_JSON *kr = e2e_keyring_new();
+		PEER p = { .kr = kr };
+		char *msg = NULL;
+
+		enable(&p, "@" BOB, "normal");
+		cm_set_peer(kr, "00112233445566778899aabbccddeeff", "\xc5\xbb" "BIK", BOB);
+		g_assert_cmpint(guard_msg(kr, &u, "PRIVMSG \xc5\xbc" "bik :x", cache_resolve, &msg), ==,
+		                E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "cannot find it now"));
+		g_free(msg);
+		e2e_json_set_string(path_get(kr, "peers", "00112233445566778899aabbccddeeff", NULL), "last_nick",
+		                    "bob");
+		g_assert_cmpint(guard_msg(kr, &u, "PRIVMSG bob :x", no_resolve, &msg), ==, E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "cannot find it now"));
+		g_free(msg);
+		e2e_json_free(kr);
+	}
+	/* ASCII: the script's lc() finds it */
+	{
+		E2E_JSON *kr = e2e_keyring_new();
+		PEER p = { .kr = kr };
+
+		enable(&p, "@" BOB, "normal");
+		cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob", BOB);
+		g_assert_cmpint(cm_guard(kr, &u, "PRIVMSG bob :secret", cache_resolve), ==, E2E_GATE_PASS);
+		g_assert_cmpint(cm_guard(kr, &u, "PRIVMSG BOB :secret", cache_resolve), ==, E2E_GATE_PASS);
+		e2e_json_free(kr);
+	}
+}
+
+/* an old context of a peer the server takes for the nick (its
+   CASEMAPPING), with rows of no known network (several networks): BLOCKED
+   - refused as it is for the nick the keyring's cache names exactly */
+static void test_casemap_blocked_folded_peer(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+	E2E_NET ascii_a = { (char *) "E2E", E2E_CASEMAP_ASCII, FALSE };
+	char *msg = NULL;
+
+	enable(&p, "@" BOB, "normal");
+	e2e_json_set_int(path_get(kr, "channels", "@" BOB, NULL), "enabled", 0);
+	e2e_json_set(e2e_json_get(kr, "outgoing"), "@" BOB, e2e_json_new(E2E_JSON_OBJECT));
+	cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob{", BOB);
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "bob{", "hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	{
+		E2E_GATE_RESULT g;
+
+		e2e_gate_decide(kr, TRUE, NULL, &net_a, "bob[", "hi", cache_resolve, NULL, &g);
+		g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+		msg = g_strdup_printf(E2E_REFUSE_LEGACY, "bob[", "E2E");
+		g_assert_cmpstr(g.message, ==, msg);
+		g_free(msg);
+		e2e_gate_result_clear(&g);
+	}
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "BOB[", "hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "carol", "hi", cache_resolve), ==, E2E_GATE_PASS);
+	/* ascii keeps bob[ apart */
+	g_assert_cmpint(cm_gate_r(kr, &ascii_a, "bob[", "hi", cache_resolve), ==, E2E_GATE_PASS);
+	/* the only network: the old rows are this one's, nothing blocked */
+	g_assert_cmpint(cm_gate_r(kr, &net_one, "bob[", "hi", cache_resolve), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+
+	/* a context another network took over */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "E2E2\x1f@" BOB, "normal");
+	e2e_json_set_int(path_get(kr, "channels", "E2E2\x1f@" BOB, NULL), "enabled", 0);
+	e2e_json_set_string(path_get(kr, "channels", "E2E2\x1f@" BOB, NULL), E2E_ADOPTED_MEMBER, "E2E2");
+	cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob{", BOB);
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "bob{", "hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "bob[", "hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &net_a, "carol", "hi", cache_resolve), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
+/* rpe2e.pl loaded: the nick resolves to another address than the one of
+   a query E2E is on for whose peer the server takes for that nick - the
+   native gate refuses (REFUSE_DM_MOVED), so does the guard (R-E30) */
+static void test_casemap_script_dm_moved(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+	char *msg = NULL;
+
+	enable(&p, "@" BOB, "normal");
+	cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob{", BOB);
+	cm_set_peer(kr, "ffeeddccbbaa99887766554433221100", "BOB[", "other@host");
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "bob[", "hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob[ :hi", cache_resolve, &msg), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_nonnull(strstr(msg, "bob[ is now other@host"));
+	g_free(msg);
+	/* ascii: bob{ is someone else */
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG bob[ :hi", cache_resolve), ==, E2E_GATE_PASS);
+	/* bob{ itself resolves to the query's address: the script encrypts */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob{ :hi", cache_resolve), ==, E2E_GATE_PASS);
+	/* the same nick, exactly, seen since at another address */
+	e2e_json_set_string(path_get(kr, "peers", "ffeeddccbbaa99887766554433221100", NULL), "last_nick",
+	                    "bob{");
+	e2e_json_set_int(path_get(kr, "peers", "ffeeddccbbaa99887766554433221100", NULL), "last_seen", 5);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob{ :hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG bob{ :hi", cache_resolve), ==, E2E_GATE_REFUSE);
+	/* E2E on for the new address as well: the script encrypts there */
+	enable(&p, "@other@host", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob{ :hi", cache_resolve), ==, E2E_GATE_PASS);
 	e2e_json_free(kr);
 }
 
@@ -4975,6 +5181,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/list-bare-nick", test_casemap_list_bare_nick);
 	g_test_add_func("/e2e/casemap/single-bare-nick", test_casemap_single_bare_nick);
 	g_test_add_func("/e2e/casemap/script-single-nick", test_casemap_script_single_nick);
+	g_test_add_func("/e2e/casemap/script-nonascii-cache", test_casemap_script_nonascii_cache);
+	g_test_add_func("/e2e/casemap/blocked-folded-peer", test_casemap_blocked_folded_peer);
+	g_test_add_func("/e2e/casemap/script-dm-moved", test_casemap_script_dm_moved);
 
 	return g_test_run();
 }

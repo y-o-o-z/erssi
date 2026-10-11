@@ -161,7 +161,8 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 /* ---- the outbound gate ---- */
 
 /* live handle of a nick (open query, common channel) or the keyring's,
-   g_free'd by the caller; NULL when unknown */
+   g_free'd by the caller; NULL when unknown. kr NULL: the live handle
+   only (no keyring cache). */
 typedef char *(*E2E_RESOLVE_FUNC)(const char *nick, const E2E_JSON *kr, void *data);
 
 typedef enum {
@@ -221,9 +222,12 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
     E2E is on for there that the server may take for the target under
     another name (CASEMAPPING): the script compares names exactly and
     would send it in clear (E2E_SCRIPT_REFUSE_CASE), and for a single
-    nick with no address now an old bare-nick row of another spelling or
-    an old query of that nick (its "nick", or a peer last seen as it) the
-    script does not find (E2E_SCRIPT_REFUSE_NICK). A body that is a
+    nick with no address the script finds (a non-ASCII nick: none but a
+    live one, R-E30) an old bare-nick row of another spelling or an old
+    query of that nick (its "nick", or a peer last seen as it)
+    (E2E_SCRIPT_REFUSE_NICK, _NICK_UNKNOWN), or, at an address whose old
+    config is off, a query of that nick with E2E on elsewhere
+    (E2E_SCRIPT_REFUSE_MOVED). A body that is a
     wire passes only in a nested emission (nested: "server outgoing
     modify" emitted while another runs - the script sending its chunks
     with send_raw_now); a wire the user typed is text like any other.
@@ -244,7 +248,9 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
                                  char **message, char **target);
 #define E2E_SCRIPT_REFUSE "E2E is on for %s in the e2e module, which rpe2e.pl does not know - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) to send it encrypted, or unload it, /e2e off here, and load it again"
 #define E2E_SCRIPT_REFUSE_CASE "E2E is on for %s in rpe2e.pl's entries, the same channel as %s for the server, but rpe2e.pl compares names exactly and would send it in clear text - the message shown above was NOT delivered; write the name as %s"
-#define E2E_SCRIPT_REFUSE_NICK "E2E is on for %s in rpe2e.pl's entries, where the server may deliver a message to %s, but rpe2e.pl does not find it under that name and would send it in clear text - the message shown above was NOT delivered"
+#define E2E_SCRIPT_REFUSE_NICK "E2E is on for %s in rpe2e.pl's entries, where the server may deliver a message to %s, but rpe2e.pl does not find it under that name and would send it in clear text - the message shown above was NOT delivered; write the nick as %s"
+#define E2E_SCRIPT_REFUSE_NICK_UNKNOWN "E2E is on for %s in rpe2e.pl's entries, where the server may deliver a message to %s, but rpe2e.pl cannot find it now and would send it in clear text - the message shown above was NOT delivered; open a query with %s (or share a channel) so that its address is known, or unload rpe2e.pl (/script unload rpe2e)"
+#define E2E_SCRIPT_REFUSE_MOVED "E2E is on for %s at %s in rpe2e.pl's entries, but %s is now %s, where it is not, and rpe2e.pl would send it in clear text - the message shown above was NOT delivered. If it is the same person: /e2e on in the query encrypts to the new address (a new key exchange)"
 #define E2E_SCRIPT_REFUSE_LIST "rpe2e.pl looks the target list %s up as one name, and E2E is on for %s in its entries - it would send the message in clear text: the message shown above was NOT delivered; send it to each target separately"
 #define E2E_SCRIPT_REFUSE_OTHER "the e2e module does not let this out to %s in clear text (%s), and rpe2e.pl does not know its per-network entries - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) and settle it with /e2e in this window"
 

@@ -120,6 +120,59 @@ static void test_free_full(void)
 	e2e_out_line_free(NULL);
 }
 
+/* misuse is a programming error: g_return_if_fail, and the queue stays
+   as it was (a batch with a NULL line is not pushed at all) */
+static void expect_critical(void)
+{
+	g_test_expect_message(NULL, G_LOG_LEVEL_CRITICAL, "*assertion*failed*");
+}
+
+static void test_null_args(void)
+{
+	E2E_OUTQ *q = e2e_outq_new();
+	GPtrArray *a = lines_of("1", NULL);
+	guint plain = 99;
+
+	g_ptr_array_add(a, NULL);
+	g_ptr_array_add(a, (gpointer) "2");
+	expect_critical();
+	e2e_outq_push_front(q, E2E_OUT_CIPHER, a);
+	g_test_assert_expected_messages();
+	g_assert_true(e2e_outq_empty(q));
+	g_ptr_array_free(a, TRUE);
+
+	expect_critical();
+	e2e_outq_push_front(q, E2E_OUT_CIPHER, NULL);
+	g_test_assert_expected_messages();
+	expect_critical();
+	e2e_outq_push_back(q, E2E_OUT_PLAIN, NULL);
+	g_test_assert_expected_messages();
+	g_assert_true(e2e_outq_empty(q));
+
+	a = lines_of("x", NULL);
+	expect_critical();
+	e2e_outq_push_front(NULL, E2E_OUT_CIPHER, a);
+	g_test_assert_expected_messages();
+	g_ptr_array_free(a, TRUE);
+	expect_critical();
+	e2e_outq_push_back(NULL, E2E_OUT_PLAIN, "x");
+	g_test_assert_expected_messages();
+	expect_critical();
+	g_assert_null(e2e_outq_pop(NULL));
+	g_test_assert_expected_messages();
+	expect_critical();
+	g_assert_true(e2e_outq_empty(NULL));
+	g_test_assert_expected_messages();
+	expect_critical();
+	g_assert_cmpuint(e2e_outq_length(NULL), ==, 0);
+	g_test_assert_expected_messages();
+	expect_critical();
+	g_assert_cmpuint(e2e_outq_drop(NULL, &plain), ==, 0);
+	g_test_assert_expected_messages();
+	g_assert_cmpuint(plain, ==, 0);
+	e2e_outq_free(q);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -128,6 +181,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/outq/front-of-front", test_front_of_front);
 	g_test_add_func("/e2e/outq/drop-counts-plain", test_drop_counts_plain);
 	g_test_add_func("/e2e/outq/free-full", test_free_full);
+	g_test_add_func("/e2e/outq/null-args", test_null_args);
 
 	return g_test_run();
 }

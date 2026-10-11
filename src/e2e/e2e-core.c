@@ -500,6 +500,9 @@ char *e2e_resolve_dm_handle(SERVER_REC *server, const E2E_JSON *kr, const char *
 				return g_strdup(rec->host);
 		}
 	}
+	/* NULL: the live handle only (E2E_RESOLVE_FUNC) */
+	if (kr == NULL)
+		return NULL;
 	cached = e2e_find_handle_by_nick(kr, nick);
 	return cached != NULL && *cached != '\0' ? g_strdup(cached) : NULL;
 }

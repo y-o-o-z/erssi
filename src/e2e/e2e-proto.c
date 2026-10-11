@@ -1657,22 +1657,99 @@ static E2E_CASEMAP net_casemap(const E2E_NET *net)
 	return net != NULL ? net->casemap : E2E_CASEMAP_RFC1459;
 }
 
-/* a and b may be one nick to the server of net (its CASEMAPPING, the
-   superset fold; without a network, rfc1459); narrow: only when every
-   server of that CASEMAPPING takes them for one (e2e_casefold_narrow) */
-static gboolean same_nick(const E2E_NET *net, const char *a, const char *b, gboolean narrow)
+/* a nick folded once by the CASEMAPPING of net (the superset fold;
+   without a network, rfc1459), to compare with many; narrow: only what
+   every server of that CASEMAPPING takes for one (e2e_casefold_narrow) */
+typedef struct {
+	const E2E_NET *net;
+	const char *nick;
+	char *fold;		/* NULL: matches nothing */
+	gboolean narrow;
+} NICK_FOLD;
+
+static char *fold_nick(const E2E_NET *net, const char *nick, gboolean narrow)
 {
-	char *fa, *fb;
+	return narrow ? e2e_casefold_narrow(nick, net_casemap(net)) : e2e_casefold(nick, net_casemap(net));
+}
+
+static void nick_fold_init(NICK_FOLD *f, const E2E_NET *net, const char *nick, gboolean narrow)
+{
+	f->net = net;
+	f->nick = nick;
+	f->narrow = narrow;
+	f->fold = nick != NULL ? fold_nick(net, nick, narrow) : NULL;
+}
+
+static void nick_fold_clear(NICK_FOLD *f)
+{
+	g_free(f->fold);
+	f->fold = NULL;
+}
+
+/* other may be the same nick as f's to the server */
+static gboolean nick_fold_same(const NICK_FOLD *f, const char *other)
+{
+	char *fo;
 	gboolean same;
 
-	if (a == NULL || b == NULL)
+	if (f->fold == NULL || other == NULL)
 		return FALSE;
-	fa = narrow ? e2e_casefold_narrow(a, net_casemap(net)) : e2e_casefold(a, net_casemap(net));
-	fb = narrow ? e2e_casefold_narrow(b, net_casemap(net)) : e2e_casefold(b, net_casemap(net));
-	same = fa != NULL && fb != NULL && strcmp(fa, fb) == 0;
-	g_free(fa);
-	g_free(fb);
+	/* one name folds one way */
+	if (strcmp(other, f->nick) == 0)
+		return TRUE;
+	fo = fold_nick(f->net, other, f->narrow);
+	same = fo != NULL && strcmp(fo, f->fold) == 0;
+	g_free(fo);
 	return same;
+}
+
+/* the peers by their last_handle: handle -> GPtrArray of their last_nick
+   (strings of kr), in the order of the peers' keys; one look per peer
+   instead of one per peer and config */
+static GHashTable *peers_by_handle(const E2E_JSON *kr)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	GHashTable *idx = g_hash_table_new_full(g_str_hash, g_str_equal, NULL,
+	                                        (GDestroyNotify) g_ptr_array_unref);
+	guint i;
+
+	for (i = 0; i < keys->len; i++) {
+		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
+		const char *handle = e2e_json_get_string(peer, "last_handle");
+		const char *nick = e2e_json_get_string(peer, "last_nick");
+		GPtrArray *nicks;
+
+		if (handle == NULL || nick == NULL)
+			continue;
+		nicks = g_hash_table_lookup(idx, handle);
+		if (nicks == NULL) {
+			nicks = g_ptr_array_new();
+			g_hash_table_insert(idx, (gpointer) handle, nicks);
+		}
+		g_ptr_array_add(nicks, (gpointer) nick);
+	}
+	g_ptr_array_unref(keys);
+	return idx;
+}
+
+/* the last_nick of a peer last seen under handle that f matches, or NULL;
+   *idx is built on the first call */
+static const char *peer_nick_at(const E2E_JSON *kr, GHashTable **idx, const char *handle,
+                                const NICK_FOLD *f)
+{
+	GPtrArray *nicks;
+	guint i;
+
+	if (handle == NULL || f->fold == NULL)
+		return NULL;
+	if (*idx == NULL)
+		*idx = peers_by_handle(kr);
+	nicks = g_hash_table_lookup(*idx, handle);
+	for (i = 0; nicks != NULL && i < nicks->len; i++)
+		if (nick_fold_same(f, g_ptr_array_index(nicks, i)))
+			return g_ptr_array_index(nicks, i);
+	return NULL;
 }
 
 /* the handles of the "@<handle>" configs with E2E on that belong to nick:
@@ -1681,31 +1758,27 @@ static gboolean same_nick(const E2E_NET *net, const char *a, const char *b, gboo
 static GPtrArray *dm_configs(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
                              gboolean narrow)
 {
-	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
-	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
+	E2E_JSON *channels = e2e_json_get(kr, "channels");
+	GPtrArray *keys = e2e_json_keys(channels);
 	GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
-	guint i, j;
+	GHashTable *idx = NULL;
+	NICK_FOLD f;
+	guint i;
 
+	nick_fold_init(&f, net, nick, narrow);
 	for (i = 0; i < keys->len; i++) {
 		const char *key = g_ptr_array_index(keys, i), *ctx;
-		const char *cnick;
-		gboolean match;
 
-		if (!config_on_net(kr, key, net, &ctx) || *ctx != '@' || !e2e_ctx_enabled(kr, key))
+		if (!e2e_ctx_enabled(kr, key) || !config_on_net(kr, key, net, &ctx) || *ctx != '@')
 			continue;
-		cnick = e2e_json_get_string(e2e_json_get(channels, key), "nick");
-		match = same_nick(net, cnick, nick, narrow);
-		for (j = 0; j < pkeys->len && !match; j++) {
-			E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(pkeys, j));
-
-			match = same_nick(net, e2e_json_get_string(peer, "last_nick"), nick, narrow) &&
-			        g_strcmp0(e2e_json_get_string(peer, "last_handle"), ctx + 1) == 0;
-		}
-		if (match)
+		if (nick_fold_same(&f, e2e_json_get_string(e2e_json_get(channels, key), "nick")) ||
+		    peer_nick_at(kr, &idx, ctx + 1, &f) != NULL)
 			g_ptr_array_add(out, g_strdup(ctx + 1));
 	}
+	nick_fold_clear(&f);
+	if (idx != NULL)
+		g_hash_table_destroy(idx);
 	g_ptr_array_unref(keys);
-	g_ptr_array_unref(pkeys);
 	return out;
 }
 
@@ -1980,23 +2053,28 @@ static gboolean lookup_enabled(const E2E_JSON *kr, const E2E_NET *net, E2E_CTX_K
 }
 
 /* the bare name of a config key that may be an old bare-nick row of a
-   nick on net, unscoped or of this network (a channel or "@<handle>"
-   config is none), or NULL */
+   nick on net, unscoped or of this network, or NULL; a "@<handle>"
+   config is none (a channel is ruled out by the caller: is_nick_wire) */
 static const char *bare_nick_row(const char *key, const E2E_NET *net)
 {
 	const char *wire = e2e_ctx_wire(key);
-	char **readings;
-	gboolean channel;
 
 	if (*wire == '\0' || *wire == '@')
 		return NULL;
 	if (strchr(key, E2E_SCOPE_SEP) != NULL &&
 	    (net == NULL || net->label == NULL || !e2e_ctx_on_net(key, net)))
 		return NULL;
-	readings = e2e_channel_readings(wire);
-	channel = readings[0] != NULL;
+	return wire;
+}
+
+/* wire names no channel */
+static gboolean is_nick_wire(const char *wire)
+{
+	char **readings = e2e_channel_readings(wire);
+	gboolean nick = readings[0] == NULL;
+
 	g_strfreev(readings);
-	return channel ? NULL : wire;
+	return nick;
 }
 
 /* an old bare-nick config of a DM target with E2E on, unscoped or of this
@@ -2007,19 +2085,57 @@ static gboolean nick_enabled(const E2E_JSON *kr, const E2E_NET *net, const char 
 	char *scoped = e2e_ctx_scoped(net, nick);
 	gboolean on = e2e_ctx_enabled(kr, nick) || (scoped != NULL && e2e_ctx_enabled(kr, scoped));
 	GPtrArray *keys;
+	NICK_FOLD f;
 	guint i;
 
 	g_free(scoped);
 	if (on)
 		return TRUE;
+	nick_fold_init(&f, net, nick, FALSE);
 	keys = e2e_json_keys(e2e_json_get(kr, "channels"));
 	for (i = 0; i < keys->len && !on; i++) {
-		const char *key = g_ptr_array_index(keys, i), *wire = bare_nick_row(key, net);
+		const char *key = g_ptr_array_index(keys, i), *wire;
 
-		on = wire != NULL && e2e_ctx_enabled(kr, key) && same_nick(net, wire, nick, FALSE);
+		/* the cheap tests first, the fold last but one */
+		on = e2e_ctx_enabled(kr, key) && (wire = bare_nick_row(key, net)) != NULL &&
+		     nick_fold_same(&f, wire) && is_nick_wire(wire);
 	}
 	g_ptr_array_unref(keys);
+	nick_fold_clear(&f);
 	return on;
+}
+
+/* the handle of a peer last seen as a nick the server of net may take for
+   nick (its CASEMAPPING) whose "@<handle>" is BLOCKED on net (old rows on
+   several networks, or another network's), or NULL: what the gate
+   refuses when the keyring's cache names that peer exactly, also for the
+   other spellings (R-E30) */
+static const char *folded_peer_blocked(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	const char *found = NULL;
+	NICK_FOLD f;
+	guint i;
+
+	nick_fold_init(&f, net, nick, FALSE);
+	for (i = 0; i < keys->len && found == NULL; i++) {
+		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
+		const char *handle = e2e_json_get_string(peer, "last_handle");
+		char *wire, *ctx = NULL;
+
+		if (handle == NULL || *handle == '\0' ||
+		    !nick_fold_same(&f, e2e_json_get_string(peer, "last_nick")))
+			continue;
+		wire = g_strconcat("@", handle, NULL);
+		if (e2e_ctx_lookup(kr, net, wire, &ctx) == E2E_CTX_BLOCKED)
+			found = handle;
+		g_free(ctx);
+		g_free(wire);
+	}
+	nick_fold_clear(&f);
+	g_ptr_array_unref(keys);
+	return found;
 }
 
 /* _gate_decide for one target; dry: decide only (no key is generated,
@@ -2133,6 +2249,12 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			} else if (other != NULL) {
 				res->action = E2E_GATE_REFUSE;
 				res->message = g_strdup_printf(REFUSE_DM_UNKNOWN, target, other, target, other);
+			} else if (net != NULL && (blocked = folded_peer_blocked(kr, net, target)) != NULL) {
+				/* as for the address the cache names exactly */
+				res->action = E2E_GATE_REFUSE;
+				res->message = strchr(blocked, E2E_SCOPE_SEP) == NULL ?
+					g_strdup_printf(E2E_REFUSE_LEGACY, target, net->label) :
+					g_strdup_printf(REFUSE_UNSCOPED, target);
 			} else {
 				res->action = E2E_GATE_PASS;
 			}
@@ -2950,71 +3072,118 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
    E2E on (R-E29, nick_enabled() for the module) - nicks folded by the
    map. Its bare name, or NULL. single: piece is the only target, which
    the script looks up itself - an old bare-nick row only when the fold
-   alone joins them (the script refuses the name as it is stored). */
+   alone joins them (the script refuses the name as it is stored).
+   *spelling (if not NULL): the name the script may find it under - the
+   old row's, or the peer's last_nick - or NULL (by address or "nick"). */
 static char *list_query_on(const E2E_JSON *kr, const E2E_NET *net, const char *piece,
-                           E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean single)
+                           E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean single,
+                           const char **spelling)
 {
-	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
-	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
+	E2E_JSON *channels = e2e_json_get(kr, "channels");
+	GPtrArray *keys = e2e_json_keys(channels);
 	char *handle = resolve != NULL ? resolve(piece, kr, resolve_data) : NULL, *found = NULL;
-	guint i, j;
+	GHashTable *idx = NULL;
+	const char *sp = NULL;
+	NICK_FOLD f;
+	guint i;
 
+	nick_fold_init(&f, net, piece, FALSE);
 	for (i = 0; i < keys->len && found == NULL; i++) {
 		const char *key = g_ptr_array_index(keys, i), *wire = e2e_ctx_wire(key);
-		gboolean match;
 
-		if (*wire == '\0' || !e2e_ctx_enabled(kr, key) ||
+		if (!e2e_ctx_enabled(kr, key) || *wire == '\0' ||
 		    (strchr(key, E2E_SCOPE_SEP) != NULL && !e2e_ctx_on_net(key, net)))
 			continue;
 		if (*wire != '@') {
-			char **readings = e2e_channel_readings(wire);
-
 			/* an old bare-nick row: exact, or folded by the map
 			   (more refusals only); a channel is no nick */
-			match = readings[0] == NULL &&
-			        (strcmp(wire, piece) == 0 ? !single : same_nick(net, wire, piece, FALSE));
-			g_strfreev(readings);
-			if (match)
+			if ((strcmp(wire, piece) == 0 ? !single : nick_fold_same(&f, wire)) &&
+			    is_nick_wire(wire)) {
 				found = g_strdup(wire);
+				sp = wire;
+			}
 			continue;
 		}
-		match = handle != NULL && *handle != '\0' && strcmp(wire + 1, handle) == 0;
-		if (!match)
-			match = same_nick(net, e2e_json_get_string(e2e_json_get(channels, key), "nick"), piece,
-			                  FALSE);
-		/* the handle first: two folds per peer only for this config's */
-		for (j = 0; j < pkeys->len && !match; j++) {
-			E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(pkeys, j));
-
-			match = g_strcmp0(e2e_json_get_string(peer, "last_handle"), wire + 1) == 0 &&
-			        same_nick(net, e2e_json_get_string(peer, "last_nick"), piece, FALSE);
-		}
-		if (match)
+		if ((handle != NULL && *handle != '\0' && strcmp(wire + 1, handle) == 0) ||
+		    nick_fold_same(&f, e2e_json_get_string(e2e_json_get(channels, key), "nick")))
+			found = g_strdup(wire);
+		else if ((sp = peer_nick_at(kr, &idx, wire + 1, &f)) != NULL)
 			found = g_strdup(wire);
 	}
+	if (spelling != NULL)
+		*spelling = found != NULL ? sp : NULL;
+	nick_fold_clear(&f);
+	if (idx != NULL)
+		g_hash_table_destroy(idx);
 	g_free(handle);
 	g_ptr_array_unref(keys);
-	g_ptr_array_unref(pkeys);
 	return found;
 }
 
-/* a single DM target, rpe2e.pl loaded: the script resolves the nick as
-   the module does (live, then the keyring's last_nick, ASCII case only)
-   and, with no address, looks an old bare-nick row up exactly. The query
-   with E2E on, or the old bare-nick row, that the server may take nick
-   for and the script does not find that way (it would send the line in
-   clear text): its bare name, or NULL. */
+static gboolean ascii_only(const char *s)
+{
+	for (; *s != '\0'; s++)
+		if ((unsigned char) *s >= 0x80)
+			return FALSE;
+	return TRUE;
+}
+
+/*
+ A single DM target, rpe2e.pl loaded. The script resolves the nick as the
+ module does - live (an open query, a common channel), then the keyring's
+ last_nick by lc(), which matches the module's ASCII case only for an
+ ASCII nick (on a non-ASCII one it may compare another form of the
+ stored name, R-E30) - and with no address looks an old bare-nick row up
+ exactly. The refusal, or NULL:
+  - an address the script has as well, its "@<handle>" config off, and E2E
+    on for the nick at another address (as the module's REFUSE_DM_MOVED);
+  - no such address: a query with E2E on, or an old bare-nick row, the
+    server may take nick for and the script does not find that way.
+ What the script finds itself (its config of the address, the row as it
+ is stored) stays its own.
+*/
 static char *script_single_nick(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
                                 E2E_RESOLVE_FUNC resolve, void *resolve_data)
 {
 	char *handle = resolve != NULL ? resolve(nick, kr, resolve_data) : NULL;
-	gboolean resolved = handle != NULL && *handle != '\0';
+	char *other, *msg = NULL;
+	const char *spelling;
 
+	if (handle != NULL && *handle != '\0' && !ascii_only(nick)) {
+		/* only a live address is sure to be the script's as well */
+		char *live = resolve(nick, NULL, resolve_data);
+
+		if (live == NULL || *live == '\0') {
+			g_free(handle);
+			handle = NULL;
+		}
+		g_free(live);
+	}
+	if (handle != NULL && *handle != '\0') {
+		char *config = g_strconcat("@", handle, NULL);
+
+		/* the script encrypts under its own config of the address */
+		other = e2e_ctx_enabled(kr, config) ? NULL :
+		        e2e_enabled_dm_elsewhere(kr, net, nick, handle);
+		if (other != NULL)
+			msg = g_strdup_printf(E2E_SCRIPT_REFUSE_MOVED, nick, other, nick, handle);
+		g_free(other);
+		g_free(config);
+		g_free(handle);
+		return msg;
+	}
 	g_free(handle);
-	/* an address: the script goes by its "@<handle>" config */
-	if (resolved)
+	other = list_query_on(kr, net, nick, NULL, NULL, TRUE, &spelling);
+	if (other == NULL)
 		return NULL;
-	return list_query_on(kr, net, nick, NULL, NULL, TRUE);
+	/* a name the script finds: ASCII (its lc() is the module's there),
+	   other than the one it did not find */
+	if (spelling != NULL && ascii_only(spelling) && strcmp(spelling, nick) != 0)
+		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_NICK, other, nick, spelling);
+	else
+		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_NICK_UNKNOWN, other, nick, nick);
+	g_free(other);
+	return msg;
 }
 
 /* rpe2e.pl compares channel names exactly, and looks "#a,#b" up as one
@@ -3032,13 +3201,13 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 {
 	char **pieces, **readings, *other = NULL, *msg = NULL;
 	const char *bad, *config;
-	gboolean undecided = FALSE, list = strchr(to, ',') != NULL, by_nick = FALSE;
+	gboolean undecided = FALSE, list = strchr(to, ',') != NULL;
 	int i;
 
 	if (kr == NULL || (e2e_is_ctcp(body) && !e2e_is_action(body)))
 		return NULL;
 	pieces = g_strsplit(to, ",", -1);
-	for (i = 0; pieces[i] != NULL && other == NULL && !undecided; i++) {
+	for (i = 0; pieces[i] != NULL && other == NULL && msg == NULL && !undecided; i++) {
 		readings = e2e_channel_readings(pieces[i]);
 		if (readings[0] != NULL && !dms_only)
 			other = enabled_other_case(kr, net, readings, list ? OTHER_SCRIPT_ALL : OTHER_SCRIPT,
@@ -3046,17 +3215,16 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 		else if (readings[0] == NULL && list && *pieces[i] != '\0')
 			/* a nick in a list: the script resolves no query for it
 			   (R-E28) */
-			other = list_query_on(kr, net, pieces[i], resolve, resolve_data, FALSE);
+			other = list_query_on(kr, net, pieces[i], resolve, resolve_data, FALSE, NULL);
 		else if (readings[0] == NULL && *pieces[i] != '\0')
 			/* the only target, a nick (never a bot command) */
-			by_nick = (other = script_single_nick(kr, net, pieces[i], resolve,
-			                                      resolve_data)) != NULL;
+			msg = script_single_nick(kr, net, pieces[i], resolve, resolve_data);
 		g_strfreev(readings);
 	}
-	if (other != NULL && list) {
+	if (msg != NULL) {
+		/* the single nick's */
+	} else if (other != NULL && list) {
 		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_LIST, to, other);
-	} else if (other != NULL && by_nick) {
-		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_NICK, other, to);
 	} else if (other != NULL) {
 		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_CASE, other, to, other);
 	} else if (undecided) {
