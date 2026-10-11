@@ -19,24 +19,43 @@
 
 #include <string.h>
 
+/*
+ The label from a chatnet name or tag, which may hold anything: C0 and C1
+ controls, DEL and '|' become '_', and so does every byte that is not part
+ of a valid UTF-8 character, so the label is valid UTF-8 and never holds
+ the separator.
+*/
+static char *label_from(const char *name)
+{
+	GString *out = g_string_sized_new(strlen(name));
+	const char *p = name;
+
+	while (*p != '\0') {
+		gunichar c = g_utf8_get_char_validated(p, -1);
+
+		if (!g_unichar_validate(c)) { /* also (gunichar) -1 and -2 */
+			g_string_append_c(out, '_');
+			p++;
+			continue;
+		}
+		if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c == '|')
+			g_string_append_c(out, '_');
+		else
+			g_string_append_len(out, p, g_utf8_next_char(p) - p);
+		p = g_utf8_next_char(p);
+	}
+	return g_string_free(out, FALSE);
+}
+
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok)
 {
-	const char *name;
-	char *p;
-
 	if (chatnet != NULL && *chatnet != '\0')
-		name = chatnet;
+		net->label = label_from(chatnet);
 	else if (tag != NULL && *tag != '\0')
-		name = tag;
+		net->label = label_from(tag);
 	else
-		name = NULL;
-
-	net->label = g_strdup(name);
-	for (p = net->label; p != NULL && *p != '\0'; p++) {
-		if ((unsigned char) *p < 0x20 || *p == '|')
-			*p = '_';
-	}
+		net->label = NULL;
 	net->casemap = e2e_casemap_parse(casemapping);
 	net->legacy_ok = legacy_ok;
 }
@@ -122,48 +141,129 @@ static char *fold_cycles(const char *s)
 	return g_string_free(out, FALSE);
 }
 
+/*
+ Invisible characters, dropped as NFKC_Casefold drops Default_Ignorable
+ code points: format characters (Cf: soft hyphen, zero width space and
+ joiners, bidi marks, word joiner, BOM, tags), the variation selectors,
+ the combining grapheme joiner and the Hangul fillers.
+*/
+static gboolean is_ignorable(gunichar c)
+{
+	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
+	       (c >= 0xe0100 && c <= 0xe01ef) || c == 0x34f || c == 0x115f || c == 0x1160 ||
+	       c == 0x3164 || c == 0xffa0;
+}
+
+static char *drop_ignorables(const char *s)
+{
+	GString *out = g_string_sized_new(strlen(s));
+	const char *p;
+
+	for (p = s; *p != '\0'; p = g_utf8_next_char(p)) {
+		if (!is_ignorable(g_utf8_get_char(p)))
+			g_string_append_len(out, p, g_utf8_next_char(p) - p);
+	}
+	return g_string_free(out, FALSE);
+}
+
+/* full case folding, with GLib's Cherokee cycles closed */
+static char *casefold_full(const char *s)
+{
+	char *folded = g_utf8_casefold(s, -1);
+	char *result = fold_cycles(folded);
+
+	g_free(folded);
+	return result;
+}
+
+/* g_utf8_normalize(s, mode), freeing s; NULL for NULL or if GLib refuses */
+static char *normalize_take(char *s, GNormalizeMode mode)
+{
+	char *result = s != NULL ? g_utf8_normalize(s, -1, mode) : NULL;
+
+	g_free(s);
+	return result;
+}
+
+/* casefold_full(s), freeing s; NULL for NULL */
+static char *casefold_take(char *s)
+{
+	char *result = s != NULL ? casefold_full(s) : NULL;
+
+	g_free(s);
+	return result;
+}
+
+/*
+ Unicode's compatibility caseless match (D146),
+ NFKD(casefold(NFKD(casefold(NFD(x))))), with the invisible characters
+ dropped first and NFKC at the end for one representative. Folding a
+ composed form instead (NFKC first) under-folds: U+1FB3 U+0342 and
+ U+1FBC U+0342 compose around U+0345 differently and fold apart, and
+ casefold leaves marks out of canonical order (U+01F0 U+0338 folds to
+ j U+030C U+0338), which only a normalisation after it puts right.
+*/
 static char *fold_unicode(const char *name)
 {
-	char *nfkc, *folded, *result;
+	char *s;
 
 	if (!g_utf8_validate(name, -1, NULL))
 		return NULL;
-	nfkc = g_utf8_normalize(name, -1, G_NORMALIZE_NFKC);
-	if (nfkc == NULL)
+	s = drop_ignorables(name);
+	s = normalize_take(s, G_NORMALIZE_NFD);
+	s = casefold_take(s);
+	s = normalize_take(s, G_NORMALIZE_NFKD);
+	s = casefold_take(s);
+	/* NFKC of the final NFKD is the NFKC of its input */
+	s = normalize_take(s, G_NORMALIZE_NFKC);
+	if (s == NULL)
 		return NULL;
-	folded = g_utf8_casefold(nfkc, -1);
-	g_free(nfkc);
-	result = fold_cycles(folded);
-	g_free(folded);
 	/* the specials are ASCII, so this keeps the string valid UTF-8 */
-	fold_bytes(result, E2E_CASEMAP_RFC1459);
+	fold_bytes(s, E2E_CASEMAP_RFC1459);
+	return s;
+}
+
+char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
+{
+	char *result;
+
+	if (exact != NULL)
+		*exact = FALSE;
+	if (name == NULL)
+		return NULL;
+	if (map == E2E_CASEMAP_UNICODE) {
+		result = fold_unicode(name);
+		if (result != NULL) {
+			if (exact != NULL)
+				*exact = TRUE;
+			return result;
+		}
+		/* not UTF-8: no Unicode fold can be decided, keep rfc1459's
+		   and say so */
+		result = g_strdup(name);
+		fold_bytes(result, E2E_CASEMAP_RFC1459);
+		return result;
+	}
+	result = g_strdup(name);
+	fold_bytes(result, map);
+	if (exact != NULL)
+		*exact = TRUE;
 	return result;
 }
 
 char *e2e_casefold(const char *name, E2E_CASEMAP map)
 {
-	char *result;
-
-	if (name == NULL)
-		return NULL;
-	if (map == E2E_CASEMAP_UNICODE) {
-		result = fold_unicode(name);
-		if (result != NULL)
-			return result;
-		/* not UTF-8: no Unicode fold can be decided, keep rfc1459's */
-		map = E2E_CASEMAP_RFC1459;
-	}
-	result = g_strdup(name);
-	fold_bytes(result, map);
-	return result;
+	return e2e_casefold_ex(name, map, NULL);
 }
 
 char *e2e_ctx_scoped(const E2E_NET *net, const char *wire)
 {
-	if (wire == NULL)
+	if (wire == NULL || strchr(wire, E2E_SCOPE_SEP) != NULL)
 		return NULL;
-	if (net == NULL || net->label == NULL)
+	if (net == NULL)
 		return g_strdup(wire);
+	if (net->label == NULL)
+		return NULL;
 	return g_strdup_printf("%s%c%s", net->label, E2E_SCOPE_SEP, wire);
 }
 
@@ -171,7 +271,7 @@ char *e2e_ctx_rescope(const char *like, const char *wire)
 {
 	const char *sep;
 
-	if (wire == NULL)
+	if (wire == NULL || strchr(wire, E2E_SCOPE_SEP) != NULL)
 		return NULL;
 	sep = like != NULL ? strchr(like, E2E_SCOPE_SEP) : NULL;
 	if (sep == NULL)
