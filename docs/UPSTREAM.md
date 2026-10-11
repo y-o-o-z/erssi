@@ -243,8 +243,9 @@ Fixed since `4833f418`:
 - fe-web holds a lock on <socket>.lock; an old socket is removed only
   when the lock is free (or, on Linux, nothing listens). The lock is a
   `flock()` the kernel drops when erssi dies, so a lock file left by a
-  killed erssi holds no start; a lock file that is a symbolic link or not
-  a regular file of the user's is refused, not followed. Before, an
+  killed erssi holds no start; a lock file that is a symbolic link, not
+  a regular file of the user's, or open to others (mode not 0600) is
+  refused, not followed and not changed. Before, an
   `ECONNREFUSED` meant "nobody listens", and FreeBSD (like the other BSDs
   and macOS) also returns it when a listener's queue is full, so a second
   erssi removed the socket of a busy one. Without file locks (some network

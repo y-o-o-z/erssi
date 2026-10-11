@@ -122,6 +122,9 @@ void fe_web_fuzz_fake_flock_errno(int err);
  * Linux; elsewhere a listener with a full queue says so too) */
 void fe_web_fuzz_set_econnrefused_reliable(gboolean reliable);
 
+/* Back to fe-web-server.c's own value of it */
+void fe_web_fuzz_reset_econnrefused_reliable(void);
+
 /* Use up the /proc lookups fe-web-server.c may make in this second of
  * its time(): a TCP loopback peer whose uid sock_diag does not give is
  * then ip:loopback */

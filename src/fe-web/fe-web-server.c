@@ -1293,7 +1293,9 @@ static void socket_addr_set(struct sockaddr_un *sa, const char *path)
  * never conflicts with itself. The lock file is never removed: an erssi
  * that opened it just before could then lock a file no one else sees.
  * A symbolic link is refused, not followed (O_NOFOLLOW), and the file must
- * be a regular file of the user's own; not inherited by /exec children.
+ * be a regular file of the user's own that no one else may open (a lock
+ * held by another user would keep erssi from starting); not inherited by
+ * /exec children.
  * Returns the fd; -1 when another process holds the lock; -2 when the
  * file system has no locks; -3 on any other error (errno set). */
 static int socket_lock(const char *path)
@@ -1303,8 +1305,12 @@ static int socket_lock(const char *path)
 	int fd, err;
 
 	lock_path = g_strconcat(path, ".lock", NULL);
-	/* O_NONBLOCK: a FIFO put there must not hang erssi in open() */
-	fd = open(lock_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0600);
+	/* O_RDWR: Linux emulates flock() on NFS with fcntl() locks, and an
+	 * exclusive one of those needs the file open for writing.
+	 * O_NONBLOCK: a FIFO put there must not hang erssi in open();
+	 * O_NOCTTY: nor may a terminal there become erssi's */
+	fd = open(lock_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY,
+	          0600);
 	err = errno;
 	g_free(lock_path);
 	if (fd < 0) {
@@ -1313,7 +1319,7 @@ static int socket_lock(const char *path)
 	}
 	if (fstat(fd, &st) < 0)
 		err = errno;
-	else if (!S_ISREG(st.st_mode) || st.st_uid != getuid())
+	else if (!S_ISREG(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077) != 0)
 		err = EPERM;
 	else
 		err = 0;
@@ -1339,18 +1345,24 @@ static int socket_lock(const char *path)
 static void socket_lock_failed(const char *path, int err)
 {
 	struct stat st;
-	char *lock_path;
-	const char *why = g_strerror(err);
+	char *lock_path, *why;
 
 	lock_path = g_strconcat(path, ".lock", NULL);
-	if (lstat(lock_path, &st) == 0) {
-		if (S_ISLNK(st.st_mode))
-			why = "it is a symbolic link - remove it";
-		else if (!S_ISREG(st.st_mode) || st.st_uid != getuid())
-			why = "it is not a regular file of yours - remove it";
-	}
+	if (lstat(lock_path, &st) < 0)
+		why = g_strdup(g_strerror(err));
+	else if (S_ISLNK(st.st_mode))
+		why = g_strdup("it is a symbolic link - remove it");
+	else if (!S_ISREG(st.st_mode) || st.st_uid != getuid())
+		why = g_strdup("it is not a regular file of yours - remove it");
+	else if ((st.st_mode & 077) != 0)
+		/* printtext() knows no %o */
+		why = g_strdup_printf("others may open it (mode %04o) - chmod 600 %s",
+		                      (unsigned int) (st.st_mode & 07777), lock_path);
+	else
+		why = g_strdup(g_strerror(err));
 	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR, "fe-web: Not starting: cannot lock %s: %s",
 	          lock_path, why);
+	g_free(why);
 	g_free(lock_path);
 }
 

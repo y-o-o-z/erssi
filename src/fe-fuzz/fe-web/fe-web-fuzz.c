@@ -661,9 +661,23 @@ void fe_web_fuzz_fake_flock_errno(int err)
 	fake_flock_errno = err;
 }
 
+/* erssi's own value, kept at the first change */
+static gboolean econnrefused_saved = FALSE;
+static gboolean econnrefused_default;
+
 void fe_web_fuzz_set_econnrefused_reliable(gboolean reliable)
 {
+	if (!econnrefused_saved) {
+		econnrefused_default = econnrefused_means_no_listener;
+		econnrefused_saved = TRUE;
+	}
 	econnrefused_means_no_listener = reliable;
+}
+
+void fe_web_fuzz_reset_econnrefused_reliable(void)
+{
+	if (econnrefused_saved)
+		econnrefused_means_no_listener = econnrefused_default;
 }
 
 static int fe_web_fuzz_connect(int fd, const struct sockaddr *addr, socklen_t len)
