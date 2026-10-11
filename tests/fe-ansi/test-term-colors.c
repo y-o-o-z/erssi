@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include "../test-home.h"
 
 #define MODULE_NAME "tests"
 
@@ -150,7 +151,7 @@ static void test_truecolor_fg(void)
 static void test_term_truecolor_setting(void)
 {
 	settings_add_choice("lookandfeel", "term_truecolor", 0, "auto;on;off");
-	ansi_term = g_new0(ANSI_TERM, 1);
+	term_open();
 
 	ansi_term->caps.max_colors = 256;
 	settings_set_str("term_truecolor", "auto");
@@ -164,8 +165,9 @@ static void test_term_truecolor_setting(void)
 	settings_set_str("term_truecolor", "off");
 	g_assert_false(term_truecolor_capable());
 
-	g_free(ansi_term);
-	ansi_term = NULL;
+	/* back to the default */
+	settings_set_str("term_truecolor", "auto");
+	term_close();
 }
 
 int main(int argc, char **argv)
@@ -178,6 +180,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/term/fallback-black24", test_fallback_black24);
 	g_test_add_func("/term/truecolor-fg", test_truecolor_fg);
 	g_test_add_func("/term/term-truecolor-setting", test_term_truecolor_setting);
+
+	test_home_setup();
 
 	core_preinit(argv[0]);
 	core_init();

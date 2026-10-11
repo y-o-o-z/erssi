@@ -27,6 +27,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
+#include "../../test-home.h"
 
 #define MODULE_NAME "test-cmd-queue"
 
@@ -129,6 +130,8 @@ int main(int argc, char **argv)
 	int res;
 
 	g_test_init(&argc, &argv, NULL);
+
+	test_home_setup();
 
 	core_preinit(*argv);
 	irssi_gui = IRSSI_GUI_NONE;

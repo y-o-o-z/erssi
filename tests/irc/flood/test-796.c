@@ -30,6 +30,7 @@
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
 #include <irssi/src/irc/core/irc-channels.h>
+#include "../../test-home.h"
 
 /* flood.c */
 void irc_flood_init(void);
@@ -173,6 +174,8 @@ int main(int argc, char **argv)
 #if GLIB_CHECK_VERSION(2,38,0)
 	g_test_set_nonfatal_assertions();
 #endif
+
+	test_home_setup();
 
 	core_preinit(*argv);
 	irssi_gui = IRSSI_GUI_NONE;

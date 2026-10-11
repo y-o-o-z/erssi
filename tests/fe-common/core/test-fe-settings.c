@@ -13,6 +13,7 @@
 #include <irssi/src/fe-common/core/printtext.h>
 
 #include <string.h>
+#include "../../test-home.h"
 
 #define MODULE_NAME "tests"
 #define MASK "(secret, set - not shown)"
@@ -66,16 +67,22 @@ static void run_set(const char *cmd)
 	signal_emit("send command", 3, cmd, NULL, NULL);
 }
 
-/* the printed line of a setting; the theme decides the separator */
+/* the printed line of a setting: it starts with the key (the theme decides
+ * the separator), so another line that only mentions the key does not count */
 static char *line_of(const char *key)
 {
 	char **lines = g_strsplit(printed->str, "\n", -1);
 	char *found = NULL;
+	size_t len = strlen(key);
 	int i;
 
 	for (i = 0; lines[i] != NULL && found == NULL; i++) {
-		if (strstr(lines[i], key) != NULL)
-			found = g_strdup(lines[i]);
+		const char *l = lines[i];
+
+		while (*l == ' ')
+			l++;
+		if (strncmp(l, key, len) == 0 && (l[len] == ' ' || l[len] == '=' || l[len] == '\0'))
+			found = g_strdup(l);
 	}
 	g_strfreev(lines);
 	g_assert_nonnull(found);
@@ -133,6 +140,8 @@ static void test_set_empty_secret_shown_empty(void)
 	run_set("/set empty_password");
 	line = line_of("empty_password");
 	g_assert_null(strstr(line, "not shown"));
+	/* what follows the key is an empty value: nothing but separators */
+	g_assert_cmpstr(g_strstrip(g_strdelimit(line + strlen("empty_password"), "=", ' ')), ==, "");
 	g_free(line);
 }
 
@@ -198,6 +207,8 @@ int main(int argc, char **argv)
 	add("/fe-settings/set/pattern-masks", test_set_pattern_masks);
 	add("/fe-settings/set/plain-visible", test_set_plain_visible);
 	add("/fe-settings/complete/secret-value-not-offered", test_complete_secret_value_not_offered);
+
+	test_home_setup();
 
 	core_preinit(*argv);
 	irssi_gui = IRSSI_GUI_NONE;
