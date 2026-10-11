@@ -108,6 +108,20 @@ static void test_casefold(void)
 	SAME("#\xe1\x8e\xa0", "#\xea\xad\xb0", E2E_CASEMAP_UNICODE); /* U+13A0 / U+AB70 */
 	SAME("#\xe1\x8f\xb0", "#\xe1\x8f\xb8", E2E_CASEMAP_UNICODE); /* U+13F0 / U+13F8 */
 	SAME("#\xc4\xb0", "#i\xcc\x87", E2E_CASEMAP_UNICODE); /* U+0130: full case folding */
+	/* the Turkish i: per code point case mappings take U+0130 to i and
+	   U+0131 to I, so dotted, dotless and plain i are one letter */
+	SAME("#\xc4\xb1", "#I", E2E_CASEMAP_UNICODE);                   /* U+0131 */
+	SAME("#\xc4\xb0", "#i", E2E_CASEMAP_UNICODE);                   /* U+0130 */
+	SAME("#\xc4\xb1i", "#II", E2E_CASEMAP_UNICODE);
+	SAME("#\xf0\x9d\x9a\xa4", "#i", E2E_CASEMAP_UNICODE);         /* U+1D6A4 */
+	SAME("#i\xcc\x87\xcc\x81", "#i\xcc\x81", E2E_CASEMAP_UNICODE); /* the dot in the marks */
+	SAME("#\xc4\xb1\xcc\x87", "#i", E2E_CASEMAP_UNICODE);
+	DIFF("#a\xcc\x87", "#a", E2E_CASEMAP_UNICODE);                  /* not after an i */
+	DIFF("#i\xcc\x81", "#i", E2E_CASEMAP_UNICODE);                  /* other marks stay */
+	DIFF("#ix\xcc\x87", "#ix", E2E_CASEMAP_UNICODE);                /* only directly after */
+	/* the run is every mark (g_unichar_ismark), ccc 0 ones like U+20DE too */
+	SAME("#i\xe2\x83\x9e\xcc\x87", "#i\xe2\x83\x9e", E2E_CASEMAP_UNICODE);
+	DIFF("#\xc4\xb1", "#I", E2E_CASEMAP_RFC1459);
 	/* the representative of a Cherokee pair is CaseFolding.txt's, the capital */
 	s = e2e_casefold("#\xea\xad\xb0", E2E_CASEMAP_UNICODE);
 	g_assert_cmpstr(s, ==, "#\xe1\x8e\xa0");
@@ -369,8 +383,6 @@ static char *variant_of(GRand *rand, const char *s)
 		if (g_rand_boolean(rand)) {
 			if (c < 0x80 && (swap = strchr("[]\\~{}|^", c)) != NULL)
 				v = "{}|^[]\\~"[swap - "[]\\~{}|^"];
-			else if (c == 0x130 || c == 0x131)
-				v = c;
 			else if (g_rand_boolean(rand))
 				v = g_unichar_toupper(c);
 			else if (g_rand_boolean(rand))
@@ -406,16 +418,37 @@ static char *code_points(const char *s)
 	return g_string_free(out, FALSE);
 }
 
-#define SERVER_MODELS 6
+#define SERVER_MODELS 9
+
+/* s with every code point mapped by map (towlower / unicode.ToLower) */
+static char *map_code_points(const char *s, gunichar (*map)(gunichar))
+{
+	GString *out = g_string_new(NULL);
+	const char *p;
+
+	for (p = s; *p != '\0'; p = g_utf8_next_char(p))
+		g_string_append_unichar(out, map(g_utf8_get_char(p)));
+	return g_string_free(out, FALSE);
+}
 
 /* what a server may take as the same name as s: rfc8265 / PRECIS order,
    tests/e2e/e2eircd.py's utf8 model, the other order, whole-string GLib
-   case mappings */
+   case mappings, per code point case mappings (C towlower / towupper, Go
+   unicode.ToLower / ToUpper, hybrid's and solanum's upper-case irccmp),
+   and upper case after NFKC */
 static char *server_image(int model, const char *s)
 {
 	char *a, *b;
 
 	switch (model) {
+	case 6:
+		return map_code_points(s, g_unichar_tolower);
+	case 7:
+		return map_code_points(s, g_unichar_toupper);
+	case 8:
+		a = g_utf8_normalize(s, -1, G_NORMALIZE_NFKC);
+		b = g_utf8_strup(a, -1);
+		break;
 	case 0:
 		a = g_utf8_casefold(s, -1);
 		b = g_utf8_normalize(a, -1, G_NORMALIZE_NFC);
@@ -477,10 +510,6 @@ static void test_casefold_random(void)
 		for (model = 0; model < SERVER_MODELS; model++) {
 			char *image, *ifold;
 
-			/* the simple upper case of U+0131 is plain I, full case
-			   folding keeps U+0131 (see the code point sweep) */
-			if (model == 3 && strstr(name->str, "\xc4\xb1") != NULL)
-				continue;
 			image = server_image(model, name->str);
 			ifold = e2e_casefold(image, E2E_CASEMAP_UNICODE);
 
@@ -534,10 +563,7 @@ static void test_casefold_ascii(void)
 }
 
 /* every code point: the superset fold is idempotent and equates a letter
-   with its upper and lower case - except U+0130 and U+0131, where the
-   simple case mapping (to and from plain i / I) and full case folding
-   (CaseFolding.txt, as rfc8265 uses it) disagree; the fold follows full
-   case folding there, U+0130 -> i U+0307 */
+   with its upper and lower case, U+0130 and U+0131 too */
 static void test_casefold_all_code_points(void)
 {
 	gunichar u, variants[2];
@@ -565,10 +591,6 @@ static void test_casefold_all_code_points(void)
 			g_error("fold of U+%04X is not idempotent", u);
 		g_free(twice);
 
-		if (u == 0x130 || u == 0x131) {
-			g_free(once);
-			continue;
-		}
 		variants[0] = g_unichar_toupper(u);
 		variants[1] = g_unichar_tolower(u);
 		for (k = 0; k < 2; k++) {

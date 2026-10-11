@@ -76,16 +76,20 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
          before and directly after every U+03B9: U+0345 folds to that iota,
          and servers that case fold before normalising leave the marks on
          the iota where D146 leaves them on the letter;
-      4. NFKC, for one representative;
-      5. the RFC1459 specials.
+      4. the Turkish i: U+0131 becomes i, and a U+0307 in the run of
+         combining marks directly after an i is dropped;
+      5. NFKC, for one representative;
+      6. the RFC1459 specials.
     Full case folding is g_utf8_casefold() followed by a fix for GLib's
     Cherokee: a code point whose fold is a single other code point folding
     back to it becomes the smaller of the two (CaseFolding.txt's target).
     The result is valid UTF-8 and holds none of the characters of step 1.
   - UNICODE, invalid UTF-8: the byte-wise RFC1459 fold.
  Bytes above 0x7f are left alone by the exact maps. fold(fold(x)) == fold(x).
- U+0130 and U+0131 follow full case folding (U+0130 -> i U+0307), not the
- simple case mapping to and from plain i.
+ Step 4 covers servers that map case per code point (towlower, Go's
+ unicode.ToLower, an upper-case irccmp), which take U+0130 to plain i and
+ U+0131 to I: dotted, dotless and plain i fold to one letter (U+1D6A4
+ too, through NFKD).
 
  Never persist the output of e2e_casefold() (it may change with the
  Unicode tables or this fold): persist the original name and fold both
