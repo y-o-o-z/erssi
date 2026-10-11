@@ -297,7 +297,7 @@ maintainer's pull requests are built and tested on the maintainer's own
 server: the hardened build with `meson test`, the ASan/UBSan build, live
 E2E interop with `rpe2e.pl`, libFuzzer runs on the fe-web and E2E parsers,
 the installer test and shellcheck. Each job is a commit status (the check
-mark next to a commit) that links to a summary page. Pull requests from
+mark next to a commit) with a one-line result. Pull requests from
 other contributors are tested after the maintainer has reviewed them.
 
 `.github/workflows/shellter-ci.yml` describes the same jobs for GitHub
