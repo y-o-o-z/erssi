@@ -170,6 +170,23 @@
     until /E2E REVERIFY (nobody gets a key that way). The rpe2e.pl script
     is recognised by its file name (rpe2e*.pl).
 
+    Networks: keys, sessions and settings are kept per network - the
+    chatnet name of the server, otherwise its tag - so #test on one
+    network and #test on another are two conversations with keys of
+    their own (in keyring.json as "<network>" U+001F "#test"; on the wire
+    only the bare name is used, as rpe2e.pl and repartee do). A keyring
+    from rpe2e.pl or from erssi before this (one entry per name, for any
+    network) is taken over automatically while erssi uses one network
+    (counting the servers connected, connecting, waiting to reconnect and
+    set to autoconnect). With several networks erssi cannot know which
+    network an old entry belongs to: a message to such a channel or query
+    is NOT sent (you are told why), and nothing is decrypted or answered
+    for it there, until /E2E ADOPT in its window binds the old entries to
+    that network, or /E2E OFF turns encryption off for it on that network.
+    A channel or address whose name holds the control character U+001F
+    cannot be kept per network: nothing is encrypted for it, and a
+    message to it is not sent while an old entry may have encryption on.
+
     EXPORT and IMPORT do not expand '~' - give a full path.
 
 %9Examples:%9

@@ -543,7 +543,7 @@ static void test_corrupt_fails_closed(void)
 
 	/* the gate reads with load_checked: not "no keyring" */
 	kr = e2e_keyring_load_checked(path, &status, &error);
-	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, "#secret", "hello", NULL, NULL, &g);
+	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, NULL, "#secret", "hello", NULL, NULL, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
 	e2e_gate_result_clear(&g);
 	g_assert_cmpint(status, ==, E2E_LOAD_LOST);
@@ -575,7 +575,7 @@ static void test_corrupt_fails_closed(void)
 	kr = e2e_keyring_load_checked(path, &status, &error);
 	g_assert_cmpint(status, ==, E2E_LOAD_OK);
 	g_assert_true(e2e_keyring_save(path, kr, &error));
-	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, "#secret", "hello", NULL, NULL, &g);
+	e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, NULL, "#secret", "hello", NULL, NULL, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
 	e2e_gate_result_clear(&g);
 	/* only while there is no keyring */

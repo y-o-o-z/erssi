@@ -6,12 +6,14 @@
 WHOIS (311 - rpe2e.pl learns its own ident@host from it), PRIVMSG/NOTICE to a
 channel and to a nick (CTCP too, which carries KEYREQ/KEYRSP). Every
 PRIVMSG/NOTICE line is also written to the --wire file, so the test can check
-what really crossed the server.
+what really crossed the server. --network names the network in 005 NETWORK=,
+so two of these can play two networks.
 """
 import argparse
 import asyncio
 
 SRV = "e2e.test"
+NETWORK = "E2ETest"
 clients = {}   # nick (lower) -> Client
 channels = {}  # channel (lower) -> set(nick lower)
 
@@ -66,7 +68,7 @@ async def handle(reader, writer, wire_path):
                 for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
                                  ("004", f"{SRV} e2e io biklmnopstv")):
                     me.send(f":{SRV} {num} {me.nick} :{msg}")
-                me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK=E2ETest :are supported")
+                me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK} :are supported")
                 me.send(f":{SRV} 376 {me.nick} :End of MOTD")
             elif cmd == "PING":
                 me.send(f":{SRV} PONG {SRV} :{args[0].lstrip(':') if args else ''}")
@@ -129,7 +131,10 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--wire", required=True)
+    parser.add_argument("--network", default="E2ETest")
     args = parser.parse_args()
+    global NETWORK
+    NETWORK = args.network
     server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire), "127.0.0.1", args.port)
     async with server:
         await server.serve_forever()

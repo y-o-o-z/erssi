@@ -35,8 +35,17 @@ gboolean e2e_ensure_identity(E2E_JSON *kr, E2E_IDENTITY *id);
 char *e2e_resolve_dm_handle(SERVER_REC *server, const E2E_JSON *kr, const char *nick);
 /* our own peer-visible ident@host on server, NULL while unknown */
 const char *e2e_own_handle(SERVER_REC *server);
-/* "@<own>" for a DM context, the channel itself, NULL while unknown */
+/* "@<own>" (scoped like ctx) for a DM context, the channel itself, NULL
+   while unknown */
 char *e2e_incoming_ctx_for(SERVER_REC *server, const char *ctx);
+/* the network of server: the label is its chatnet (as configured), else
+   its tag; the casemap its CASEMAPPING; legacy_ok e2e_legacy_ok(). The
+   caller calls e2e_net_clear(). */
+void e2e_server_net(SERVER_REC *server, E2E_NET *net);
+/* erssi uses at most one network: the labels of the servers connected,
+   connecting and waiting to reconnect, and of the autoconnect servers
+   (one without a chatnet by its address, unless it is up) */
+gboolean e2e_legacy_ok(void);
 void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
 /* the 30 s limiter of the KEYREQs we send */
 GHashTable *e2e_keyreq_out_stamps(void);

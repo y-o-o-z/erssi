@@ -11,9 +11,20 @@
  and the config of a query are keyed by the PEER's handle ("@<peer>"),
  incoming DM sessions by OUR handle ("@<own>", recipient-keyed, see
  repartee's docs/rpe2e-dm-addendum.md).
+
+ Networks (e2e-scope.h): a parameter named ctx is a STORAGE context,
+ "<label>\x1f<wire>" - keyring keys and "channel" members are built from
+ it as it is. Everything on the wire (c=, the AAD, the HKDF info of a
+ wrap, what is signed) is the bare e2e_ctx_wire(ctx). The handlers and
+ the gate take the network (const E2E_NET *) and find the storage
+ context with e2e_ctx_lookup / e2e_ctx_resolve; an old unscoped context
+ that may not be used there (BLOCKED) is treated as E2E off by the
+ handlers and refused by the gate. A NULL net is the behaviour before the
+ scope: every context as it is.
 */
 
 #include "e2e-json.h"
+#include "e2e-scope.h"
 #include "e2e-wire.h"
 
 #define E2E_KEYREQ_MIN_INTERVAL         30
@@ -84,13 +95,13 @@ char *e2e_build_reciprocal_keyreq_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id
    for /e2e accept (then pending_inbound has it). outgoing_stamps is the
    30 s limiter of KEYREQs we send. */
 void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoing_stamps,
-                       const char *sender_handle, const char *nick, const char *body,
-                       const char *own_handle, char **rsp, char **reciprocal);
+                       const E2E_NET *net, const char *sender_handle, const char *nick,
+                       const char *body, const char *own_handle, char **rsp, char **reciprocal);
 /* TRUE when a session was installed */
-gboolean e2e_handle_keyrsp(E2E_JSON *kr, const char *sender_handle, const char *nick,
-                           const char *body);
-gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *sender_handle,
-                          const char *nick, const char *body);
+gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_handle,
+                           const char *nick, const char *body);
+gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *net,
+                          const char *sender_handle, const char *nick, const char *body);
 /* "at most once per 10 s" for each kind of handshake, sender and context */
 gboolean e2e_handshake_allow(GHashTable *stamps, E2E_HS_TYPE type, const char *sender,
                              const char *ctx);
@@ -108,11 +119,14 @@ gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *c
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp);
 /* the ident@host of every "@<handle>" config with E2E on that belongs to
-   nick (its "nick" member, or a peer last seen as nick there) */
-GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const char *nick);
+   nick (its "nick" member, or a peer last seen as nick there), of net:
+   its own configs and old unscoped ones that none of its own hides */
+GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick);
 /* /e2e off in the query with nick (live: its ident@host now, or NULL):
-   the "@<handle>" contexts to turn off */
-GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const char *nick, const char *live);
+   the "@<handle>" contexts to turn off - bare, the caller finds them on
+   its network */
+GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                                 const char *live);
 /* some "accepted" row is for this fingerprint */
 gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex);
 /* /e2e revoke, decline, forget: handle no longer gets our key for ctx */
@@ -151,12 +165,12 @@ typedef enum {
 
 typedef struct {
 	E2E_GATE_ACTION action;
-	char *ctx;
+	char *ctx;		/* CIPHER: the storage context */
 	GPtrArray *wires;	/* CIPHER: the message bodies */
 	GPtrArray *notices;	/* REKEYs to send first: nick, body, nick, body ... */
 	GPtrArray *warnings;	/* to show (rekey problems) */
 	char *message;
-	gboolean save_needed;	/* a key was generated */
+	gboolean save_needed;	/* a key was generated, or old rows taken over */
 } E2E_GATE_RESULT;
 
 #define E2E_REFUSE_NO_HANDLE "cannot encrypt PM without peer handle — wait for a message from them first"
@@ -164,16 +178,20 @@ typedef struct {
 #define E2E_REFUSE_ENCRYPT   "encryption failed — message NOT sent as plaintext (use /e2e off to send cleartext)"
 #define E2E_REFUSE_TOO_LONG  "the encrypted line would be longer than the server allows (target name too long) — message NOT sent"
 #define E2E_REFUSE_LOST      "cannot encrypt — the keyring was corrupt and is moved aside, E2E state is lost; message NOT sent. /e2e reset starts a new keyring"
+#define E2E_REFUSE_LEGACY "E2E for %s was set up before erssi kept networks apart, and erssi uses several networks — message NOT sent. /e2e adopt in this window binds it to %s; /e2e off turns it off here"
 
 /* kr_ok: the keyring was read (an unreadable one may hold an enabled
    context: everything but a bot command is refused). id may be NULL
-   (no REKEY then). */
+   (no REKEY then). net: the server's network; an old context of unknown
+   network there is refused (E2E_REFUSE_LEGACY), one that may be taken
+   over is (only when the line is encrypted: save_needed). */
 /* the ident@host of another "@<handle>" config with E2E on for nick (a
    query's "nick" member, or a peer last seen as nick) than live; NULL
    when there is none. The gate refuses a DM to nick then. */
-char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const char *nick, const char *live);
+char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                               const char *live);
 void e2e_gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
-                     const char *target, const char *body,
+                     const E2E_NET *net, const char *target, const char *body,
                      E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res);
 void e2e_gate_result_clear(E2E_GATE_RESULT *res);
 /* every IRC line of the wires fits max_len bytes (without CR LF) */
@@ -182,7 +200,8 @@ gboolean e2e_gate_lines_fit(const E2E_GATE_RESULT *res, const char *tags, const 
 /* An outgoing buffer with more than one IRC line in it (CR, LF or NUL
    before its end): the refusal message when one of its PRIVMSGs would
    need encryption or be refused by the gate, NULL when it may go out */
-char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const char *buf, gsize len,
+char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                         const char *buf, gsize len,
                          E2E_RESOLVE_FUNC resolve, void *resolve_data);
 /* one of the IRC lines in buf (split at CR, LF and NUL) is a PRIVMSG */
 gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
@@ -200,6 +219,7 @@ typedef struct {
 	E2E_RESOLVE_FUNC resolve;
 	void *resolve_data;
 	GHashTable *keyreq_stamps;	/* the 30 s limiter of our KEYREQs */
+	const E2E_NET *net;	/* the network; NULL: unscoped (as before) */
 } E2E_IN_PARAMS;
 
 typedef enum {
@@ -212,10 +232,10 @@ typedef enum {
 typedef struct {
 	E2E_IN_ACTION action;
 	char *plain;		/* PLAIN: valid UTF-8 */
-	char *ctx;
+	char *ctx;		/* the storage context (bare until it is found) */
 	char *keyreq;		/* DROP: an automatic KEYREQ to send to the sender */
 	char *debug;		/* why it was dropped */
-	gboolean save_needed;
+	gboolean save_needed;	/* a KEYREQ of ours is pending, or old rows taken over */
 } E2E_IN_RESULT;
 
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,

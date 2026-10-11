@@ -46,11 +46,14 @@
 #include "e2e-wire.h"
 
 #include <irssi/src/core/channels.h>
+#include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/modules.h>
 #include <irssi/src/core/nicklist.h>
 #include <irssi/src/core/queries.h>
+#include <irssi/src/core/servers-reconnect.h>
+#include <irssi/src/core/servers-setup.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/irc/core/irc.h>
@@ -104,12 +107,13 @@ void e2e_print_item(void *item, const char *fmt, ...)
 
 void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick)
 {
+	const char *wire = e2e_ctx_wire(ctx);
 	WI_ITEM_REC *item;
 
 	if (server == NULL)
 		return NULL;
-	if (ctx != NULL && e2e_is_channel(ctx)) {
-		item = window_item_find(server, ctx);
+	if (wire != NULL && e2e_is_channel(wire)) {
+		item = window_item_find(server, wire);
 		if (item != NULL)
 			return item;
 	}
@@ -223,6 +227,101 @@ static void sig_script_destroyed(void)
 {
 	if (script_check_id == 0)
 		script_check_id = g_idle_add(script_check, NULL);
+}
+
+/* ---- networks ---- */
+
+/* the chatnet as configured (its own spelling), else the name given */
+static const char *chatnet_name(const char *chatnet)
+{
+	CHATNET_REC *rec;
+
+	if (chatnet == NULL || *chatnet == '\0')
+		return NULL;
+	rec = chatnet_find(chatnet);
+	return rec != NULL && rec->name != NULL ? rec->name : chatnet;
+}
+
+static void add_label(GHashTable *labels, const char *chatnet, const char *tag)
+{
+	E2E_NET net;
+
+	e2e_net_init(&net, chatnet_name(chatnet), tag, NULL, FALSE);
+	/* a server without a name: one of its own */
+	g_hash_table_add(labels, net.label != NULL ? net.label : g_strdup("\001"));
+	net.label = NULL;
+	e2e_net_clear(&net);
+}
+
+static gboolean has_live_conn(const char *address, int port)
+{
+	GSList *lists[2] = { servers, lookup_servers }, *tmp;
+	int i;
+
+	for (i = 0; i < 2; i++)
+		for (tmp = lists[i]; tmp != NULL; tmp = tmp->next) {
+			SERVER_REC *rec = tmp->data;
+
+			if (rec->connrec != NULL && rec->connrec->port == port &&
+			    rec->connrec->address != NULL &&
+			    g_ascii_strcasecmp(rec->connrec->address, address) == 0)
+				return TRUE;
+		}
+	for (tmp = reconnects; tmp != NULL; tmp = tmp->next) {
+		RECONNECT_REC *rec = tmp->data;
+
+		if (rec->conn != NULL && rec->conn->port == port && rec->conn->address != NULL &&
+		    g_ascii_strcasecmp(rec->conn->address, address) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+gboolean e2e_legacy_ok(void)
+{
+	GHashTable *labels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	GSList *lists[2] = { servers, lookup_servers }, *tmp;
+	gboolean ok;
+	int i;
+
+	for (i = 0; i < 2; i++)
+		for (tmp = lists[i]; tmp != NULL; tmp = tmp->next) {
+			SERVER_REC *rec = tmp->data;
+
+			add_label(labels, rec->connrec != NULL ? rec->connrec->chatnet : NULL, rec->tag);
+		}
+	/* waiting to reconnect: still a network in use */
+	for (tmp = reconnects; tmp != NULL; tmp = tmp->next) {
+		RECONNECT_REC *rec = tmp->data;
+
+		if (rec->conn != NULL)
+			add_label(labels, rec->conn->chatnet, rec->conn->tag);
+	}
+	/* will connect: the chatnet, or - without one, the tag is not known
+	   yet - the address, unless that server is up already */
+	for (tmp = setupservers; tmp != NULL; tmp = tmp->next) {
+		SERVER_SETUP_REC *rec = tmp->data;
+
+		if (!rec->autoconnect)
+			continue;
+		if (rec->chatnet != NULL && *rec->chatnet != '\0')
+			add_label(labels, rec->chatnet, NULL);
+		else if (rec->address != NULL && !has_live_conn(rec->address, rec->port))
+			g_hash_table_add(labels, g_strconcat("\002", rec->address, NULL));
+	}
+	ok = g_hash_table_size(labels) <= 1;
+	g_hash_table_destroy(labels);
+	return ok;
+}
+
+void e2e_server_net(SERVER_REC *server, E2E_NET *net)
+{
+	const char *casemapping = NULL;
+
+	if (IS_IRC_SERVER(server) && IRC_SERVER(server)->isupport != NULL)
+		casemapping = g_hash_table_lookup(IRC_SERVER(server)->isupport, "CASEMAPPING");
+	e2e_net_init(net, server != NULL && server->connrec != NULL ? chatnet_name(server->connrec->chatnet) : NULL,
+	             server != NULL ? server->tag : NULL, casemapping, e2e_legacy_ok());
 }
 
 /* ---- the keyring ---- */
@@ -395,11 +494,18 @@ const char *e2e_own_handle(SERVER_REC *server)
 char *e2e_incoming_ctx_for(SERVER_REC *server, const char *ctx)
 {
 	const char *own;
+	char *wire, *out;
 
-	if (ctx == NULL || *ctx != '@')
+	if (ctx == NULL || *e2e_ctx_wire(ctx) != '@')
 		return g_strdup(ctx);
 	own = e2e_own_handle(server);
-	return own != NULL && *own != '\0' ? g_strconcat("@", own, NULL) : NULL;
+	if (own == NULL || *own == '\0')
+		return NULL;
+	/* on the network of ctx */
+	wire = g_strconcat("@", own, NULL);
+	out = e2e_ctx_rescope(ctx, wire);
+	g_free(wire);
+	return out;
 }
 
 /* a one-shot WHOIS of ourselves: its 311 has the displayed host, exactly
@@ -572,6 +678,7 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 {
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
+	E2E_NET net;
 	char *error = NULL, *msg;
 
 	if (memchr(str->str, '\r', len) == NULL && memchr(str->str, '\n', len) == NULL &&
@@ -579,7 +686,9 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 		return FALSE;
 	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
 	g_free(error);
-	msg = e2e_gate_multiline(kr, status == E2E_LOAD_OK, str->str, len, resolve_cb, server);
+	e2e_server_net(server, &net);
+	msg = e2e_gate_multiline(kr, status == E2E_LOAD_OK, &net, str->str, len, resolve_cb, server);
+	e2e_net_clear(&net);
 	if (msg != NULL) {
 		e2e_print_item(NULL, "%s", msg);
 		g_string_truncate(str, 0);
@@ -596,6 +705,7 @@ static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 	E2E_IDENTITY id;
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
+	E2E_NET net;
 	char *line, *tags, *target, *body, *error = NULL;
 	gboolean have_id = FALSE, created;
 	gsize len;
@@ -635,8 +745,11 @@ static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 	if (status == E2E_LOAD_OK)
 		have_id = e2e_identity_get(kr, &id, FALSE, &created, &error);
 	g_free(error);
-	e2e_gate_decide(kr, status == E2E_LOAD_OK, have_id ? &id : NULL, target, body,
+	/* this network's keys and settings */
+	e2e_server_net(server, &net);
+	e2e_gate_decide(kr, status == E2E_LOAD_OK, have_id ? &id : NULL, &net, target, body,
 	                resolve_cb, server, &res);
+	e2e_net_clear(&net);
 	/* the corrupt keyring was moved aside: say what to do */
 	if (status == E2E_LOAD_LOST && res.action == E2E_GATE_REFUSE) {
 		g_free(res.message);
@@ -763,6 +876,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	E2E_IN_RESULT res;
 	E2E_IDENTITY id;
 	E2E_JSON *kr;
+	E2E_NET net;
 	const char *sp, *text, *orig_nick = nick, *orig_address = address;
 	char *target, **readings, *wait_key, *newdata;
 	gboolean have_id, is_channel, lost;
@@ -809,6 +923,8 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	p.resolve = resolve_cb;
 	p.resolve_data = server;
 	p.keyreq_stamps = keyreq_out;
+	e2e_server_net(server, &net);
+	p.net = &net;
 
 	/* the keyring is lost (moved aside): nothing to decrypt with, and no
 	   new identity or KEYREQ until /e2e reset */
@@ -818,6 +934,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 		                nick);
 		signal_stop();
 		e2e_json_free(kr);
+		e2e_net_clear(&net);
 		g_strfreev(readings);
 		g_free(target);
 		return;
@@ -844,14 +961,19 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			e2e_print_debug(server, res.ctx, nick, "%s", res.debug);
 		if (res.keyreq != NULL) {
 			e2e_send_notice(server, nick, res.keyreq);
-			e2e_save(kr);
 			e2e_print_item(e2e_notice_item(server, res.ctx, nick), "KEYREQ sent to %s for %s",
-			               nick, res.ctx);
-			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, res.ctx);
+			               nick, e2e_ctx_wire(res.ctx));
+			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick,
+			                e2e_ctx_wire(res.ctx));
 		}
+		/* a KEYREQ of ours waits for its answer; old rows taken over */
+		if (res.save_needed)
+			e2e_save(kr);
 		signal_stop();
 		break;
 	case E2E_IN_PLAIN:
+		if (res.save_needed)
+			e2e_save(kr);
 		/* a decrypted non-ACTION CTCP would be answered by irssi with a
 		   PLAIN TEXT reply; our side never encrypts those, so drop it */
 		if (res.plain[0] == '\001' && strncmp(res.plain, "\001ACTION ", 8) != 0) {
@@ -871,6 +993,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	if (have_id)
 		e2e_identity_wipe(&id);
 	e2e_json_free(kr);
+	e2e_net_clear(&net);
 	g_strfreev(readings);
 	g_free(target);
 }
@@ -884,8 +1007,9 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	E2E_HS_TYPE type;
 	E2E_IDENTITY id;
 	E2E_JSON *kr;
+	E2E_NET net;
 	const char *sender, *ctx;
-	char *before, *after, *key, *rsp = NULL, *recip = NULL;
+	char *before, *after, *key, *rsp = NULL, *recip = NULL, *limit, *sctx = NULL;
 	gboolean have_id, lost;
 	size_t taglen = strlen(E2E_CTCP_TAG);
 	static const char *const names[] = { "", "KEYREQ", "KEYRSP", "REKEY" };
@@ -907,13 +1031,16 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 
 	/* a flood must not become a KEYRSP flood (Excess Flood), a stream of
 	   signature checks or of keyring writes: each kind once per 10 s per
-	   sender and context */
-	if (!e2e_handshake_allow(keyreq_in, type, sender, ctx)) {
+	   sender and context - of this server */
+	limit = g_strdup_printf("%s%c%s", server->tag, E2E_SCOPE_SEP, ctx);
+	if (!e2e_handshake_allow(keyreq_in, type, sender, limit)) {
 		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s dropped: rate limit",
 		                names[type], nick, sender, ctx);
+		g_free(limit);
 		e2e_handshake_free(parsed);
 		return;
 	}
+	g_free(limit);
 	kr = e2e_keyring_is_lost() ? NULL : e2e_load_full(&lost);
 	if (kr == NULL || lost) {
 		e2e_print_debug(server, ctx, nick, "%s from %s ignored: the keyring is lost (/e2e reset)",
@@ -922,6 +1049,14 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 		e2e_handshake_free(parsed);
 		return;
 	}
+	e2e_server_net(server, &net);
+	/* E2E set up before networks were kept apart, erssi on several: the
+	   handshake is ignored (E2E is off there) until /e2e adopt */
+	if (parsed != NULL && e2e_ctx_lookup(kr, &net, ctx, &sctx) == E2E_CTX_BLOCKED)
+		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s ignored: E2E there was set up before networks were kept apart and erssi uses several - /e2e adopt in this window binds it to this network",
+		                names[type], nick, sender, ctx);
+	g_free(sctx);
+	sctx = NULL;
 	before = e2e_keyring_snapshot(kr);
 	have_id = e2e_ensure_identity(kr, &id);
 	switch (type) {
@@ -929,18 +1064,18 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 		if (parsed != NULL)
 			e2e_print_debug(server, ctx, nick, "RX KEYREQ from %s (%s) for %s", nick, sender, ctx);
 		if (have_id)
-			e2e_handle_keyreq(kr, &id, keyreq_out, sender, nick, args,
+			e2e_handle_keyreq(kr, &id, keyreq_out, &net, sender, nick, args,
 			                  e2e_own_handle(server), &rsp, &recip);
 		break;
 	case E2E_HS_KEYRSP:
 		if (parsed != NULL)
 			e2e_print_debug(server, ctx, nick, "RX KEYRSP from %s (%s) for %s", nick, sender, ctx);
-		if (e2e_handle_keyrsp(kr, sender, nick, args))
+		if (e2e_handle_keyrsp(kr, &net, sender, nick, args))
 			e2e_print_debug(server, ctx, nick, "KEYRSP from %s (%s) installed session on %s",
 			                nick, sender, ctx);
 		break;
 	case E2E_HS_REKEY:
-		if (have_id && e2e_handle_rekey(kr, &id, sender, nick, args))
+		if (have_id && e2e_handle_rekey(kr, &id, &net, sender, nick, args))
 			e2e_print_debug(server, ctx, nick, "REKEY from %s (%s) installed on %s",
 			                nick, sender, ctx);
 		break;
@@ -951,8 +1086,10 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	if (strcmp(before, after) != 0)
 		e2e_save(kr);
 
-	if (type == E2E_HS_KEYREQ && parsed != NULL && rsp == NULL) {
-		key = g_strconcat(sender, "|", ctx, NULL);
+	/* the request waits under this network's context */
+	if (type == E2E_HS_KEYREQ && parsed != NULL && rsp == NULL &&
+	    e2e_ctx_lookup(kr, &net, ctx, &sctx) != E2E_CTX_BLOCKED) {
+		key = g_strconcat(sender, "|", sctx, NULL);
 		if (e2e_json_get(e2e_json_get(kr, "pending_inbound"), key) != NULL) {
 			/* their key may be here already (they answered our request):
 			   ours still goes to them only after /e2e accept */
@@ -982,6 +1119,8 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	g_free(after);
 	g_free(rsp);
 	g_free(recip);
+	g_free(sctx);
+	e2e_net_clear(&net);
 	if (have_id)
 		e2e_identity_wipe(&id);
 	e2e_json_free(kr);

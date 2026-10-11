@@ -422,3 +422,275 @@ char *e2e_ctx_display(const char *ctx)
 		return g_strdup(ctx);
 	return g_strdup_printf("%.*s:%s", (int) (sep - ctx), ctx, sep + 1);
 }
+
+/* ---- legacy rows ---- */
+
+static gboolean is_object(const E2E_JSON *node)
+{
+	return node != NULL && node->type == E2E_JSON_OBJECT;
+}
+
+/* key is the "<handle>|<ctx>" key of row: the handle is the row's
+   "handle" member when it has one, else everything before the first '|'
+   (a handle holds no '|'; the convention of /e2e list and the export) */
+static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
+{
+	const char *handle = e2e_json_get_string(row, "handle");
+	const char *bar;
+	size_t hl;
+
+	if (handle != NULL) {
+		hl = strlen(handle);
+		return strncmp(key, handle, hl) == 0 && key[hl] == '|' && strcmp(key + hl + 1, ctx) == 0;
+	}
+	bar = strchr(key, '|');
+	return bar != NULL && strcmp(bar + 1, ctx) == 0;
+}
+
+/* key is the "<ctx>|<handle>" key of row, or "<ctx>" alone (a request
+   sent without a handle): the handle is the row's "handle" member when it
+   has one, else everything after the last '|' */
+static gboolean key_starts_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
+{
+	const char *handle = e2e_json_get_string(row, "handle");
+	size_t n = strlen(ctx);
+
+	if (strcmp(key, ctx) == 0)
+		return TRUE;
+	if (strncmp(key, ctx, n) != 0 || key[n] != '|')
+		return FALSE;
+	if (handle != NULL && *handle != '\0')
+		return strcmp(key + n + 1, handle) == 0;
+	return strchr(key + n + 1, '|') == NULL;
+}
+
+typedef enum {
+	ROW_SAME,		/* the key is the context: channels, outgoing */
+	ROW_HANDLE_FIRST,	/* "<handle>|<ctx>", "<fp>|<ctx>" */
+	ROW_CTX_FIRST		/* "<ctx>|<handle>" */
+} ROW_KEY;
+
+static gboolean key_is_of(const char *key, const E2E_JSON *row, ROW_KEY form, const char *ctx)
+{
+	switch (form) {
+	case ROW_SAME:
+		return strcmp(key, ctx) == 0;
+	case ROW_HANDLE_FIRST:
+		return key_ends_with_ctx(key, row, ctx);
+	default:
+		return key_starts_with_ctx(key, row, ctx);
+	}
+}
+
+/* the keys of store that are rows of ctx (copies) */
+static GPtrArray *keys_of(const E2E_JSON *store, ROW_KEY form, const char *ctx)
+{
+	GPtrArray *keys = e2e_json_keys(store), *out = g_ptr_array_new_with_free_func(g_free);
+	guint i;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+
+		if (key_is_of(k, e2e_json_get(store, k), form, ctx))
+			g_ptr_array_add(out, g_strdup(k));
+	}
+	g_ptr_array_unref(keys);
+	return out;
+}
+
+static gboolean any_row(const E2E_JSON *kr, const char *store, ROW_KEY form, const char *ctx)
+{
+	GPtrArray *keys = keys_of(e2e_json_get(kr, store), form, ctx);
+	gboolean found = keys->len > 0;
+
+	g_ptr_array_unref(keys);
+	return found;
+}
+
+/* a context exists when its config, our key, a session for it or a key
+   request of ours for it is stored */
+static gboolean ctx_exists(const E2E_JSON *kr, const char *ctx)
+{
+	return e2e_json_get(e2e_json_get(kr, "channels"), ctx) != NULL ||
+	       e2e_json_get(e2e_json_get(kr, "outgoing"), ctx) != NULL ||
+	       any_row(kr, "incoming", ROW_HANDLE_FIRST, ctx) ||
+	       any_row(kr, "pending", ROW_CTX_FIRST, ctx);
+}
+
+E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *wire, char **ctx)
+{
+	gboolean have_scoped, have_bare;
+	char *scoped;
+
+	*ctx = NULL;
+	if (wire == NULL)
+		return E2E_CTX_BLOCKED;
+	/* no network: the context as it is, as before the scope */
+	if (net == NULL) {
+		*ctx = g_strdup(wire);
+		return ctx_exists(kr, wire) ? E2E_CTX_SCOPED : E2E_CTX_NEW;
+	}
+	/* a wire with 0x1F, or a network without a label: nothing can be
+	   stored for it, and an old row of that name would read as scoped */
+	scoped = e2e_ctx_scoped(net, wire);
+	if (scoped == NULL) {
+		*ctx = g_strdup(wire);
+		return E2E_CTX_BLOCKED;
+	}
+	have_scoped = ctx_exists(kr, scoped);
+	have_bare = ctx_exists(kr, wire);
+	/* on the only network old rows are taken over even when some scoped
+	   ones exist already (they win row by row): a scoped request of ours
+	   must not hide the old sessions of everybody else */
+	if (have_bare && net->legacy_ok) {
+		g_free(scoped);
+		*ctx = g_strdup(wire);
+		return E2E_CTX_LEGACY;
+	}
+	if (have_scoped) {
+		*ctx = scoped;
+		return E2E_CTX_SCOPED;
+	}
+	if (have_bare) {
+		g_free(scoped);
+		*ctx = g_strdup(wire);
+		return E2E_CTX_BLOCKED;
+	}
+	*ctx = scoped;
+	return E2E_CTX_NEW;
+}
+
+char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *changed)
+{
+	char *ctx;
+
+	if (changed != NULL)
+		*changed = FALSE;
+	switch (e2e_ctx_lookup(kr, net, wire, &ctx)) {
+	case E2E_CTX_BLOCKED:
+		g_free(ctx);
+		return NULL;
+	case E2E_CTX_LEGACY:
+		g_free(ctx);
+		e2e_adopt_legacy(kr, net->label, wire);
+		if (changed != NULL)
+			*changed = TRUE;
+		return e2e_ctx_scoped(net, wire);
+	default:
+		return ctx;
+	}
+}
+
+/* the rows of store (of the form form) that belong to wire, under scoped;
+   an existing scoped row wins. merge: the members of a dropped row are
+   added to the one that wins (used REKEY nonces) */
+static guint move_rows(E2E_JSON *kr, const char *name, ROW_KEY form, const char *wire,
+                       const char *scoped, gboolean merge)
+{
+	E2E_JSON *store = e2e_json_get(kr, name);
+	GPtrArray *keys;
+	guint i, j, moved = 0;
+
+	if (!is_object(store))
+		return 0;
+	keys = keys_of(store, form, wire);
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *row = e2e_json_get(store, k), *have;
+		size_t wl = strlen(wire);
+		char *nk;
+
+		/* the key with wire replaced by scoped */
+		if (form == ROW_HANDLE_FIRST)
+			nk = g_strdup_printf("%.*s%s", (int) (strlen(k) - wl), k, scoped);
+		else
+			nk = g_strconcat(scoped, k + wl, NULL);
+		have = e2e_json_get(store, nk);
+		if (have != NULL) {
+			if (merge && is_object(have) && is_object(row)) {
+				GPtrArray *members = e2e_json_keys(row);
+
+				for (j = 0; j < members->len; j++) {
+					const char *m = g_ptr_array_index(members, j);
+
+					if (e2e_json_get(have, m) == NULL)
+						e2e_json_set(have, m, e2e_json_copy(e2e_json_get(row, m)));
+				}
+				g_ptr_array_unref(members);
+			}
+		} else {
+			E2E_JSON *copy = e2e_json_copy(row);
+
+			if (g_strcmp0(e2e_json_get_string(copy, "channel"), wire) == 0)
+				e2e_json_set_string(copy, "channel", scoped);
+			e2e_json_set(store, nk, copy);
+			moved++;
+		}
+		e2e_json_remove(store, k);
+		g_free(nk);
+	}
+	g_ptr_array_unref(keys);
+	return moved;
+}
+
+static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scoped)
+{
+	E2E_JSON *list = e2e_json_get(kr, "pending_trust_change");
+	guint i, j, moved = 0;
+
+	if (list == NULL || list->type != E2E_JSON_ARRAY)
+		return 0;
+	for (i = 0; i < list->array->len;) {
+		E2E_JSON *row = g_ptr_array_index(list->array, i);
+		gboolean dup = FALSE;
+
+		if (!is_object(row) || g_strcmp0(e2e_json_get_string(row, "channel"), wire) != 0) {
+			i++;
+			continue;
+		}
+		for (j = 0; j < list->array->len && !dup; j++) {
+			E2E_JSON *other = g_ptr_array_index(list->array, j);
+
+			dup = g_strcmp0(e2e_json_get_string(other, "channel"), scoped) == 0 &&
+			      g_strcmp0(e2e_json_get_string(other, "handle"),
+			                e2e_json_get_string(row, "handle")) == 0;
+		}
+		if (dup) {
+			g_ptr_array_remove_index(list->array, i);
+			continue;
+		}
+		e2e_json_set_string(row, "channel", scoped);
+		moved++;
+		i++;
+	}
+	return moved;
+}
+
+guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire)
+{
+	E2E_NET net;
+	char *scoped;
+	guint n = 0;
+
+	/* a label is never empty and holds neither the separator nor '|'
+	   (e2e_net_init) */
+	if (label == NULL || *label == '\0' || strchr(label, E2E_SCOPE_SEP) != NULL ||
+	    strchr(label, '|') != NULL || !is_object(kr))
+		return 0;
+	memset(&net, 0, sizeof(net));
+	net.label = (char *) label;
+	scoped = e2e_ctx_scoped(&net, wire);
+	if (scoped == NULL)
+		return 0;
+	n += move_rows(kr, "channels", ROW_SAME, wire, scoped, FALSE);
+	n += move_rows(kr, "outgoing", ROW_SAME, wire, scoped, FALSE);
+	n += move_rows(kr, "incoming", ROW_HANDLE_FIRST, wire, scoped, FALSE);
+	n += move_rows(kr, "accepted", ROW_HANDLE_FIRST, wire, scoped, FALSE);
+	n += move_rows(kr, "pending_inbound", ROW_HANDLE_FIRST, wire, scoped, FALSE);
+	n += move_rows(kr, "seen_rekeys", ROW_HANDLE_FIRST, wire, scoped, TRUE);
+	n += move_rows(kr, "pending", ROW_CTX_FIRST, wire, scoped, FALSE);
+	n += move_rows(kr, "outgoing_recipients", ROW_CTX_FIRST, wire, scoped, FALSE);
+	n += move_trust_changes(kr, wire, scoped);
+	g_free(scoped);
+	return n;
+}
