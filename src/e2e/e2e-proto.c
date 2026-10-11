@@ -1979,13 +1979,46 @@ static gboolean lookup_enabled(const E2E_JSON *kr, const E2E_NET *net, E2E_CTX_K
 	return on;
 }
 
-/* an old bare-nick config of a DM target, unscoped or of this network */
+/* the bare name of a config key that may be an old bare-nick row of a
+   nick on net, unscoped or of this network (a channel or "@<handle>"
+   config is none), or NULL */
+static const char *bare_nick_row(const char *key, const E2E_NET *net)
+{
+	const char *wire = e2e_ctx_wire(key);
+	char **readings;
+	gboolean channel;
+
+	if (*wire == '\0' || *wire == '@')
+		return NULL;
+	if (strchr(key, E2E_SCOPE_SEP) != NULL &&
+	    (net == NULL || net->label == NULL || !e2e_ctx_on_net(key, net)))
+		return NULL;
+	readings = e2e_channel_readings(wire);
+	channel = readings[0] != NULL;
+	g_strfreev(readings);
+	return channel ? NULL : wire;
+}
+
+/* an old bare-nick config of a DM target with E2E on, unscoped or of this
+   network: the name as it is, or any the server of net may take for the
+   same nick (its CASEMAPPING, as channels: only more refusals) */
 static gboolean nick_enabled(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
 {
 	char *scoped = e2e_ctx_scoped(net, nick);
 	gboolean on = e2e_ctx_enabled(kr, nick) || (scoped != NULL && e2e_ctx_enabled(kr, scoped));
+	GPtrArray *keys;
+	guint i;
 
 	g_free(scoped);
+	if (on)
+		return TRUE;
+	keys = e2e_json_keys(e2e_json_get(kr, "channels"));
+	for (i = 0; i < keys->len && !on; i++) {
+		const char *key = g_ptr_array_index(keys, i), *wire = bare_nick_row(key, net);
+
+		on = wire != NULL && e2e_ctx_enabled(kr, key) && same_nick(net, wire, nick, FALSE);
+	}
+	g_ptr_array_unref(keys);
 	return on;
 }
 
@@ -2915,9 +2948,11 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
    now (resolve), or the config's "nick", or a peer last seen as that nick
    under the config's handle; or an old bare-nick row of that nick with
    E2E on (R-E29, nick_enabled() for the module) - nicks folded by the
-   map. Its bare name, or NULL. */
+   map. Its bare name, or NULL. single: piece is the only target, which
+   the script looks up itself - an old bare-nick row only when the fold
+   alone joins them (the script refuses the name as it is stored). */
 static char *list_query_on(const E2E_JSON *kr, const E2E_NET *net, const char *piece,
-                           E2E_RESOLVE_FUNC resolve, void *resolve_data)
+                           E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean single)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
 	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
@@ -2937,7 +2972,7 @@ static char *list_query_on(const E2E_JSON *kr, const E2E_NET *net, const char *p
 			/* an old bare-nick row: exact, or folded by the map
 			   (more refusals only); a channel is no nick */
 			match = readings[0] == NULL &&
-			        (strcmp(wire, piece) == 0 || same_nick(net, wire, piece, FALSE));
+			        (strcmp(wire, piece) == 0 ? !single : same_nick(net, wire, piece, FALSE));
 			g_strfreev(readings);
 			if (match)
 				found = g_strdup(wire);
@@ -2963,6 +2998,25 @@ static char *list_query_on(const E2E_JSON *kr, const E2E_NET *net, const char *p
 	return found;
 }
 
+/* a single DM target, rpe2e.pl loaded: the script resolves the nick as
+   the module does (live, then the keyring's last_nick, ASCII case only)
+   and, with no address, looks an old bare-nick row up exactly. The query
+   with E2E on, or the old bare-nick row, that the server may take nick
+   for and the script does not find that way (it would send the line in
+   clear text): its bare name, or NULL. */
+static char *script_single_nick(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                                E2E_RESOLVE_FUNC resolve, void *resolve_data)
+{
+	char *handle = resolve != NULL ? resolve(nick, kr, resolve_data) : NULL;
+	gboolean resolved = handle != NULL && *handle != '\0';
+
+	g_free(handle);
+	/* an address: the script goes by its "@<handle>" config */
+	if (resolved)
+		return NULL;
+	return list_query_on(kr, net, nick, NULL, NULL, TRUE);
+}
+
 /* rpe2e.pl compares channel names exactly, and looks "#a,#b" up as one
    name: a channel E2E is on for in its own (bare) rows that the server
    may take for to under another name, or for a piece of a target list,
@@ -2978,7 +3032,7 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 {
 	char **pieces, **readings, *other = NULL, *msg = NULL;
 	const char *bad, *config;
-	gboolean undecided = FALSE, list = strchr(to, ',') != NULL;
+	gboolean undecided = FALSE, list = strchr(to, ',') != NULL, by_nick = FALSE;
 	int i;
 
 	if (kr == NULL || (e2e_is_ctcp(body) && !e2e_is_action(body)))
@@ -2992,11 +3046,17 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 		else if (readings[0] == NULL && list && *pieces[i] != '\0')
 			/* a nick in a list: the script resolves no query for it
 			   (R-E28) */
-			other = list_query_on(kr, net, pieces[i], resolve, resolve_data);
+			other = list_query_on(kr, net, pieces[i], resolve, resolve_data, FALSE);
+		else if (readings[0] == NULL && *pieces[i] != '\0')
+			/* the only target, a nick (never a bot command) */
+			by_nick = (other = script_single_nick(kr, net, pieces[i], resolve,
+			                                      resolve_data)) != NULL;
 		g_strfreev(readings);
 	}
 	if (other != NULL && list) {
 		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_LIST, to, other);
+	} else if (other != NULL && by_nick) {
+		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_NICK, other, to);
 	} else if (other != NULL) {
 		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_CASE, other, to, other);
 	} else if (undecided) {

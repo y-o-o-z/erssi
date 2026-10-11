@@ -4756,6 +4756,140 @@ static void test_casemap_list_bare_nick(void)
 	e2e_json_free(kr);
 }
 
+#define ZBIK_LOWER "\xc5\xbc" "bik"	/* żbik */
+#define ZBIK_UPPER "\xc5\xbb" "BIK"	/* ŻBIK */
+
+/* a single DM target with its address unknown now: an old bare-nick row
+   with E2E on counts for every nick the server takes for it (its
+   CASEMAPPING, as for channels), not only for the name as it is stored */
+static void test_casemap_single_bare_nick(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+	char *msg = NULL;
+
+	enable(&p, "bob", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "bob", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB", &msg), ==, E2E_GATE_REFUSE);
+	g_assert_cmpstr(msg, ==, E2E_REFUSE_NO_HANDLE);
+	g_free(msg);
+	g_assert_cmpint(cm_gate(kr, &cm_ascii, "BOB", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_unicode, "BOB", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "carol", NULL), ==, E2E_GATE_PASS);
+	/* a nick in a list: as before */
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "carol,BOB", NULL), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* rfc1459: [ ] \ ~ are { } | ^ */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "bob[", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB{", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "bob{", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_unicode, "BOB{", NULL), ==, E2E_GATE_REFUSE);
+	/* ascii keeps them apart */
+	g_assert_cmpint(cm_gate(kr, &cm_ascii, "bob{", NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(cm_gate(kr, &cm_ascii, "BOB{", NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(cm_gate(kr, &cm_ascii, "BOB[", NULL), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* UNICODE (and before the server named its CASEMAPPING) */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, ZBIK_LOWER, "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_unicode, ZBIK_UPPER, NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_unicode, ZBIK_LOWER, NULL), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* this network's scoped bare-nick row, folded too; another network's
+	   not; one turned off is no row */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "E2E2\x1f" "bob", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB", NULL), ==, E2E_GATE_PASS);
+	enable(&p, "bob", "normal");
+	e2e_json_set_int(path_get(kr, "channels", "bob", NULL), "enabled", 0);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB", NULL), ==, E2E_GATE_PASS);
+	enable(&p, "E2E\x1f" "bob", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "bob", NULL), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* a channel row is no nick, not even one the fold joins to a nick
+	   (U+FF03 FULLWIDTH NUMBER SIGN is '#' after NFKC) */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "#bob", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "BOB", NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(cm_gate(kr, &cm_unicode, "\xef\xbc\x83" "bob", NULL), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
+/* an empty address is none */
+static char *empty_resolve(const char *nick, const E2E_JSON *kr, void *data)
+{
+	return g_strdup("");
+}
+
+/* rpe2e.pl loaded, a single DM target: the script looks an old bare-nick
+   row up exactly and a peer by lc(last_nick); a nick the server takes for
+   one with E2E on there that the script does not find gets clear text
+   from it - refused. What the script finds itself stays its own. */
+static void test_casemap_script_single_nick(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+
+	enable(&p, "bob", "normal");
+	/* the script's own refusal */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob :hi", no_resolve), ==, E2E_GATE_PASS);
+	{
+		const char *line = "PRIVMSG BOB :hi";
+		char *m = NULL, *t = NULL;
+
+		g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_rfc1459, line, strlen(line),
+		                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(m, "does not find it under that name"));
+		g_assert_nonnull(strstr(m, "for bob in"));
+		g_assert_cmpstr(t, ==, "BOB");
+		g_free(m);
+		g_free(t);
+	}
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG BOB :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol :hi", no_resolve), ==, E2E_GATE_PASS);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG BOB :hi", empty_resolve), ==, E2E_GATE_REFUSE);
+	/* resolved: the script goes by the address, as the module does */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG BOB :hi", cm_resolve_bob), ==, E2E_GATE_PASS);
+	/* non-ACTION CTCP stays the escape hatch */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG BOB :\x01VERSION\x01", no_resolve), ==,
+	                E2E_GATE_PASS);
+	e2e_json_free(kr);
+
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "bob[", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG BOB{ :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG bob{ :hi", no_resolve), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, ZBIK_LOWER, "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG " ZBIK_UPPER " :hi", no_resolve), ==,
+	                E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* an old "@<handle>" config of a peer last seen as bob{: the script
+	   does not find bob[ (lc() is ASCII only) */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "@" BOB, "normal");
+	cm_set_peer(kr, "00112233445566778899aabbccddeeff", "bob{", BOB);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob[ :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG bob[ :hi", no_resolve), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -4839,6 +4973,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/list-dm-pieces", test_casemap_list_dm_pieces);
 	g_test_add_func("/e2e/casemap/list-dm-bypass", test_casemap_list_dm_bypass);
 	g_test_add_func("/e2e/casemap/list-bare-nick", test_casemap_list_bare_nick);
+	g_test_add_func("/e2e/casemap/single-bare-nick", test_casemap_single_bare_nick);
+	g_test_add_func("/e2e/casemap/script-single-nick", test_casemap_script_single_nick);
 
 	return g_test_run();
 }
