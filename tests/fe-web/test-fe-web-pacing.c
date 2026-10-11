@@ -1680,6 +1680,9 @@ static void test_proc_budget(void)
 }
 
 #ifdef __linux__
+/* /proc/self/uid_map of the initial user namespace */
+#define UID_MAP_WHOLE "         0          0 4294967295\n"
+
 /* NETLINK_SOCK_DIAG: the kernel's answer for the one socket */
 
 typedef struct {
@@ -2138,10 +2141,49 @@ static void test_sock_diag_seam(void)
 	fake_reset();
 	fake_sport_delta = 1;
 	g_assert_cmpint(fake_uid_of(fd), ==, -1);
-	/* the overflow uid */
+	/* the overflow uid (65534): a real user (nobody) when our user
+	 * namespace maps every uid, else maybe one shown for a uid outside
+	 * it */
 	fake_reset();
 	fake_uid = 65534;
+	fe_web_uid_map_set_text(UID_MAP_WHOLE);
+	g_assert_cmpint(fake_uid_of(fd), ==, 65534);
+	fe_web_uid_map_set_text("         0       1000          1\n");
 	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	/* 65534 mapped, but other uids are not: not sure, refused */
+	fe_web_uid_map_set_text("         0     100000      65536\n");
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	fe_web_uid_map_set_text("0 0 4294967295 x\n");
+	g_assert_cmpint(fake_uid_of(fd), ==, -1);
+	{
+		/* too long to be a uid_map: refused even with a whole map
+		 * at its start */
+		GString *big = g_string_new(UID_MAP_WHOLE);
+
+		while (big->len <= FE_WEB_UID_MAP_MAX)
+			g_string_append_c(big, ' ');
+		g_string_append_c(big, '\n');
+		fe_web_uid_map_set_text(big->str);
+		g_assert_cmpint(fake_uid_of(fd), ==, -1);
+		g_string_free(big, TRUE);
+	}
+	/* other uids are not touched by it */
+	fe_web_uid_map_set_text("         0       1000          1\n");
+	fake_uid = 1001;
+	g_assert_cmpint(fake_uid_of(fd), ==, 1001);
+	/* this machine's own map, read from /proc/self/uid_map */
+	{
+		char *text = NULL;
+		gsize len = 0;
+		gboolean whole;
+
+		fe_web_uid_map_set_text(NULL);
+		fake_uid = 65534;
+		whole = g_file_get_contents("/proc/self/uid_map", &text, &len, NULL) &&
+		        fe_web_uid_map_whole(text, len);
+		g_assert_cmpint(fake_uid_of(fd), ==, whole ? 65534 : -1);
+		g_free(text);
+	}
 	/* sock_diag is not used for peers not on loopback: none here, but
 	 * a Unix socket is never asked about */
 	{
@@ -2155,6 +2197,7 @@ static void test_sock_diag_seam(void)
 		close(sv[1]);
 	}
 	fe_web_sock_diag_set_func(NULL);
+	fe_web_uid_map_set_text(NULL);
 	close(fd);
 	close(client);
 }
@@ -2168,6 +2211,7 @@ static void test_sock_diag_live(void)
 
 	g_assert_cmpint(fd, >=, 0);
 	fe_web_sock_diag_set_func(NULL);
+	fe_web_uid_map_set_text(NULL);
 	g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 1);
 	g_assert_cmpuint(uid, ==, getuid());
 	/* the client closed: FIN_WAIT2 (uid 0), not ESTABLISHED */
@@ -2179,6 +2223,90 @@ static void test_sock_diag_live(void)
 	close(fd);
 }
 #endif
+
+/* Does a uid_map (of /proc/self) map every uid */
+static gboolean whole(const char *text)
+{
+	return fe_web_uid_map_whole(text, strlen(text));
+}
+
+static void test_uid_map_whole(void)
+{
+	GString *s;
+	int i;
+
+	g_assert_true(fe_web_uid_map_whole(UID_MAP_WHOLE, strlen(UID_MAP_WHOLE)));
+	g_assert_true(whole("0 0 4294967295\n"));
+	/* several ranges, in any order, that leave no uid out */
+	g_assert_true(whole("0 0 65534\n65534 65534 4294901761\n"));
+	g_assert_true(whole("65534 65534 4294901761\n0 0 65534\n"));
+	g_assert_true(whole("    1000     1000 4294966295\n       0        0     1000\n"));
+	/* one uid left out (65534, or the first, or the last) */
+	g_assert_false(whole("0 0 65534\n65535 65535 4294901760\n"));
+	/* a range past the last uid outside */
+	g_assert_false(whole("0 1 4294967295\n"));
+	g_assert_false(whole("1 1 4294967294\n"));
+	g_assert_false(whole("0 0 4294967294\n"));
+	/* containers, a namespace without a map yet */
+	g_assert_false(whole("         0       1000          1\n"));
+	g_assert_false(whole("         0     100000      65536\n"));
+	g_assert_false(whole(""));
+	g_assert_false(fe_web_uid_map_whole(NULL, 0));
+	/* not as the kernel prints it */
+	g_assert_false(whole("0 0 4294967295"));
+	g_assert_false(whole("0 0 4294967295 7\n"));
+	/* two lines' numbers on one */
+	g_assert_false(whole("0 0 65534 65534 65534 4294901761\n"));
+	g_assert_false(whole("0 0 4294967295 0 0 1\n"));
+	/* a number past 64 bits that would wrap to 4294967295 */
+	g_assert_false(whole("0 0 18446744078004518911\n"));
+	g_assert_false(whole("0 0\n"));
+	g_assert_false(whole("0 0 x\n"));
+	g_assert_false(whole("0 0 -1\n"));
+	g_assert_false(whole("0 0 +4294967295\n"));
+	g_assert_false(whole("0\t0\t4294967295\n"));
+	g_assert_false(whole("0 0 4294967296\n"));
+	g_assert_false(whole("0 0 99999999999999999999999\n"));
+	g_assert_false(whole("0 0 0\n0 0 4294967295\n"));
+	g_assert_false(whole("4294967295 0 1\n0 0 4294967295\n"));
+	g_assert_false(whole("0 0 4294967295\n\n"));
+	/* a NUL in it: only 'len' bytes count, and a NUL is not a digit */
+	g_assert_false(fe_web_uid_map_whole("0 0 4294967295\0\n", 16));
+	/* the length given is what counts */
+	g_assert_false(fe_web_uid_map_whole("0 0 4294967295\n", 10));
+	/* at most FE_WEB_UID_MAP_LINES lines, at most FE_WEB_UID_MAP_MAX
+	 * bytes */
+	s = g_string_new("");
+	for (i = 0; i < FE_WEB_UID_MAP_LINES - 1; i++)
+		g_string_append_printf(s, "%d %d 1\n", i, i);
+	g_string_append_printf(s, "%d %d %u\n", i, i, 4294967295u - i);
+	g_assert_true(fe_web_uid_map_whole(s->str, s->len));
+	g_string_truncate(s, 0);
+	for (i = 0; i < FE_WEB_UID_MAP_LINES; i++)
+		g_string_append_printf(s, "%d %d 1\n", i, i);
+	g_string_append_printf(s, "%d %d %u\n", i, i, 4294967295u - i);
+	g_assert_false(fe_web_uid_map_whole(s->str, s->len));
+	g_string_assign(s, UID_MAP_WHOLE);
+	while (s->len < FE_WEB_UID_MAP_MAX)
+		g_string_insert_c(s, 0, ' ');
+	g_assert_true(fe_web_uid_map_whole(s->str, s->len));
+	g_string_insert_c(s, 0, ' ');
+	g_assert_false(fe_web_uid_map_whole(s->str, s->len));
+	g_string_free(s, TRUE);
+	/* every byte changed: no crash */
+	for (i = 0; UID_MAP_WHOLE[i] != '\0'; i++) {
+		static const char subst[] = { ' ', '0', '9', '\n', 'x', '\t' };
+		gsize k;
+
+		for (k = 0; k < sizeof(subst); k++) {
+			char copy[sizeof(UID_MAP_WHOLE)];
+
+			memcpy(copy, UID_MAP_WHOLE, sizeof(copy));
+			copy[i] = subst[k];
+			fe_web_uid_map_whole(copy, strlen(copy));
+		}
+	}
+}
 
 /* What a reply says about sock_diag itself */
 static void test_sock_diag_status(void)
@@ -2283,6 +2411,7 @@ static void test_sock_diag_backoff(void)
 		g_assert_cmpint(diag_calls_at(fd, T), >=, 1);
 	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
 	fe_web_sock_diag_set_func(NULL);
+	fe_web_uid_map_set_text(NULL);
 	close(fd);
 	close(client);
 }
@@ -2313,6 +2442,7 @@ static void test_sock_diag_enoent(void)
 		g_assert_cmpint(diag_calls_at(fd, T), >=, 1);
 	g_assert_cmpint(diag_calls_at(fd, T), ==, 0);
 	fe_web_sock_diag_set_func(NULL);
+	fe_web_uid_map_set_text(NULL);
 	close(fd);
 	close(client);
 }
@@ -2418,6 +2548,8 @@ static void assert_live_own_uid(const char *listen_host, int client_family,
 		g_assert_cmpint(fe_web_tcp_peer_uid(fd, &spent, T, &uid), ==, 0);
 		g_assert_cmpuint(uid, ==, 4242);
 		fe_web_sock_diag_set_func(NULL);
+		fe_web_uid_map_set_text(NULL);
+	fe_web_uid_map_set_text(NULL);
 		fe_web_sock_diag_reset();
 	}
 #else
@@ -2566,6 +2698,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/peer/sock-diag-seam", test_sock_diag_seam);
 	g_test_add_func("/fe-web/peer/sock-diag-live", test_sock_diag_live);
 	g_test_add_func("/fe-web/peer/sock-diag-status", test_sock_diag_status);
+	g_test_add_func("/fe-web/peer/uid-map-whole", test_uid_map_whole);
 	g_test_add_func("/fe-web/peer/sock-diag-backoff", test_sock_diag_backoff);
 	g_test_add_func("/fe-web/peer/sock-diag-enoent", test_sock_diag_enoent);
 #endif
