@@ -25,6 +25,13 @@
 # text, until /e2e off in that query. Last, rpe2e.pl
 # loads and saves alice's keyring and keeps what only the module writes.
 #
+# A second fake server plays a second network (chatnet E2E2): alice is on
+# both, erin (native module) on E2E2 only. alice's keyring keeps the two
+# networks apart ("E2E\x1f#test", "E2E2\x1f#test", each with its own key),
+# while rpe2e.pl's (bob's) stays unscoped, and everything on the wire is
+# bare. At the very end bob unloads rpe2e.pl and the native module takes
+# his old, unscoped keyring over (one network): nothing to do for him.
+#
 # Each client has its own --home and HOME under a temporary directory and
 # runs in a private tmux server (-L e2e-live-<pid>); only that tmux server
 # and the fake server started here are stopped at the end.
@@ -60,7 +67,7 @@ bad()  { printf '  FAIL %s\n' "$*"; fail=$((fail + 1)); }
 
 cleanup() {
     tmux -L "$SOCK" kill-server 2>/dev/null || true
-    if [ -n "$IRCD_PID" ]; then kill "$IRCD_PID" 2>/dev/null || true; fi
+    if [ -n "$IRCD_PID" ]; then kill $IRCD_PID 2>/dev/null || true; fi
     if [ "${KEEP_WORK:-}" = 1 ]; then echo "work dir kept: $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
@@ -76,15 +83,20 @@ PERLLIB=$(dirname "$(find "$WORK/inst" -name Irssi.pm | head -n 1)")
 [ -x "$ERSSI" ] && [ -d "$MODDIR" ] && [ -d "$PERLLIB" ] || { echo "installed tree incomplete"; exit 1; }
 
 PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+PORT2=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" &
 IRCD_PID=$!
-i=0
-while ! python3 -c "import socket; socket.create_connection(('127.0.0.1', $PORT), 1)" 2>/dev/null; do
-    i=$((i + 1)); [ $i -gt 50 ] && { echo "test server did not start"; exit 1; }
-    sleep 0.1
+python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --network E2E2Test &
+IRCD_PID="$IRCD_PID $!"
+for port in "$PORT" "$PORT2"; do
+    i=0
+    while ! python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null; do
+        i=$((i + 1)); [ $i -gt 50 ] && { echo "test server did not start"; exit 1; }
+        sleep 0.1
+    done
 done
 
-for nick in alice bob mallory carol; do
+for nick in alice bob mallory carol erin; do
     home="$WORK/$nick"
     mkdir -p "$home/modules" "$home/logs" "$home/scripts/autorun" "$WORK/home-$nick"
     for so in "$MODDIR"/*.so; do ln -s "$so" "$home/modules/"; done
@@ -94,14 +106,26 @@ for nick in alice bob mallory carol; do
     # tree), when one is installed there, and the log lines the long
     # message check reads depend on what this machine has installed
     cp "$SRC/themes/default.theme" "$home/default.theme"
+    # alice on both networks, erin on E2E2 only, the others on E2E
+    case $nick in
+    alice) nets="E2E:$PORT E2E2:$PORT2" ;;
+    erin)  nets="E2E2:$PORT2" ;;
+    *)     nets="E2E:$PORT" ;;
+    esac
+    srv= net= chn=
+    for n in $nets; do
+        srv="$srv${srv:+, }{ address = \"127.0.0.1\"; chatnet = \"${n%%:*}\"; port = \"${n#*:}\"; autoconnect = \"yes\"; }"
+        net="$net ${n%%:*} = { type = \"IRC\"; };"
+        chn="$chn${chn:+, }{ name = \"$CHAN\"; chatnet = \"${n%%:*}\"; autojoin = \"yes\"; }"
+    done
     cat > "$home/config" <<EOF
-servers = ( { address = "127.0.0.1"; chatnet = "E2E"; port = "$PORT"; autoconnect = "yes"; } );
-chatnets = { E2E = { type = "IRC"; }; };
-channels = ( { name = "$CHAN"; chatnet = "E2E"; autojoin = "yes"; } );
+servers = ( $srv );
+chatnets = {$net };
+channels = ( $chn );
 logs = { "$home/all.log" = { auto_open = "yes"; level = "ALL"; }; };
 settings = {
   core = { real_name = "e2e test"; user_name = "$nick"; nick = "$nick"; };
-  "fe-common/core" = { theme = "default"; autolog = "yes"; autolog_path = "$home/logs/\$0.log"; autolog_level = "ALL"; };
+  "fe-common/core" = { theme = "default"; autolog = "yes"; autolog_path = "$home/logs/\$tag/\$0.log"; autolog_level = "ALL"; };
   "perl/core" = { perl_use_lib = "$PERLLIB"; };
 };
 EOF
@@ -136,8 +160,8 @@ echo "erssi:    $ERSSI"
 echo "rpe2e.pl: $SCRIPT"
 
 n=0
-until grep -q "bob.*joined $CHAN" "$WORK/alice/logs/$CHAN.log" 2>/dev/null ||
-      grep -q "alice.*joined $CHAN" "$WORK/bob/logs/$CHAN.log" 2>/dev/null; do
+until grep -q "bob.*joined $CHAN" "$WORK/alice/logs/E2E/$CHAN.log" 2>/dev/null ||
+      grep -q "alice.*joined $CHAN" "$WORK/bob/logs/E2E/$CHAN.log" 2>/dev/null; do
     n=$((n + 1)); [ $n -gt 40 ] && { bad "clients did not join $CHAN"; exit 1; }
     sleep 1
 done
@@ -184,12 +208,13 @@ LONG_A=$(python3 -c 'print(" ".join("zażółć%d" % i for i in range(1, 41)))')
 LONG_B=$(python3 -c 'print(" ".join("gęślą%d" % i for i in range(1, 41)))')
 
 # ---- channel ----
-for nick in alice bob; do say "$nick" "/window goto $CHAN"; done
+say alice "/join -E2E $CHAN"
+say bob "/window goto $CHAN"
 say alice "/e2e on"
 say bob "/e2e on"
 say alice "/e2e handshake bob"
 sleep 2
-if wait_for "$WORK/bob/logs/$CHAN.log" "Pending key exchange from alice" 10; then
+if wait_for "$WORK/bob/logs/E2E/$CHAN.log" "Pending key exchange from alice" 10; then
     pass "bob (rpe2e.pl) got the native KEYREQ"
 else
     bad "bob did not get alice's KEYREQ"
@@ -198,7 +223,7 @@ say bob "/e2e accept alice"
 sleep 2
 # bob's key arrived with his answer, but his own request for alice's key
 # waits for her decision as well
-if wait_for "$WORK/alice/logs/$CHAN.log" "Pending key exchange from bob" 10; then
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "Pending key exchange from bob" 10; then
     pass "alice (native) got bob's reciprocal KEYREQ and asks before answering"
 else
     bad "alice did not ask about bob's reciprocal KEYREQ"
@@ -221,20 +246,24 @@ say alice "/msg $CHAN sent with msg"
 say alice "/e2e verify 100%done"
 sleep 3
 
-check() {  # check <receiver log> <text>
-    if wait_for "$1" "$2" 10; then pass "$(basename "$(dirname "$(dirname "$1")")") sees: $2"
-    else bad "$(basename "$(dirname "$(dirname "$1")")") does not see: $2"; fi
+who() {  # who <log under $WORK>: the client it belongs to
+    local rel=${1#"$WORK"/}
+    echo "${rel%%/*}"
 }
-check "$WORK/bob/logs/$CHAN.log" "secret message from alice"
-check "$WORK/alice/logs/$CHAN.log" "reply from bob"
-check "$WORK/bob/logs/$CHAN.log" "$POLISH"
-check "$WORK/alice/logs/$CHAN.log" "$POLISH from bob"
-check "$WORK/bob/logs/$CHAN.log" "alice waves"
-check "$WORK/alice/logs/$CHAN.log" "bob nods"
-check "$WORK/bob/logs/$CHAN.log" "an ellipsis line"
-check "$WORK/bob/logs/$CHAN.log" "quoted in lower case"
-check "$WORK/bob/logs/$CHAN.log" "sent with msg"
-check "$WORK/alice/logs/$CHAN.log" "cannot resolve handle for 100%done"
+check() {  # check <receiver log> <text>
+    if wait_for "$1" "$2" 10; then pass "$(who "$1") sees: $2"
+    else bad "$(who "$1") does not see: $2"; fi
+}
+check "$WORK/bob/logs/E2E/$CHAN.log" "secret message from alice"
+check "$WORK/alice/logs/E2E/$CHAN.log" "reply from bob"
+check "$WORK/bob/logs/E2E/$CHAN.log" "$POLISH"
+check "$WORK/alice/logs/E2E/$CHAN.log" "$POLISH from bob"
+check "$WORK/bob/logs/E2E/$CHAN.log" "alice waves"
+check "$WORK/alice/logs/E2E/$CHAN.log" "bob nods"
+check "$WORK/bob/logs/E2E/$CHAN.log" "an ellipsis line"
+check "$WORK/bob/logs/E2E/$CHAN.log" "quoted in lower case"
+check "$WORK/bob/logs/E2E/$CHAN.log" "sent with msg"
+check "$WORK/alice/logs/E2E/$CHAN.log" "cannot resolve handle for 100%done"
 
 # ---- query ----
 say alice "/query bob"
@@ -243,14 +272,14 @@ say alice "/e2e on"
 say bob "/e2e on"
 say alice "/e2e handshake bob"
 sleep 2
-if wait_for "$WORK/bob/logs/alice.log" "Pending key exchange from alice" 10; then
+if wait_for "$WORK/bob/logs/E2E/alice.log" "Pending key exchange from alice" 10; then
     pass "bob (rpe2e.pl) got the native DM KEYREQ"
 else
     bad "bob did not get alice's DM KEYREQ"
 fi
 say bob "/e2e accept alice"
 sleep 2
-if wait_for "$WORK/alice/logs/bob.log" "Pending key exchange from bob" 10; then
+if wait_for "$WORK/alice/logs/E2E/bob.log" "Pending key exchange from bob" 10; then
     pass "alice (native) got bob's reciprocal DM KEYREQ"
 else
     bad "alice did not get bob's reciprocal DM KEYREQ"
@@ -262,8 +291,8 @@ say bob "private from bob $POLISH"
 say alice "$LONG_B"
 say bob "$LONG_A"
 sleep 3
-check "$WORK/bob/logs/alice.log" "private from alice $POLISH"
-check "$WORK/alice/logs/bob.log" "private from bob $POLISH"
+check "$WORK/bob/logs/E2E/alice.log" "private from alice $POLISH"
+check "$WORK/alice/logs/E2E/bob.log" "private from bob $POLISH"
 
 # the long messages: several encrypted chunks, each shown as a line; put
 # together they are the message
@@ -292,10 +321,10 @@ joined = "".join(bodies).replace(" ", "")
 sys.exit(0 if text.replace(" ", "") in joined else 1)
 EOF
 }
-long_check "$WORK/bob/logs/$CHAN.log" alice "$LONG_A" "channel: bob reads alice's long message (chunked)"
-long_check "$WORK/alice/logs/$CHAN.log" bob "$LONG_B" "channel: alice reads bob's long message (chunked)"
-long_check "$WORK/bob/logs/alice.log" alice "$LONG_B" "query: bob reads alice's long message (chunked)"
-long_check "$WORK/alice/logs/bob.log" bob "$LONG_A" "query: alice reads bob's long message (chunked)"
+long_check "$WORK/bob/logs/E2E/$CHAN.log" alice "$LONG_A" "channel: bob reads alice's long message (chunked)"
+long_check "$WORK/alice/logs/E2E/$CHAN.log" bob "$LONG_B" "channel: alice reads bob's long message (chunked)"
+long_check "$WORK/bob/logs/E2E/alice.log" alice "$LONG_B" "query: bob reads alice's long message (chunked)"
+long_check "$WORK/alice/logs/E2E/bob.log" bob "$LONG_A" "query: alice reads bob's long message (chunked)"
 
 # ---- what crossed the server ----
 python3 - "$WORK/wire.log" "$CHAN" <<'EOF' && pass "server: every message is ciphertext, chunked ones too" || bad "server: plain text or missing chunks"
@@ -334,6 +363,8 @@ else
 fi
 
 # ---- the keyrings: the same format on both sides ----
+# alice's (native) entries are kept per network ("E2E\x1f..."), bob's
+# (rpe2e.pl) are not; the wire between them names the bare contexts
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" <<'EOF' && pass "keyrings: native and rpe2e.pl files hold each other's identity" || bad "keyrings do not match"
 import json, sys, stat, os
 alice, bob = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
@@ -342,19 +373,30 @@ for p in sys.argv[1:3]:
 fa, fb = alice["identity"]["fp"], bob["identity"]["fp"]
 assert fb in alice["peers"] and alice["peers"][fb]["status"] == "trusted", "alice lacks bob"
 assert fa in bob["peers"] and bob["peers"][fa]["status"] == "trusted", "bob lacks alice"
-assert alice["incoming"]["bob@127.0.0.1|#test"]["status"] == "trusted"
+assert alice["incoming"]["bob@127.0.0.1|E2E\x1f#test"]["status"] == "trusted"
 assert bob["incoming"]["alice@127.0.0.1|#test"]["status"] == "trusted"
-assert alice["incoming"]["bob@127.0.0.1|@alice@127.0.0.1"]["status"] == "trusted"
+assert alice["incoming"]["bob@127.0.0.1|E2E\x1f@alice@127.0.0.1"]["status"] == "trusted"
 assert bob["incoming"]["alice@127.0.0.1|@bob@127.0.0.1"]["status"] == "trusted"
+assert alice["channels"]["E2E\x1f#test"]["enabled"] and alice["channels"]["E2E\x1f@bob@127.0.0.1"]["enabled"]
+# nothing unscoped from the module, nothing scoped from rpe2e.pl
+for store in ("channels", "outgoing", "incoming", "accepted", "pending", "outgoing_recipients", "pending_inbound"):
+    for k in alice.get(store, {}):
+        assert "\x1f" in k, (store, k)
+assert not any("\x1f" in k for k in bob["channels"]), "rpe2e.pl wrote a scoped entry"
 EOF
+if grep -aq $'\x1f' "$WORK/wire.log"; then
+    bad "a scoped context crossed the server"
+else
+    pass "server: only bare contexts on the wire"
+fi
 
 # ---- mallory: an outsider gets no key without /e2e accept (review C1) ----
-say alice "/window goto $CHAN"
+say alice "/join -E2E $CHAN"
 say mallory "/window goto $CHAN"
 say mallory "/e2e mode auto"
 say mallory "hello from mallory"
 # handshake NOTICEs go through the flood queue: mallory answers bob too
-if wait_for "$WORK/alice/logs/$CHAN.log" "Pending key exchange from mallory" 30; then
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "Pending key exchange from mallory" 30; then
     pass "alice: mallory's request for her key waits for /e2e accept"
 else
     bad "alice: no pending request from mallory"
@@ -366,8 +408,8 @@ else
 fi
 say alice "members only after mallory came"
 sleep 3
-check "$WORK/bob/logs/$CHAN.log" "members only after mallory came"
-if grep -qF "members only after mallory came" "$WORK/mallory/logs/$CHAN.log" 2>/dev/null; then
+check "$WORK/bob/logs/E2E/$CHAN.log" "members only after mallory came"
+if grep -qF "members only after mallory came" "$WORK/mallory/logs/E2E/$CHAN.log" 2>/dev/null; then
     bad "mallory reads alice's channel messages"
 else
     pass "mallory cannot read alice's channel messages"
@@ -383,7 +425,7 @@ PERL
 say alice "/script load e2ealias"
 say alice "after another script bound e2e"
 sleep 2
-check "$WORK/bob/logs/$CHAN.log" "after another script bound e2e"
+check "$WORK/bob/logs/E2E/$CHAN.log" "after another script bound e2e"
 say alice "/script unload e2ealias"
 
 # ---- a PRIVMSG from a rawlog hook while ciphertext goes out (review M4) ----
@@ -396,14 +438,14 @@ Irssi::signal_add('rawlog', sub {
     my ($rawlog, $data) = @_;
     return if $done || $data !~ /^<< PRIVMSG #test :\+RPE2E01 /;
     $done = 1;
-    my ($server) = Irssi::servers();
+    my $server = Irssi::server_find_tag('E2E');
     $server->send_raw_now('PRIVMSG #test :sent from a rawlog hook');
 });
 PERL
 say alice "/script load e2erawlog"
 say alice "this line triggers the hook"
 sleep 2
-check "$WORK/bob/logs/$CHAN.log" "sent from a rawlog hook"
+check "$WORK/bob/logs/E2E/$CHAN.log" "sent from a rawlog hook"
 say alice "/script unload e2erawlog"
 
 # ---- a raw line with CR LF in it (review I2) ----
@@ -430,7 +472,7 @@ say alice "/e2e on"
 say alice "/window close"
 say carol "/part $CHAN"
 sleep 1
-say alice "/window goto $CHAN"
+say alice "/join -E2E $CHAN"
 say alice "/msg carol unresolved dm secret"
 sleep 2
 if grep -aqF "unresolved dm secret" "$WORK/wire.log"; then
@@ -450,7 +492,59 @@ else
 fi
 say alice "/window close"
 
+# ---- a second network (E2E2): its own keys, its own settings ----
+say erin "/window goto $CHAN"
+n=0
+until grep -qF "erin" "$WORK/alice/logs/E2E2/$CHAN.log" 2>/dev/null ||
+      grep -qF "alice" "$WORK/erin/logs/E2E2/$CHAN.log" 2>/dev/null; do
+    n=$((n + 1)); [ $n -gt 20 ] && break
+    sleep 1
+done
+# E2E is on for #test on E2E only: the other network's #test is another
+# channel and gets clear text
+say alice "/join -E2E2 $CHAN"
+say alice "net2 plain hello"
+sleep 1
+if grep -aqF "alice PRIVMSG $CHAN :net2 plain hello" "$WORK/wire2.log"; then
+    pass "E2E2: #test there is not encrypted (E2E is on for E2E's #test only)"
+else
+    bad "E2E2: the clear-text message is not on the second network"
+fi
+check "$WORK/erin/logs/E2E2/$CHAN.log" "net2 plain hello"
+if grep -aqF "net2 plain hello" "$WORK/wire.log"; then
+    bad "E2E2's message crossed the first network"
+else
+    pass "E2E2's message stayed on its network"
+fi
+# turned on there: a key of its own
+say alice "/e2e on"
+say alice "net2 secret hello"
+sleep 1
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'EOF' && pass "alice: E2E and E2E2 #test have their own keys" || bad "alice: the networks share a key or a config"
+import json, sys
+k = json.load(open(sys.argv[1], encoding="utf-8"))
+a, b = k["outgoing"]["E2E\x1f#test"], k["outgoing"]["E2E2\x1f#test"]
+assert a["sk"] != b["sk"], "same key"
+assert k["channels"]["E2E2\x1f#test"]["enabled"] and k["channels"]["E2E\x1f#test"]["enabled"]
+assert "#test" not in k["channels"] and "#test" not in k["outgoing"]
+EOF
+if grep -aqF "net2 secret hello" "$WORK/wire2.log" "$WORK/wire.log" ||
+   ! grep -aq "^alice PRIVMSG $CHAN :+RPE2E01 " "$WORK/wire2.log"; then
+    bad "E2E2: the message after /e2e on is not ciphertext"
+else
+    pass "E2E2: encrypted after /e2e on there"
+fi
+if grep -aqF "net2 secret hello" "$WORK/erin/logs/E2E2/$CHAN.log" 2>/dev/null; then
+    bad "erin reads alice without a key"
+else
+    pass "erin (no key) cannot read alice on E2E2"
+fi
+say alice "/join -E2E $CHAN"
+say alice "back on the first network"
+check "$WORK/bob/logs/E2E/$CHAN.log" "back on the first network"
+
 # ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
+say alice "/join -E2E $CHAN"
 say alice "/set cmds_max_at_once 1"
 say alice "/set cmd_queue_speed 8s"
 quick alice "upgrade queued one"
@@ -464,11 +558,12 @@ if grep -aqiF "upgrade queued" "$WORK/wire.log"; then
 else
     pass "/upgrade sent no queued message in plain text"
 fi
-check "$WORK/bob/logs/$CHAN.log" "upgrade queued three"
+check "$WORK/bob/logs/E2E/$CHAN.log" "upgrade queued three"
 
 # ---- rpe2e.pl keeps what only the module writes ----
 # bob's rpe2e.pl loads and saves alice's keyring: "accepted" and
 # "seen_rekeys" are the module's own members, rpe2e.pl keeps them
+cp "$WORK/bob/rpe2e/keyring.json" "$WORK/bob-keyring.json"
 cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
 say bob "/e2e mode quiet"
@@ -481,6 +576,37 @@ assert a.get("accepted"), "alice accepted nobody"
 assert b.get("accepted") == a["accepted"], "accepted changed"
 assert b.get("seen_rekeys") == a.get("seen_rekeys"), "seen_rekeys changed"
 assert b["identity"] == a["identity"]
+PY
+
+# ---- one network, an old keyring: nothing to do ----
+# bob unloads rpe2e.pl, his own (unscoped) keyring comes back, and the
+# native module takes it over the first time it is used: he reads alice
+# and she reads him without a new key exchange
+say bob "/script unload rpe2e"
+sleep 1
+cp "$WORK/bob-keyring.json" "$WORK/bob/rpe2e/keyring.json"
+say bob "/window goto $CHAN"
+say bob "the native module on an old keyring"
+check "$WORK/alice/logs/E2E/$CHAN.log" "the native module on an old keyring"
+say alice "/join -E2E $CHAN"
+say alice "alice to the old keyring"
+check "$WORK/bob/logs/E2E/$CHAN.log" "alice to the old keyring"
+if grep -aqF "old keyring" "$WORK/wire.log"; then
+    bad "plain text after the native module took bob's keyring over"
+else
+    pass "no plain text after the native module took bob's keyring over"
+fi
+python3 - "$WORK/bob-keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "bob: his old #test entries are the network's now, the keys the same" || bad "bob: the old keyring was not taken over as it is"
+import json, sys
+old, new = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+c = sys.argv[3]
+s = "E2E\x1f" + c
+assert new["outgoing"][s]["sk"] == old["outgoing"][c]["sk"], "our key changed"
+assert new["incoming"]["alice@127.0.0.1|" + s]["sk"] == old["incoming"]["alice@127.0.0.1|" + c]["sk"]
+assert new["channels"][s]["enabled"]
+assert c not in new["channels"] and c not in new["outgoing"]
+assert "alice@127.0.0.1|" + c not in new["incoming"]
+assert new["identity"] == old["identity"]
 PY
 
 for f in "$WORK"/asan-* "$WORK"/ubsan-*; do

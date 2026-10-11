@@ -15,6 +15,8 @@
 #include <irssi/src/e2e/e2e-json.h>
 #include <irssi/src/e2e/e2e-scope.h>
 
+#include "e2e-legacy-fixture.h"
+
 static const E2E_CASEMAP all_maps[] = {
 	E2E_CASEMAP_RFC1459,
 	E2E_CASEMAP_STRICT_RFC1459,
@@ -776,6 +778,279 @@ static void test_json_roundtrip(void)
 	g_free(text);
 }
 
+/* ---- the keyring: legacy rows ---- */
+
+static E2E_JSON *store_of(E2E_JSON *kr, const char *name)
+{
+	E2E_JSON *s = e2e_json_get(kr, name);
+
+	if (s == NULL) {
+		s = e2e_json_new(E2E_JSON_OBJECT);
+		e2e_json_set(kr, name, s);
+	}
+	return s;
+}
+
+static void put_row(E2E_JSON *kr, const char *store, const char *key)
+{
+	E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+
+	e2e_json_set_int(row, "created_at", 1);
+	e2e_json_set(store_of(kr, store), key, row);
+}
+
+static E2E_JSON *fixture(void)
+{
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT);
+
+	legacy_fixture_fill(kr);
+	return kr;
+}
+
+static E2E_CTX_KIND lookup(const E2E_JSON *kr, const E2E_NET *net, const char *wire,
+                           const char *want_ctx)
+{
+	char *ctx = (char *) "unset";
+	E2E_CTX_KIND kind = e2e_ctx_lookup(kr, net, wire, &ctx);
+
+	g_assert_cmpstr(ctx, ==, want_ctx);
+	g_free(ctx);
+	return kind;
+}
+
+/* the decision table of e2e_ctx_lookup */
+static void test_ctx_lookup(void)
+{
+	E2E_NET one = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_NET many = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET other = { (char *) "Libera", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET none = { NULL, E2E_CASEMAP_RFC1459, TRUE };
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT);
+	static const char *const how[] = { "channels", "outgoing", NULL };
+	int i;
+
+	/* nothing stored */
+	g_assert_cmpint(lookup(kr, &one, "#a", "IRCnet\x1f#a"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup(kr, &many, "#a", "IRCnet\x1f#a"), ==, E2E_CTX_NEW);
+	/* no network: the context as it is (the behaviour before the scope) */
+	g_assert_cmpint(lookup(kr, NULL, "#a", "#a"), ==, E2E_CTX_NEW);
+	put_row(kr, "channels", "#a");
+	g_assert_cmpint(lookup(kr, NULL, "#a", "#a"), ==, E2E_CTX_SCOPED);
+	e2e_json_remove(e2e_json_get(kr, "channels"), "#a");
+
+	/* each kind of row makes a context exist: a scoped one is SCOPED,
+	   an old one LEGACY on the only network and BLOCKED on several */
+	for (i = 0; how[i] != NULL; i++) {
+		put_row(kr, how[i], "IRCnet\x1f#s");
+		g_assert_cmpint(lookup(kr, &many, "#s", "IRCnet\x1f#s"), ==, E2E_CTX_SCOPED);
+		g_assert_cmpint(lookup(kr, &other, "#s", "Libera\x1f#s"), ==, E2E_CTX_NEW);
+		e2e_json_remove(e2e_json_get(kr, how[i]), "IRCnet\x1f#s");
+		put_row(kr, how[i], "#l");
+		g_assert_cmpint(lookup(kr, &one, "#l", "#l"), ==, E2E_CTX_LEGACY);
+		g_assert_cmpint(lookup(kr, &many, "#l", "#l"), ==, E2E_CTX_BLOCKED);
+		e2e_json_remove(e2e_json_get(kr, how[i]), "#l");
+	}
+	/* a session ("<handle>|<ctx>"), a request of ours ("<ctx>|<handle>",
+	   or "<ctx>" without a handle) */
+	put_row(kr, "incoming", "bob@b.host|#l");
+	g_assert_cmpint(lookup(kr, &many, "#l", "#l"), ==, E2E_CTX_BLOCKED);
+	g_assert_cmpint(lookup(kr, &many, "#", "IRCnet\x1f#"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup(kr, &many, "l", "IRCnet\x1fl"), ==, E2E_CTX_NEW);
+	e2e_json_remove(e2e_json_get(kr, "incoming"), "bob@b.host|#l");
+	put_row(kr, "incoming", "bob@b.host|IRCnet\x1f#s");
+	g_assert_cmpint(lookup(kr, &many, "#s", "IRCnet\x1f#s"), ==, E2E_CTX_SCOPED);
+	put_row(kr, "pending", "IRCnet\x1f@me@host|bob@b.host");
+	g_assert_cmpint(lookup(kr, &many, "@me@host", "IRCnet\x1f@me@host"), ==, E2E_CTX_SCOPED);
+	put_row(kr, "pending", "#p");
+	g_assert_cmpint(lookup(kr, &many, "#p", "#p"), ==, E2E_CTX_BLOCKED);
+	/* only whole contexts: "#x|#a|b" is no row of "#a|b", "#a" no row of
+	   "#a|b" */
+	put_row(kr, "incoming", "bob@b.host|#x|#a|b");
+	g_assert_cmpint(lookup(kr, &many, "#a|b", "IRCnet\x1f#a|b"), ==, E2E_CTX_NEW);
+	put_row(kr, "pending", "#a|b|bob@b.host");
+	g_assert_cmpint(lookup(kr, &many, "#a", "IRCnet\x1f#a"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup(kr, &many, "#a|b", "#a|b"), ==, E2E_CTX_BLOCKED);
+
+	/* scoped wins over old rows */
+	put_row(kr, "channels", "#w");
+	put_row(kr, "channels", "IRCnet\x1f#w");
+	g_assert_cmpint(lookup(kr, &many, "#w", "IRCnet\x1f#w"), ==, E2E_CTX_SCOPED);
+	/* on the only network the old ones are taken over (the scoped win) */
+	g_assert_cmpint(lookup(kr, &one, "#w", "#w"), ==, E2E_CTX_LEGACY);
+	e2e_json_remove(e2e_json_get(kr, "channels"), "#w");
+	g_assert_cmpint(lookup(kr, &one, "#w", "IRCnet\x1f#w"), ==, E2E_CTX_SCOPED);
+	put_row(kr, "channels", "#w");
+	/* another network's scoped row does not hide the old one */
+	g_assert_cmpint(lookup(kr, &other, "#w", "#w"), ==, E2E_CTX_BLOCKED);
+
+	/* a name with 0x1F can never be scoped, and an old row under it would
+	   read as another network's: always BLOCKED, the bare name returned */
+	g_assert_cmpint(lookup(kr, &one, "#a\x1f" "b", "#a\x1f" "b"), ==, E2E_CTX_BLOCKED);
+	put_row(kr, "channels", "#a\x1f" "b");
+	g_assert_cmpint(lookup(kr, &one, "#a\x1f" "b", "#a\x1f" "b"), ==, E2E_CTX_BLOCKED);
+	g_assert_cmpint(lookup(kr, &many, "#a\x1f" "b", "#a\x1f" "b"), ==, E2E_CTX_BLOCKED);
+	/* a network without a label stores nothing */
+	g_assert_cmpint(lookup(kr, &none, "#a", "#a"), ==, E2E_CTX_BLOCKED);
+	/* no keyring member of the right type: nothing exists */
+	e2e_json_set_int(kr, "incoming", 3);
+	g_assert_cmpint(lookup(kr, &many, "#zz", "IRCnet\x1f#zz"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup(kr, &many, NULL, NULL), ==, E2E_CTX_BLOCKED);
+	e2e_json_free(kr);
+}
+
+static void test_ctx_resolve(void)
+{
+	E2E_NET one = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_NET many = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = fixture();
+	gboolean changed = TRUE;
+	char *ctx, *before, *after;
+
+	before = e2e_json_encode(kr, FALSE);
+	/* several networks: an old context is not used, nothing changes */
+	g_assert_null(e2e_ctx_resolve(kr, &many, "#test", &changed));
+	g_assert_false(changed);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	/* a new one is the scoped name */
+	ctx = e2e_ctx_resolve(kr, &many, "#new", &changed);
+	g_assert_cmpstr(ctx, ==, "IRCnet\x1f#new");
+	g_assert_false(changed);
+	g_free(ctx);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	/* no network: unchanged */
+	ctx = e2e_ctx_resolve(kr, NULL, "#test", &changed);
+	g_assert_cmpstr(ctx, ==, "#test");
+	g_assert_false(changed);
+	g_free(ctx);
+	g_assert_null(e2e_ctx_resolve(kr, &one, "#a\x1f" "b", &changed));
+	g_assert_false(changed);
+	/* the only network: taken over */
+	ctx = e2e_ctx_resolve(kr, &one, "#test", &changed);
+	g_assert_cmpstr(ctx, ==, "IRCnet\x1f#test");
+	g_assert_true(changed);
+	g_free(ctx);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"));
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	/* the second time it is scoped */
+	changed = TRUE;
+	ctx = e2e_ctx_resolve(kr, &many, "#test", &changed);
+	g_assert_cmpstr(ctx, ==, "IRCnet\x1f#test");
+	g_assert_false(changed);
+	g_free(ctx);
+	g_free(before);
+	e2e_json_free(kr);
+}
+
+static const char *row_str(E2E_JSON *kr, const char *store, const char *key, const char *field)
+{
+	return e2e_json_get_string(e2e_json_get(e2e_json_get(kr, store), key), field);
+}
+
+static void test_adopt_legacy(void)
+{
+	E2E_JSON *kr = fixture(), *list, *seen;
+	char *other_before, *other_after;
+
+	/* the "#other" rows, to compare */
+	other_before = g_strdup_printf("%s %s %s",
+	                               row_str(kr, "outgoing", "#other", "sk"),
+	                               row_str(kr, "incoming", "bob@127.0.0.1|#other", "sk"),
+	                               row_str(kr, "outgoing_recipients", "#other|bob@127.0.0.1", "channel"));
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#test"), ==, LEGACY_ROWS_TEST);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"));
+	g_assert_cmpstr(row_str(kr, "outgoing", "IRCnet\x1f#test", "sk"), ==, LEGACY_OUT_SK);
+	g_assert_cmpstr(row_str(kr, "incoming", "bob@127.0.0.1|IRCnet\x1f#test", "sk"), ==, LEGACY_BOB_SK);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "accepted"), "bob@127.0.0.1|IRCnet\x1f#test"));
+	g_assert_cmpstr(row_str(kr, "pending", "IRCnet\x1f#test|carol@127.0.0.1", "channel"), ==, "IRCnet\x1f#test");
+	g_assert_cmpstr(row_str(kr, "outgoing_recipients", "IRCnet\x1f#test|bob@127.0.0.1", "channel"), ==, "IRCnet\x1f#test");
+	g_assert_cmpstr(row_str(kr, "pending_inbound", "dave@127.0.0.1|IRCnet\x1f#test", "channel"), ==, "IRCnet\x1f#test");
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "seen_rekeys"), LEGACY_BOB_FP "|IRCnet\x1f#test"));
+	list = e2e_json_get(kr, "pending_trust_change");
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(list->array, 0), "channel"), ==, "IRCnet\x1f#test");
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(list->array, 1), "channel"), ==, "#other");
+	/* the others are untouched */
+	other_after = g_strdup_printf("%s %s %s",
+	                              row_str(kr, "outgoing", "#other", "sk"),
+	                              row_str(kr, "incoming", "bob@127.0.0.1|#other", "sk"),
+	                              row_str(kr, "outgoing_recipients", "#other|bob@127.0.0.1", "channel"));
+	g_assert_cmpstr(other_before, ==, other_after);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "#test2"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|#test2"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|#te"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "pending"), "#te|st|carol@127.0.0.1"));
+	/* nothing left to move */
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#test"), ==, 0);
+	/* a row with '|' in its context: only its own rows */
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#te"), ==, 1);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "pending"), "#te|st|carol@127.0.0.1"));
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#te|st"), ==, 1);
+	g_assert_cmpstr(row_str(kr, "pending", "IRCnet\x1f#te|st|carol@127.0.0.1", "channel"), ==, "IRCnet\x1f#te|st");
+	/* a handle holding '|': its row's "handle" member tells where the
+	   context starts or ends */
+	{
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+
+		e2e_json_set_string(row, "handle", "x|y@h");
+		e2e_json_set_string(row, "channel", "#p");
+		e2e_json_set(e2e_json_get(kr, "pending_inbound"), "x|y@h|#p", row);
+		row = e2e_json_new(E2E_JSON_OBJECT);
+		e2e_json_set_string(row, "handle", "x|y@h");
+		e2e_json_set_string(row, "channel", "#p");
+		e2e_json_set(e2e_json_get(kr, "pending"), "#p|x|y@h", row);
+	}
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "y@h|#p"), ==, 0);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#p|x"), ==, 0);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#p"), ==, 2);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "pending_inbound"), "x|y@h|IRCnet\x1f#p"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "pending"), "IRCnet\x1f#p|x|y@h"));
+	g_free(other_before);
+	g_free(other_after);
+	e2e_json_free(kr);
+
+	/* a scoped row that exists wins, the old one is dropped; used REKEY
+	   nonces are kept from both */
+	kr = fixture();
+	put_row(kr, "channels", "IRCnet\x1f#test");
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"), "mode", "quiet");
+	seen = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_int(seen, "bmV3bm9uY2VuZXdub25jZQ==", 2);
+	e2e_json_set(e2e_json_get(kr, "seen_rekeys"), LEGACY_BOB_FP "|IRCnet\x1f#test", seen);
+	list = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(list, "handle", "eve@127.0.0.1");
+	e2e_json_set_string(list, "channel", "IRCnet\x1f#test");
+	e2e_json_set_string(list, "change", "revoked");
+	e2e_json_array_add(e2e_json_get(kr, "pending_trust_change"), list);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#test"), ==, LEGACY_ROWS_TEST - 3);
+	list = e2e_json_get(kr, "pending_trust_change");
+	g_assert_cmpuint(list->array->len, ==, 2);
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(list->array, 0), "channel"), ==, "#other");
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(list->array, 1), "change"), ==, "revoked");
+	g_assert_cmpstr(row_str(kr, "channels", "IRCnet\x1f#test", "mode"), ==, "quiet");
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	seen = e2e_json_get(e2e_json_get(kr, "seen_rekeys"), LEGACY_BOB_FP "|IRCnet\x1f#test");
+	g_assert_cmpuint(e2e_json_size(seen), ==, 2);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "seen_rekeys"), LEGACY_BOB_FP "|#test"));
+	e2e_json_free(kr);
+
+	/* refused: a label or wire that cannot make a scoped name, a keyring
+	   with no stores */
+	kr = fixture();
+	g_assert_cmpuint(e2e_adopt_legacy(kr, NULL, "#test"), ==, 0);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", NULL), ==, 0);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRC\x1fnet", "#test"), ==, 0);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#te\x1fst"), ==, 0);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	e2e_json_free(kr);
+	kr = e2e_json_new(E2E_JSON_OBJECT);
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#test"), ==, 0);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -789,6 +1064,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/casefold-all-code-points", test_casefold_all_code_points);
 	g_test_add_func("/e2e/scope/contexts", test_contexts);
 	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
+	g_test_add_func("/e2e/scope/ctx-lookup", test_ctx_lookup);
+	g_test_add_func("/e2e/scope/ctx-resolve", test_ctx_resolve);
+	g_test_add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
 
 	return g_test_run();
 }

@@ -93,6 +93,15 @@
     turns off one explicitly,
   - /e2e list shows a session we read but whose peer was never accepted
     as "key held, not accepted", not "trusted".
+ Networks (2026-10, e2e-scope.h): the keyring keeps each context per
+ network, "<label>\x1f<wire>", while every wire-visible field - c=, the
+ AAD, the HKDF info of a wrap, what is signed - stays the bare name, so
+ rpe2e.pl, repartee and rpe2e.py see no difference. Old unscoped rows are
+ taken over while erssi uses one network; on several they are BLOCKED:
+ the gate refuses the context (E2E_REFUSE_LEGACY), a wire, KEYREQ, KEYRSP
+ or REKEY for it is treated as E2E off (rpe2e.pl knows one network per
+ keyring only). A name holding 0x1F cannot be scoped: never encrypted,
+ and refused where the old rules would not have sent it in clear.
  Not addressed (known limitations, /help e2e): channel names are compared
  ASCII/rfc1459 case-insensitively only (Unicode casemapping servers);
  NOTICEs, non-ACTION CTCPs, bot commands and IRCv3 tags stay clear text;
@@ -124,6 +133,7 @@
 #define REFUSE_DM_MOVED  "E2E is on for %s at %s, but %s is now %s — message NOT sent. If it is the same person: /e2e on in the query encrypts to the new address (a new key exchange); /e2e off %s turns E2E off for the old one"
 #define REFUSE_DM_UNKNOWN "E2E is on for %s at %s, but the address of %s is not known now (no query or common channel) — message NOT sent; /e2e off %s turns E2E off for it"
 #define REFUSE_RAW_LINES "a raw line holding several IRC lines (CR/LF) includes a PRIVMSG that the E2E gate does not let out as it is (%s) — NOTHING of it was sent"
+#define REFUSE_UNSCOPED  "E2E cannot be kept per network for %s (its name holds the control character 0x1F, or the network has no name) and may be on for it — message NOT sent"
 
 static gint64 default_now(void)
 {
@@ -260,16 +270,38 @@ static char *oldest_member(const E2E_JSON *obj, const char *field)
 	return oldest;
 }
 
-/* requests waiting for /e2e accept: the oldest go first (with the keyless
-   session row stored next to them) */
-static void prune_pending_inbound(E2E_JSON *kr)
+/* the context of a "<handle>|<ctx>" key is on net (always without one) */
+static gboolean handle_key_on_net(const char *key, const E2E_NET *net)
+{
+	const char *bar = strchr(key, '|');
+
+	return net == NULL || e2e_ctx_on_net(bar != NULL ? bar + 1 : key, net);
+}
+
+/* requests waiting for /e2e accept on net (another network's do not
+   push them out): the oldest go first, with the keyless session row
+   stored next to them */
+static void prune_pending_inbound(E2E_JSON *kr, const E2E_NET *net)
 {
 	E2E_JSON *pending = e2e_json_get(kr, "pending_inbound");
 
-	while (e2e_json_size(pending) > E2E_MAX_PENDING_INBOUND) {
-		char *k = oldest_member(pending, "received_at");
-		E2E_JSON *row;
+	for (;;) {
+		GPtrArray *keys = e2e_json_keys(pending);
+		E2E_JSON *mine = e2e_json_new(E2E_JSON_OBJECT), *row;
+		char *k = NULL;
+		guint i;
 
+		for (i = 0; i < keys->len; i++) {
+			const char *key = g_ptr_array_index(keys, i);
+
+			if (handle_key_on_net(key, net))
+				e2e_json_set_int(mine, key, e2e_json_get_int(e2e_json_get(pending, key),
+				                                             "received_at", 0));
+		}
+		g_ptr_array_unref(keys);
+		if (e2e_json_size(mine) > E2E_MAX_PENDING_INBOUND)
+			k = oldest_member(mine, NULL);
+		e2e_json_free(mine);
 		if (k == NULL)
 			break;
 		e2e_json_remove(pending, k);
@@ -791,15 +823,19 @@ char *e2e_build_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, const char *ctx,
 	row = e2e_json_get(pending, key);
 	if (row != NULL) {
 		if (is_fresh(e2e_json_get_int(row, "created_at", 0), E2E_PENDING_KEYREQ_TTL)) {
-			*error = g_strdup_printf("key exchange already pending for %s", key);
+			char *shown = pending_key(e2e_ctx_wire(ctx), handle);
+
+			*error = g_strdup_printf("key exchange already pending for %s", shown);
+			g_free(shown);
 			g_free(key);
 			return NULL;
 		}
 		e2e_json_remove(pending, key);
 	}
+	/* the wire names the bare context; the keyring keeps it scoped */
 	memset(&hs, 0, sizeof(hs));
 	hs.type = E2E_HS_KEYREQ;
-	hs.channel = (char *) ctx;
+	hs.channel = (char *) e2e_ctx_wire(ctx);
 	memcpy(hs.pub, id->pk, 32);
 	if (!e2e_x25519_keypair(eph_sk, hs.eph) || !e2e_random_bytes(hs.nonce, 16) ||
 	    !e2e_handshake_sign(&hs, id->sk)) {
@@ -842,9 +878,9 @@ char *e2e_build_keyrsp_for_req(E2E_JSON *kr, const E2E_IDENTITY *id, const char 
 
 	memset(&hs, 0, sizeof(hs));
 	hs.type = E2E_HS_KEYRSP;
-	hs.channel = (char *) ctx;
+	hs.channel = (char *) e2e_ctx_wire(ctx);
 	memcpy(hs.pub, id->pk, 32);
-	info = g_strconcat(WRAP_INFO, ctx, NULL);
+	info = g_strconcat(WRAP_INFO, e2e_ctx_wire(ctx), NULL);
 	hs.wrap_ctlen = 32 + E2E_TAG_LEN;
 	hs.wrap_ct = g_malloc(hs.wrap_ctlen);
 	ok = e2e_x25519_keypair(eph_sk, hs.eph) &&
@@ -891,9 +927,9 @@ char *e2e_build_rekey(const E2E_IDENTITY *id, const char *ctx,
 
 	memset(&hs, 0, sizeof(hs));
 	hs.type = E2E_HS_REKEY;
-	hs.channel = (char *) ctx;
+	hs.channel = (char *) e2e_ctx_wire(ctx);
 	memcpy(hs.pub, id->pk, 32);
-	info = g_strconcat(REKEY_INFO, ctx, NULL);
+	info = g_strconcat(REKEY_INFO, e2e_ctx_wire(ctx), NULL);
 	hs.wrap_ctlen = 32 + E2E_TAG_LEN;
 	hs.wrap_ct = g_malloc(hs.wrap_ctlen);
 	/* the peer's only long-term key is its Ed25519 identity */
@@ -921,9 +957,29 @@ char *e2e_build_rekey(const E2E_IDENTITY *id, const char *ctx,
    later with an automatic KEYREQ) */
 static char *reciprocal_ctx(const char *ctx, const char *own_handle)
 {
-	if (e2e_is_channel(ctx))
+	char *own, *out;
+
+	if (e2e_is_channel(e2e_ctx_wire(ctx)))
 		return g_strdup(ctx);
-	return own_handle != NULL && *own_handle != '\0' ? g_strconcat("@", own_handle, NULL) : NULL;
+	if (own_handle == NULL || *own_handle == '\0')
+		return NULL;
+	/* on the network of ctx */
+	own = g_strconcat("@", own_handle, NULL);
+	out = e2e_ctx_rescope(ctx, own);
+	g_free(own);
+	return out;
+}
+
+/* "@<handle>" on net: the config of a DM with handle (NULL: E2E cannot be
+   on there - an old row on several networks) */
+static char *dm_config_ctx(E2E_JSON *kr, const E2E_NET *net, const char *handle,
+                           gboolean *changed)
+{
+	char *wire = g_strconcat("@", handle, NULL);
+	char *ctx = e2e_ctx_resolve(kr, net, wire, changed);
+
+	g_free(wire);
+	return ctx;
 }
 
 static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
@@ -972,26 +1028,23 @@ char *e2e_build_reciprocal_keyreq_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id
 }
 
 void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoing_stamps,
-                       const char *sender_handle, const char *nick, const char *body,
-                       const char *own_handle, char **rsp, char **reciprocal)
+                       const E2E_NET *net, const char *sender_handle, const char *nick,
+                       const char *body, const char *own_handle, char **rsp, char **reciprocal)
 {
 	E2E_HANDSHAKE *req;
 	E2E_JSON *cfg, *sess, *row;
 	PEER_CHANGE change;
 	const char *mode;
 	gboolean autotrust, trusted;
-	char *fp_hex = NULL, *k = NULL, *dm;
+	char *fp_hex = NULL, *k = NULL, *dm, *ctx = NULL;
 
 	*rsp = NULL;
 	*reciprocal = NULL;
 	req = e2e_handshake_parse(body, E2E_HS_KEYREQ);
 	if (req == NULL)
 		return;
+	/* the signature and the sender rule are about the wire: the bare c= */
 	if (!e2e_handshake_verify(req))
-		goto out;
-	/* requests for a context where E2E is off are ignored */
-	cfg = e2e_json_get(e2e_json_get(kr, "channels"), req->channel);
-	if (!e2e_json_truthy(e2e_json_get(cfg, "enabled")))
 		goto out;
 	/* a DM request asks for the direction to its sender: "@" + the
 	   sender's own handle (rpe2e-dm-addendum). One naming anybody else
@@ -1003,18 +1056,26 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		if (!trusted)
 			goto out;
 	}
+	/* the context on this network; an old one of unknown network is off */
+	ctx = e2e_ctx_resolve(kr, net, req->channel, NULL);
+	if (ctx == NULL)
+		goto out;
+	/* requests for a context where E2E is off are ignored */
+	cfg = e2e_json_get(e2e_json_get(kr, "channels"), ctx);
+	if (!e2e_json_truthy(e2e_json_get(cfg, "enabled")))
+		goto out;
 	fp_hex = e2e_fingerprint_hex(req->pub);
-	if (!check_peer(kr, fp_hex, req->pub, sender_handle, req->channel, &change))
+	if (!check_peer(kr, fp_hex, req->pub, sender_handle, ctx, &change))
 		goto out;
 	update_peer(kr, fp_hex, req->pub, sender_handle, nick, NULL);
 
-	autotrust = e2e_autotrust_matches(kr, sender_handle, req->channel);
+	autotrust = e2e_autotrust_matches(kr, sender_handle, ctx);
 	mode = e2e_json_get_string(cfg, "mode");
 	if (mode == NULL)
 		mode = "normal";
 	if (autotrust)
 		mode = "auto-accept";
-	k = pipe_key(sender_handle, req->channel);
+	k = pipe_key(sender_handle, ctx);
 	sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
 	trusted = is_trusted(sess);
 	/* Our key goes only to someone the user accepted (/e2e accept,
@@ -1023,7 +1084,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   KEYREQ to anyone who sends a wire (rpe2e.pl and repartee answer
 	   then, see the header). */
 	if (strcmp(mode, "auto-accept") != 0 &&
-	    !e2e_peer_accepted(kr, sender_handle, req->channel, fp_hex)) {
+	    !e2e_peer_accepted(kr, sender_handle, ctx, fp_hex)) {
 		/* quiet: a stranger's request is dropped silently */
 		if (strcmp(mode, "quiet") == 0 && !trusted)
 			goto out;
@@ -1031,11 +1092,11 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		if (!trusted) {
 			unsigned char zero[32] = { 0 };
 
-			set_session(kr, sender_handle, req->channel, fp_hex, zero, "pending");
+			set_session(kr, sender_handle, ctx, fp_hex, zero, "pending");
 		}
 		row = e2e_json_new(E2E_JSON_OBJECT);
 		e2e_json_set_string(row, "handle", sender_handle);
-		e2e_json_set_string(row, "channel", req->channel);
+		e2e_json_set_string(row, "channel", ctx);
 		e2e_json_set_string(row, "sender_handle", sender_handle);
 		e2e_json_set_string(row, "sender_nick", nick);
 		set_b64(row, "pubkey", req->pub, 32);
@@ -1044,16 +1105,17 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		set_b64(row, "sig", req->sig, 64);
 		e2e_json_set_int(row, "received_at", e2e_now());
 		e2e_json_set(e2e_json_get(kr, "pending_inbound"), k, row);
-		prune_pending_inbound(kr);
+		prune_pending_inbound(kr, net);
 		goto out;
 	}
-	*rsp = e2e_build_keyrsp_for_req(kr, id, req->channel, sender_handle, req->pub, req->eph);
-	if (*rsp != NULL && !e2e_peer_accepted(kr, sender_handle, req->channel, fp_hex))
-		mark_accepted(kr, sender_handle, req->channel, fp_hex,
+	*rsp = e2e_build_keyrsp_for_req(kr, id, ctx, sender_handle, req->pub, req->eph);
+	if (*rsp != NULL && !e2e_peer_accepted(kr, sender_handle, ctx, fp_hex))
+		mark_accepted(kr, sender_handle, ctx, fp_hex,
 		              autotrust ? "autotrust" : "auto-accept");
-	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, req->channel,
+	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, ctx,
 	                                            sender_handle, own_handle);
 out:
+	g_free(ctx);
 	g_free(k);
 	g_free(fp_hex);
 	e2e_handshake_free(req);
@@ -1087,14 +1149,14 @@ static gboolean unwrap(const E2E_HANDSHAKE *hs, const unsigned char x_sk[32],
 	return ok;
 }
 
-gboolean e2e_handle_keyrsp(E2E_JSON *kr, const char *sender_handle, const char *nick,
-                           const char *body)
+gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_handle,
+                           const char *nick, const char *body)
 {
 	E2E_HANDSHAKE *rsp;
 	E2E_JSON *pending, *row;
 	PEER_CHANGE change;
 	unsigned char eph_sk[32], key[32];
-	char *pk, *fp_hex = NULL;
+	char *pk, *fp_hex = NULL, *ctx = NULL;
 	gboolean have_eph, ok = FALSE;
 
 	rsp = e2e_handshake_parse(body, E2E_HS_KEYRSP);
@@ -1102,10 +1164,13 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const char *sender_handle, const char *
 		return FALSE;
 	if (!e2e_handshake_verify(rsp))
 		goto out;
+	ctx = e2e_ctx_resolve(kr, net, rsp->channel, NULL);
+	if (ctx == NULL)
+		goto out;
 	/* only an answer to a request of ours to this sender. rpe2e.pl also
 	   took one to a request sent without a known handle - from anyone. */
 	pending = e2e_json_get(kr, "pending");
-	pk = pipe_key(rsp->channel, sender_handle);
+	pk = pipe_key(ctx, sender_handle);
 	row = e2e_json_get(pending, pk);
 	if (row == NULL) {
 		g_free(pk);
@@ -1128,13 +1193,14 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const char *sender_handle, const char *
 		goto out;
 	ok = FALSE;
 	fp_hex = e2e_fingerprint_hex(rsp->pub);
-	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, rsp->channel, &change))
+	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, ctx, &change))
 		goto out;
 	update_peer(kr, fp_hex, rsp->pub, sender_handle, nick, "trusted");
-	set_session(kr, sender_handle, rsp->channel, fp_hex, key, "trusted");
+	set_session(kr, sender_handle, ctx, fp_hex, key, "trusted");
 	ok = TRUE;
 out:
 	e2e_wipe(key, sizeof(key));
+	g_free(ctx);
 	g_free(fp_hex);
 	e2e_handshake_free(rsp);
 	return ok;
@@ -1165,15 +1231,15 @@ static gboolean consume_rekey_nonce(E2E_JSON *kr, const char *fp_hex, const char
 	return fresh;
 }
 
-gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *sender_handle,
-                          const char *nick, const char *body)
+gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *net,
+                          const char *sender_handle, const char *nick, const char *body)
 {
 	E2E_HANDSHAKE *rk;
 	E2E_JSON *sess;
 	PEER_CHANGE change;
 	unsigned char x_sk[32], key[32];
 	const char *old_fp;
-	char *fp_hex = NULL, *cfg_ctx, *k;
+	char *fp_hex = NULL, *cfg_ctx, *k, *ctx = NULL;
 	gboolean ok = FALSE, on;
 
 	rk = e2e_handshake_parse(body, E2E_HS_REKEY);
@@ -1182,27 +1248,31 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *send
 	if (!e2e_handshake_verify(rk))
 		goto out;
 	fp_hex = e2e_fingerprint_hex(rk->pub);
+	ctx = e2e_ctx_resolve(kr, net, rk->channel, NULL);
+	if (ctx == NULL)
+		goto out;
 	/* E2E has to be on: the context, for a DM the peer's config ("@" +
-	   their handle; the REKEY names the direction to us, "@<own>") */
-	cfg_ctx = e2e_is_channel(rk->channel) ? g_strdup(rk->channel)
-	                                      : g_strconcat("@", sender_handle, NULL);
-	on = e2e_ctx_enabled(kr, cfg_ctx);
+	   their handle on this network; the REKEY names the direction to us,
+	   "@<own>") */
+	cfg_ctx = e2e_is_channel(rk->channel) ? g_strdup(ctx)
+	                                      : dm_config_ctx(kr, net, sender_handle, NULL);
+	on = cfg_ctx != NULL && e2e_ctx_enabled(kr, cfg_ctx);
 	g_free(cfg_ctx);
 	if (!on)
 		goto out;
 	/* it replaces a trusted session of this handle and context with this
 	   key; it never creates one (rpe2e.pl took it from anyone it had seen,
 	   even a peer still waiting for /e2e accept) */
-	k = pipe_key(sender_handle, rk->channel);
+	k = pipe_key(sender_handle, ctx);
 	sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
 	g_free(k);
 	if (!is_trusted(sess) || g_strcmp0(e2e_json_get_string(sess, "fp"), fp_hex) != 0)
 		goto out;
 	if (classify_peer_change(kr, fp_hex, sender_handle, &old_fp) == CHANGE_NEW)
 		goto out;
-	if (!check_peer(kr, fp_hex, rk->pub, sender_handle, rk->channel, &change))
+	if (!check_peer(kr, fp_hex, rk->pub, sender_handle, ctx, &change))
 		goto out;
-	if (!consume_rekey_nonce(kr, fp_hex, rk->channel, rk->nonce))
+	if (!consume_rekey_nonce(kr, fp_hex, ctx, rk->nonce))
 		goto out;
 	if (!e2e_ed25519_sk_to_x25519(x_sk, id->sk))
 		goto out;
@@ -1211,9 +1281,10 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *send
 	if (!ok)
 		goto out;
 	update_peer(kr, fp_hex, rk->pub, sender_handle, nick, "trusted");
-	set_session(kr, sender_handle, rk->channel, fp_hex, key, "trusted");
+	set_session(kr, sender_handle, ctx, fp_hex, key, "trusted");
 out:
 	e2e_wipe(key, sizeof(key));
+	g_free(ctx);
 	g_free(fp_hex);
 	e2e_handshake_free(rk);
 	return ok;
@@ -1323,16 +1394,42 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp)
 {
-	char *actx = e2e_is_channel(ctx) ? g_strdup(ctx) : g_strconcat("@", handle, NULL);
-	gboolean ok = e2e_peer_accepted(kr, handle, actx, fp);
+	char *peer = g_strconcat("@", handle, NULL);
+	char *actx = e2e_is_channel(e2e_ctx_wire(ctx)) ? g_strdup(ctx) : e2e_ctx_rescope(ctx, peer);
+	gboolean ok = actx != NULL && e2e_peer_accepted(kr, handle, actx, fp);
 
+	g_free(peer);
 	g_free(actx);
 	return ok;
 }
 
+/* The config key ctx counts on net, and the bare name it stands for
+   there (*wire): this network's, or an old unscoped one that no config of
+   this network hides (that one wins, e2e_adopt_legacy). Without a network
+   every key counts as it is, as before the scope. */
+static gboolean config_on_net(const E2E_JSON *kr, const char *ctx, const E2E_NET *net,
+                              const char **wire)
+{
+	char *scoped;
+	gboolean hidden;
+
+	*wire = ctx;
+	if (net == NULL)
+		return TRUE;
+	if (!e2e_ctx_on_net(ctx, net))
+		return FALSE;
+	*wire = e2e_ctx_wire(ctx);
+	if (strchr(ctx, E2E_SCOPE_SEP) != NULL)
+		return TRUE;
+	scoped = e2e_ctx_scoped(net, ctx);
+	hidden = scoped != NULL && e2e_json_get(e2e_json_get(kr, "channels"), scoped) != NULL;
+	g_free(scoped);
+	return !hidden;
+}
+
 /* the handles of the "@<handle>" configs with E2E on that belong to nick:
    its "nick" member, or a peer last seen as nick under that handle */
-GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const char *nick)
+GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
 	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
@@ -1340,13 +1437,13 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const char *nick)
 	guint i, j;
 
 	for (i = 0; i < keys->len; i++) {
-		const char *ctx = g_ptr_array_index(keys, i);
+		const char *key = g_ptr_array_index(keys, i), *ctx;
 		const char *cnick;
 		gboolean match;
 
-		if (*ctx != '@' || !e2e_ctx_enabled(kr, ctx))
+		if (!config_on_net(kr, key, net, &ctx) || *ctx != '@' || !e2e_ctx_enabled(kr, key))
 			continue;
-		cnick = e2e_json_get_string(e2e_json_get(channels, ctx), "nick");
+		cnick = e2e_json_get_string(e2e_json_get(channels, key), "nick");
 		match = cnick != NULL && g_ascii_strcasecmp(cnick, nick) == 0;
 		for (j = 0; j < pkeys->len && !match; j++) {
 			E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(pkeys, j));
@@ -1363,7 +1460,8 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const char *nick)
 	return out;
 }
 
-GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const char *nick, const char *live)
+GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                                 const char *live)
 {
 	GPtrArray *out = g_ptr_array_new_with_free_func(g_free), *mine;
 
@@ -1373,7 +1471,7 @@ GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const char *nick, const cha
 		g_ptr_array_add(out, g_strconcat("@", live, NULL));
 		return out;
 	}
-	mine = e2e_dm_configs_of(kr, nick);
+	mine = e2e_dm_configs_of(kr, net, nick);
 	if (mine->len == 1)
 		g_ptr_array_add(out, g_strconcat("@", (char *) g_ptr_array_index(mine, 0), NULL));
 	g_ptr_array_unref(mine);
@@ -1437,7 +1535,7 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 		   no recipients any more */
 		if (handle == NULL || !e2e_peer_accepted(kr, handle, ctx, fp)) {
 			add_warning(res, g_strdup_printf("rekey to %s skipped: never accepted on %s (a keyring of rpe2e.pl or repartee?) — they no longer get your key; /e2e accept them when they ask",
-			                                 handle != NULL ? handle : "?", ctx));
+			                                 handle != NULL ? handle : "?", e2e_ctx_wire(ctx)));
 			g_ptr_array_add(dropped, g_strdup(g_ptr_array_index(keys, i)));
 			continue;
 		}
@@ -1487,9 +1585,10 @@ static char *irc_fold(const char *name)
 	return out;
 }
 
-/* "#Secret" when E2E is on for "#secret": the server takes both for the
-   same channel, so the line must not go out in clear text */
-static char *enabled_other_case(const E2E_JSON *kr, char **readings)
+/* "#Secret" when E2E is on for "#secret" on this network: the server
+   takes both for the same channel, so the line must not go out in clear
+   text. The bare name of the config found. */
+static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **readings)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels");
 	GPtrArray *keys = e2e_json_keys(channels);
@@ -1500,11 +1599,14 @@ static char *enabled_other_case(const E2E_JSON *kr, char **readings)
 		char *want = irc_fold(readings[j]);
 
 		for (i = 0; i < keys->len && found == NULL; i++) {
-			const char *key = g_ptr_array_index(keys, i);
-			char *have = irc_fold(key);
+			const char *key = g_ptr_array_index(keys, i), *wire;
+			char *have;
 
+			if (!config_on_net(kr, key, net, &wire))
+				continue;
+			have = irc_fold(wire);
 			if (strcmp(have, want) == 0 && e2e_ctx_enabled(kr, key))
-				found = g_strdup(key);
+				found = g_strdup(wire);
 			g_free(have);
 		}
 		g_free(want);
@@ -1516,9 +1618,10 @@ static char *enabled_other_case(const E2E_JSON *kr, char **readings)
 /* The "@<handle>" with E2E on that belongs to nick, other than the live
    handle: a config of a query with that nick (its "nick" member) or of a
    peer last seen under that nick. NULL when there is none. */
-char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const char *nick, const char *live)
+char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                               const char *live)
 {
-	GPtrArray *mine = e2e_dm_configs_of(kr, nick);
+	GPtrArray *mine = e2e_dm_configs_of(kr, net, nick);
 	char *found = NULL;
 	guint i;
 
@@ -1529,18 +1632,66 @@ char *e2e_enabled_dm_elsewhere(const E2E_JSON *kr, const char *nick, const char 
 	return found;
 }
 
-/* _gate_decide for one target; dry: decide only (no key is generated) */
-static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
-                        const char *target, const char *body, E2E_RESOLVE_FUNC resolve,
-                        void *resolve_data, gboolean dry, E2E_GATE_RESULT *res)
+/* the name of a target cannot be kept per network: a reading holds 0x1F
+   (an old row of that name would read as another network's), or the
+   network has no label */
+static gboolean unscopable(const E2E_NET *net, char **readings)
 {
-	char **readings;
-	GPtrArray *on;
-	const char *error = NULL;
-	gboolean is_channel, is_action, rotated, generated;
+	int i;
+
+	if (net == NULL)
+		return FALSE;
+	if (net->label == NULL)
+		return TRUE;
+	for (i = 0; readings != NULL && readings[i] != NULL; i++)
+		if (strchr(readings[i], E2E_SCOPE_SEP) != NULL)
+			return TRUE;
+	return FALSE;
+}
+
+/* E2E is on for ctx (what e2e_ctx_lookup gave for wire): for an old
+   context taken over on the only network, the scoped config wins when
+   there is one (e2e_adopt_legacy) */
+static gboolean lookup_enabled(const E2E_JSON *kr, const E2E_NET *net, E2E_CTX_KIND kind,
+                               const char *ctx, const char *wire)
+{
+	char *scoped;
+	gboolean on;
+
+	if (kind != E2E_CTX_LEGACY)
+		return e2e_ctx_enabled(kr, ctx);
+	scoped = e2e_ctx_scoped(net, wire);
+	on = e2e_ctx_enabled(kr, scoped != NULL &&
+	                         e2e_json_get(e2e_json_get(kr, "channels"), scoped) != NULL ? scoped : ctx);
+	g_free(scoped);
+	return on;
+}
+
+/* an old bare-nick config of a DM target, unscoped or of this network */
+static gboolean nick_enabled(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
+{
+	char *scoped = e2e_ctx_scoped(net, nick);
+	gboolean on = e2e_ctx_enabled(kr, nick) || (scoped != NULL && e2e_ctx_enabled(kr, scoped));
+
+	g_free(scoped);
+	return on;
+}
+
+/* _gate_decide for one target; dry: decide only (no key is generated,
+   nothing in kr changes) */
+static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
+                        const E2E_NET *net, const char *target, const char *body,
+                        E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean dry,
+                        E2E_GATE_RESULT *res)
+{
+	char **readings, **ctxs = NULL;
+	E2E_CTX_KIND *kinds = NULL, kind = E2E_CTX_NEW;
+	GPtrArray *on = NULL;
+	const char *error = NULL, *blocked = NULL, *wire = NULL;
+	gboolean is_channel, is_action, rotated, generated, adopted = FALSE;
 	unsigned char key[32];
-	char *ctx = NULL, *handle;
-	guint i;
+	char *ctx = NULL, *handle, *dm_wire = NULL;
+	guint i, n = 0;
 
 	readings = e2e_channel_readings(target);
 	is_channel = readings[0] != NULL;
@@ -1552,29 +1703,58 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 		goto out;
 	}
 
+	/* nothing can be stored for such a name on this network: decided as
+	   before the scope, and never encrypted */
+	if (unscopable(net, is_channel ? readings : NULL)) {
+		gate_single(kr, kr_ok, id, NULL, target, body, resolve, resolve_data, TRUE, res);
+		if (res->action == E2E_GATE_CIPHER ||
+		    (res->action == E2E_GATE_REFUSE && kr_ok)) {
+			e2e_gate_result_clear(res);
+			res->action = E2E_GATE_REFUSE;
+			res->message = g_strdup_printf(REFUSE_UNSCOPED, target);
+		}
+		goto out;
+	}
+
+	/* every reading on this network; an old one of unknown network
+	   (BLOCKED) is never sent in clear text nor encrypted */
 	on = g_ptr_array_new();
-	for (i = 0; is_channel && readings[i] != NULL; i++)
-		if (e2e_ctx_enabled(kr, readings[i]))
-			g_ptr_array_add(on, readings[i]);
+	if (is_channel) {
+		n = g_strv_length(readings);
+		ctxs = g_new0(char *, n + 1);
+		kinds = g_new0(E2E_CTX_KIND, n);
+		for (i = 0; i < n; i++) {
+			kinds[i] = e2e_ctx_lookup(kr, net, readings[i], &ctxs[i]);
+			if (kinds[i] == E2E_CTX_BLOCKED) {
+				if (blocked == NULL)
+					blocked = readings[i];
+			} else if (lookup_enabled(kr, net, kinds[i], ctxs[i], readings[i])) {
+				g_ptr_array_add(on, readings[i]);
+			}
+		}
+	}
 
 	/* bot commands go out in clear text, channel only, warned about
 	   whenever E2E cannot be ruled out */
 	if (is_channel && e2e_is_bot_command(body)) {
 		res->action = E2E_GATE_BYPASS;
-		if (!kr_ok || on->len > 0)
+		if (!kr_ok || on->len > 0 || blocked != NULL)
 			res->message = g_strdup_printf(BOT_BYPASS_WARN, readings[0]);
-		g_ptr_array_unref(on);
 		goto out;
 	}
 	/* an unreadable keyring may hold an enabled config: fail closed */
 	if (!kr_ok) {
 		res->action = E2E_GATE_REFUSE;
 		res->message = g_strdup(E2E_REFUSE_KEYRING);
-		g_ptr_array_unref(on);
 		goto out;
 	}
 
 	if (is_channel) {
+		if (blocked != NULL) {
+			res->action = E2E_GATE_REFUSE;
+			res->message = g_strdup_printf(E2E_REFUSE_LEGACY, blocked, net->label);
+			goto out;
+		}
 		if (on->len > 1) {
 			char *both;
 
@@ -1583,14 +1763,16 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			res->action = E2E_GATE_REFUSE;
 			res->message = g_strdup_printf(REFUSE_AMBIGUOUS, target, both);
 			g_free(both);
-			g_ptr_array_unref(on);
 			goto out;
 		}
 		/* encrypting under the one enabled reading is always safe */
-		ctx = g_strdup(on->len > 0 ? (char *) g_ptr_array_index(on, 0) : readings[0]);
-		g_ptr_array_unref(on);
+		for (i = 0; on->len > 0 && readings[i] != g_ptr_array_index(on, 0); i++)
+			;
+		wire = readings[i];
+		kind = kinds[i];
+		ctx = ctxs[i];
+		ctxs[i] = NULL;
 	} else {
-		g_ptr_array_unref(on);
 		handle = resolve(target, kr, resolve_data);
 		if (handle == NULL || *handle == '\0') {
 			char *other;
@@ -1599,8 +1781,8 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			/* the address is not known now (no query, no common channel),
 			   but E2E may be on for the nick at the one it had: an old
 			   bare-nick row, or a "@<handle>" config of the nick */
-			other = e2e_enabled_dm_elsewhere(kr, target, NULL);
-			if (e2e_ctx_enabled(kr, target)) {
+			other = e2e_enabled_dm_elsewhere(kr, net, target, NULL);
+			if (nick_enabled(kr, net, target)) {
 				res->action = E2E_GATE_REFUSE;
 				res->message = g_strdup(E2E_REFUSE_NO_HANDLE);
 			} else if (other != NULL) {
@@ -1612,13 +1794,23 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			g_free(other);
 			goto out;
 		}
-		ctx = g_strconcat("@", handle, NULL);
+		dm_wire = g_strconcat("@", handle, NULL);
 		g_free(handle);
+		wire = dm_wire;
+		kind = e2e_ctx_lookup(kr, net, wire, &ctx);
+		if (kind == E2E_CTX_BLOCKED) {
+			res->action = E2E_GATE_REFUSE;
+			/* a handle with 0x1F: nothing can be stored for it */
+			res->message = net != NULL && strchr(wire, E2E_SCOPE_SEP) == NULL ?
+				g_strdup_printf(E2E_REFUSE_LEGACY, target, net->label) :
+				g_strdup_printf(REFUSE_UNSCOPED, target);
+			goto out;
+		}
 	}
 
-	if (!e2e_ctx_enabled(kr, ctx)) {
-		char *other = is_channel ? enabled_other_case(kr, readings)
-		                         : e2e_enabled_dm_elsewhere(kr, target, ctx + 1);
+	if (!lookup_enabled(kr, net, kind, ctx, wire)) {
+		char *other = is_channel ? enabled_other_case(kr, net, readings)
+		                         : e2e_enabled_dm_elsewhere(kr, net, target, wire + 1);
 
 		if (other != NULL && is_channel) {
 			res->action = E2E_GATE_REFUSE;
@@ -1628,18 +1820,31 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			   someone else took the nick): never clear text where the
 			   user expects E2E */
 			res->action = E2E_GATE_REFUSE;
-			res->message = g_strdup_printf(REFUSE_DM_MOVED, target, other, target, ctx + 1, other);
+			res->message = g_strdup_printf(REFUSE_DM_MOVED, target, other, target, wire + 1, other);
 		} else {
 			res->action = E2E_GATE_PASS;
 		}
 		g_free(other);
 		goto out;
 	}
-	res->ctx = g_strdup(ctx);
 	if (dry) {
+		/* what it would be: an old context is not taken over now */
+		res->ctx = kind == E2E_CTX_LEGACY ? e2e_ctx_scoped(net, wire) : g_strdup(ctx);
 		res->action = E2E_GATE_CIPHER;
 		goto out;
 	}
+	/* the only network: the old rows become this network's */
+	if (kind == E2E_CTX_LEGACY) {
+		g_free(ctx);
+		ctx = e2e_ctx_resolve(kr, net, wire, &adopted);
+		if (ctx == NULL) {
+			res->action = E2E_GATE_REFUSE;
+			res->message = g_strdup(E2E_REFUSE_ENCRYPT);
+			goto out;
+		}
+	}
+	res->ctx = g_strdup(ctx);
+	res->save_needed = adopted;
 	if (!e2e_outgoing_key(kr, ctx, key, &rotated, &generated)) {
 		res->action = E2E_GATE_REFUSE;
 		res->message = g_strdup(E2E_REFUSE_ENCRYPT);
@@ -1647,10 +1852,12 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	}
 	if (rotated)
 		distribute_rekey(kr, id, ctx, key, res);
-	/* written only when a key was generated or rotated, not per message */
-	res->save_needed = generated;
-	res->wires = is_action ? e2e_encrypt_ctcp(key, ctx, body, e2e_now(), &error)
-	                       : e2e_encrypt_plain(key, ctx, body, e2e_now(), &error);
+	/* written only when a key was generated or rotated (or old rows were
+	   taken over), not per message */
+	res->save_needed = generated || adopted;
+	/* the AAD is the bare context */
+	res->wires = is_action ? e2e_encrypt_ctcp(key, e2e_ctx_wire(ctx), body, e2e_now(), &error)
+	                       : e2e_encrypt_plain(key, e2e_ctx_wire(ctx), body, e2e_now(), &error);
 	e2e_wipe(key, sizeof(key));
 	if (res->wires == NULL) {
 		res->action = E2E_GATE_REFUSE;
@@ -1659,20 +1866,28 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	}
 	res->action = E2E_GATE_CIPHER;
 out:
+	if (on != NULL)
+		g_ptr_array_unref(on);
+	for (i = 0; ctxs != NULL && i < n; i++)
+		g_free(ctxs[i]);
+	g_free(ctxs);
+	g_free(kinds);
+	g_free(dm_wire);
 	g_free(ctx);
 	g_strfreev(readings);
 }
 
 static void gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
-                        const char *target, const char *body, E2E_RESOLVE_FUNC resolve,
-                        void *resolve_data, gboolean dry, E2E_GATE_RESULT *res)
+                        const E2E_NET *net, const char *target, const char *body,
+                        E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean dry,
+                        E2E_GATE_RESULT *res)
 {
 	char **targets;
 	int i;
 
 	memset(res, 0, sizeof(*res));
 	if (strchr(target, ',') == NULL) {
-		gate_single(kr, kr_ok, id, target, body, resolve, resolve_data, dry, res);
+		gate_single(kr, kr_ok, id, net, target, body, resolve, resolve_data, dry, res);
 		return;
 	}
 	/* "#a,#b": one line cannot be encrypted for several contexts. Clear
@@ -1685,7 +1900,7 @@ static void gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 		if (*targets[i] == '\0')
 			continue;
 		memset(&one, 0, sizeof(one));
-		gate_single(kr, kr_ok, id, targets[i], body, resolve, resolve_data, TRUE, &one);
+		gate_single(kr, kr_ok, id, net, targets[i], body, resolve, resolve_data, TRUE, &one);
 		if (one.action == E2E_GATE_REFUSE || one.action == E2E_GATE_CIPHER) {
 			g_free(res->message);
 			res->action = E2E_GATE_REFUSE;
@@ -1705,10 +1920,10 @@ static void gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 }
 
 void e2e_gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
-                     const char *target, const char *body,
+                     const E2E_NET *net, const char *target, const char *body,
                      E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res)
 {
-	gate_decide(kr, kr_ok, id, target, body, resolve, resolve_data, FALSE, res);
+	gate_decide(kr, kr_ok, id, net, target, body, resolve, resolve_data, FALSE, res);
 }
 
 void e2e_gate_result_clear(E2E_GATE_RESULT *res)
@@ -1738,7 +1953,8 @@ gboolean e2e_gate_lines_fit(const E2E_GATE_RESULT *res, const char *tags, const 
 	return TRUE;
 }
 
-char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const char *buf, gsize len,
+char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                         const char *buf, gsize len,
                          E2E_RESOLVE_FUNC resolve, void *resolve_data)
 {
 	char *message = NULL;
@@ -1754,7 +1970,7 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const char *buf, gsize le
 			;
 		line = g_strndup(buf + start, end - start);
 		if (*line != '\0' && e2e_parse_privmsg_line(line, &tags, &target, &body)) {
-			gate_decide(kr, kr_ok, NULL, target, body, resolve, resolve_data, TRUE, &res);
+			gate_decide(kr, kr_ok, NULL, net, target, body, resolve, resolve_data, TRUE, &res);
 			if (res.action == E2E_GATE_REFUSE)
 				message = g_strdup_printf(REFUSE_RAW_LINES, res.message);
 			else if (res.action == E2E_GATE_CIPHER)
@@ -1783,7 +1999,8 @@ static gboolean try_decrypt(const E2E_WIRE *w, const E2E_JSON *row, const char *
 	/* never the all-zero placeholder: anyone can encrypt under it */
 	if (!e2e_session_has_key(row) || !b64_member(row, "sk", key, 32))
 		return FALSE;
-	pt = e2e_wire_decrypt(w, key, ctx, &len);
+	/* the AAD is the bare context */
+	pt = e2e_wire_decrypt(w, key, e2e_ctx_wire(ctx), &len);
 	e2e_wipe(key, sizeof(key));
 	if (pt == NULL)
 		return FALSE;
@@ -1799,6 +2016,19 @@ static gboolean try_decrypt(const E2E_WIRE *w, const E2E_JSON *row, const char *
 	return TRUE;
 }
 
+/* the storage context of wire on the network of p (old rows taken over on
+   the only network: res->save_needed); NULL for an old context of unknown
+   network, which is treated as E2E off */
+static char *in_ctx(E2E_JSON *kr, const E2E_IN_PARAMS *p, const char *wire, E2E_IN_RESULT *res)
+{
+	gboolean changed = FALSE;
+	char *ctx = e2e_ctx_resolve(kr, p->net, wire, &changed);
+
+	if (changed)
+		res->save_needed = TRUE;
+	return ctx;
+}
+
 /* _decrypt_wire_message */
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
                           const char *text, E2E_IN_RESULT *res)
@@ -1806,7 +2036,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 	E2E_WIRE *w;
 	E2E_JSON *incoming, *row;
 	gboolean is_dm = !e2e_is_channel(p->target);
-	char *k;
+	char *k, *wire = NULL, *ctx;
 	int i;
 
 	memset(res, 0, sizeof(*res));
@@ -1825,9 +2055,11 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 			res->action = E2E_IN_WAIT_OWN;
 			goto out;
 		}
-		res->ctx = g_strconcat("@", p->own_handle, NULL);
+		wire = g_strconcat("@", p->own_handle, NULL);
+		res->ctx = g_strdup(wire);
 	} else {
-		res->ctx = g_strdup(p->target);
+		wire = g_strdup(p->target);
+		res->ctx = g_strdup(wire);
 	}
 
 	if (ABS(e2e_now() - w->ts) > E2E_TS_TOLERANCE) {
@@ -1853,12 +2085,13 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 				g_ptr_array_add(ctxs, g_strconcat("@", h, NULL));
 			g_free(h);
 		}
-		for (j = 0; j < ctxs->len; j++) {
-			const char *octx = g_ptr_array_index(ctxs, j);
+		for (j = 0; j < ctxs->len && res->action != E2E_IN_PLAIN; j++) {
+			char *octx = in_ctx(kr, p, g_ptr_array_index(ctxs, j), res);
 
-			row = e2e_json_get(e2e_json_get(kr, "outgoing"), octx);
-			if (row != NULL && try_decrypt(w, row, octx, res))
-				break;
+			row = octx != NULL ? e2e_json_get(e2e_json_get(kr, "outgoing"), octx) : NULL;
+			if (row != NULL)
+				try_decrypt(w, row, octx, res);
+			g_free(octx);
 		}
 		if (res->action != E2E_IN_PLAIN)
 			res->debug = g_strdup_printf("own-copy wire to %s undecryptable (rotated key?) — dropped",
@@ -1866,6 +2099,17 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		g_ptr_array_unref(ctxs);
 		goto out;
 	}
+
+	/* the context on this network: an old one of unknown network is off
+	   here, nothing is read or asked under it */
+	ctx = in_ctx(kr, p, wire, res);
+	if (ctx == NULL) {
+		res->debug = g_strdup_printf("wire from %s (%s) for %s dropped: E2E there was set up before networks were kept apart and erssi uses several - /e2e adopt in this window binds it to this network",
+		                             p->nick, p->handle, wire);
+		goto out;
+	}
+	g_free(res->ctx);
+	res->ctx = ctx;
 
 	incoming = e2e_json_get(kr, "incoming");
 	k = pipe_key(p->handle, res->ctx);
@@ -1875,28 +2119,39 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 	   wrong pick cannot leak, the AEAD just fails) */
 	for (i = 0; p->alt_ctxs != NULL && p->alt_ctxs[i] != NULL && !is_trusted(row); i++) {
 		E2E_JSON *r;
+		char *actx = in_ctx(kr, p, p->alt_ctxs[i], res);
 
-		k = pipe_key(p->handle, p->alt_ctxs[i]);
+		if (actx == NULL)
+			continue;
+		k = pipe_key(p->handle, actx);
 		r = e2e_json_get(incoming, k);
 		g_free(k);
 		if (is_trusted(r)) {
 			g_free(res->ctx);
-			res->ctx = g_strdup(p->alt_ctxs[i]);
+			res->ctx = actx;
+			actx = NULL;
 			row = r;
 		}
+		g_free(actx);
 	}
 
 	if (!is_trusted(row)) {
-		res->debug = g_strdup_printf("no trusted incoming for (%s,%s)", p->handle, res->ctx);
+		res->debug = g_strdup_printf("no trusted incoming for (%s,%s)", p->handle,
+		                             e2e_ctx_wire(res->ctx));
 		if (e2e_stamp_allow(p->keyreq_stamps, p->handle, E2E_KEYREQ_MIN_INTERVAL)) {
 			/* enabled is the PEER-keyed config ("E2E with that peer"), the
 			   KEYREQ asks for the direction we receive */
-			char *cfg_ctx = is_dm ? g_strconcat("@", p->handle, NULL) : g_strdup(res->ctx);
+			gboolean changed = FALSE;
+			char *cfg_ctx = is_dm ? dm_config_ctx(kr, p->net, p->handle, &changed)
+			                      : g_strdup(res->ctx);
 			char *error = NULL;
 
-			if (id != NULL && e2e_ctx_enabled(kr, cfg_ctx)) {
+			if (changed)
+				res->save_needed = TRUE;
+			if (id != NULL && cfg_ctx != NULL && e2e_ctx_enabled(kr, cfg_ctx)) {
 				res->keyreq = e2e_build_keyreq(kr, id, res->ctx, p->handle, &error);
-				res->save_needed = res->keyreq != NULL;
+				if (res->keyreq != NULL)
+					res->save_needed = TRUE;
 			}
 			g_free(error);
 			g_free(cfg_ctx);
@@ -1904,8 +2159,10 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		goto out;
 	}
 	if (!try_decrypt(w, row, res->ctx, res))
-		res->debug = g_strdup_printf("decrypt failed for (%s,%s)", p->handle, res->ctx);
+		res->debug = g_strdup_printf("decrypt failed for (%s,%s)", p->handle,
+		                             e2e_ctx_wire(res->ctx));
 out:
+	g_free(wire);
 	e2e_wire_free(w);
 }
 

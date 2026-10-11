@@ -41,8 +41,9 @@ static const char *item_name(WI_ITEM_REC *item)
 	return item != NULL && item->name != NULL ? item->name : "";
 }
 
-/* _resolve_ctx_for_command: the channel, or "@<peer handle>" in a query */
-static char *resolve_ctx(const E2E_JSON *kr, WI_ITEM_REC *item, const char *nick)
+/* the bare context of a window: the channel, or "@<peer handle>" in a
+   query */
+static char *window_wire(const E2E_JSON *kr, WI_ITEM_REC *item, const char *nick)
 {
 	char *handle, *ctx;
 
@@ -58,6 +59,71 @@ static char *resolve_ctx(const E2E_JSON *kr, WI_ITEM_REC *item, const char *nick
 	return ctx;
 }
 
+/* why wire has no context on net: set up before networks were kept
+   apart (erssi uses several), or a name that cannot be kept per network */
+static void print_blocked(WI_ITEM_REC *item, const E2E_NET *net, const char *wire)
+{
+	char *scoped = e2e_ctx_scoped(net, wire);
+
+	if (scoped != NULL)
+		e2e_print_item(item, E2E_REFUSE_LEGACY, wire, net->label);
+	else
+		e2e_print_item(item, "E2E cannot be kept per network for %s (its name holds the control character 0x1F, or the network has no name)",
+		               wire);
+	g_free(scoped);
+}
+
+/* _resolve_ctx_for_command: the context of the window on its network
+   (old rows taken over, and saved, while erssi uses one network). NULL
+   when there is none; *refused: the reason is printed already (E2E there
+   was set up before networks were kept apart, or no server) */
+static char *resolve_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick, gboolean *refused)
+{
+	E2E_NET net;
+	gboolean changed = FALSE;
+	char *wire, *ctx;
+
+	*refused = FALSE;
+	wire = window_wire(kr, item, nick);
+	if (wire == NULL)
+		return NULL;
+	if (item->server == NULL) {
+		e2e_print_item(item, "not connected to a server — the network of %s is not known", wire);
+		*refused = TRUE;
+		g_free(wire);
+		return NULL;
+	}
+	e2e_server_net(item->server, &net);
+	ctx = e2e_ctx_resolve(kr, &net, wire, &changed);
+	if (changed)
+		e2e_save(kr);
+	if (ctx == NULL) {
+		print_blocked(item, &net, wire);
+		*refused = TRUE;
+	}
+	e2e_net_clear(&net);
+	g_free(wire);
+	return ctx;
+}
+
+/* the context /e2e off writes for wire on net: the one in use; for an old
+   one of unknown network a config of this network with E2E off (it hides
+   the old one here); for a name that cannot be scoped the old row itself */
+static char *off_ctx(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *on)
+{
+	gboolean changed = FALSE;
+	char *ctx;
+
+	ctx = e2e_ctx_resolve(kr, net, wire, &changed);
+	if (ctx == NULL) {
+		*on = e2e_ctx_enabled(kr, wire);
+		ctx = e2e_ctx_scoped(net, wire);
+		return ctx != NULL ? ctx : g_strdup(wire);
+	}
+	*on = e2e_ctx_enabled(kr, ctx);
+	return ctx;
+}
+
 /* a nick through the keyring, an ident@host as it is */
 static char *resolve_handle(const E2E_JSON *kr, const char *who)
 {
@@ -66,17 +132,41 @@ static char *resolve_handle(const E2E_JSON *kr, const char *who)
 	return g_strdup(e2e_find_handle_by_nick(kr, who));
 }
 
+/* e2e_incoming_ctx_for: "@<own>" on the network of ctx; its old rows
+   (the DM sessions of every peer) are taken over first while erssi uses
+   one network, so a trust change reaches them */
+static char *own_ctx(E2E_JSON *kr, SERVER_REC *server, const char *ctx)
+{
+	char *own = e2e_incoming_ctx_for(server, ctx), *taken, *found = NULL;
+	E2E_NET net;
+	gboolean changed = FALSE;
+
+	if (own == NULL || server == NULL || strcmp(own, ctx) == 0)
+		return own;
+	e2e_server_net(server, &net);
+	if (e2e_ctx_lookup(kr, &net, e2e_ctx_wire(own), &found) == E2E_CTX_LEGACY) {
+		taken = e2e_ctx_resolve(kr, &net, e2e_ctx_wire(own), &changed);
+		if (changed)
+			e2e_save(kr);
+		g_free(taken);
+	}
+	g_free(found);
+	e2e_net_clear(&net);
+	return own;
+}
+
 /* the "@<own>" context a DM trust change must touch as well; NULL (and the
    refusal printed) while our handle is unknown - guessing would miss the
    real session or touch another network's */
-static char *own_ctx_or_warn(WI_ITEM_REC *item, const char *ctx, const char *cmd, gboolean *ok)
+static char *own_ctx_or_warn(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *cmd,
+                             gboolean *ok)
 {
 	char *own;
 
 	*ok = TRUE;
-	if (*ctx != '@')
+	if (*e2e_ctx_wire(ctx) != '@')
 		return g_strdup(ctx);
-	own = e2e_incoming_ctx_for(item != NULL ? item->server : NULL, ctx);
+	own = own_ctx(kr, item != NULL ? item->server : NULL, ctx);
 	if (own == NULL) {
 		e2e_print_item(item, "%s: own identity not learned yet (waiting for the WHOIS reply) — try again in a moment",
 		               cmd);
@@ -182,7 +272,7 @@ static void set_channel(E2E_JSON *kr, const char *ctx, int enabled, const char *
 
 	e2e_json_set_int(cfg, "enabled", enabled);
 	e2e_json_set_string(cfg, "mode", mode);
-	if (nick != NULL && *ctx == '@')
+	if (nick != NULL && *e2e_ctx_wire(ctx) == '@')
 		e2e_json_set_string(cfg, "nick", nick);
 	e2e_json_set(e2e_json_get(kr, "channels"), ctx, cfg);
 }
@@ -192,9 +282,9 @@ static const char *query_nick(WI_ITEM_REC *item)
 	return item != NULL && !e2e_is_channel(item_name(item)) ? item_name(item) : NULL;
 }
 
-static guint e2e_dm_configs_of_count(const E2E_JSON *kr, const char *nick)
+static guint e2e_dm_configs_of_count(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
 {
-	GPtrArray *on = e2e_dm_configs_of(kr, nick);
+	GPtrArray *on = e2e_dm_configs_of(kr, net, nick);
 	guint n = on->len;
 
 	g_ptr_array_unref(on);
@@ -213,14 +303,16 @@ static const char *str_or(const char *s, const char *def)
 static void cmd_on(WI_ITEM_REC *item)
 {
 	E2E_JSON *kr = e2e_load();
-	char *ctx = resolve_ctx(kr, item, NULL);
+	gboolean refused;
+	char *ctx = resolve_ctx(kr, item, NULL, &refused);
 
 	if (ctx == NULL) {
-		e2e_print_item(item, "%s", NOT_IN_CONTEXT);
+		if (!refused)
+			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 	} else {
 		set_channel(kr, ctx, 1, "normal", query_nick(item));
 		e2e_save(kr);
-		e2e_print_item(item, "enabled on %s (mode=normal)", ctx);
+		e2e_print_item(item, "enabled on %s (mode=normal)", e2e_ctx_wire(ctx));
 	}
 	g_free(ctx);
 	e2e_json_free(kr);
@@ -239,9 +331,9 @@ static void disable_ctx(E2E_JSON *kr, const char *ctx, const char *nick)
 }
 
 /* what is still on for the nick of a query */
-static void print_still_on(WI_ITEM_REC *item, E2E_JSON *kr, const char *nick)
+static void print_still_on(WI_ITEM_REC *item, E2E_JSON *kr, const E2E_NET *net, const char *nick)
 {
-	GPtrArray *on = e2e_dm_configs_of(kr, nick);
+	GPtrArray *on = e2e_dm_configs_of(kr, net, nick);
 	guint i;
 
 	for (i = 0; i < on->len; i++)
@@ -252,54 +344,74 @@ static void print_still_on(WI_ITEM_REC *item, E2E_JSON *kr, const char *nick)
 }
 
 /* SYNTAX: E2E OFF [<ident@host>|<channel>] */
-static void cmd_off(WI_ITEM_REC *item, const char *who)
+static void cmd_off(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 {
-	E2E_JSON *kr = e2e_load();
+	E2E_JSON *kr;
+	E2E_NET net;
 	const char *nick = query_nick(item);
-	char *ctx = NULL, *handle;
+	char *ctx = NULL, *wire = NULL, *handle;
 	GPtrArray *targets;
+	gboolean on;
 	guint i;
 
+	/* the network of the window (of the active server without one) */
+	if (item != NULL && item->server != NULL)
+		server = item->server;
+	if (server == NULL) {
+		e2e_print_item(item, "not connected to a server — the network is not known");
+		return;
+	}
+	kr = e2e_load();
+	e2e_server_net(server, &net);
 	if (who != NULL) {
 		/* an address of a query (or a channel), from any window */
-		ctx = *who == '@' || e2e_is_channel(who) ? g_strdup(who) : g_strconcat("@", who, NULL);
-		if (*ctx == '@' && strchr(ctx + 1, '@') == NULL)
+		wire = *who == '@' || e2e_is_channel(who) ? g_strdup(who) : g_strconcat("@", who, NULL);
+		if (*wire == '@' && strchr(wire + 1, '@') == NULL) {
 			e2e_print_item(item, "usage: /e2e off [<ident@host>|<channel>]");
-		else if (!e2e_ctx_enabled(kr, ctx))
-			e2e_print_item(item, "E2E is not on for %s", ctx);
-		else {
-			disable_ctx(kr, ctx, NULL);
+		} else {
+			ctx = off_ctx(kr, &net, wire, &on);
+			if (!on) {
+				e2e_print_item(item, "E2E is not on for %s", wire);
+			} else {
+				disable_ctx(kr, ctx, NULL);
+				e2e_print_item(item, "disabled on %s", wire);
+			}
 			e2e_save(kr);
-			e2e_print_item(item, "disabled on %s", ctx);
 		}
 	} else if (nick == NULL) {
-		ctx = resolve_ctx(kr, item, NULL);
-		if (ctx == NULL) {
+		wire = window_wire(kr, item, NULL);
+		if (wire == NULL) {
 			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 		} else {
+			ctx = off_ctx(kr, &net, wire, &on);
 			disable_ctx(kr, ctx, NULL);
 			e2e_save(kr);
-			e2e_print_item(item, "disabled on %s", ctx);
+			e2e_print_item(item, "disabled on %s", wire);
 		}
 	} else {
 		/* a query: its address only (the live one, else the one config
 		   of this query); other addresses of the nick are named */
 		handle = e2e_resolve_dm_handle(item->server, kr, nick);
-		targets = e2e_query_off_targets(kr, nick, handle);
+		targets = e2e_query_off_targets(kr, &net, nick, handle);
 		g_free(handle);
 		for (i = 0; i < targets->len; i++) {
-			disable_ctx(kr, g_ptr_array_index(targets, i), nick);
+			char *tctx = off_ctx(kr, &net, g_ptr_array_index(targets, i), &on);
+
+			disable_ctx(kr, tctx, nick);
+			g_free(tctx);
 			e2e_print_item(item, "disabled on %s", (char *) g_ptr_array_index(targets, i));
 		}
 		if (targets->len > 0)
 			e2e_save(kr);
-		else if (e2e_dm_configs_of_count(kr, nick) == 0)
+		else if (e2e_dm_configs_of_count(kr, &net, nick) == 0)
 			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 		else
 			e2e_print_item(item, "the address of %s is not known now — nothing turned off", nick);
-		print_still_on(item, kr, nick);
+		print_still_on(item, kr, &net, nick);
 		g_ptr_array_unref(targets);
 	}
+	e2e_net_clear(&net);
+	g_free(wire);
 	g_free(ctx);
 	e2e_json_free(kr);
 }
@@ -308,6 +420,7 @@ static void cmd_off(WI_ITEM_REC *item, const char *who)
 static void cmd_mode(WI_ITEM_REC *item, const char *mode)
 {
 	E2E_JSON *kr;
+	gboolean refused;
 	char *ctx;
 
 	if (mode == NULL)
@@ -320,13 +433,14 @@ static void cmd_mode(WI_ITEM_REC *item, const char *mode)
 		return;
 	}
 	kr = e2e_load();
-	ctx = resolve_ctx(kr, item, NULL);
+	ctx = resolve_ctx(kr, item, NULL, &refused);
 	if (ctx == NULL) {
-		e2e_print_item(item, "%s", NOT_IN_CONTEXT);
+		if (!refused)
+			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 	} else {
 		set_channel(kr, ctx, 1, mode, query_nick(item));
 		e2e_save(kr);
-		e2e_print_item(item, "mode=%s on %s", mode, ctx);
+		e2e_print_item(item, "mode=%s on %s", mode, e2e_ctx_wire(ctx));
 	}
 	g_free(ctx);
 	e2e_json_free(kr);
@@ -396,7 +510,8 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 {
 	E2E_JSON *kr = e2e_load(), *src;
 	GPtrArray *keys;
-	gboolean all = FALSE, any = FALSE;
+	E2E_NET net;
+	gboolean all = FALSE, any = FALSE, refused;
 	char *ctx, *handle, *channel;
 	guint i;
 
@@ -449,24 +564,31 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		e2e_json_free(kr);
 		return;
 	}
-	ctx = resolve_ctx(kr, item, NULL);
+	ctx = resolve_ctx(kr, item, NULL, &refused);
 	if (ctx == NULL) {
-		e2e_print_item(item, "cannot resolve current context");
+		if (!refused)
+			e2e_print_item(item, "cannot resolve current context");
 		e2e_json_free(kr);
 		return;
 	}
-	/* a query lists everything from this peer (DM sessions live under
-	   "@<own>", trust markers under "@<peer>"), a channel its sessions */
+	/* a query lists everything from this peer on this network (DM
+	   sessions live under "@<own>", trust markers under "@<peer>"), a
+	   channel its sessions */
+	e2e_server_net(item->server, &net);
 	src = e2e_json_get(kr, "incoming");
 	keys = e2e_json_keys(src);
 	for (i = 0; i < keys->len; i++) {
 		E2E_JSON *row = e2e_json_get(src, g_ptr_array_index(keys, i));
+		const char *wire = e2e_ctx_wire(ctx);
 		gboolean match;
 
 		split_key(g_ptr_array_index(keys, i), &handle, &channel);
-		match = *ctx == '@' ? strcmp(handle, ctx + 1) == 0 : g_strcmp0(channel, ctx) == 0;
+		match = *wire == '@' ? strcmp(handle, wire + 1) == 0 && channel != NULL &&
+		                       e2e_ctx_on_net(channel, &net)
+		                     : g_strcmp0(channel, ctx) == 0;
 		if (match) {
-			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", handle, str_or(channel, ""),
+			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", handle,
+			               channel != NULL ? e2e_ctx_wire(channel) : "",
 			               str_or(e2e_json_get_string(row, "fp"), ""),
 			               session_label(kr, handle, channel, row));
 			any = TRUE;
@@ -477,6 +599,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 	g_ptr_array_unref(keys);
 	if (!any)
 		e2e_print_item(item, "no peers");
+	e2e_net_clear(&net);
 	g_free(ctx);
 	e2e_json_free(kr);
 }
@@ -486,6 +609,7 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 {
 	E2E_JSON *kr;
 	E2E_IDENTITY id;
+	gboolean refused;
 	char *ctx, *kreq_ctx = NULL, *handle = NULL, *wire = NULL, *error = NULL;
 
 	if (nick == NULL) {
@@ -501,18 +625,19 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 		return;
 	}
 	kr = e2e_load();
-	ctx = resolve_ctx(kr, item, nick);
+	ctx = resolve_ctx(kr, item, nick, &refused);
 	if (ctx == NULL) {
-		e2e_print_item(item, "cannot resolve handle for %s", nick);
+		if (!refused)
+			e2e_print_item(item, "cannot resolve handle for %s", nick);
 		goto out;
 	}
 	if (!e2e_ctx_enabled(kr, ctx)) {
-		e2e_print_item(item, "e2e not enabled on %s", ctx);
+		e2e_print_item(item, "e2e not enabled on %s", e2e_ctx_wire(ctx));
 		goto out;
 	}
 	/* a KEYREQ asks for the direction WE receive: for a DM it is stamped
 	   with our own handle; the peer-keyed ctx is only the config key */
-	kreq_ctx = e2e_incoming_ctx_for(server, ctx);
+	kreq_ctx = own_ctx(kr, server, ctx);
 	if (kreq_ctx == NULL) {
 		e2e_print_item(item, "own identity not learned yet (waiting for the WHOIS reply) — try again in a moment");
 		goto out;
@@ -534,8 +659,8 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 	}
 	e2e_save(kr);
 	e2e_send_notice(server, nick, wire);
-	e2e_print_item(item, "KEYREQ sent to %s for %s", nick, ctx);
-	e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, ctx);
+	e2e_print_item(item, "KEYREQ sent to %s for %s", nick, e2e_ctx_wire(ctx));
+	e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, e2e_ctx_wire(ctx));
 out:
 	g_free(error);
 	g_free(wire);
@@ -550,15 +675,18 @@ out:
 static gboolean nick_context(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick,
                              char **handle, char **ctx)
 {
+	gboolean refused;
+
 	*ctx = NULL;
 	*handle = resolve_handle(kr, nick);
 	if (*handle == NULL) {
 		e2e_print_item(item, "cannot resolve handle for %s", nick);
 		return FALSE;
 	}
-	*ctx = resolve_ctx(kr, item, nick);
+	*ctx = resolve_ctx(kr, item, nick, &refused);
 	if (*ctx == NULL) {
-		e2e_print_item(item, "cannot resolve context for %s", nick);
+		if (!refused)
+			e2e_print_item(item, "cannot resolve context for %s", nick);
 		return FALSE;
 	}
 	return TRUE;
@@ -584,37 +712,37 @@ static void cmd_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *nick)
 		goto out;
 	if (!e2e_ensure_identity(kr, &id))
 		goto out;
-	own = *ctx == '@' ? e2e_incoming_ctx_for(server, ctx) : NULL;
+	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, server, ctx) : NULL;
 	switch (e2e_accept(kr, &id, handle, ctx, own, e2e_own_handle(server), &rsp, &recip)) {
 	case E2E_ACCEPT_SENT:
 		e2e_save(kr);
 		e2e_send_notice(server, nick, rsp);
 		if (recip != NULL)
 			e2e_send_notice(server, nick, recip);
-		e2e_print_item(item, "accepted %s (%s) on %s — KEYRSP sent", nick, handle, ctx);
-		e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
+		e2e_print_item(item, "accepted %s (%s) on %s — KEYRSP sent", nick, handle, e2e_ctx_wire(ctx));
+		e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, e2e_ctx_wire(ctx));
 		if (recip != NULL)
-			e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, ctx);
+			e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, e2e_ctx_wire(ctx));
 		break;
 	case E2E_ACCEPT_TRUSTED:
 		e2e_save(kr);
 		e2e_print_item(item, "accepted %s (%s) on %s — their next key request is answered", nick,
-		               handle, ctx);
+		               handle, e2e_ctx_wire(ctx));
 		break;
 	case E2E_ACCEPT_NO_KEY:
 		e2e_print_item(item, "cannot accept %s on %s: no key from them is stored (only a request that is gone) — wait for their next request, or /e2e handshake %s",
-		               nick, ctx, nick);
+		               nick, e2e_ctx_wire(ctx), nick);
 		break;
 	case E2E_ACCEPT_DAMAGED:
 		e2e_print_item(item, "the pending exchange from %s on %s is damaged — /e2e decline %s removes it",
-		               nick, ctx, nick);
+		               nick, e2e_ctx_wire(ctx), nick);
 		break;
 	case E2E_ACCEPT_FAILED:
 		e2e_print_item(item, "cannot answer the key exchange from %s on %s (key material damaged?)",
-		               nick, ctx);
+		               nick, e2e_ctx_wire(ctx));
 		break;
 	case E2E_ACCEPT_NOTHING:
-		e2e_print_item(item, "no pending exchange or session for %s on %s", nick, ctx);
+		e2e_print_item(item, "no pending exchange or session for %s on %s", nick, e2e_ctx_wire(ctx));
 		break;
 	}
 	e2e_identity_wipe(&id);
@@ -647,7 +775,7 @@ static void cmd_decline(WI_ITEM_REC *item, const char *nick)
 			e2e_json_set_string(row, "status", "revoked");
 		e2e_forget_acceptance(kr, handle, ctx);
 		e2e_save(kr);
-		e2e_print_item(item, "declined %s on %s", nick, ctx);
+		e2e_print_item(item, "declined %s on %s", nick, e2e_ctx_wire(ctx));
 	}
 	g_free(handle);
 	g_free(ctx);
@@ -669,14 +797,14 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 	kr = e2e_load();
 	if (!nick_context(kr, item, nick, &handle, &ctx))
 		goto out;
-	own = own_ctx_or_warn(item, ctx, revoke ? "/e2e revoke" : "/e2e unrevoke", &ok);
+	own = own_ctx_or_warn(kr, item, ctx, revoke ? "/e2e revoke" : "/e2e unrevoke", &ok);
 	if (!ok)
 		goto out;
 	if (!revoke && e2e_unrevoke(kr, handle, ctx, own) == 0) {
 		/* trusted without a key would show anything encrypted under
 		   the placeholder as genuine */
 		e2e_print_item(item, "cannot unrevoke %s on %s: no key from them is stored — wait for their key, or /e2e handshake %s",
-		               nick, ctx, nick);
+		               nick, e2e_ctx_wire(ctx), nick);
 		goto out;
 	}
 	if (revoke) {
@@ -696,10 +824,10 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 		e2e_json_set_string(peer, "status", revoke ? "revoked" : "trusted");
 	e2e_save(kr);
 	if (revoke)
-		e2e_print_item(item, "revoked %s on %s — key will rotate", nick, ctx);
+		e2e_print_item(item, "revoked %s on %s — key will rotate", nick, e2e_ctx_wire(ctx));
 	else
 		e2e_print_item(item, "unrevoked %s on %s — you read them again; they get your key after /e2e accept %s",
-		               nick, ctx, nick);
+		               nick, e2e_ctx_wire(ctx), nick);
 out:
 	g_free(own);
 	g_free(handle);
@@ -715,7 +843,7 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 	};
 	E2E_JSON *kr;
 	guint n = g_strv_length(args);
-	gboolean all = FALSE, ok;
+	gboolean all = FALSE, ok, refused;
 	const char *who, *fp;
 	char *handle = NULL, *ctx = NULL, *own = NULL;
 	int i, removed = 0;
@@ -754,18 +882,19 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 		e2e_print_item(item, "forgot %s (%s) globally — removed %d row(s)", who, handle, removed);
 		goto out;
 	}
-	ctx = resolve_ctx(kr, item, who);
+	ctx = resolve_ctx(kr, item, who, &refused);
 	if (ctx == NULL) {
-		e2e_print_item(item, "cannot resolve context for %s", who);
+		if (!refused)
+			e2e_print_item(item, "cannot resolve context for %s", who);
 		goto out;
 	}
-	own = own_ctx_or_warn(item, ctx, "/e2e forget", &ok);
+	own = own_ctx_or_warn(kr, item, ctx, "/e2e forget", &ok);
 	if (!ok)
 		goto out;
 	delete_rows(kr, handle, ctx, own);
 	e2e_forget_acceptance(kr, handle, ctx);
 	e2e_save(kr);
-	e2e_print_item(item, "forgotten %s on %s", who, ctx);
+	e2e_print_item(item, "forgotten %s on %s", who, e2e_ctx_wire(ctx));
 out:
 	g_free(own);
 	g_free(ctx);
@@ -789,13 +918,13 @@ static void cmd_verify(WI_ITEM_REC *item, const char *nick)
 		goto out;
 	/* real DM sessions are recipient-keyed under "@<own>"; the peer-keyed
 	   trust marker if only that exists */
-	own = e2e_incoming_ctx_for(item != NULL ? item->server : NULL, ctx);
+	own = own_ctx(kr, item != NULL ? item->server : NULL, ctx);
 	row = own != NULL ? incoming_row(kr, handle, own) : NULL;
 	if (row == NULL)
 		row = incoming_row(kr, handle, ctx);
 	g_free(own);
 	if (row == NULL) {
-		e2e_print_item(item, "no session for %s on %s", nick, ctx);
+		e2e_print_item(item, "no session for %s on %s", nick, e2e_ctx_wire(ctx));
 		goto out;
 	}
 	if (!e2e_ensure_identity(kr, &id))
@@ -883,6 +1012,7 @@ static void cmd_rotate(WI_ITEM_REC *item)
 {
 	E2E_JSON *kr, *out;
 	unsigned char key[32];
+	gboolean refused;
 	char *ctx, *b64;
 
 	if (item == NULL) {
@@ -890,9 +1020,10 @@ static void cmd_rotate(WI_ITEM_REC *item)
 		return;
 	}
 	kr = e2e_load();
-	ctx = resolve_ctx(kr, item, NULL);
+	ctx = resolve_ctx(kr, item, NULL, &refused);
 	if (ctx == NULL) {
-		e2e_print_item(item, "cannot resolve current context");
+		if (!refused)
+			e2e_print_item(item, "cannot resolve current context");
 		e2e_json_free(kr);
 		return;
 	}
@@ -911,7 +1042,7 @@ static void cmd_rotate(WI_ITEM_REC *item)
 		e2e_json_set(e2e_json_get(kr, "outgoing"), ctx, out);
 	}
 	e2e_save(kr);
-	e2e_print_item(item, "rotation scheduled for %s", ctx);
+	e2e_print_item(item, "rotation scheduled for %s", e2e_ctx_wire(ctx));
 	g_free(ctx);
 	e2e_json_free(kr);
 }
@@ -1106,7 +1237,8 @@ static void cmd_guide(WI_ITEM_REC *item)
 {
 	E2E_JSON *kr = e2e_load(), *incoming;
 	const char *fp = e2e_json_get_string(e2e_json_get(kr, "identity"), "fp");
-	char *ctx = resolve_ctx(kr, item, NULL);
+	gboolean refused;
+	char *ctx = resolve_ctx(kr, item, NULL, &refused);
 
 	e2e_print_item(item, "End-to-end encryption (RPE2E, compatible with repartee)");
 	if (e2e_keyring_is_lost())
@@ -1114,8 +1246,8 @@ static void cmd_guide(WI_ITEM_REC *item)
 	e2e_print_item(item, "Your key fingerprint: %s", str_or(fp, "(none yet - created on first use)"));
 	if (ctx != NULL) {
 		E2E_JSON *cfg = e2e_json_get(e2e_json_get(kr, "channels"), ctx);
-		char *own = e2e_incoming_ctx_for(item->server, ctx);
-		const char *peer = *ctx == '@' ? ctx + 1 : NULL;
+		char *own = own_ctx(kr, item->server, ctx);
+		const char *peer = *e2e_ctx_wire(ctx) == '@' ? e2e_ctx_wire(ctx) + 1 : NULL;
 		GPtrArray *keys, *trusted = g_ptr_array_new_with_free_func(g_free);
 		GString *who = g_string_new(NULL);
 		guint i, j;
@@ -1148,14 +1280,16 @@ static void cmd_guide(WI_ITEM_REC *item)
 			g_string_append_printf(who, "%s%s", i > 0 ? ", " : "",
 			                       (char *) g_ptr_array_index(trusted, i));
 		if (e2e_json_truthy(e2e_json_get(cfg, "enabled")))
-			e2e_print_item(item, "Here (%s): encryption ON, mode %s", ctx,
+			e2e_print_item(item, "Here (%s): encryption ON, mode %s", e2e_ctx_wire(ctx),
 			               str_or(e2e_json_get_string(cfg, "mode"), "normal"));
 		else
-			e2e_print_item(item, "Here (%s): encryption off", ctx);
+			e2e_print_item(item, "Here (%s): encryption off", e2e_ctx_wire(ctx));
 		e2e_print_item(item, "Keys from: %s", who->len > 0 ? who->str : "nobody yet");
 		g_string_free(who, TRUE);
 		g_ptr_array_unref(trusted);
 		g_free(own);
+	} else if (refused) {
+		/* said why above */
 	} else if (item != NULL && IS_QUERY(item)) {
 		e2e_print_item(item, "Here: the address (ident@host) of %s is not known yet - wait for a message from them or join a common channel, then /e2e on.",
 		               item_name(item));
@@ -1212,7 +1346,7 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 	} else if (strcmp(sub, "on") == 0) {
 		cmd_on(item);
 	} else if (strcmp(sub, "off") == 0) {
-		cmd_off(item, args[0]);
+		cmd_off(server, item, args[0]);
 	} else if (strcmp(sub, "mode") == 0) {
 		cmd_mode(item, args[0]);
 	} else if (strcmp(sub, "fingerprint") == 0) {

@@ -28,11 +28,23 @@
  empty) gets the superset fold E2E_CASEMAP_UNICODE, which can only equate
  more names than the server does, never fewer.
 
- Everything here is pure: no irssi, no keyring. Strings returned as
- char * are newly allocated (g_free).
+ Old (unscoped) rows: a keyring of rpe2e.pl, or of the module before the
+ scope, holds bare contexts. e2e_ctx_lookup() decides what a wire context
+ is on a network; e2e_ctx_resolve() takes old rows over
+ (e2e_adopt_legacy()) where that is safe: only while erssi uses one
+ network (E2E_NET.legacy_ok). On several networks an old context is
+ BLOCKED - the gate refuses it, nothing is decrypted or answered with it
+ - until /e2e adopt binds it to one network, or /e2e off writes a scoped
+ config for this one.
+
+ Everything here is pure: no irssi; the lookups read and change an
+ in-memory keyring only. Strings returned as char * are newly allocated
+ (g_free).
 */
 
 #include <glib.h>
+
+#include "e2e-json.h"
 
 #define E2E_SCOPE_SEP '\x1f'
 
@@ -118,5 +130,57 @@ char *e2e_ctx_network(const char *ctx);
 gboolean e2e_ctx_on_net(const char *ctx, const E2E_NET *net);
 /* "IRCnet:#chan" for a scoped ctx, a bare one unchanged; NULL for NULL */
 char *e2e_ctx_display(const char *ctx);
+
+/* ---- the keyring: legacy (unscoped) rows ---- */
+
+typedef enum {
+	E2E_CTX_NEW,		/* nothing stored for it on this network yet */
+	E2E_CTX_SCOPED,		/* rows stored for this network */
+	E2E_CTX_LEGACY,		/* only old unscoped rows, which may be used here */
+	E2E_CTX_BLOCKED		/* old rows of unknown network, or no scoped name */
+} E2E_CTX_KIND;
+
+/*
+ What wire (a bare "#chan" or "@ident@host") is on net. A context EXISTS
+ when channels[ctx] or outgoing[ctx] is there, an incoming key is
+ "<handle>|<ctx>" or a pending key (a request of ours) is "<ctx>|<handle>"
+ or "<ctx>"; the handle of a key is its row's "handle" member, else
+ everything up to the first '|' (incoming) or after the last '|'
+ (pending), so "#a" is never a row of "#a|b".
+
+   the bare wire exists, net->legacy_ok     LEGACY,  *ctx = wire
+   else scoped "<label>\x1f<wire>" exists   SCOPED,  *ctx = scoped
+   else the bare wire exists                BLOCKED, *ctx = wire
+   else                                     NEW,     *ctx = scoped
+   wire holds 0x1F, or net has no label     BLOCKED, *ctx = wire
+   net NULL (unscoped, as before)           SCOPED if wire exists, else
+                                            NEW;     *ctx = wire
+   wire NULL                                BLOCKED, *ctx = NULL
+
+ On the only network (legacy_ok) old rows are taken over even next to
+ scoped ones, which win row by row (e2e_adopt_legacy): one scoped row of
+ a context (a request of ours) must not hide the old sessions of others.
+ On several networks a scoped row hides the old ones; they stay.
+
+ A wire holding 0x1F cannot be scoped, and an old row under that name
+ reads as another network's (or as one of a network named like its first
+ part): BLOCKED whether a row exists or not, so callers never encrypt
+ under it. *ctx is g_free'd by the caller.
+*/
+E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *wire, char **ctx);
+/* the storage context of wire on net: e2e_ctx_lookup(), and for LEGACY the
+   old rows are taken over (e2e_adopt_legacy(), *changed set: the caller
+   saves). NULL for BLOCKED (nothing changed). changed may be NULL. */
+char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *changed);
+/*
+ Moves every bare row of wire to "<label>\x1f<wire>": channels, outgoing,
+ accepted "*|w", incoming "*|w", seen_rekeys "*|w", pending_inbound
+ "*|w", pending "w|*" and "w", outgoing_recipients "w|*" (the rows'
+ "channel" member too, when it names wire), pending_trust_change[] with
+ channel w. A scoped row that already exists wins and the bare one is
+ dropped (seen_rekeys: the used nonces of both are kept). Returns the
+ rows moved; 0 for a label or wire that cannot make a scoped name.
+*/
+guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire);
 
 #endif
