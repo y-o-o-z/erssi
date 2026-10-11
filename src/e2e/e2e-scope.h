@@ -30,12 +30,15 @@
 
  Old (unscoped) rows: a keyring of rpe2e.pl, or of the module before the
  scope, holds bare contexts. e2e_ctx_lookup() decides what a wire context
- is on a network; e2e_ctx_resolve() takes old rows over
- (e2e_adopt_legacy()) where that is safe: only while erssi uses one
- network (E2E_NET.legacy_ok). On several networks an old context is
- BLOCKED - the gate refuses it, nothing is decrypted or answered with it
- - until /e2e adopt binds it to one network, or /e2e off writes a scoped
- config for this one.
+ is on a network. While erssi uses one network (E2E_NET.legacy_ok) old
+ rows are LEGACY: e2e_ctx_find() uses them where they are (incoming
+ traffic, commands), and only the user's own encrypted line takes them
+ over, e2e_ctx_resolve() / e2e_adopt_legacy(), which marks the name as
+ that network's (R-E18: a stranger's KEYREQ or wire must not bind it).
+ On several networks an old context is BLOCKED - the gate refuses it,
+ nothing is decrypted or answered with it - until /e2e adopt binds it to
+ one network, or /e2e off writes a scoped config for this one; a name
+ another network took over is BLOCKED the same way.
 
  Everything here is pure: no irssi; the lookups read and change an
  in-memory keyring only. Strings returned as char * are newly allocated
@@ -151,7 +154,14 @@ typedef enum {
    the bare wire exists, net->legacy_ok     LEGACY,  *ctx = wire
    else scoped "<label>\x1f<wire>" exists   SCOPED,  *ctx = scoped
    else the bare wire exists                BLOCKED, *ctx = wire
+   else adopted by another network          BLOCKED, *ctx = wire
    else                                     NEW,     *ctx = scoped
+
+ "Adopted by another network": a channels or outgoing row
+ "<other label>\x1f<wire>" with the E2E_ADOPTED_MEMBER marker, and no row
+ of this network for wire. It also keeps LEGACY from taking newer old
+ rows of that name over here. A pending row without a "handle" member
+ belongs to the context of its "channel" member.
    wire holds 0x1F, or net has no label     BLOCKED, *ctx = wire
    net NULL (unscoped, as before)           SCOPED if wire exists, else
                                             NEW;     *ctx = wire
@@ -172,15 +182,29 @@ E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *
    old rows are taken over (e2e_adopt_legacy(), *changed set: the caller
    saves). NULL for BLOCKED (nothing changed). changed may be NULL. */
 char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *changed);
+/* the storage context of wire on net WITHOUT taking anything over: for
+   LEGACY the bare name (the old rows used where they are) - the scoped
+   name when this network has rows of its own as well -, NULL for
+   BLOCKED. For everything that is not the user's own outgoing line:
+   incoming messages and handshakes, commands (R-E18). */
+char *e2e_ctx_find(const E2E_JSON *kr, const E2E_NET *net, const char *wire);
 /*
  Moves every bare row of wire to "<label>\x1f<wire>": channels, outgoing,
  accepted "*|w", incoming "*|w", seen_rekeys "*|w", pending_inbound
  "*|w", pending "w|*" and "w", outgoing_recipients "w|*" (the rows'
  "channel" member too, when it names wire), pending_trust_change[] with
  channel w. A scoped row that already exists wins and the bare one is
- dropped (seen_rekeys: the used nonces of both are kept). Returns the
- rows moved; 0 for a label or wire that cannot make a scoped name.
+ dropped (seen_rekeys: the used nonces of both are kept). The scoped
+ channels and outgoing rows of wire get E2E_ADOPTED_MEMBER = label when
+ any old row was found. Returns the rows moved; 0 for a label or wire
+ that cannot make a scoped name.
 */
 guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire);
+
+/* the member of a scoped config or key row ("channels", "outgoing") whose
+   old rows were taken over: the label. While one exists, the same wire
+   name on any other network without rows of its own is BLOCKED, not NEW.
+   Writers of those rows keep it. */
+#define E2E_ADOPTED_MEMBER "adopted"
 
 #endif

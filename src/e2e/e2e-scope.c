@@ -449,10 +449,12 @@ static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const ch
 
 /* key is the "<ctx>|<handle>" key of row, or "<ctx>" alone (a request
    sent without a handle): the handle is the row's "handle" member when it
-   has one, else everything after the last '|' */
+   has one; without one the row's "channel" member names the context, and
+   only when it has neither, everything after the last '|' is the handle */
 static gboolean key_starts_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
 {
 	const char *handle = e2e_json_get_string(row, "handle");
+	const char *channel = e2e_json_get_string(row, "channel");
 	size_t n = strlen(ctx);
 
 	if (strcmp(key, ctx) == 0)
@@ -461,6 +463,8 @@ static gboolean key_starts_with_ctx(const char *key, const E2E_JSON *row, const 
 		return FALSE;
 	if (handle != NULL && *handle != '\0')
 		return strcmp(key + n + 1, handle) == 0;
+	if (channel != NULL)
+		return strcmp(channel, ctx) == 0;
 	return strchr(key + n + 1, '|') == NULL;
 }
 
@@ -517,9 +521,34 @@ static gboolean ctx_exists(const E2E_JSON *kr, const char *ctx)
 	       any_row(kr, "pending", ROW_CTX_FIRST, ctx);
 }
 
+/* old rows of wire were taken over by another network than net: a config
+   or key row "<other label>\x1f<wire>" carries the "adopted" marker */
+static gboolean adopted_elsewhere(const E2E_JSON *kr, const E2E_NET *net, const char *wire)
+{
+	static const char *const stores[] = { "channels", "outgoing", NULL };
+	gboolean found = FALSE;
+	int i;
+	guint j;
+
+	for (i = 0; stores[i] != NULL && !found; i++) {
+		E2E_JSON *store = e2e_json_get(kr, stores[i]);
+		GPtrArray *keys = e2e_json_keys(store);
+
+		for (j = 0; j < keys->len && !found; j++) {
+			const char *k = g_ptr_array_index(keys, j);
+
+			found = strchr(k, E2E_SCOPE_SEP) != NULL && strcmp(e2e_ctx_wire(k), wire) == 0 &&
+			        !e2e_ctx_on_net(k, net) &&
+			        e2e_json_get_string(e2e_json_get(store, k), E2E_ADOPTED_MEMBER) != NULL;
+		}
+		g_ptr_array_unref(keys);
+	}
+	return found;
+}
+
 E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *wire, char **ctx)
 {
-	gboolean have_scoped, have_bare;
+	gboolean have_scoped, have_bare, elsewhere;
 	char *scoped;
 
 	*ctx = NULL;
@@ -539,10 +568,13 @@ E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *
 	}
 	have_scoped = ctx_exists(kr, scoped);
 	have_bare = ctx_exists(kr, wire);
+	/* old rows of this name went to another network (the user's line
+	   there): this one has to set it up by itself (/e2e adopt, /e2e off) */
+	elsewhere = !have_scoped && adopted_elsewhere(kr, net, wire);
 	/* on the only network old rows are taken over even when some scoped
 	   ones exist already (they win row by row): a scoped request of ours
 	   must not hide the old sessions of everybody else */
-	if (have_bare && net->legacy_ok) {
+	if (have_bare && net->legacy_ok && !elsewhere) {
 		g_free(scoped);
 		*ctx = g_strdup(wire);
 		return E2E_CTX_LEGACY;
@@ -551,13 +583,36 @@ E2E_CTX_KIND e2e_ctx_lookup(const E2E_JSON *kr, const E2E_NET *net, const char *
 		*ctx = scoped;
 		return E2E_CTX_SCOPED;
 	}
-	if (have_bare) {
+	if (have_bare || elsewhere) {
 		g_free(scoped);
 		*ctx = g_strdup(wire);
 		return E2E_CTX_BLOCKED;
 	}
 	*ctx = scoped;
 	return E2E_CTX_NEW;
+}
+
+char *e2e_ctx_find(const E2E_JSON *kr, const E2E_NET *net, const char *wire)
+{
+	char *ctx, *scoped;
+
+	switch (e2e_ctx_lookup(kr, net, wire, &ctx)) {
+	case E2E_CTX_BLOCKED:
+		g_free(ctx);
+		return NULL;
+	case E2E_CTX_LEGACY:
+		/* rows of this network next to the old ones: they are the user's
+		   later decision and win, as they would in e2e_adopt_legacy */
+		scoped = e2e_ctx_scoped(net, wire);
+		if (scoped != NULL && ctx_exists(kr, scoped)) {
+			g_free(ctx);
+			return scoped;
+		}
+		g_free(scoped);
+		return ctx;
+	default:
+		return ctx;
+	}
 }
 
 char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboolean *changed)
@@ -585,7 +640,7 @@ char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboole
    an existing scoped row wins. merge: the members of a dropped row are
    added to the one that wins (used REKEY nonces) */
 static guint move_rows(E2E_JSON *kr, const char *name, ROW_KEY form, const char *wire,
-                       const char *scoped, gboolean merge)
+                       const char *scoped, gboolean merge, gboolean *found)
 {
 	E2E_JSON *store = e2e_json_get(kr, name);
 	GPtrArray *keys;
@@ -594,6 +649,8 @@ static guint move_rows(E2E_JSON *kr, const char *name, ROW_KEY form, const char 
 	if (!is_object(store))
 		return 0;
 	keys = keys_of(store, form, wire);
+	if (keys->len > 0)
+		*found = TRUE;
 	for (i = 0; i < keys->len; i++) {
 		const char *k = g_ptr_array_index(keys, i);
 		E2E_JSON *row = e2e_json_get(store, k), *have;
@@ -633,7 +690,8 @@ static guint move_rows(E2E_JSON *kr, const char *name, ROW_KEY form, const char 
 	return moved;
 }
 
-static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scoped)
+static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scoped,
+                                gboolean *found)
 {
 	E2E_JSON *list = e2e_json_get(kr, "pending_trust_change");
 	guint i, j, moved = 0;
@@ -655,6 +713,7 @@ static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scop
 			      g_strcmp0(e2e_json_get_string(other, "handle"),
 			                e2e_json_get_string(row, "handle")) == 0;
 		}
+		*found = TRUE;
 		if (dup) {
 			g_ptr_array_remove_index(list->array, i);
 			continue;
@@ -669,6 +728,8 @@ static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scop
 guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire)
 {
 	E2E_NET net;
+	E2E_JSON *row;
+	gboolean found = FALSE;
 	char *scoped;
 	guint n = 0;
 
@@ -682,15 +743,26 @@ guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire)
 	scoped = e2e_ctx_scoped(&net, wire);
 	if (scoped == NULL)
 		return 0;
-	n += move_rows(kr, "channels", ROW_SAME, wire, scoped, FALSE);
-	n += move_rows(kr, "outgoing", ROW_SAME, wire, scoped, FALSE);
-	n += move_rows(kr, "incoming", ROW_HANDLE_FIRST, wire, scoped, FALSE);
-	n += move_rows(kr, "accepted", ROW_HANDLE_FIRST, wire, scoped, FALSE);
-	n += move_rows(kr, "pending_inbound", ROW_HANDLE_FIRST, wire, scoped, FALSE);
-	n += move_rows(kr, "seen_rekeys", ROW_HANDLE_FIRST, wire, scoped, TRUE);
-	n += move_rows(kr, "pending", ROW_CTX_FIRST, wire, scoped, FALSE);
-	n += move_rows(kr, "outgoing_recipients", ROW_CTX_FIRST, wire, scoped, FALSE);
-	n += move_trust_changes(kr, wire, scoped);
+	n += move_rows(kr, "channels", ROW_SAME, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "outgoing", ROW_SAME, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "incoming", ROW_HANDLE_FIRST, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "accepted", ROW_HANDLE_FIRST, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "pending_inbound", ROW_HANDLE_FIRST, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "seen_rekeys", ROW_HANDLE_FIRST, wire, scoped, TRUE, &found);
+	n += move_rows(kr, "pending", ROW_CTX_FIRST, wire, scoped, FALSE, &found);
+	n += move_rows(kr, "outgoing_recipients", ROW_CTX_FIRST, wire, scoped, FALSE, &found);
+	n += move_trust_changes(kr, wire, scoped, &found);
+	/* the name is this network's now: other networks see that (BLOCKED,
+	   not NEW, e2e_ctx_lookup) */
+	if (found) {
+		row = e2e_json_get(e2e_json_get(kr, "channels"), scoped);
+		if (is_object(row))
+			e2e_json_set_string(row, E2E_ADOPTED_MEMBER, label);
+		row = e2e_json_get(e2e_json_get(kr, "outgoing"), scoped);
+		if (is_object(row))
+			e2e_json_set_string(row, E2E_ADOPTED_MEMBER, label);
+	}
 	g_free(scoped);
 	return n;
 }
+

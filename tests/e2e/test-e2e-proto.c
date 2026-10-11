@@ -1746,6 +1746,25 @@ static void deliver_keyreq_on(PEER *to, PEER *from, const E2E_NET *net, const ch
 	g_free(body);
 }
 
+/* a KEYREQ for #test from a new identity at handle h, to to on net */
+static void keyreq_from(PEER *to, const E2E_NET *net, const char *h)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	E2E_IDENTITY id;
+	gboolean created;
+	char *req, *body, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	g_assert_true(e2e_identity_get(kr, &id, TRUE, &created, &error));
+	req = e2e_build_keyreq(kr, &id, "#test", to->handle, &error);
+	body = unframe(req);
+	e2e_handle_keyreq(to->kr, &to->id, to->stamps, net, h, "u", body, to->handle, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(body);
+	g_free(req);
+	e2e_identity_wipe(&id);
+	e2e_json_free(kr);
+}
+
 static gboolean deliver_rekey_on(PEER *to, PEER *from, const E2E_NET *net, const char *ctcp)
 {
 	char *body = unframe(ctcp);
@@ -2097,12 +2116,414 @@ static void test_scope_rekey_dm_config(void)
 	e2e_json_remove(e2e_json_get(a.kr, "channels"), "E2E\x1f@" BOB);
 	enable(&a, "@" BOB, "normal");
 	g_assert_false(deliver_rekey_on(&a, &b, &net_a, rk));
-	/* on the only network the old config is taken over: taken */
+	/* on the only network the old config counts where it is: taken,
+	   and the old config is not taken over by a peer's REKEY */
 	g_assert_true(deliver_rekey_on(&a, &b, &net_one, rk));
-	g_assert_nonnull(path_get(a.kr, "channels", "E2E\x1f@" BOB, NULL));
+	g_assert_null(path_get(a.kr, "channels", "E2E\x1f@" BOB, NULL));
+	g_assert_true(e2e_ctx_enabled(a.kr, "@" BOB));
 	g_free(rk);
 	peer_free(&a);
 	peer_free(&b);
+}
+
+
+static void legacy_bob_real(PEER *a);
+
+/* I1 (fix round 1): a handle may hold '|' and 0x1F; the network of a
+   waiting request is its row's, not whatever follows the first '|' */
+static void test_scope_prune_confused_handle(void)
+{
+	PEER a;
+	char *rsp = NULL, *recip = NULL, *k;
+	guint on_a = 0, on_b = 0, i;
+	GPtrArray *keys;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	enable_scoped(&a, &net_a, "#test");
+	enable_scoped(&a, &net_b, "#test");
+	/* 64 real requests on B */
+	for (i = 0; i < E2E_MAX_PENDING_INBOUND; i++) {
+		char *h = g_strdup_printf("b%u@198.51.100.1", i);
+
+		fake_now++;
+		keyreq_from(&a, &net_b, h);
+		g_free(h);
+	}
+	/* 20 on A from handles that read like B's when split at the first '|' */
+	for (i = 0; i < 20; i++) {
+		char *h = g_strdup_printf("e%u|E2E2\x1fz@203.0.113.9", i);
+
+		fake_now++;
+		keyreq_from(&a, &net_a, h);
+		g_free(h);
+	}
+	/* one more real request on B: only B's oldest goes */
+	fake_now++;
+	keyreq_from(&a, &net_b, "newest@198.51.100.1");
+	keys = e2e_json_keys(e2e_json_get(a.kr, "pending_inbound"));
+	for (i = 0; i < keys->len; i++) {
+		const char *c = path_str(a.kr, "pending_inbound", g_ptr_array_index(keys, i), "channel");
+
+		on_a += g_strcmp0(c, A_TEST) == 0;
+		on_b += g_strcmp0(c, B_TEST) == 0;
+	}
+	g_ptr_array_unref(keys);
+	g_assert_cmpuint(on_a, ==, 20);
+	g_assert_cmpuint(on_b, ==, E2E_MAX_PENDING_INBOUND);
+	g_assert_null(path_get(a.kr, "pending_inbound", "b0@198.51.100.1|" B_TEST, NULL));
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "b1@198.51.100.1|" B_TEST, NULL));
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "newest@198.51.100.1|" B_TEST, NULL));
+	k = g_strdup_printf("e0|E2E2\x1fz@203.0.113.9|" A_TEST);
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", k, NULL));
+	g_free(k);
+	/* and A's cap holds for them: 64 at most */
+	for (i = 20; i < E2E_MAX_PENDING_INBOUND + 10; i++) {
+		char *h = g_strdup_printf("e%u|E2E2\x1fz@203.0.113.9", i);
+
+		fake_now++;
+		keyreq_from(&a, &net_a, h);
+		g_free(h);
+	}
+	on_a = on_b = 0;
+	keys = e2e_json_keys(e2e_json_get(a.kr, "pending_inbound"));
+	for (i = 0; i < keys->len; i++) {
+		const char *c = path_str(a.kr, "pending_inbound", g_ptr_array_index(keys, i), "channel");
+
+		on_a += g_strcmp0(c, A_TEST) == 0;
+		on_b += g_strcmp0(c, B_TEST) == 0;
+	}
+	g_ptr_array_unref(keys);
+	g_assert_cmpuint(on_a, ==, E2E_MAX_PENDING_INBOUND);
+	g_assert_cmpuint(on_b, ==, E2E_MAX_PENDING_INBOUND);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+}
+
+/* old rows without a "channel" member: the row's handle tells where the
+   context starts */
+static void test_scope_prune_handle_member(void)
+{
+	PEER a;
+	int i;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	enable_scoped(&a, &net_a, "#test");
+	for (i = 0; i < E2E_MAX_PENDING_INBOUND; i++) {
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+		char *h = g_strdup_printf("h%d|E2E\x1fq", i), *k = g_strconcat(h, "|" B_TEST, NULL);
+
+		e2e_json_set_string(row, "handle", h);
+		e2e_json_set_int(row, "received_at", 1);
+		e2e_json_set(e2e_json_get(a.kr, "pending_inbound"), k, row);
+		g_free(h);
+		g_free(k);
+	}
+	keyreq_from(&a, &net_a, "real@198.51.100.1");
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(a.kr, "pending_inbound")), ==, E2E_MAX_PENDING_INBOUND + 1);
+	/* and rows with a "channel" member only: that names the network */
+	for (i = 0; i < E2E_MAX_PENDING_INBOUND; i++) {
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+		char *k = g_strdup_printf("c%d|E2E\x1fq|" B_TEST, i);
+
+		e2e_json_set_string(row, "channel", B_TEST);
+		e2e_json_set_int(row, "received_at", 1);
+		e2e_json_set(e2e_json_get(a.kr, "pending_inbound"), k, row);
+		g_free(k);
+	}
+	keyreq_from(&a, &net_a, "real2@198.51.100.1");
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(a.kr, "pending_inbound")), ==,
+	                 2 * E2E_MAX_PENDING_INBOUND + 2);
+	peer_free(&a);
+}
+
+/* DM requests on one network with old "@<own>" rows: our reciprocal
+   request waits where they are, also after /e2e accept */
+static void test_legacy_dm_reciprocal_in_place(void)
+{
+	PEER a, b;
+	E2E_JSON *row;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	/* old: E2E with bob (auto-accept), carol's DM session to us */
+	enable(&a, "@" BOB, "auto-accept");
+	set_trusted_session(a.kr, CAROL "|@" ALICE, LEGACY_BOB_SK);
+	req = e2e_build_keyreq(b.kr, &b.id, "@" BOB, ALICE, &error);
+	deliver_keyreq_on(&a, &b, &net_one, req, ALICE, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_nonnull(recip);
+	g_assert_nonnull(path_get(a.kr, "pending", "@" ALICE "|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f@" ALICE "|" BOB, NULL));
+	g_assert_nonnull(path_get(a.kr, "incoming", CAROL "|@" ALICE, NULL));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	/* /e2e accept in a query whose config is this network's, "@<own>"
+	   still old: the reciprocal goes where "@<own>" is */
+	e2e_json_remove(e2e_json_get(a.kr, "channels"), "@" BOB);
+	enable(&a, "E2E\x1f@" BOB, "normal");
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "@" ALICE "|" BOB);
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	{
+		char *pk = e2e_b64_encode(b.id.pk, 32);
+		unsigned char eph_sk[32], eph[32];
+
+		g_assert_true(e2e_x25519_keypair(eph_sk, eph));
+		e2e_json_set_string(row, "pubkey", pk);
+		g_free(pk);
+		pk = e2e_b64_encode(eph, 32);
+		e2e_json_set_string(row, "eph_x25519", pk);
+		g_free(pk);
+	}
+	e2e_json_set_string(row, "handle", BOB);
+	e2e_json_set_string(row, "channel", "E2E\x1f@" BOB);
+	e2e_json_set(e2e_json_get(a.kr, "pending_inbound"), BOB "|E2E\x1f@" BOB, row);
+	g_assert_cmpint(e2e_accept(a.kr, &a.id, BOB, "E2E\x1f@" BOB, "@" ALICE, ALICE, &rsp, &recip), ==,
+	                E2E_ACCEPT_SENT);
+	g_assert_nonnull(recip);
+	g_assert_nonnull(path_get(a.kr, "pending", "@" ALICE "|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f@" ALICE "|" BOB, NULL));
+	g_free(rsp);
+	g_free(recip);
+	/* bob asks again, the query's config this network's (auto-accept):
+	   the reciprocal goes where "@<own>" is, too */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "@" ALICE "|" BOB);
+	e2e_json_set_string(path_get(a.kr, "channels", "E2E\x1f@" BOB, NULL), "mode", "auto-accept");
+	g_hash_table_remove_all(a.stamps);
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "@" BOB "|" ALICE);
+	req = e2e_build_keyreq(b.kr, &b.id, "@" BOB, ALICE, &error);
+	deliver_keyreq_on(&a, &b, &net_one, req, ALICE, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_nonnull(recip);
+	g_assert_nonnull(path_get(a.kr, "pending", "@" ALICE "|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f@" ALICE "|" BOB, NULL));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	/* several networks: the old "@<own>" cannot be used, ours goes under
+	   this network's name - never under the blocked old one */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "@" ALICE "|" BOB);
+	g_hash_table_remove_all(a.stamps);
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "@" BOB "|" ALICE);
+	req = e2e_build_keyreq(b.kr, &b.id, "@" BOB, ALICE, &error);
+	deliver_keyreq_on(&a, &b, &net_a, req, ALICE, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_nonnull(recip);
+	g_assert_nonnull(path_get(a.kr, "pending", "E2E\x1f@" ALICE "|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "pending", "@" ALICE "|" BOB, NULL));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* every network together stays bounded too */
+static void test_scope_prune_global_cap(void)
+{
+	PEER a;
+	int n;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	for (n = 0; n < 6; n++) {
+		E2E_NET net = { NULL, E2E_CASEMAP_RFC1459, FALSE };
+		int i;
+
+		net.label = g_strdup_printf("N%d", n);
+		enable_scoped(&a, &net, "#test");
+		for (i = 0; i < E2E_MAX_PENDING_INBOUND; i++) {
+			char *h = g_strdup_printf("u%d.%d@198.51.100.1", n, i);
+
+			fake_now++;
+			keyreq_from(&a, &net, h);
+			g_free(h);
+		}
+		g_free(net.label);
+	}
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(a.kr, "pending_inbound")), ==,
+	                 E2E_MAX_PENDING_INBOUND_ALL);
+	/* the newest stay */
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "u5.63@198.51.100.1|N5\x1f#test", NULL));
+	g_assert_null(path_get(a.kr, "pending_inbound", "u0.0@198.51.100.1|N0\x1f#test", NULL));
+	peer_free(&a);
+}
+
+/* R-E18 (fix round 1): someone else's traffic never binds old rows to a
+   network; once the user's own line has, another network is refused */
+static void test_legacy_stranger_does_not_adopt(void)
+{
+	PEER a;
+	E2E_GATE_RESULT g;
+	E2E_IN_PARAMS in;
+	E2E_IN_RESULT r;
+	char *rsp = NULL, *recip = NULL, *plain, *before, *after;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	legacy_fixture_fill(a.kr);
+	legacy_bob_real(&a);
+	/* erssi on one network (A): a stranger's signed KEYREQ and a wire for
+	   #test - handled with the old rows in place, nothing taken over */
+	e2e_handle_keyreq(a.kr, &a.id, a.stamps, &net_one, BOB, "bob", vec_keyreq, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", BOB "|#test", NULL));
+	g_assert_null(path_get(a.kr, "pending_inbound", BOB "|" A_TEST, NULL));
+	g_assert_cmpint(vec_decrypt(&a, &net_one, 0, &plain), ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(plain, ==, vec_wire[0].plain);
+	g_free(plain);
+	g_assert_true(e2e_handle_keyrsp(a.kr, &net_one, BOB, "bob", vec_keyrsp));
+	g_assert_true(e2e_handle_rekey(a.kr, &a.id, &net_one, BOB, "bob", vec_rekey));
+	g_assert_nonnull(path_get(a.kr, "channels", "#test", NULL));
+	g_assert_null(path_get(a.kr, "channels", A_TEST, NULL));
+	g_assert_null(path_get(a.kr, "outgoing", A_TEST, NULL));
+	g_assert_null(path_get(a.kr, "incoming", BOB "|" A_TEST, NULL));
+	/* a second network comes: #test there is refused, never clear text */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_b, "#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_nonnull(strstr(g.message, "/e2e adopt"));
+	e2e_gate_result_clear(&g);
+
+	/* back on one network, the user's own line binds the rows to A */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_one, "#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_cmpstr(g.ctx, ==, A_TEST);
+	e2e_gate_result_clear(&g);
+	g_assert_cmpstr(path_str(a.kr, "channels", A_TEST, "adopted"), ==, "E2E");
+	g_assert_cmpstr(path_str(a.kr, "outgoing", A_TEST, "adopted"), ==, "E2E");
+	/* network B: the name was encrypted on another network - refused,
+	   nothing read there */
+	before = e2e_keyring_snapshot(a.kr);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_b, "#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_nonnull(strstr(g.message, "/e2e adopt"));
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_b, "#TEST", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_b, "#pub,#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	fake_now = 1791564129;
+	in_params(&in, &a, "bob", BOB, "#test", &net_b);
+	e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_null(r.keyreq);
+	e2e_in_result_clear(&r);
+	after = e2e_keyring_snapshot(a.kr);
+	g_assert_cmpstr(before, ==, after);
+	g_free(before);
+	g_free(after);
+	/* A keeps encrypting, the rows stay A's */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_a, "#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	/* /e2e off on B (its own config, E2E off) settles it there */
+	enable(&a, B_TEST, "normal");
+	e2e_json_set_int(path_get(a.kr, "channels", B_TEST, NULL), "enabled", 0);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_b, "#test", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	/* and it rotates and stays marked */
+	e2e_json_set_int(path_get(a.kr, "outgoing", A_TEST, NULL), "pending_rotation", 1);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &net_a, "#test", "rotated", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	g_assert_cmpstr(path_str(a.kr, "outgoing", A_TEST, "sk"), !=, LEGACY_OUT_SK);
+	g_assert_cmpstr(path_str(a.kr, "outgoing", A_TEST, "adopted"), ==, "E2E");
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+}
+
+/* a DM config taken over on A refuses the nick's DMs on B the same way */
+static void test_legacy_adopted_dm_elsewhere(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+	E2E_GATE_RESULT g;
+	gboolean changed = FALSE;
+	char *ctx;
+
+	enable(&p, "@bob@old.host", "normal");
+	e2e_json_set_string(path_get(kr, "channels", "@bob@old.host", NULL), "nick", "bob");
+	ctx = e2e_ctx_resolve(kr, &net_one, "@bob@old.host", &changed);
+	g_assert_cmpstr(ctx, ==, "E2E\x1f@bob@old.host");
+	g_assert_true(changed);
+	g_free(ctx);
+	/* the same address on B */
+	e2e_gate_decide(kr, TRUE, NULL, &net_b, "bob", "dm", fixed_resolve, (char *) "bob@old.host", &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* another address of the nick on B: still the old config's nick */
+	e2e_gate_decide(kr, TRUE, NULL, &net_b, "bob", "dm", fixed_resolve, (char *) "bob@new.host", &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* the case of a channel taken over on A, written otherwise on B */
+	enable(&p, "#Secret", "normal");
+	ctx = e2e_ctx_resolve(kr, &net_one, "#Secret", &changed);
+	g_free(ctx);
+	e2e_gate_decide(kr, TRUE, NULL, &net_b, "#secret", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* a channel set up fresh on A (nothing old) is A's only */
+	enable(&p, "E2E\x1f#fresh", "normal");
+	e2e_gate_decide(kr, TRUE, NULL, &net_b, "#fresh", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	e2e_json_free(kr);
+}
+
+/* the decryption paths of a BLOCKED context: an alt reading and our own
+   copy read nothing with the old rows */
+static void test_legacy_blocked_decrypt_paths(void)
+{
+	PEER a;
+	E2E_IN_PARAMS in;
+	E2E_IN_RESULT r;
+	char *alts[] = { (char *) "#test", NULL };
+	unsigned char out[32];
+	const char *err = NULL;
+	GPtrArray *own;
+	gsize len;
+	unsigned char *raw;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	legacy_fixture_fill(a.kr);
+	fake_now = 1791564129;
+	/* "+#test": #fresh is no context, #test an old one */
+	in_params(&in, &a, "bob", BOB, "#fresh", &net_a);
+	in.alt_ctxs = alts;
+	e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	e2e_in_result_clear(&r);
+	/* one network: read in place */
+	in.net = &net_one;
+	e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_false(r.save_needed);
+	e2e_in_result_clear(&r);
+
+	/* our own line relayed back, under the old outgoing key of #test */
+	raw = e2e_b64_decode(LEGACY_OUT_SK, &len);
+	memcpy(out, raw, 32);
+	g_free(raw);
+	own = e2e_encrypt_plain(out, "#test", "own old copy", fake_now, &err);
+	g_assert_nonnull(own);
+	in_params(&in, &a, "alice", ALICE, "#test", &net_a);
+	in.is_own_line = TRUE;
+	e2e_decrypt_incoming(a.kr, &a.id, &in, g_ptr_array_index(own, 0), &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	e2e_in_result_clear(&r);
+	in.net = &net_one;
+	e2e_decrypt_incoming(a.kr, &a.id, &in, g_ptr_array_index(own, 0), &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "own old copy");
+	g_assert_false(r.save_needed);
+	e2e_in_result_clear(&r);
+	g_assert_nonnull(path_get(a.kr, "outgoing", "#test", NULL));
+	g_ptr_array_unref(own);
+	peer_free(&a);
 }
 
 /* the requests waiting for /e2e accept are bounded per network: a flood
@@ -2226,7 +2647,8 @@ static void test_legacy_single_network(void)
 	g_assert_cmpint(vec_decrypt(&a, &net_one, 0, &plain), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(plain, ==, vec_wire[0].plain);
 	g_free(plain);
-	/* #other is taken over by an incoming message the same way */
+	/* an incoming message for #other (old rows) is read with them where
+	   they are: nothing is taken over by someone else's traffic */
 	set_trusted_session(a.kr, BOB "|#other", LEGACY_BOB_SK);
 	{
 		E2E_IN_PARAMS in;
@@ -2235,13 +2657,13 @@ static void test_legacy_single_network(void)
 		fake_now = 1791564129;
 		in_params(&in, &a, "bob", BOB, "#other", &net_one);
 		e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
-		/* the AAD is "#test": not this channel's message, but the rows moved */
+		/* the AAD is "#test": not this channel's message */
 		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
-		g_assert_true(r.save_needed);
+		g_assert_false(r.save_needed);
 		e2e_in_result_clear(&r);
 	}
-	assert_no_bare(a.kr, "#other");
-	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|E2E\x1f#other", NULL));
+	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|#other", NULL));
+	g_assert_null(path_get(a.kr, "incoming", BOB "|E2E\x1f#other", NULL));
 	peer_free(&a);
 }
 
@@ -2427,6 +2849,18 @@ static void test_legacy_scoped_wins(void)
 	e2e_gate_decide(a.kr, TRUE, &a.id, &net_one, "#test", "hello", no_resolve, NULL, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
 	e2e_gate_result_clear(&g);
+	/* nor does a request get our key through the old config (even in
+	   auto-accept mode) */
+	e2e_json_set_string(path_get(a.kr, "channels", "#test", NULL), "mode", "auto-accept");
+	{
+		char *rsp = NULL, *recip = NULL;
+
+		e2e_handle_keyreq(a.kr, &a.id, a.stamps, &net_one, BOB, "bob", vec_keyreq, ALICE, &rsp, &recip);
+		g_assert_null(rsp);
+		g_assert_null(recip);
+		g_assert_null(path_get(a.kr, "pending_inbound", BOB "|#test", NULL));
+		g_assert_null(path_get(a.kr, "pending_inbound", BOB "|" A_TEST, NULL));
+	}
 	/* and E2E on here wins over an old config that is off */
 	e2e_json_set_int(path_get(a.kr, "channels", A_TEST, NULL), "enabled", 1);
 	e2e_json_set_int(path_get(a.kr, "channels", "#test", NULL), "enabled", 0);
@@ -2564,6 +2998,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/loops-on-net", test_scope_loops_on_net);
 	g_test_add_func("/e2e/scope/rekey-dm-config", test_scope_rekey_dm_config);
 	g_test_add_func("/e2e/scope/prune-per-network", test_scope_prune_per_network);
+	g_test_add_func("/e2e/scope/prune-confused-handle", test_scope_prune_confused_handle);
+	g_test_add_func("/e2e/scope/prune-global-cap", test_scope_prune_global_cap);
+	g_test_add_func("/e2e/scope/prune-handle-member", test_scope_prune_handle_member);
+	g_test_add_func("/e2e/legacy/dm-reciprocal-in-place", test_legacy_dm_reciprocal_in_place);
+	g_test_add_func("/e2e/legacy/stranger-does-not-adopt", test_legacy_stranger_does_not_adopt);
+	g_test_add_func("/e2e/legacy/adopted-dm-elsewhere", test_legacy_adopted_dm_elsewhere);
+	g_test_add_func("/e2e/legacy/blocked-decrypt-paths", test_legacy_blocked_decrypt_paths);
 	g_test_add_func("/e2e/scope/separator-in-name", test_scope_separator_in_name);
 	g_test_add_func("/e2e/legacy/single-network-adopts", test_legacy_single_network);
 	g_test_add_func("/e2e/legacy/multi-network-refuses", test_legacy_multi_network);

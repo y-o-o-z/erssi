@@ -870,6 +870,15 @@ static void test_ctx_lookup(void)
 	put_row(kr, "pending", "#a|b|bob@b.host");
 	g_assert_cmpint(lookup(kr, &many, "#a", "IRCnet\x1f#a"), ==, E2E_CTX_NEW);
 	g_assert_cmpint(lookup(kr, &many, "#a|b", "#a|b"), ==, E2E_CTX_BLOCKED);
+	/* a request without a handle for "#c|d": "#c" has no row there */
+	{
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+
+		e2e_json_set_string(row, "channel", "#c|d");
+		e2e_json_set(store_of(kr, "pending"), "#c|d", row);
+	}
+	g_assert_cmpint(lookup(kr, &many, "#c", "IRCnet\x1f#c"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup(kr, &many, "#c|d", "#c|d"), ==, E2E_CTX_BLOCKED);
 
 	/* scoped wins over old rows */
 	put_row(kr, "channels", "#w");
@@ -895,6 +904,84 @@ static void test_ctx_lookup(void)
 	e2e_json_set_int(kr, "incoming", 3);
 	g_assert_cmpint(lookup(kr, &many, "#zz", "IRCnet\x1f#zz"), ==, E2E_CTX_NEW);
 	g_assert_cmpint(lookup(kr, &many, NULL, NULL), ==, E2E_CTX_BLOCKED);
+	e2e_json_free(kr);
+}
+
+/* a name taken over on one network is BLOCKED on the others until they
+   have a config of their own; fresh scoped rows bind nothing */
+static void test_ctx_adopted_elsewhere(void)
+{
+	E2E_NET a = { (char *) "IRCnet", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_NET b = { (char *) "Libera", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET b1 = { (char *) "Libera", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_JSON *kr = fixture();
+	char *ctx;
+
+	put_row(kr, "channels", "IRCnet\x1f#fresh");
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#fresh"), ==, 0);
+	g_assert_null(e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#fresh"),
+	                                  "adopted"));
+	g_assert_cmpint(lookup(kr, &b, "#fresh", "Libera\x1f#fresh"), ==, E2E_CTX_NEW);
+	/* an old trust change alone is an old row of the name too */
+	{
+		E2E_JSON *tc = e2e_json_new(E2E_JSON_OBJECT);
+
+		e2e_json_set_string(tc, "handle", "eve@127.0.0.1");
+		e2e_json_set_string(tc, "channel", "#fresh");
+		e2e_json_array_add(e2e_json_get(kr, "pending_trust_change"), tc);
+	}
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "#fresh"), ==, 1);
+	g_assert_cmpstr(e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#fresh"),
+	                                    "adopted"), ==, "IRCnet");
+	g_assert_cmpint(lookup(kr, &b, "#fresh", "#fresh"), ==, E2E_CTX_BLOCKED);
+	ctx = e2e_ctx_resolve(kr, &a, "#test", NULL);
+	g_assert_cmpstr(ctx, ==, "IRCnet\x1f#test");
+	g_free(ctx);
+	g_assert_cmpstr(e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"),
+	                                    "adopted"), ==, "IRCnet");
+	g_assert_cmpint(lookup(kr, &a, "#test", "IRCnet\x1f#test"), ==, E2E_CTX_SCOPED);
+	g_assert_cmpint(lookup(kr, &b, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	/* also when Libera is the only network now */
+	g_assert_cmpint(lookup(kr, &b1, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	g_assert_null(e2e_ctx_resolve(kr, &b1, "#test", NULL));
+	/* old rows of the name written again (rpe2e.pl): not Libera's either */
+	put_row(kr, "channels", "#test");
+	g_assert_cmpint(lookup(kr, &b1, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	g_assert_cmpint(lookup(kr, &a, "#test", "#test"), ==, E2E_CTX_LEGACY);
+	/* unless Libera has rows of its own for it: then they are Libera's
+	   business, taken over there like any old rows */
+	put_row(kr, "outgoing", "Libera\x1f#test");
+	g_assert_cmpint(lookup(kr, &b1, "#test", "#test"), ==, E2E_CTX_LEGACY);
+	g_assert_cmpint(lookup(kr, &b, "#test", "Libera\x1f#test"), ==, E2E_CTX_SCOPED);
+	e2e_json_remove(e2e_json_get(kr, "outgoing"), "Libera\x1f#test");
+	e2e_json_remove(e2e_json_get(kr, "channels"), "#test");
+	/* the marker on the key row alone counts as well */
+	e2e_json_remove(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"), "adopted");
+	g_assert_cmpint(lookup(kr, &b, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	e2e_json_remove(e2e_json_get(e2e_json_get(kr, "outgoing"), "IRCnet\x1f#test"), "adopted");
+	g_assert_cmpint(lookup(kr, &b, "#test", "Libera\x1f#test"), ==, E2E_CTX_NEW);
+	/* a config of Libera's own settles it there */
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"), "adopted", "IRCnet");
+	put_row(kr, "channels", "Libera\x1f#test");
+	g_assert_cmpint(lookup(kr, &b, "#test", "Libera\x1f#test"), ==, E2E_CTX_SCOPED);
+	/* e2e_ctx_find: the storage context without taking anything over */
+	e2e_json_free(kr);
+	kr = fixture();
+	ctx = e2e_ctx_find(kr, &a, "#test");
+	g_assert_cmpstr(ctx, ==, "#test");
+	g_free(ctx);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	g_assert_null(e2e_ctx_find(kr, &b, "#test"));
+	ctx = e2e_ctx_find(kr, &b, "#new");
+	g_assert_cmpstr(ctx, ==, "Libera\x1f#new");
+	g_free(ctx);
+	/* old rows next to this network's own: its own are used */
+	put_row(kr, "channels", "IRCnet\x1f#test");
+	g_assert_cmpint(lookup(kr, &a, "#test", "#test"), ==, E2E_CTX_LEGACY);
+	ctx = e2e_ctx_find(kr, &a, "#test");
+	g_assert_cmpstr(ctx, ==, "IRCnet\x1f#test");
+	g_free(ctx);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
 	e2e_json_free(kr);
 }
 
@@ -998,9 +1085,9 @@ static void test_adopt_legacy(void)
 		e2e_json_set_string(row, "handle", "x|y@h");
 		e2e_json_set_string(row, "channel", "#p");
 		e2e_json_set(e2e_json_get(kr, "pending_inbound"), "x|y@h|#p", row);
+		/* (no "channel" member: the handle alone tells) */
 		row = e2e_json_new(E2E_JSON_OBJECT);
 		e2e_json_set_string(row, "handle", "x|y@h");
-		e2e_json_set_string(row, "channel", "#p");
 		e2e_json_set(e2e_json_get(kr, "pending"), "#p|x|y@h", row);
 	}
 	g_assert_cmpuint(e2e_adopt_legacy(kr, "IRCnet", "y@h|#p"), ==, 0);
@@ -1066,6 +1153,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
 	g_test_add_func("/e2e/scope/ctx-lookup", test_ctx_lookup);
 	g_test_add_func("/e2e/scope/ctx-resolve", test_ctx_resolve);
+	g_test_add_func("/e2e/scope/ctx-adopted-elsewhere", test_ctx_adopted_elsewhere);
 	g_test_add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
 
 	return g_test_run();

@@ -580,8 +580,9 @@ PY
 
 # ---- one network, an old keyring: nothing to do ----
 # bob unloads rpe2e.pl, his own (unscoped) keyring comes back, and the
-# native module takes it over the first time it is used: he reads alice
-# and she reads him without a new key exchange
+# native module takes it over with the first line he sends (incoming
+# traffic never does): he reads alice and she reads him without a new
+# key exchange
 say bob "/script unload rpe2e"
 sleep 1
 cp "$WORK/bob-keyring.json" "$WORK/bob/rpe2e/keyring.json"
@@ -604,6 +605,7 @@ s = "E2E\x1f" + c
 assert new["outgoing"][s]["sk"] == old["outgoing"][c]["sk"], "our key changed"
 assert new["incoming"]["alice@127.0.0.1|" + s]["sk"] == old["incoming"]["alice@127.0.0.1|" + c]["sk"]
 assert new["channels"][s]["enabled"]
+assert new["channels"][s]["adopted"] == "E2E" and new["outgoing"][s]["adopted"] == "E2E"
 assert c not in new["channels"] and c not in new["outgoing"]
 assert "alice@127.0.0.1|" + c not in new["incoming"]
 assert new["identity"] == old["identity"]
