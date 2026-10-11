@@ -669,6 +669,16 @@ say bob "dm back after adopt"
 check "$WORK/bob/logs/E2E/alice.log" "dm after adopt"
 check "$WORK/alice/logs/E2E/bob.log" "dm back after adopt"
 say alice "/window close"
+# a target list with a query E2E is on for: one line cannot be
+# encrypted for several (R-E28) - irssi sends such a list in one line
+# when the server's TARGMAX allows it
+say alice "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG bob,carol :native list dm secret')"
+sleep 1
+if grep -aqF "native list dm secret" "$WORK/wire.log"; then
+    bad "a target list with a query E2E is on for went out in plain text"
+else
+    pass "a target list with a query E2E is on for is not sent"
+fi
 python3 - "$WORK/alice-scoped.json" "$WORK/alice/rpe2e/keyring.json" "$WORK/wire.log" "$WORK/wire2.log" <<'PY' && pass "adopted: E2E's keys as before, E2E2's entries untouched, nothing in clear" || bad "the adoption changed keys or another network's entries"
 import json, sys
 old, new = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
@@ -838,6 +848,17 @@ if grep -aqF "list piece to multi" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: #x,#multi (E2E on for #multi in its entry) is not sent in plain text"
 fi
+# the script resolves no query for a nick in a list either (R-E28)
+say bob "/query alice"
+say bob "/e2e on"
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG alice,carol :script list dm secret')"
+sleep 1
+if grep -aqF "script list dm secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: alice,carol (E2E on for alice in its entry) went out in plain text"
+else
+    pass "rpe2e.pl loaded: alice,carol (E2E on for alice in its entry) is not sent in plain text"
+fi
+say bob "/window close"
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
 import json, sys

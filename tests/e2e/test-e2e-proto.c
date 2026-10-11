@@ -4297,10 +4297,17 @@ static void test_casemap_decrypt_marked(void)
 			g_free(via);
 		}
 	}
-	/* the Kelvin sign is k to both models: no mark */
+	/* R-E28: a server comparing in upper case keeps the Kelvin sign
+	   apart from k, and Final_Sigma makes #ΑΣ #ας: marked */
 	g_assert_cmpint(cm_moved(&cm_unicode, "#k", "#\xe2\x84\xaa", &plain, &via), ==, E2E_IN_PLAIN);
-	g_assert_null(via);
+	g_assert_cmpstr(via, ==, "#k");
 	g_free(plain);
+	g_free(via);
+	g_assert_cmpint(cm_moved(&cm_unicode, "#\xce\xb1\xcf\x83", "#\xce\x91\xce\xa3", &plain, &via), ==,
+	                E2E_IN_PLAIN);
+	g_assert_cmpstr(via, ==, "#\xce\xb1\xcf\x83");
+	g_free(plain);
+	g_free(via);
 	/* R-E26: an unknown CASEMAPPING (cp1250, cp1251) may keep any
 	   non-ASCII spelling apart: marked */
 	g_assert_cmpint(cm_moved(&cm_unknown, ZABA_LOWER, ZABA_UPPER, &plain, &via), ==, E2E_IN_PLAIN);
@@ -4567,6 +4574,107 @@ static void test_casemap_ircnet_short_name(void)
 	e2e_json_free(kr);
 }
 
+/* R-E28: a list of targets with a query piece E2E is on for */
+static char *cm_resolve_bob(const char *nick, const E2E_JSON *kr, void *data)
+{
+	return g_ascii_strcasecmp(nick, "bob") == 0 ? g_strdup(BOB) : NULL;
+}
+
+static void cm_set_peer(E2E_JSON *kr, const char *fp, const char *nick, const char *handle)
+{
+	E2E_JSON *peer = e2e_json_new(E2E_JSON_OBJECT);
+
+	e2e_json_set_string(peer, "last_nick", nick);
+	e2e_json_set_string(peer, "last_handle", handle);
+	e2e_json_set_string(peer, "status", "trusted");
+	e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
+}
+
+static E2E_GATE_ACTION cm_gate_r(E2E_JSON *kr, const E2E_NET *net, const char *target,
+                                 const char *body, E2E_RESOLVE_FUNC resolve)
+{
+	E2E_GATE_RESULT g;
+	E2E_GATE_ACTION a;
+
+	e2e_gate_decide(kr, TRUE, NULL, net, target, body, resolve, NULL, &g);
+	a = g.action;
+	e2e_gate_result_clear(&g);
+	return a;
+}
+
+static E2E_GATE_ACTION cm_guard(E2E_JSON *kr, const E2E_NET *net, const char *line,
+                                E2E_RESOLVE_FUNC resolve)
+{
+	char *m = NULL, *t = NULL;
+	E2E_GATE_ACTION a = e2e_script_guard(kr, TRUE, FALSE, FALSE, net, line, strlen(line), resolve,
+	                                     NULL, &m, &t);
+
+	if (a == E2E_GATE_REFUSE) {
+		g_assert_nonnull(m);
+		g_assert_null(strchr(m, '\x1f'));
+	}
+	g_free(m);
+	g_free(t);
+	return a;
+}
+
+static void test_casemap_list_dm_pieces(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+
+	/* the module active: its gate decides every piece (as before) */
+	enable(&p, "E2E\x1f@" BOB, "normal");
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "bob,carol", "hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,bob", "hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,bob", "\001ACTION waves\001", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "carol,dave", "hi", cm_resolve_bob), ==, E2E_GATE_PASS);
+	/* the address not known now: the query's nick, or the peer last seen
+	   as that nick, folded by the map */
+	e2e_json_set_string(path_get(kr, "channels", "E2E\x1f@" BOB, NULL), "nick", "bob[");
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "carol,BOB{", "hi", no_resolve), ==, E2E_GATE_REFUSE);
+	e2e_json_remove(path_get(kr, "channels", "E2E\x1f@" BOB, NULL), "nick");
+	cm_set_peer(kr, "f00d", "bob[", BOB);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "carol,BOB{", "hi", no_resolve), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+
+	/* rpe2e.pl loaded: it looks "bob,carol" up as one name and sends it
+	   in clear; its own (bare) query rows count */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "@" BOB, "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,bob :hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,bob :\001ACTION waves\001", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,dave :hi", cm_resolve_bob), ==, E2E_GATE_PASS);
+	/* the script's own: one target, and the CTCP escape hatch */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob :hi", cm_resolve_bob), ==, E2E_GATE_PASS);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :\001VERSION\001", cm_resolve_bob), ==,
+	                E2E_GATE_PASS);
+	/* not resolved: the query's nick or the peer's last nick, folded */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,BOB{ :hi", no_resolve), ==, E2E_GATE_PASS);
+	cm_set_peer(kr, "f00d", "bob[", BOB);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,BOB{ :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_ascii, "PRIVMSG carol,BOB{ :hi", no_resolve), ==, E2E_GATE_PASS);
+	e2e_json_remove(e2e_json_get(kr, "peers"), "f00d");
+	e2e_json_set_string(path_get(kr, "channels", "@" BOB, NULL), "nick", "bob[");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,BOB{ :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	/* the module's config of that query off does not hide the script's */
+	enable(&p, "E2E\x1f@" BOB, "normal");
+	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f@" BOB, NULL), "enabled", 0);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	/* the script's row off, the module's on: refused as well */
+	e2e_json_set_int(path_get(kr, "channels", "@" BOB, NULL), "enabled", 0);
+	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f@" BOB, NULL), "enabled", 1);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", cm_resolve_bob), ==, E2E_GATE_REFUSE);
+	/* both off: clear text, as asked */
+	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f@" BOB, NULL), "enabled", 0);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", cm_resolve_bob), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -4647,6 +4755,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/unassigned", test_casemap_unassigned);
 	g_test_add_func("/e2e/casemap/guard-bare-rows", test_casemap_guard_bare_rows);
 	g_test_add_func("/e2e/casemap/ircnet-short-name", test_casemap_ircnet_short_name);
+	g_test_add_func("/e2e/casemap/list-dm-pieces", test_casemap_list_dm_pieces);
 
 	return g_test_run();
 }
