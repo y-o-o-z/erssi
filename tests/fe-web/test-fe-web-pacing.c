@@ -2222,7 +2222,6 @@ static void test_sock_diag_live(void)
 	g_assert_cmpuint(uid, ==, 4242);
 	close(fd);
 }
-#endif
 
 /* Does a uid_map (of /proc/self) map every uid */
 static gboolean whole(const char *text)
@@ -2446,6 +2445,7 @@ static void test_sock_diag_enoent(void)
 	close(fd);
 	close(client);
 }
+#endif
 
 /* The file is read whole only if its last line ends */
 static void test_sockaddr_unterminated_file(void)
@@ -2549,7 +2549,6 @@ static void assert_live_own_uid(const char *listen_host, int client_family,
 		g_assert_cmpuint(uid, ==, 4242);
 		fe_web_sock_diag_set_func(NULL);
 		fe_web_uid_map_set_text(NULL);
-	fe_web_uid_map_set_text(NULL);
 		fe_web_sock_diag_reset();
 	}
 #else
