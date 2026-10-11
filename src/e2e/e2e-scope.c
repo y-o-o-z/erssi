@@ -145,13 +145,14 @@ static char *fold_cycles(const char *s)
  Invisible characters, dropped as NFKC_Casefold drops Default_Ignorable
  code points: format characters (Cf: soft hyphen, zero width space and
  joiners, bidi marks, word joiner, BOM, tags), the variation selectors,
- the combining grapheme joiner and the Hangul fillers.
+ the Mongolian free variation selectors, the combining grapheme joiner
+ and the Hangul fillers.
 */
 static gboolean is_ignorable(gunichar c)
 {
 	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
-	       (c >= 0xe0100 && c <= 0xe01ef) || c == 0x34f || c == 0x115f || c == 0x1160 ||
-	       c == 0x3164 || c == 0xffa0;
+	       (c >= 0xe0100 && c <= 0xe01ef) || (c >= 0x180b && c <= 0x180d) || c == 0x180f ||
+	       c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
 }
 
 static char *drop_ignorables(const char *s)

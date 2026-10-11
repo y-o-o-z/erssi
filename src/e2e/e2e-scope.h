@@ -65,7 +65,8 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
   - RFC1459: STRICT_RFC1459 and ~ -> ^;
   - UNICODE, valid UTF-8, in this order:
       1. drop the invisible characters (general category Cf, variation
-         selectors U+FE00-U+FE0F and U+E0100-U+E01EF, U+034F, the Hangul
+         selectors U+FE00-U+FE0F and U+E0100-U+E01EF, the Mongolian free
+         variation selectors U+180B-U+180D and U+180F, U+034F, the Hangul
          fillers U+115F, U+1160, U+3164, U+FFA0), as NFKC_Casefold does;
       2. NFD, full case folding, NFKD, full case folding: Unicode's
          compatibility caseless match (D146);
