@@ -1490,14 +1490,18 @@ static char *guard_resolve(const char *nick, const E2E_JSON *kr, void *data)
 	return g_ascii_strcasecmp(nick, "bob") == 0 ? g_strdup("bob@127.0.0.1") : NULL;
 }
 
-static E2E_GATE_ACTION guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
-                             const char *buf, const char *want_target, const char *want_in_msg)
+/* e2e_script_guard on buf (len bytes), checked: the keyring never
+   changes, the target and a part of the message are as wanted */
+static E2E_GATE_ACTION guard_ex(const E2E_JSON *kr, gboolean kr_ok, gboolean lost, gboolean nested,
+                                const E2E_NET *net, const char *buf, gsize len,
+                                const char *want_target, const char *want_in_msg)
 {
 	char *message = (char *) "unset", *target = (char *) "unset", *before, *after;
 	E2E_GATE_ACTION a;
 
 	before = e2e_json_encode(kr, FALSE);
-	a = e2e_script_guard(kr, kr_ok, net, buf, strlen(buf), guard_resolve, NULL, &message, &target);
+	a = e2e_script_guard(kr, kr_ok, lost, nested, net, buf, len, guard_resolve, NULL, &message,
+	                     &target);
 	after = e2e_json_encode(kr, FALSE);
 	/* never changes the keyring */
 	g_assert_cmpstr(before, ==, after);
@@ -1509,7 +1513,7 @@ static E2E_GATE_ACTION guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *
 	} else {
 		g_assert_nonnull(message);
 		if (strstr(message, want_in_msg) == NULL)
-			g_test_message("%s: \"%s\" not in \"%s\"", buf, want_in_msg, message);
+			g_test_message("%.*s: \"%s\" not in \"%s\"", (int) len, buf, want_in_msg, message);
 		g_assert_nonnull(strstr(message, want_in_msg));
 	}
 	if (message != NULL)
@@ -1517,6 +1521,13 @@ static E2E_GATE_ACTION guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *
 	g_free(message);
 	g_free(target);
 	return a;
+}
+
+/* a line the user sent (not nested), the keyring readable */
+static E2E_GATE_ACTION guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                             const char *buf, const char *want_target, const char *want_in_msg)
+{
+	return guard_ex(kr, kr_ok, FALSE, FALSE, net, buf, strlen(buf), want_target, want_in_msg);
 }
 
 static void put_cfg(E2E_JSON *kr, const char *ctx, int enabled, const char *nick)
@@ -1580,17 +1591,19 @@ static void test_legacy_script_guard(void)
 	   networks), they never refuse here */
 	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #test :hi", NULL, NULL), ==, E2E_GATE_PASS);
 	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #other :hi", NULL, NULL), ==, E2E_GATE_PASS);
-	/* the script's own chunks pass */
+	/* the script's own chunks pass (sent from within its gate: nested) */
 	memset(key, 0x42, sizeof(key));
 	wires = e2e_encrypt_plain(key, "#only", "from the script", 1791564000, &error);
 	g_assert_nonnull(wires);
 	line = g_strconcat("PRIVMSG #only :", (char *) g_ptr_array_index(wires, 0), NULL);
-	g_assert_cmpint(guard(kr, TRUE, &a, line, NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, line, strlen(line), NULL, NULL), ==,
+	                E2E_GATE_PASS);
 	g_free(line);
 	/* ... but a wire does not cover a clear line next to it */
 	line = g_strconcat("PRIVMSG #only :", (char *) g_ptr_array_index(wires, 0),
 	                   "\nPRIVMSG #only :clear", NULL);
-	g_assert_cmpint(guard(kr, TRUE, &a, line, "#only", "E2E:#only"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, line, strlen(line), "#only", "E2E:#only"), ==,
+	                E2E_GATE_REFUSE);
 	g_free(line);
 	g_ptr_array_unref(wires);
 	/* "+RPE2E01 " that is no wire is text */
@@ -1611,6 +1624,106 @@ static void test_legacy_script_guard(void)
 	                E2E_GATE_REFUSE);
 	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #test :hi", "#test", "E2E:#test"), ==,
 	                E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+}
+
+/* a wire passes only as the script's own chunk, sent from within its
+   gate (a nested emission), and only as a line of its own */
+static void test_legacy_script_guard_nested(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = e2e_keyring_new();
+	unsigned char key[32];
+	const char *error = NULL;
+	GPtrArray *wires;
+	GString *buf;
+	char *line;
+
+	put_cfg(kr, "E2E\x1f#only", 1, NULL);
+	memset(key, 0x42, sizeof(key));
+	wires = e2e_encrypt_plain(key, "#only", "pasted", 1791564000, &error);
+	g_assert_nonnull(wires);
+	line = g_strconcat("PRIVMSG #only :", (char *) g_ptr_array_index(wires, 0), NULL);
+	/* typed or pasted by the user: text like any other */
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, FALSE, &a, line, strlen(line), "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	/* the script's chunk */
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, line, strlen(line), NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	/* (with its line end) */
+	buf = g_string_new(line);
+	g_string_append(buf, "\r\n");
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, buf->str, buf->len, NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	g_string_free(buf, TRUE);
+	/* a clear piece after a NUL rides along with no wire */
+	buf = g_string_new(line);
+	g_string_append_c(buf, '\0');
+	g_string_append(buf, "secret");
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, buf->str, buf->len, "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	g_string_free(buf, TRUE);
+	/* two chunks in one buffer: not as the script sends them */
+	buf = g_string_new(line);
+	g_string_append_printf(buf, "\r\n%s", line);
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, TRUE, &a, buf->str, buf->len, "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	g_string_free(buf, TRUE);
+	/* a wire to a channel E2E is not on for is nothing to stop */
+	g_free(line);
+	line = g_strconcat("PRIVMSG #free :", (char *) g_ptr_array_index(wires, 0), NULL);
+	g_assert_cmpint(guard_ex(kr, TRUE, FALSE, FALSE, &a, line, strlen(line), NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	g_free(line);
+	g_ptr_array_unref(wires);
+	e2e_json_free(kr);
+}
+
+/* rpe2e.pl decides a buffer of several lines by its first one: each
+   PRIVMSG in it is decided on the whole keyring, old rows too */
+static void test_legacy_script_guard_multi(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET a1 = { (char *) "E2E", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_JSON *kr = e2e_keyring_new();
+
+	put_cfg(kr, "#legacy", 1, NULL);
+	put_cfg(kr, "#legacyoff", 0, NULL);
+	put_cfg(kr, "E2E\x1f#only", 1, NULL);
+	/* one line: the script's own (bare) entry is its business */
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #legacy :secret", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #legacy :secret", NULL, NULL), ==, E2E_GATE_PASS);
+	/* behind another line it is not looked at by the script */
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #free :a\r\nPRIVMSG #legacy :secret", "#legacy",
+	                      "rpe2e.pl"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :a\r\nPRIVMSG #legacy :secret", "#legacy",
+	                      "rpe2e.pl"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a1, "NOTICE #free :a\nPRIVMSG #legacy :secret", "#legacy",
+	                      "rpe2e.pl"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #free :a\rPRIVMSG #only :secret", "#only",
+	                      "E2E:#only"), ==, E2E_GATE_REFUSE);
+	/* nothing on in the lines: they go */
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #free :a\r\nPRIVMSG #legacyoff :b", NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #free :a\r\nNOTICE #legacy :b", NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
+/* a lost keyring (a corrupt one moved aside): the refusal says /e2e reset */
+static void test_legacy_script_guard_lost(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = e2e_keyring_new();
+	static const char hi[] = "PRIVMSG #free :hi", bot[] = "PRIVMSG #free :!seen x";
+
+	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, hi, strlen(hi), "#free", E2E_REFUSE_LOST),
+	                ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, bot, strlen(bot), "#free", "CLEARTEXT"),
+	                ==, E2E_GATE_BYPASS);
+	/* unreadable, not lost: no /e2e reset (it would start a new keyring) */
+	g_assert_cmpint(guard_ex(kr, FALSE, FALSE, FALSE, &a, hi, strlen(hi), "#free", "keyring read failed"),
+	                ==, E2E_GATE_REFUSE);
 	e2e_json_free(kr);
 }
 
@@ -1799,6 +1912,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/legacy/has-scoped", test_legacy_has_scoped);
 	g_test_add_func("/e2e/legacy/autotrust-old-rule", test_legacy_autotrust_old_rule);
 	g_test_add_func("/e2e/legacy/script-guard", test_legacy_script_guard);
+	g_test_add_func("/e2e/legacy/script-guard-nested", test_legacy_script_guard_nested);
+	g_test_add_func("/e2e/legacy/script-guard-multi", test_legacy_script_guard_multi);
+	g_test_add_func("/e2e/legacy/script-guard-lost", test_legacy_script_guard_lost);
 	g_test_add_func("/e2e/regress/t3-refused-until-adopt", test_regress_refused_until_adopt);
 	g_test_add_func("/e2e/regress/t3-adopt-b-keeps-a", test_regress_adopt_b_keeps_a);
 	g_test_add_func("/e2e/regress/t3-no-change-outcomes", test_regress_no_change_outcomes);

@@ -2665,12 +2665,30 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 	return view;
 }
 
-E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
-                                 const char *buf, gsize len, E2E_RESOLVE_FUNC resolve,
-                                 void *resolve_data, char **message, char **target)
+/* buf (without its final CR / LF) holds a CR, LF or NUL: several lines */
+static gboolean several_lines(const char *buf, gsize len)
+{
+	gsize i;
+
+	while (len > 0 && (buf[len - 1] == '\r' || buf[len - 1] == '\n'))
+		len--;
+	for (i = 0; i < len; i++)
+		if (buf[i] == '\r' || buf[i] == '\n' || buf[i] == '\0')
+			return TRUE;
+	return FALSE;
+}
+
+E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lost,
+                                 gboolean nested, const E2E_NET *net, const char *buf,
+                                 gsize len, E2E_RESOLVE_FUNC resolve, void *resolve_data,
+                                 char **message, char **target)
 {
 	E2E_GATE_ACTION action = E2E_GATE_PASS;
-	E2E_JSON *view = scoped_view(kr);
+	gboolean multi = several_lines(buf, len);
+	/* one line: what the script cannot see; several: everything, as the
+	   script looks at the first line only */
+	E2E_JSON *view = !multi ? scoped_view(kr) :
+	                 kr != NULL ? e2e_json_copy(kr) : e2e_json_new(E2E_JSON_OBJECT);
 	gsize start, end;
 
 	*message = NULL;
@@ -2691,8 +2709,9 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_N
 		}
 		e2e_wipe(line, strlen(line));
 		g_free(line);
-		/* the script's own ciphertext */
-		w = e2e_wire_parse(body);
+		/* the script's own ciphertext: a line of its own, sent from
+		   within its gate; a wire the user typed is text */
+		w = nested && !multi ? e2e_wire_parse(body) : NULL;
 		if (w != NULL) {
 			e2e_wire_free(w);
 		} else {
@@ -2702,9 +2721,13 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_N
 				char *where = e2e_ctx_display(res.ctx);
 
 				g_free(*message);
-				*message = res.action == E2E_GATE_CIPHER ?
-					g_strdup_printf(E2E_SCRIPT_REFUSE, where) :
-					g_strdup_printf(E2E_SCRIPT_REFUSE_OTHER, to, res.message);
+				if (lost && res.action == E2E_GATE_REFUSE)
+					*message = g_strdup_printf("%s - the message shown above was NOT delivered",
+					                           E2E_REFUSE_LOST);
+				else if (res.action == E2E_GATE_CIPHER)
+					*message = g_strdup_printf(E2E_SCRIPT_REFUSE, where);
+				else
+					*message = g_strdup_printf(E2E_SCRIPT_REFUSE_OTHER, to, res.message);
 				g_free(where);
 				g_free(*target);
 				*target = g_strdup(to);
