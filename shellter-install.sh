@@ -85,7 +85,21 @@ optval() {
 
 # ── output ───────────────────────────────────────────────────────────
 # One line per step: "  [3/6] Building ........ ✓ 2m 04s". On a terminal
-# the line shows a spinner and the time while the step runs.
+# the line shows a spinner and the time while the step runs. The symbols and
+# the spinner are UTF-8 only when the locale is; otherwise ASCII ("ok").
+utf8_locale() {
+    cm=""
+    have locale && cm=$(locale charmap 2>/dev/null) || cm=""
+    if [ -n "$cm" ]; then
+        case "$cm" in [Uu][Tt][Ff]-8|[Uu][Tt][Ff]8) return 0 ;; esac
+        return 1
+    fi
+    # no locale command, or it printed nothing: the locale variables
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) return 0 ;;
+    esac
+    return 1
+}
 ui_init() {
     TTY=0
     if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
@@ -96,10 +110,15 @@ ui_init() {
     else
         B='' D='' A='' R='' G='' N='' CR=''
     fi
+    if utf8_locale; then
+        UTF8=1 S_OK='✓' S_FAIL='✗' S_SEP='·' S_ARROW='→' S_SKIP='–' S_BUSY='…'
+    else
+        UTF8=0 S_OK=ok S_FAIL=failed S_SEP=- S_ARROW='->' S_SKIP=- S_BUSY=...
+    fi
     STEP=0; STEPS=6; IN_STEP=0; STEP_TITLE=""; LOG=""
 }
 header() {   # what
-    printf '\n  %s%serssi Shellter Edition%s %s· %s%s\n\n' "$B" "$A" "$N" "$D" "$1" "$N"
+    printf '\n  %s%serssi Shellter Edition%s %s%s %s%s\n\n' "$B" "$A" "$N" "$D" "$S_SEP" "$1" "$N"
 }
 field() { printf '  %s%-9s%s %s\n' "$D" "$1" "$N" "$2"; }
 tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
@@ -112,34 +131,46 @@ step_line() {   # status text
 }
 step() {   # title
     STEP=$((STEP + 1)); STEP_TITLE=$1; STEP_T0=$(now); IN_STEP=1
-    [ "$TTY" = 1 ] && step_line "${D}…${N}"
+    [ "$TTY" = 1 ] && step_line "${D}${S_BUSY}${N}"
     return 0
 }
 done_() {   # detail
-    step_line "${G}✓${N} ${D}$1${N}"; printf '\n'; IN_STEP=0
+    step_line "${G}${S_OK}${N} ${D}$1${N}"; printf '\n'; IN_STEP=0
 }
 skip_() {   # detail
-    step_line "${D}– $1${N}"; printf '\n'; IN_STEP=0
+    step_line "${D}${S_SKIP} $1${N}"; printf '\n'; IN_STEP=0
 }
 warn() {   # shown under the step it belongs to
     if [ "$IN_STEP" = 1 ] && [ "$TTY" = 1 ]; then printf '%s' "$CR"; fi
     printf '        %s!%s %s\n' "$A" "$N" "$*"
-    if [ "$IN_STEP" = 1 ] && [ "$TTY" = 1 ]; then step_line "${D}…${N}"; fi
+    if [ "$IN_STEP" = 1 ] && [ "$TTY" = 1 ]; then step_line "${D}${S_BUSY}${N}"; fi
     return 0
 }
 die() {
-    if [ "$IN_STEP" = 1 ]; then step_line "${R}✗${N}"; printf '\n'; IN_STEP=0; fi
+    if [ "$IN_STEP" = 1 ]; then step_line "${R}${S_FAIL}${N}"; printf '\n'; IN_STEP=0; fi
     printf '\n  %serror:%s %s\n' "$R" "$N" "$*" >&2
     exit 1
 }
 die_log() {   # message - with the end of the build log
-    if [ "$IN_STEP" = 1 ]; then step_line "${R}✗${N}"; printf '\n'; IN_STEP=0; fi
+    if [ "$IN_STEP" = 1 ]; then step_line "${R}${S_FAIL}${N}"; printf '\n'; IN_STEP=0; fi
     printf '\n  %serror:%s %s\n\n' "$R" "$N" "$1" >&2
     tail -n 15 "$LOG" | sed 's/^/    /' >&2
     printf '\n  %sfull log: %s%s\n' "$D" "$LOG" "$N" >&2
     exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+spinner_frame() {   # i
+    if [ "$UTF8" = 1 ]; then
+        case $(($1 % 10)) in
+            0) printf '⠋' ;; 1) printf '⠙' ;; 2) printf '⠹' ;; 3) printf '⠸' ;; 4) printf '⠼' ;;
+            5) printf '⠴' ;; 6) printf '⠦' ;; 7) printf '⠧' ;; 8) printf '⠇' ;; *) printf '⠏' ;;
+        esac
+    else
+        case $(($1 % 4)) in
+            0) printf '|' ;; 1) printf '/' ;; 2) printf '-' ;; *) printf '\134' ;;
+        esac
+    fi
+}
 
 # command >> log, with a spinner and the time on a terminal; returns its code
 run_logged() {
@@ -152,11 +183,7 @@ run_logged() {
     JOB=$!
     i=0
     while kill -0 "$JOB" 2>/dev/null; do
-        case $((i % 10)) in
-            0) s='⠋' ;; 1) s='⠙' ;; 2) s='⠹' ;; 3) s='⠸' ;; 4) s='⠼' ;;
-            5) s='⠴' ;; 6) s='⠦' ;; 7) s='⠧' ;; 8) s='⠇' ;; *) s='⠏' ;;
-        esac
-        step_line "$A$s$N $D$(elapsed $(($(now) - STEP_T0)))$N"
+        step_line "$A$(spinner_frame "$i")$N $D$(elapsed $(($(now) - STEP_T0)))$N"
         i=$((i + 1))
         sleep 1
     done
@@ -526,7 +553,7 @@ else
         fi
         PATH="$VENV/bin:$PATH"; export PATH
     fi
-    done_ "meson $("$MESON" --version) · ninja $("$NINJA" --version) · glib $($PKGCONFIG --modversion glib-2.0) · openssl $($PKGCONFIG --modversion openssl)"
+    done_ "meson $("$MESON" --version) $S_SEP ninja $("$NINJA" --version) $S_SEP glib $($PKGCONFIG --modversion glib-2.0) $S_SEP openssl $($PKGCONFIG --modversion openssl)"
 fi
 
 # ── 2. the release ───────────────────────────────────────────────────
@@ -565,9 +592,9 @@ if [ "$UPDATE" = 1 ]; then
     SAME=""             # the installed version, released again with changes
     if [ -n "$REF" ]; then
         NEWEST=${REF#shellter-v}
-        done_ "$REF · signed by the erssi Shellter release key"
+        done_ "$REF $S_SEP signed by the erssi Shellter release key"
         if [ "$NEWEST" = "$INSTALLED" ]; then
-            SAME="$(echo "$INSTALLED_COMMIT" | cut -c1-8) → $(git -C "$WORK" rev-parse "$TAG_OBJ^{commit}" | cut -c1-8)"
+            SAME="$(echo "$INSTALLED_COMMIT" | cut -c1-8) $S_ARROW $(git -C "$WORK" rev-parse "$TAG_OBJ^{commit}" | cut -c1-8)"
         fi
     else
         NEWEST=$INSTALLED
@@ -587,7 +614,7 @@ if [ "$UPDATE" = 1 ]; then
         exit 0
     fi
     if [ "$CHECK" = 1 ]; then
-        printf '\n  %sUpdate available: %s → %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$NEWEST" "$N"
+        printf '\n  %sUpdate available: %s %s %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$S_ARROW" "$NEWEST" "$N"
         exit 0
     fi
 else
@@ -639,14 +666,14 @@ if [ -n "$PINNED" ] && [ "$UPDATE" = 1 ] && [ "$HEAD_SHA" != "$PINNED" ]; then
     :
 elif [ -n "$PINNED" ]; then
     [ "$HEAD_SHA" = "$PINNED" ] || die "$REF points to $HEAD_SHA, but this installer expects $PINNED - refusing to build (download the installer again, or report it)"
-    VERIFIED="${VERIFIED:+$VERIFIED · }commit recorded"
+    VERIFIED="${VERIFIED:+$VERIFIED $S_SEP }commit recorded"
 elif [ "$UPDATE" = 0 ]; then
     case "$REF" in
         shellter-v*) warn "$REF is not recorded in this installer - not verified; download the installer again to verify it" ;;
         *) warn "$REF is not a release - built as is, not verified" ;;
     esac
 fi
-done_ "$(echo "$HEAD_SHA" | cut -c1-8)${VERIFIED:+ · $VERIFIED}"
+done_ "$(echo "$HEAD_SHA" | cut -c1-8)${VERIFIED:+ $S_SEP $VERIFIED}"
 
 # ── 4. build ─────────────────────────────────────────────────────────
 step "Building"
@@ -663,7 +690,7 @@ step "Testing"
 if [ "$RUN_TESTS" = 1 ]; then
     run_logged "$MESON" test -C "$SRC/Build" || die_log "tests failed (all results: $SRC/Build/meson-logs/testlog.txt)"
     n=$(sed -n 's/^Ok: *\([0-9]*\).*/\1/p' "$LOG" | tail -n 1)
-    done_ "${n:+$n tests · }$(elapsed $(($(now) - STEP_T0)))"
+    done_ "${n:+$n tests $S_SEP }$(elapsed $(($(now) - STEP_T0)))"
 else
     skip_ "skipped"
 fi
@@ -686,7 +713,7 @@ cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/n
 VERSION=$("$PREFIX/bin/erssi" --version | awk '{print $2}')
 if [ "$CLEAN" = 1 ]; then
     rm -rf "$SRC/Build"
-    done_ "$(tilde "$PREFIX") · build directory removed"
+    done_ "$(tilde "$PREFIX") $S_SEP build directory removed"
 else
     done_ "$(tilde "$PREFIX")"
 fi
@@ -703,7 +730,7 @@ if [ -n "${SAME:-}" ]; then
     printf '  %s%sUpdated: %s (%s)%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$SAME" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
     field "running" "in a running erssi, /upgrade loads it without disconnecting"
 elif [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
-    printf '  %s%sUpdated: %s → %s%s  %s(%s)%s\n\n' "$B" "$G" "$INSTALLED" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
+    printf '  %s%sUpdated: %s %s %s%s  %s(%s)%s\n\n' "$B" "$G" "$INSTALLED" "$S_ARROW" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
     field "running" "in a running erssi, /upgrade loads $VERSION without disconnecting"
 else
     printf '  %s%serssi Shellter Edition %s is installed%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
@@ -717,4 +744,4 @@ field "log" "$(tilde "$LOG")"
 printf '\n'
 }
 
-main "$@"
+[ -n "${SHELLTER_INSTALL_NO_MAIN:-}" ] || main "$@"
