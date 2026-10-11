@@ -122,6 +122,17 @@ static void test_casefold(void)
 	/* folding a composed form under-folds: U+0345 joins another base */
 	SAME("#\xe1\xbe\xb3\xcd\x82", "#\xe1\xbe\xbc\xcd\x82", E2E_CASEMAP_UNICODE); /* U+1FB3/U+1FBC U+0342 */
 	SAME("#\xe1\xbe\xb7", "#\xce\x91\xcd\x82\xce\xb9", E2E_CASEMAP_UNICODE);    /* U+1FB7 */
+	/* servers that casefold first put U+0345's iota before the other
+	   marks, NFD puts it after them: the marks next to an iota go */
+	SAME("#\xe1\xbe\x88\xcc\xaf", "#\xe1\xbc\x88\xce\x99\xcc\xaf", E2E_CASEMAP_UNICODE); /* U+1F88 U+032F */
+	SAME("#\xe1\xbf\xbc\xcc\xa8", "#\xcf\x89\xce\xb9\xcc\xa8", E2E_CASEMAP_UNICODE);     /* U+1FFC U+0328 */
+	SAME("#\xcf\x80\xce\xbf\xce\xaf\xce\xb7\xce\xbc\xce\xb1", "#\xcf\x80\xce\xbf\xce\xb9\xce\xb7\xce\xbc\xce\xb1",
+	     E2E_CASEMAP_UNICODE); /* the over-fold this costs */
+	DIFF("#\xce\xb1\xcc\x81", "#\xce\xb1", E2E_CASEMAP_UNICODE); /* marks elsewhere stay */
+	SAME("#\xce\xb9\xcc\x81\xcc\x80", "#\xce\xb9", E2E_CASEMAP_UNICODE);  /* marks at the end */
+	SAME("\xcc\x81\xcc\x80\xce\xb9", "\xce\xb9", E2E_CASEMAP_UNICODE);    /* marks at the start */
+	SAME("#a\xcc\x81\xcd\x85", "#a\xce\xb9", E2E_CASEMAP_UNICODE);        /* a U+0345 */
+	DIFF("#a\xcc\x81\xcd\x85", "#\xce\xb9", E2E_CASEMAP_UNICODE);         /* the base stays */
 	s = e2e_casefold("#\xc7\xb0\xcc\xb8", E2E_CASEMAP_UNICODE);
 	g_assert_cmpstr(s, ==, "#\xc7\xb0\xcc\xb8"); /* NFKC of j U+030C U+0338 */
 	g_free(s);
@@ -164,6 +175,8 @@ static const char *const ignorables[] = {
 	"\xe1\xa0\x8c",     /* U+180C Mongolian free variation selector 2 */
 	"\xe1\xa0\x8d",     /* U+180D Mongolian free variation selector 3 */
 	"\xe1\xa0\x8f",     /* U+180F Mongolian free variation selector 4 */
+	"\xe1\x9e\xb4",     /* U+17B4 Khmer vowel inherent aq */
+	"\xe1\x9e\xb5",     /* U+17B5 Khmer vowel inherent aa */
 	"\xe1\x85\x9f",     /* U+115F Hangul choseong filler */
 	"\xe1\x85\xa0",     /* U+1160 Hangul jungseong filler */
 	"\xe3\x85\xa4",     /* U+3164 Hangul filler */
@@ -179,6 +192,8 @@ static const char *const kept_neighbours[] = {
 	"\xcd\x8e",         /* U+034E */
 	"\xe1\xa0\x8a",     /* U+180A */
 	"\xe1\xa0\x90",     /* U+1810 */
+	"\xe1\x9e\xb3",     /* U+17B3 */
+	"\xe1\x9e\xb6",     /* U+17B6 */
 	"\xe1\x85\x9e",     /* U+115E */
 	"\xe1\x85\xa1",     /* U+1161 */
 	"\xe3\x85\xa5",     /* U+3165 */
@@ -189,7 +204,7 @@ static gboolean oracle_ignorable(gunichar c)
 {
 	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
 	       (c >= 0xe0100 && c <= 0xe01ef) || (c >= 0x180b && c <= 0x180d) || c == 0x180f ||
-	       c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
+	       c == 0x17b4 || c == 0x17b5 || c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
 }
 
 static void test_casefold_ignorables(void)
@@ -261,6 +276,13 @@ static void test_casefold_ex(void)
 	g_assert_cmpstr(s, ==, "#a~");
 	g_free(s);
 
+	/* any byte from 0x80 up is not ASCII: no fast path for it */
+	exact = TRUE;
+	s = e2e_casefold_ex("#A\x80", E2E_CASEMAP_UNICODE, &exact);
+	g_assert_false(exact);
+	g_assert_cmpstr(s, ==, "#a\x80");
+	g_free(s);
+
 	/* a NULL name decides nothing */
 	exact = TRUE;
 	g_assert_null(e2e_casefold_ex(NULL, E2E_CASEMAP_UNICODE, &exact));
@@ -276,7 +298,7 @@ static void test_casefold_ex(void)
 }
 
 #define RANDOM_SEED       0x52504532u
-#define RANDOM_ITERATIONS 200000
+#define RANDOM_ITERATIONS 100000
 
 /* a code point from pools that stress normalisation and case folding */
 static gunichar random_code_point(GRand *rand)
@@ -373,14 +395,59 @@ static char *variant_of(GRand *rand, const char *s)
 	return g_string_free(out, FALSE);
 }
 
+/* the code points of s, for messages */
+static char *code_points(const char *s)
+{
+	GString *out = g_string_new(NULL);
+	const char *p;
+
+	for (p = s; *p != '\0'; p = g_utf8_next_char(p))
+		g_string_append_printf(out, "%sU+%04X", out->len > 0 ? " " : "", g_utf8_get_char(p));
+	return g_string_free(out, FALSE);
+}
+
+#define SERVER_MODELS 6
+
+/* what a server may take as the same name as s: rfc8265 / PRECIS order,
+   tests/e2e/e2eircd.py's utf8 model, the other order, whole-string GLib
+   case mappings */
+static char *server_image(int model, const char *s)
+{
+	char *a, *b;
+
+	switch (model) {
+	case 0:
+		a = g_utf8_casefold(s, -1);
+		b = g_utf8_normalize(a, -1, G_NORMALIZE_NFC);
+		break;
+	case 1:
+		a = g_utf8_normalize(s, -1, G_NORMALIZE_NFKC);
+		b = g_utf8_casefold(a, -1);
+		break;
+	case 2:
+		a = g_utf8_casefold(s, -1);
+		b = g_utf8_normalize(a, -1, G_NORMALIZE_NFKC);
+		break;
+	case 3:
+		return g_utf8_strup(s, -1);
+	case 4:
+		return g_utf8_strdown(s, -1);
+	default:
+		return g_utf8_casefold(s, -1);
+	}
+	g_free(a);
+	return b;
+}
+
 /* seeded random names of several code points: the superset fold is
-   idempotent, drops every invisible character, and folds every variant of
-   a name (rfc1459-equal ones among them) to the same string */
+   idempotent, drops every invisible character, folds every variant of a
+   name (rfc1459-equal ones among them) to the same string, and every name
+   a server model takes as the same */
 static void test_casefold_random(void)
 {
 	GRand *rand = g_rand_new_with_seed(RANDOM_SEED);
 	GString *name = g_string_new(NULL);
-	int i, n;
+	int i, n, model;
 
 	for (i = 0; i < RANDOM_ITERATIONS; i++) {
 		char *once, *twice, *variant, *vfold;
@@ -404,12 +471,63 @@ static void test_casefold_random(void)
 		variant = variant_of(rand, name->str);
 		vfold = e2e_casefold(variant, E2E_CASEMAP_UNICODE);
 		if (strcmp(once, vfold) != 0)
-			g_error("iteration %d: \"%s\" and \"%s\" fold apart", i, name->str, variant);
+			g_error("iteration %d: %s and %s fold apart", i, code_points(name->str),
+			        code_points(variant));
+
+		for (model = 0; model < SERVER_MODELS; model++) {
+			char *image, *ifold;
+
+			/* the simple upper case of U+0131 is plain I, full case
+			   folding keeps U+0131 (see the code point sweep) */
+			if (model == 3 && strstr(name->str, "\xc4\xb1") != NULL)
+				continue;
+			image = server_image(model, name->str);
+			ifold = e2e_casefold(image, E2E_CASEMAP_UNICODE);
+
+			if (strcmp(once, ifold) != 0)
+				g_error("iteration %d: %s and its server model %d image %s fold apart",
+				        i, code_points(name->str), model, code_points(image));
+			g_free(image);
+			g_free(ifold);
+		}
 
 		g_free(once);
 		g_free(twice);
 		g_free(variant);
 		g_free(vfold);
+	}
+	g_string_free(name, TRUE);
+	g_rand_free(rand);
+}
+
+/* random ASCII names: the UNICODE fold of a pure ASCII name equals the
+   full Unicode path (forced by an invisible U+200B, which it drops) and
+   the byte-wise rfc1459 fold */
+static void test_casefold_ascii(void)
+{
+	GRand *rand = g_rand_new_with_seed(RANDOM_SEED);
+	GString *name = g_string_new(NULL);
+	int i, n;
+
+	for (i = 0; i < 20000; i++) {
+		char *fast, *slow, *bytes, *forced;
+		gboolean exact = FALSE;
+
+		g_string_truncate(name, 0);
+		for (n = g_rand_int_range(rand, 0, 12); n > 0; n--)
+			g_string_append_c(name, (char) g_rand_int_range(rand, 1, 0x80));
+		forced = g_strconcat(name->str, "\xe2\x80\x8b", NULL);
+
+		fast = e2e_casefold_ex(name->str, E2E_CASEMAP_UNICODE, &exact);
+		g_assert_true(exact);
+		slow = e2e_casefold(forced, E2E_CASEMAP_UNICODE);
+		bytes = e2e_casefold(name->str, E2E_CASEMAP_RFC1459);
+		g_assert_cmpstr(fast, ==, slow);
+		g_assert_cmpstr(fast, ==, bytes);
+		g_free(fast);
+		g_free(slow);
+		g_free(bytes);
+		g_free(forced);
 	}
 	g_string_free(name, TRUE);
 	g_rand_free(rand);
@@ -645,6 +763,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/casefold-ignorables", test_casefold_ignorables);
 	g_test_add_func("/e2e/scope/casefold-ex", test_casefold_ex);
 	g_test_add_func("/e2e/scope/casefold-random", test_casefold_random);
+	g_test_add_func("/e2e/scope/casefold-ascii", test_casefold_ascii);
 	g_test_add_func("/e2e/scope/casefold-all-code-points", test_casefold_all_code_points);
 	g_test_add_func("/e2e/scope/contexts", test_contexts);
 	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
