@@ -25,6 +25,10 @@
 # from <prefix>/share/irssi/shellter-install.conf; an erssi kept up to date
 # by another tool names it there as UPDATE_COMMAND, which --update runs.
 #
+# Inside a user namespace (rootless container, bwrap) root's directories
+# show as the overflow uid; SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts it
+# as root's above the parent of --src (safe_path).
+#
 # Build output goes to a log (~/.local/state/erssi/install.log), shown when a
 # step fails. Colours only on a terminal (NO_COLOR turns them off).
 # Everything runs from main() at the end of the file, so a download cut
@@ -73,6 +77,14 @@ erssi Shellter Edition - install and update
 As root the installer lists the system packages erssi needs and installs
 them after you confirm; on a user account it lists them with the command
 for the administrator.
+
+The source directory, its venv and the directories above them must be
+yours or root's. In a user namespace (rootless container, bwrap, unshare)
+root's directories show as the overflow uid (65534):
+  SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
+                 count it as root's above the parent of --src (never the
+                 parent, --src or its venv); does nothing outside a user
+                 namespace or without /proc
 USAGE
 }
 
@@ -320,22 +332,54 @@ safe_dir() {   # dir - when it exists: the user's, and only the user can write t
         die "$1 can be changed by other users - use a directory of your own (--src DIR) or take their write access away"
     fi
 }
+# In a user namespace (a rootless container, bwrap, unshare) the files of
+# every user it does not map, root's among them, show as the kernel's
+# overflow uid (65534). SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts that
+# uid as root's above the parent of --src; never for the parent, the source
+# directory or its venv. Outside a user namespace, and without /proc
+# (FreeBSD), it does nothing. SHELLTER_PROC: another /proc (tests).
+in_userns() {   # 0 when /proc/self/uid_map is not the initial (identity) map
+    um="${SHELLTER_PROC:-/proc}/self/uid_map"
+    [ -r "$um" ] || return 1
+    [ "$(awk '{$1 = $1; print}' "$um" 2>/dev/null)" != "0 0 4294967295" ]
+}
+overflow_uid() {   # the overflow uid inside a user namespace, else nothing
+    in_userns || return 0
+    ov=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/overflowuid" 2>/dev/null) || return 0
+    case "$ov" in ''|*[!0-9]*|0) return 0 ;; esac
+    printf '%s\n' "$ov"
+}
 # $1, the resolved parent of the source directory, and every directory above
 # it: the user's or root's, and nobody else can write to the parent; above
 # it only a sticky directory of root's (/tmp) may be open to others
-# (ssh StrictModes)
+# (ssh StrictModes). Above the parent, the overflow uid counts as root's
+# with SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 (see in_userns).
 safe_path() {
     d=$1
     hint="choose a --src under a directory only you can write"
+    ovf=$(overflow_uid)
+    trust=""
+    [ "${SHELLTER_INSTALL_TRUST_OVERFLOW_UID:-}" != 1 ] || trust=$ovf
     while :; do
         o=$(owner "$d")
-        [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$d belongs to another user (uid ${o:-unknown}) - $hint"
+        r=$o        # the owner as the rules below see it
+        [ -z "$trust" ] || [ "$d" = "$1" ] || [ "$o" != "$trust" ] || r=0
+        if [ "$o" != "$(id -u)" ] && [ "$r" != 0 ]; then
+            if [ -n "$ovf" ] && [ "$o" = "$ovf" ]; then
+                # a user namespace: root's directories show as this uid
+                if [ "$d" = "$1" ]; then
+                    die "$d belongs to another user (uid $o) - $hint (in this user namespace uid $o is every user outside it, root included; SHELLTER_INSTALL_TRUST_OVERFLOW_UID does not cover the parent of --src)"
+                fi
+                die "$d belongs to another user (uid $o) - $hint, or, as uid $o is every user outside this user namespace (root included), set SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 to count it as root's above the parent of --src"
+            fi
+            die "$d belongs to another user (uid ${o:-unknown}) - $hint"
+        fi
         if others_can_write "$d"; then
             # above the parent: a sticky directory of root's without an
             # untrusted ACL (/tmp) is fine
             pg=$(mode_gid "$d")
             m=${pg%% *}
-            if [ "$d" = "$1" ] || [ "$o" != 0 ] || untrusted_acl "$m"; then
+            if [ "$d" = "$1" ] || [ "$r" != 0 ] || untrusted_acl "$m"; then
                 die "$d is writable by other users - $hint"
             fi
             case "$m" in
