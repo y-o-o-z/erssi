@@ -8,10 +8,12 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope']
     implicit_include_directories : false,
     dependencies : dep,
   )
+  # scope sweeps every code point and 200k random names: ~30 s in ASan
   test('test-e2e-' + name + ' test', exe,
     env : test_env,
     args : ['--tap'],
-    protocol : 'tap')
+    protocol : 'tap',
+    timeout : name == 'scope' ? 120 : 30)
 endforeach
 
 # native module <-> rpe2e.pl on a local fake IRC server, in a private tmux

@@ -10,11 +10,18 @@
    "<label>\x1f<wire ctx>"
 
  The label is the server's chatnet name if it has one, otherwise the
- server tag; every byte below 0x20 and every '|' in it becomes '_', so a
- label never holds the separator. A key without the separator is a legacy
- (unscoped) row, from rpe2e.pl or from before the scope: it matches any
- network. The wire (c= field, AAD, HKDF info, signatures) always uses the
- bare context, e2e_ctx_wire().
+ server tag. C0 controls, DEL, C1 controls (U+0080-U+009F), '|' and every
+ byte that is not part of valid UTF-8 become '_', so a label is valid
+ UTF-8 and never holds the separator. A key without the separator is a
+ legacy (unscoped) row, from rpe2e.pl or from before the scope: it matches
+ any network. The wire (c= field, AAD, HKDF info, signatures) always uses
+ the bare context, e2e_ctx_wire().
+
+ A wire context that itself holds 0x1F cannot be told apart from a scoped
+ one, so it is refused: e2e_ctx_scoped() and e2e_ctx_rescope() return NULL
+ for it, and the callers refuse such a context (fail closed). A legacy
+ row whose name holds 0x1F reads as scoped; callers flag such rows rather
+ than reinterpret them.
 
  CASEMAPPING: ascii, rfc1459 and strict-rfc1459 are folded exactly; no
  value means rfc1459; every other value (rfc7613, rfc8265, utf8, unknown,
@@ -42,8 +49,8 @@ typedef struct {
 	gboolean legacy_ok;	/* whether unscoped rows may be used here */
 } E2E_NET;
 
-/* label from chatnet (if non-empty) or tag (if non-empty), casemap from
-   the CASEMAPPING value (NULL when the server sent none) */
+/* label from chatnet (if non-empty) or tag (if non-empty), else NULL;
+   casemap from the CASEMAPPING value (NULL when the server sent none) */
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok);
 /* frees the label; safe to call twice */
@@ -56,19 +63,36 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
   - ASCII: A-Z -> a-z;
   - STRICT_RFC1459: ASCII and [ ] \ -> { } |;
   - RFC1459: STRICT_RFC1459 and ~ -> ^;
-  - UNICODE, valid UTF-8: NFKC (g_utf8_normalize), then full case folding
-    (g_utf8_casefold), then a code point whose fold is a single other code
-    point folding back to it (GLib's Cherokee) becomes the smaller of the
-    two, then the RFC1459 specials. The result is valid UTF-8.
+  - UNICODE, valid UTF-8, in this order:
+      1. drop the invisible characters (general category Cf, variation
+         selectors U+FE00-U+FE0F and U+E0100-U+E01EF, U+034F, the Hangul
+         fillers U+115F, U+1160, U+3164, U+FFA0), as NFKC_Casefold does;
+      2. NFD, full case folding, NFKD, full case folding: Unicode's
+         compatibility caseless match (D146);
+      3. NFKC, for one representative;
+      4. the RFC1459 specials.
+    Full case folding is g_utf8_casefold() followed by a fix for GLib's
+    Cherokee: a code point whose fold is a single other code point folding
+    back to it becomes the smaller of the two (CaseFolding.txt's target).
+    The result is valid UTF-8 and holds none of the characters of step 1.
   - UNICODE, invalid UTF-8: the byte-wise RFC1459 fold.
  Bytes above 0x7f are left alone by the exact maps. fold(fold(x)) == fold(x).
+ U+0130 and U+0131 follow full case folding (U+0130 -> i U+0307), not the
+ simple case mapping to and from plain i.
 */
 char *e2e_casefold(const char *name, E2E_CASEMAP map);
+/* e2e_casefold(), and *exact (if not NULL) says whether the fold is the
+   one map asks for: FALSE when UNICODE fell back to the byte-wise RFC1459
+   fold (invalid UTF-8, or GLib refused to normalise) and for a NULL name;
+   TRUE otherwise, the exact maps always */
+char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact);
 
-/* "<label>\x1f<wire>"; a bare copy when net or its label is NULL; NULL for
-   a NULL wire */
+/* "<label>\x1f<wire>"; a bare copy when net is NULL; NULL when net has no
+   label (never a bare key in its place), and for a NULL wire or one that
+   holds 0x1F */
 char *e2e_ctx_scoped(const E2E_NET *net, const char *wire);
-/* wire scoped to the same network as like (a bare copy if like is bare) */
+/* wire scoped to the same network as like (a bare copy if like is bare or
+   NULL); NULL for a NULL wire or one that holds 0x1F */
 char *e2e_ctx_rescope(const char *like, const char *wire);
 /* the part after the first 0x1F, or ctx itself; points into ctx */
 const char *e2e_ctx_wire(const char *ctx);

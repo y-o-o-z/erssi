@@ -65,7 +65,9 @@ static const char *const fold_inputs[] = {
 	"#\xc5\xbb" "aba", "#\xc5\xbc" "aba", "#z\xcc\x87" "aba", "#\xff",
 	"#A\xff[", "#\xef\xbc\xbb" "X",
 	"#\xe1\x8e\xa0", "#\xea\xad\xb0", "#\xe1\x8f\xb8", "#\xe1\x8f\xb0",
-	"#Stra\xc3\x9f" "e", "#STRASSE", "#\xc4\xb0", "#i\xcc\x87", "",
+	"#Stra\xc3\x9f" "e", "#STRASSE", "#\xc4\xb0", "#i\xcc\x87",
+	"#\xc7\xb0\xcc\xb8", "#J\xcc\xb8\xcc\x8c", "#\xc4\xb0\xcc\xa7", "#i\xcc\xa7\xcc\x87",
+	"#a\xc2\xad" "b", "#a\xcd\x8f\xcc\x81\xcc\x80", "#\xe1\xbe\xb3\xcd\x82", "#\xe1\xbe\xbc\xcd\x82", "",
 };
 
 static void test_casefold(void)
@@ -113,6 +115,16 @@ static void test_casefold(void)
 	s = e2e_casefold("#\xe1\x8f\xb8", E2E_CASEMAP_UNICODE);
 	g_assert_cmpstr(s, ==, "#\xe1\x8f\xb0");
 	g_free(s);
+	/* casefold output is normalised again: these are one name under full
+	   case folding but come out of casefold in different mark orders */
+	SAME("#\xc7\xb0\xcc\xb8", "#J\xcc\xb8\xcc\x8c", E2E_CASEMAP_UNICODE);  /* U+01F0 U+0338 */
+	SAME("#\xc4\xb0\xcc\xa7", "#i\xcc\xa7\xcc\x87", E2E_CASEMAP_UNICODE);  /* U+0130 U+0327 */
+	/* folding a composed form under-folds: U+0345 joins another base */
+	SAME("#\xe1\xbe\xb3\xcd\x82", "#\xe1\xbe\xbc\xcd\x82", E2E_CASEMAP_UNICODE); /* U+1FB3/U+1FBC U+0342 */
+	SAME("#\xe1\xbe\xb7", "#\xce\x91\xcd\x82\xce\xb9", E2E_CASEMAP_UNICODE);    /* U+1FB7 */
+	s = e2e_casefold("#\xc7\xb0\xcc\xb8", E2E_CASEMAP_UNICODE);
+	g_assert_cmpstr(s, ==, "#\xc7\xb0\xcc\xb8"); /* NFKC of j U+030C U+0338 */
+	g_free(s);
 	/* a plain result for the exact maps too */
 	s = e2e_casefold("#A[]\\~\xc3\x80", E2E_CASEMAP_RFC1459);
 	g_assert_cmpstr(s, ==, "#a{}|^\xc3\x80");
@@ -133,6 +145,268 @@ static void test_casefold(void)
 	}
 }
 
+/* invisible characters the superset fold drops, as NFKC_Casefold does */
+static const char *const ignorables[] = {
+	"\xc2\xad",         /* U+00AD soft hyphen (Cf) */
+	"\xd8\x80",         /* U+0600 (Cf) */
+	"\xe2\x80\x8b",     /* U+200B zero width space (Cf) */
+	"\xe2\x80\x8d",     /* U+200D zero width joiner (Cf) */
+	"\xe2\x80\x8f",     /* U+200F (Cf) */
+	"\xe2\x81\xa0",     /* U+2060 word joiner (Cf) */
+	"\xef\xbb\xbf",     /* U+FEFF (Cf) */
+	"\xf3\xa0\x80\x81", /* U+E0001 language tag (Cf) */
+	"\xef\xb8\x80",     /* U+FE00 variation selector 1 */
+	"\xef\xb8\x8f",     /* U+FE0F variation selector 16 */
+	"\xf3\xa0\x84\x80", /* U+E0100 variation selector 17 */
+	"\xf3\xa0\x87\xaf", /* U+E01EF variation selector 256 */
+	"\xcd\x8f",         /* U+034F combining grapheme joiner */
+	"\xe1\x85\x9f",     /* U+115F Hangul choseong filler */
+	"\xe1\x85\xa0",     /* U+1160 Hangul jungseong filler */
+	"\xe3\x85\xa4",     /* U+3164 Hangul filler */
+	"\xef\xbe\xa0",     /* U+FFA0 halfwidth Hangul filler */
+};
+
+/* their neighbours outside the ranges are kept */
+static const char *const kept_neighbours[] = {
+	"\xef\xb8\x90",     /* U+FE10 (NFKC: ',') */
+	"\xef\xb7\xbf",     /* U+FDFF */
+	"\xf3\xa0\x83\xbf", /* U+E00FF */
+	"\xf3\xa0\x87\xb0", /* U+E01F0 */
+	"\xcd\x8e",         /* U+034E */
+	"\xe1\x85\x9e",     /* U+115E */
+	"\xe1\x85\xa1",     /* U+1161 */
+	"\xe3\x85\xa5",     /* U+3165 */
+	"\xef\xbe\xa1",     /* U+FFA1 */
+};
+
+static gboolean oracle_ignorable(gunichar c)
+{
+	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
+	       (c >= 0xe0100 && c <= 0xe01ef) || c == 0x34f || c == 0x115f || c == 0x1160 ||
+	       c == 0x3164 || c == 0xffa0;
+}
+
+static void test_casefold_ignorables(void)
+{
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS(ignorables); i++) {
+		char *with = g_strconcat("#a", ignorables[i], "b", NULL);
+		char *only = g_strconcat("#", ignorables[i], NULL);
+
+		SAME("#ab", with, E2E_CASEMAP_UNICODE);
+		SAME("#", only, E2E_CASEMAP_UNICODE);
+		DIFF("#ab", with, E2E_CASEMAP_ASCII);
+		DIFF("#ab", with, E2E_CASEMAP_RFC1459);
+		DIFF("#ab", with, E2E_CASEMAP_STRICT_RFC1459);
+		g_free(with);
+		g_free(only);
+	}
+	for (i = 0; i < G_N_ELEMENTS(kept_neighbours); i++) {
+		char *with = g_strconcat("#a", kept_neighbours[i], "b", NULL);
+
+		DIFF("#ab", with, E2E_CASEMAP_UNICODE);
+		g_free(with);
+	}
+	/* a joiner between marks blocks reordering until it is dropped */
+	SAME("#a\xcc\x81\xcd\x8f\xcc\x80", "#a\xcc\x81\xcc\x80", E2E_CASEMAP_UNICODE);
+	SAME("#\xc3\x81\xcd\x8f", "#a\xcc\x81", E2E_CASEMAP_UNICODE);
+}
+
+static void test_casefold_ex(void)
+{
+	gboolean exact;
+	char *s, *t;
+
+	exact = FALSE;
+	s = e2e_casefold_ex("#\xc5\xbb" "aba", E2E_CASEMAP_UNICODE, &exact);
+	g_assert_true(exact);
+	t = e2e_casefold("#\xc5\xbb" "aba", E2E_CASEMAP_UNICODE);
+	g_assert_cmpstr(s, ==, t);
+	g_assert_cmpstr(s, ==, "#\xc5\xbc" "aba");
+	g_free(s);
+	g_free(t);
+
+	/* the byte-wise fallback says so, with the same result */
+	exact = TRUE;
+	s = e2e_casefold_ex("#A\xff[", E2E_CASEMAP_UNICODE, &exact);
+	g_assert_false(exact);
+	g_assert_cmpstr(s, ==, "#a\xff{");
+	t = e2e_casefold("#A\xff[", E2E_CASEMAP_UNICODE);
+	g_assert_cmpstr(s, ==, t);
+	g_free(s);
+	g_free(t);
+
+	/* the exact maps are exact whatever the bytes */
+	exact = FALSE;
+	s = e2e_casefold_ex("#A\xff[", E2E_CASEMAP_RFC1459, &exact);
+	g_assert_true(exact);
+	g_assert_cmpstr(s, ==, "#a\xff{");
+	g_free(s);
+	exact = FALSE;
+	s = e2e_casefold_ex("#A", E2E_CASEMAP_ASCII, &exact);
+	g_assert_true(exact);
+	g_free(s);
+	exact = FALSE;
+	s = e2e_casefold_ex("#A~", E2E_CASEMAP_STRICT_RFC1459, &exact);
+	g_assert_true(exact);
+	g_assert_cmpstr(s, ==, "#a~");
+	g_free(s);
+
+	/* a NULL name decides nothing */
+	exact = TRUE;
+	g_assert_null(e2e_casefold_ex(NULL, E2E_CASEMAP_UNICODE, &exact));
+	g_assert_false(exact);
+	exact = TRUE;
+	g_assert_null(e2e_casefold_ex(NULL, E2E_CASEMAP_ASCII, &exact));
+	g_assert_false(exact);
+
+	/* exact may be NULL */
+	s = e2e_casefold_ex("#\xff", E2E_CASEMAP_UNICODE, NULL);
+	g_assert_cmpstr(s, ==, "#\xff");
+	g_free(s);
+}
+
+#define RANDOM_SEED       0x52504532u
+#define RANDOM_ITERATIONS 200000
+
+/* a code point from pools that stress normalisation and case folding */
+static gunichar random_code_point(GRand *rand)
+{
+	static const char ascii[] = "AZaz09[]\\~{}|^#-";
+	static const gunichar special[] = {
+		0x130, 0x131, 0x1f0, 0xdf, 0x1e9e, 0x3a3, 0x3c2, 0x345, 0x390, 0x1fb3,
+		0x13a0, 0x13f5, 0x13f8, 0xab70, 0xabbf, 0x1c4, 0x1c5, 0x1c6, 0xfb00, 0xfb03,
+		0x212a, 0x212b, 0x2126, 0x1e9b, 0x149, 0x17f, 0xb5, 0x3d0, 0x10400, 0x10428,
+	};
+	static const struct { gunichar lo, hi; } ranges[] = {
+		{ 0xc0, 0x24f },       /* Latin letters */
+		{ 0x300, 0x36f },      /* combining marks */
+		{ 0x327, 0x338 },      /* cedilla .. long solidus overlay */
+		{ 0x370, 0x3ff },      /* Greek */
+		{ 0x400, 0x4ff },      /* Cyrillic */
+		{ 0x1100, 0x11ff },    /* Hangul jamo */
+		{ 0xac00, 0xd7a3 },    /* Hangul syllables */
+		{ 0x1e00, 0x1fff },    /* Latin extended additional, Greek extended */
+		{ 0xff01, 0xff5e },    /* fullwidth */
+		{ 0x2160, 0x217f },    /* Roman numerals */
+		{ 0x24b6, 0x24e9 },    /* circled letters */
+		{ 0x1d400, 0x1d7ff },  /* mathematical letters */
+		{ 0x10a0, 0x10ff },    /* Georgian */
+	};
+	gunichar c;
+
+	switch (g_rand_int_range(rand, 0, 6)) {
+	case 0:
+		return ascii[g_rand_int_range(rand, 0, sizeof(ascii) - 1)];
+	case 1:
+		return special[g_rand_int_range(rand, 0, G_N_ELEMENTS(special))];
+	case 2: {
+		const char *s = ignorables[g_rand_int_range(rand, 0, G_N_ELEMENTS(ignorables))];
+
+		return g_utf8_get_char(s);
+	}
+	case 3:
+	case 4: {
+		int r = g_rand_int_range(rand, 0, G_N_ELEMENTS(ranges));
+
+		return g_rand_int_range(rand, ranges[r].lo, ranges[r].hi + 1);
+	}
+	default:
+		do
+			c = g_rand_int_range(rand, 0x20, 0x110000);
+		while (!g_unichar_validate(c));
+		return c;
+	}
+}
+
+/* the same name another way: other case per letter, rfc1459 specials,
+   another normalisation form, invisible characters added */
+static char *variant_of(GRand *rand, const char *s)
+{
+	static const GNormalizeMode modes[] = {
+		G_NORMALIZE_NFD, G_NORMALIZE_NFC, G_NORMALIZE_NFKD, G_NORMALIZE_NFKC,
+	};
+	GString *out = g_string_new(NULL);
+	const char *p;
+	char *normal;
+	int mode, extra;
+
+	for (p = s; *p != '\0'; p = g_utf8_next_char(p)) {
+		gunichar c = g_utf8_get_char(p), v = c;
+		const char *swap;
+
+		if (g_rand_boolean(rand)) {
+			if (c < 0x80 && (swap = strchr("[]\\~{}|^", c)) != NULL)
+				v = "{}|^[]\\~"[swap - "[]\\~{}|^"];
+			else if (c == 0x130 || c == 0x131)
+				v = c;
+			else if (g_rand_boolean(rand))
+				v = g_unichar_toupper(c);
+			else if (g_rand_boolean(rand))
+				v = g_unichar_tolower(c);
+			else
+				v = g_unichar_totitle(c);
+		}
+		g_string_append_unichar(out, v);
+	}
+	mode = g_rand_int_range(rand, 0, G_N_ELEMENTS(modes) + 1);
+	if (mode < (int) G_N_ELEMENTS(modes)) {
+		normal = g_utf8_normalize(out->str, -1, modes[mode]);
+		g_string_assign(out, normal);
+		g_free(normal);
+	}
+	for (extra = g_rand_int_range(rand, 0, 3); extra > 0; extra--) {
+		glong at = g_rand_int_range(rand, 1, g_utf8_strlen(out->str, -1) + 1);
+		const char *ign = ignorables[g_rand_int_range(rand, 0, G_N_ELEMENTS(ignorables))];
+
+		g_string_insert(out, g_utf8_offset_to_pointer(out->str, at) - out->str, ign);
+	}
+	return g_string_free(out, FALSE);
+}
+
+/* seeded random names of several code points: the superset fold is
+   idempotent, drops every invisible character, and folds every variant of
+   a name (rfc1459-equal ones among them) to the same string */
+static void test_casefold_random(void)
+{
+	GRand *rand = g_rand_new_with_seed(RANDOM_SEED);
+	GString *name = g_string_new(NULL);
+	int i, n;
+
+	for (i = 0; i < RANDOM_ITERATIONS; i++) {
+		char *once, *twice, *variant, *vfold;
+		const char *p;
+
+		g_string_assign(name, "#");
+		for (n = g_rand_int_range(rand, 1, 7); n > 0; n--)
+			g_string_append_unichar(name, random_code_point(rand));
+
+		once = e2e_casefold(name->str, E2E_CASEMAP_UNICODE);
+		g_assert_true(g_utf8_validate(once, -1, NULL));
+		for (p = once; *p != '\0'; p = g_utf8_next_char(p)) {
+			if (oracle_ignorable(g_utf8_get_char(p)))
+				g_error("iteration %d: U+%04X left in the fold", i,
+				        g_utf8_get_char(p));
+		}
+		twice = e2e_casefold(once, E2E_CASEMAP_UNICODE);
+		if (strcmp(once, twice) != 0)
+			g_error("iteration %d: fold of \"%s\" is not idempotent", i, name->str);
+
+		variant = variant_of(rand, name->str);
+		vfold = e2e_casefold(variant, E2E_CASEMAP_UNICODE);
+		if (strcmp(once, vfold) != 0)
+			g_error("iteration %d: \"%s\" and \"%s\" fold apart", i, name->str, variant);
+
+		g_free(once);
+		g_free(twice);
+		g_free(variant);
+		g_free(vfold);
+	}
+	g_string_free(name, TRUE);
+	g_rand_free(rand);
+}
+
 /* every code point: the superset fold is idempotent and equates a letter
    with its upper and lower case - except U+0130 and U+0131, where the
    simple case mapping (to and from plain i / I) and full case folding
@@ -142,6 +416,7 @@ static void test_casefold_all_code_points(void)
 {
 	gunichar u, variants[2];
 	char buf[8], vbuf[8];
+	const char *p;
 	int len, k;
 
 	for (u = 0x80; u <= 0x10ffff; u++) {
@@ -153,6 +428,12 @@ static void test_casefold_all_code_points(void)
 		buf[len] = '\0';
 		once = e2e_casefold(buf, E2E_CASEMAP_UNICODE);
 		g_assert_true(g_utf8_validate(once, -1, NULL));
+		if (oracle_ignorable(u) ? *once != '\0' : *once == '\0')
+			g_error("U+%04X: dropped wrongly or kept wrongly", u);
+		for (p = once; *p != '\0'; p = g_utf8_next_char(p)) {
+			if (oracle_ignorable(g_utf8_get_char(p)))
+				g_error("U+%04X folds to an invisible U+%04X", u, g_utf8_get_char(p));
+		}
 		twice = e2e_casefold(once, E2E_CASEMAP_UNICODE);
 		if (strcmp(once, twice) != 0)
 			g_error("fold of U+%04X is not idempotent", u);
@@ -233,6 +514,27 @@ static void test_contexts(void)
 
 	/* only the first separator splits: the label never has one */
 	g_assert_cmpstr(e2e_ctx_wire("IRCnet\x1f#a\x1f" "b"), ==, "#a\x1f" "b");
+	t = e2e_ctx_network("IRCnet\x1f#a\x1f" "b");
+	g_assert_cmpstr(t, ==, "IRCnet");
+	g_free(t);
+	t = e2e_ctx_rescope("IRCnet\x1f#a\x1f" "b", "#c");
+	g_assert_cmpstr(t, ==, "IRCnet\x1f#c");
+	g_free(t);
+	t = e2e_ctx_display("IRCnet\x1f#a\x1f" "b");
+	g_assert_cmpstr(t, ==, "IRCnet:#a\x1f" "b");
+	g_free(t);
+
+	/* a wire context holding the separator cannot be scoped */
+	g_assert_null(e2e_ctx_scoped(&net, "#a\x1f" "b"));
+	g_assert_null(e2e_ctx_scoped(&net, "\x1f"));
+	g_assert_null(e2e_ctx_scoped(NULL, "#a\x1f" "b"));
+	g_assert_null(e2e_ctx_rescope("IRCnet\x1f#a", "#a\x1f" "b"));
+	g_assert_null(e2e_ctx_rescope("#a", "#a\x1f" "b"));
+	g_assert_null(e2e_ctx_rescope(NULL, "\x1f"));
+	g_assert_null(e2e_ctx_rescope("IRCnet\x1f#a", NULL));
+	t = e2e_ctx_rescope(NULL, "#b");
+	g_assert_cmpstr(t, ==, "#b");
+	g_free(t);
 
 	e2e_net_init(&odd, "IR|C\x1fnet", "t", "ascii", TRUE);
 	g_assert_cmpstr(odd.label, ==, "IR_C_net");
@@ -250,17 +552,35 @@ static void test_contexts(void)
 	g_assert_cmpstr(bare.label, ==, "libera");
 
 	e2e_net_init(&ctl, NULL, "\x01" "a\x1f" "b|c\x7f", NULL, FALSE);
-	g_assert_cmpstr(ctl.label, ==, "_a_b_c\x7f");
+	g_assert_cmpstr(ctl.label, ==, "_a_b_c_");
 	e2e_net_clear(&ctl);
 	e2e_net_init(&ctl, "My Net", "t", NULL, FALSE);
-	g_assert_cmpstr(ctl.label, ==, "My Net"); /* only bytes below 0x20 and | */
+	g_assert_cmpstr(ctl.label, ==, "My Net"); /* space and printable ASCII kept */
+	e2e_net_clear(&ctl);
+	e2e_net_init(&ctl, " !~}", "t", NULL, FALSE);
+	g_assert_cmpstr(ctl.label, ==, " !~}");
+	e2e_net_clear(&ctl);
+	/* C1 controls are one '_' each; U+00A0 and other letters are kept */
+	e2e_net_init(&ctl, "a\xc2\x80" "b\xc2\x85" "c\xc2\x9f" "d\xc2\xa0" "e\xc5\xbb", "t", NULL,
+	             FALSE);
+	g_assert_cmpstr(ctl.label, ==, "a_b_c_d\xc2\xa0" "e\xc5\xbb");
+	e2e_net_clear(&ctl);
+	/* every byte of invalid UTF-8 is a '_' */
+	e2e_net_init(&ctl, "a\xff" "b\xc5", "t", NULL, FALSE);
+	g_assert_cmpstr(ctl.label, ==, "a_b_");
+	e2e_net_clear(&ctl);
+	e2e_net_init(&ctl, "\xc5" "a\xc0\x80" "b\xed\xa0\x80" "c\xf4\x90\x80\x80", "t", NULL, FALSE);
+	g_assert_cmpstr(ctl.label, ==, "_a__b___c____");
+	e2e_net_clear(&ctl);
+	e2e_net_init(&ctl, "\xe2\x82", "t", NULL, FALSE); /* a truncated sequence */
+	g_assert_cmpstr(ctl.label, ==, "__");
+	g_assert_true(g_utf8_validate(ctl.label, -1, NULL));
 
 	e2e_net_init(&none, NULL, NULL, "utf8", FALSE);
 	g_assert_null(none.label);
 	g_assert_cmpint(none.casemap, ==, E2E_CASEMAP_UNICODE);
-	s = e2e_ctx_scoped(&none, "#test");
-	g_assert_cmpstr(s, ==, "#test");
-	g_free(s);
+	/* no label, no scoped key: never a bare one in its place */
+	g_assert_null(e2e_ctx_scoped(&none, "#test"));
 	g_assert_false(e2e_ctx_on_net("IRCnet\x1f#a", &none));
 	e2e_net_clear(&none);
 	e2e_net_init(&none, "", "", NULL, FALSE);
@@ -314,6 +634,9 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/e2e/scope/casemap-parse", test_casemap_parse);
 	g_test_add_func("/e2e/scope/casefold", test_casefold);
+	g_test_add_func("/e2e/scope/casefold-ignorables", test_casefold_ignorables);
+	g_test_add_func("/e2e/scope/casefold-ex", test_casefold_ex);
+	g_test_add_func("/e2e/scope/casefold-random", test_casefold_random);
 	g_test_add_func("/e2e/scope/casefold-all-code-points", test_casefold_all_code_points);
 	g_test_add_func("/e2e/scope/contexts", test_contexts);
 	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
