@@ -143,13 +143,16 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact);
 /* what every server of map takes for the same name, at least: the exact
    maps' fold without the Latin-1 bytes; for UNKNOWN the ASCII letters
    only (a byte code page may fold any other byte its own way, or not at
-   all); for UNICODE what both a per code point server (simple lower
-   case, g_unichar_tolower: towlower, Go) and a PRECIS / utf8 one (NFKC,
-   then full case folding) take for one name - no rfc1459 specials,
-   nothing dropped, no normalisation in the first - and NULL for a name
-   that is not valid UTF-8. Two names that differ here may be two
-   channels to the server although e2e_casefold() joins them (R-E22,
-   R-E26). Never persisted, as e2e_casefold(). */
+   all); for UNICODE what every one of these takes for one name: a per
+   code point server (simple lower case, g_unichar_tolower: towlower,
+   Go), whole-string lower case with GLib's Final_Sigma and with
+   Unicode's (its Cased and Case_Ignorable approximated with GLib),
+   whole-string upper case, and a PRECIS / utf8 server (NFKC, then full
+   case folding) - no rfc1459 specials, nothing dropped, no
+   normalisation but in the last - and NULL for a name that is not valid
+   UTF-8. Two names that differ here may be two channels to the server
+   although e2e_casefold() joins them (R-E22, R-E26, R-E28, R-E29).
+   Never persisted, as e2e_casefold(). */
 char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map);
 
 

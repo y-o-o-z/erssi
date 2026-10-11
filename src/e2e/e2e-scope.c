@@ -382,6 +382,81 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 	return result;
 }
 
+/* Unicode's Cased, approximated with GLib (which has no such property):
+   a letter of category Lu, Ll or Lt, a code point GLib maps to another
+   case, and the Other_Lowercase / Other_Uppercase code points that are
+   neither Lm nor Mn (listed: ª, º, Roman numerals, circled and squared
+   Latin letters). The Lm and Mn ones are case ignorable, and
+   final_sigma() skips those before it asks. Over every assigned code
+   point after "ΑΣ" and before "Σ" this agrees with Python's str.lower()
+   (Unicode 15.1, GLib 2.84); a newer Unicode may add cased code points
+   it misses - that only changes where a name is marked */
+static gboolean sigma_cased(gunichar c)
+{
+	switch (g_unichar_type(c)) {
+	case G_UNICODE_UPPERCASE_LETTER:
+	case G_UNICODE_LOWERCASE_LETTER:
+	case G_UNICODE_TITLECASE_LETTER:
+		return TRUE;
+	default:
+		break;
+	}
+	return c == 0xAA || c == 0xBA || (c >= 0x2160 && c <= 0x217F) ||
+	       (c >= 0x24B6 && c <= 0x24E9) || (c >= 0x1F130 && c <= 0x1F149) ||
+	       (c >= 0x1F150 && c <= 0x1F169) || (c >= 0x1F170 && c <= 0x1F189) ||
+	       g_unichar_tolower(c) != c || g_unichar_toupper(c) != c || g_unichar_totitle(c) != c;
+}
+
+/* Unicode's Case_Ignorable, approximated with GLib: the categories Mn,
+   Me, Cf, Lm and Sk, and the Word_Break MidLetter, MidNumLet and
+   Single_Quote code points (listed: GLib has no Word_Break) */
+static gboolean sigma_ignorable(gunichar c)
+{
+	switch (g_unichar_type(c)) {
+	case G_UNICODE_NON_SPACING_MARK:
+	case G_UNICODE_ENCLOSING_MARK:
+	case G_UNICODE_FORMAT:
+	case G_UNICODE_MODIFIER_LETTER:
+	case G_UNICODE_MODIFIER_SYMBOL:
+		return TRUE;
+	default:
+		break;
+	}
+	switch (c) {
+	case 0x0027: case 0x002E: case 0x003A: case 0x00B7: case 0x0387: case 0x055F:
+	case 0x05F4: case 0x2018: case 0x2019: case 0x2024: case 0x2027: case 0xFE13:
+	case 0xFE52: case 0xFE55: case 0xFF07: case 0xFF0E: case 0xFF1A:
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+/* Unicode's Final_Sigma for the Σ at p in s (valid UTF-8): a cased
+   letter before it and none after it, case ignorables skipped both ways
+   (as Python's str.lower(), ICU). GLib's g_utf8_strdown() asks only
+   whether the next character is a letter */
+static gboolean final_sigma(const char *s, const char *p)
+{
+	const char *q;
+	gunichar c = 0;
+
+	for (q = p; q > s;) {
+		q = g_utf8_prev_char(q);
+		c = g_utf8_get_char(q);
+		if (!sigma_ignorable(c))
+			break;
+	}
+	if (q == p || sigma_ignorable(c) || !sigma_cased(c))
+		return FALSE;
+	for (q = g_utf8_next_char(p); *q != '\0'; q = g_utf8_next_char(q)) {
+		c = g_utf8_get_char(q);
+		if (!sigma_ignorable(c))
+			return !sigma_cased(c);
+	}
+	return TRUE;
+}
+
 /* "<length>:<s>" onto out */
 static void append_part(GString *out, const char *s)
 {
@@ -417,7 +492,9 @@ char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 	/* every model must take the names for one (R-E26, R-E28):
 	   - per code point simple lower case (towlower, Go's
 	     unicode.ToLower), no normalisation;
-	   - whole-string lower case (Final_Sigma: #ΑΣ is #ας);
+	   - whole-string lower case (Final_Sigma: #ΑΣ is #ας), GLib's
+	     rule and Unicode's own (R-E29: #ΑΣ中 is #ας中 to Unicode,
+	     #ασ中 to GLib), the full mapping of U+0130 in both;
 	   - whole-string upper case (servers that compare in upper case:
 	     the Kelvin, Angstrom and Ohm signs, ß / ẞ, θ / ϴ stay apart);
 	   - NFKC and full case folding (the PRECIS and utf8 servers).
@@ -431,6 +508,19 @@ char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 	folded = g_utf8_strdown(name, -1);
 	append_part(out, folded);
 	g_free(folded);
+	part = g_string_sized_new(strlen(name) * 2);
+	for (p = name; *p != '\0'; p = g_utf8_next_char(p)) {
+		gunichar c = g_utf8_get_char(p);
+
+		if (c == 0x03A3)
+			g_string_append_unichar(part, final_sigma(name, p) ? 0x03C2 : 0x03C3);
+		else if (c == 0x0130)
+			g_string_append(part, "i\xcc\x87"); /* SpecialCasing: i + U+0307 */
+		else
+			g_string_append_unichar(part, g_unichar_tolower(c));
+	}
+	append_part(out, part->str);
+	g_string_free(part, TRUE);
 	folded = g_utf8_strup(name, -1);
 	append_part(out, folded);
 	g_free(folded);

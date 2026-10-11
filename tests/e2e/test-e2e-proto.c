@@ -4675,6 +4675,87 @@ static void test_casemap_list_dm_pieces(void)
 	e2e_json_free(kr);
 }
 
+/* R-E29: a bot command bypasses E2E on a channel only - DMs never bypass,
+   also when a channel piece of the list makes the line a bot command */
+static void test_casemap_list_dm_bypass(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+
+	/* the module active: the DM piece refuses the list (as before) */
+	enable(&p, "E2E\x1f@" BOB, "normal");
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,bob", "!help secret", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "bob,#x", ".net secret", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,carol", "!help", cm_resolve_bob), ==, E2E_GATE_BYPASS);
+	e2e_json_free(kr);
+
+	/* rpe2e.pl loaded, E2E on for bob in its own (bare) row */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "@" BOB, "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,bob :!help secret", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,#x :.net secret", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,BOB :!help secret", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	/* not resolved: the query's nick */
+	e2e_json_set_string(path_get(kr, "channels", "@" BOB, NULL), "nick", "bob");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,bob :!help secret", no_resolve), ==,
+	                E2E_GATE_REFUSE);
+	/* a list of channels and a nick without E2E: the bot command goes
+	   out, as the module would send it */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,carol :!help", cm_resolve_bob), !=,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x :!help", cm_resolve_bob), !=, E2E_GATE_REFUSE);
+	/* channels: a bot command bypasses E2E in the script and in the
+	   module alike, whatever the case of the name */
+	enable(&p, "#\xc5\xbc" "aba", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG #\xc5\xbb" "aba :!help", cm_resolve_bob), !=,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG #x,#\xc5\xbb" "aba :!help", cm_resolve_bob), !=,
+	                E2E_GATE_REFUSE);
+	/* not a bot command: refused as before */
+	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG #x,#\xc5\xbb" "aba :help", cm_resolve_bob), ==,
+	                E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+}
+
+/* R-E29: an old bare-nick row (no '@') with E2E on counts for a nick in a
+   list, as nick_enabled() does for the module */
+static void test_casemap_list_bare_nick(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	PEER p = { .kr = kr };
+
+	enable(&p, "bob", "normal");
+	/* the module: the address not known now, the old row refuses */
+	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "bob,carol", "hi", no_resolve), ==, E2E_GATE_REFUSE);
+	/* rpe2e.pl loaded */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,BOB :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG #x,bob :!help", no_resolve), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,dave :hi", no_resolve), ==, E2E_GATE_PASS);
+	/* one target: the script's own */
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob :hi", no_resolve), ==, E2E_GATE_PASS);
+	/* this network's scoped bare-nick row as well, another network's not */
+	e2e_json_set_int(path_get(kr, "channels", "bob", NULL), "enabled", 0);
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", no_resolve), ==, E2E_GATE_PASS);
+	enable(&p, "E2E2\x1f" "bob", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", no_resolve), ==, E2E_GATE_PASS);
+	enable(&p, "E2E\x1f" "bob", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG bob,carol :hi", no_resolve), ==, E2E_GATE_REFUSE);
+	/* a channel row is not a nick */
+	e2e_json_free(kr);
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "#bob", "normal");
+	g_assert_cmpint(cm_guard(kr, &cm_rfc1459, "PRIVMSG carol,dave :hi", no_resolve), ==, E2E_GATE_PASS);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -4756,6 +4837,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/guard-bare-rows", test_casemap_guard_bare_rows);
 	g_test_add_func("/e2e/casemap/ircnet-short-name", test_casemap_ircnet_short_name);
 	g_test_add_func("/e2e/casemap/list-dm-pieces", test_casemap_list_dm_pieces);
+	g_test_add_func("/e2e/casemap/list-dm-bypass", test_casemap_list_dm_bypass);
+	g_test_add_func("/e2e/casemap/list-bare-nick", test_casemap_list_bare_nick);
 
 	return g_test_run();
 }

@@ -858,8 +858,24 @@ if grep -aqF "script list dm secret" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: alice,carol (E2E on for alice in its entry) is not sent in plain text"
 fi
+# a bot command bypasses E2E on a channel only; the channel piece of a
+# list does not make the DM piece a bot command (R-E29)
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG #x,alice :!help script bypass secret')"
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG alice,#x :.net script bypass secret')"
+sleep 1
+if grep -aqF "script bypass secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: a bot command to #x,alice (E2E on for alice in its entry) went out in plain text"
+else
+    pass "rpe2e.pl loaded: a bot command to #x,alice (E2E on for alice in its entry) is not sent in plain text"
+fi
+say bob "/e2e off"
 say bob "/window close"
 sleep 1
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' && pass "bob: E2E for alice is off again after the list checks" || bad "bob: E2E for alice is left on after the list checks"
+import json, sys
+b = json.load(open(sys.argv[1], encoding="utf-8"))
+assert not b["channels"]["@alice@127.0.0.1"].get("enabled"), "still on"
+PY
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
 import json, sys
 a, b = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
