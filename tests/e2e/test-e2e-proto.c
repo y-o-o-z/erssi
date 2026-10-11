@@ -4277,8 +4277,41 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpint(cm_moved(&cm_unicode, ZABA_LOWER, ZABA_UPPER, &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
-	g_assert_cmpint(cm_moved(&cm_unicode, "#\xc5\xbc" "aba", "#z\xcc\x87" "aba", &plain, &via), ==,
-	                E2E_IN_PLAIN);
+	g_assert_cmpint(cm_moved(&cm_unicode, ZABA_LOWER, "#\xc5\xbb" "ABA", &plain, &via), ==, E2E_IN_PLAIN);
+	g_assert_null(via);
+	g_free(plain);
+	/* R-E26: names a per code point server (towlower, Go) or a PRECIS
+	   one keeps apart: marked */
+	{
+		static const struct { const char *session, *target; } apart[] = {
+			{ "#\xc5\xbc" "aba", "#z\xcc\x87" "aba" },  /* NFC / NFD */
+			{ "#ss", "#\xc3\x9f" },                      /* ß */
+			{ "#ff", "#\xef\xac\x80" },                  /* ﬀ */
+		};
+
+		for (i = 0; i < G_N_ELEMENTS(apart); i++) {
+			g_assert_cmpint(cm_moved(&cm_unicode, apart[i].session, apart[i].target, &plain, &via),
+			                ==, E2E_IN_PLAIN);
+			g_assert_cmpstr(via, ==, apart[i].session);
+			g_free(plain);
+			g_free(via);
+		}
+	}
+	/* the Kelvin sign is k to both models: no mark */
+	g_assert_cmpint(cm_moved(&cm_unicode, "#k", "#\xe2\x84\xaa", &plain, &via), ==, E2E_IN_PLAIN);
+	g_assert_null(via);
+	g_free(plain);
+	/* R-E26: an unknown CASEMAPPING (cp1250, cp1251) may keep any
+	   non-ASCII spelling apart: marked */
+	g_assert_cmpint(cm_moved(&cm_unknown, ZABA_LOWER, ZABA_UPPER, &plain, &via), ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(via, ==, ZABA_LOWER);
+	g_free(plain);
+	g_free(via);
+	g_assert_cmpint(cm_moved(&cm_unknown, "#\xd0\xb8", "#\xd0\x98", &plain, &via), ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(via, ==, "#\xd0\xb8");
+	g_free(plain);
+	g_free(via);
+	g_assert_cmpint(cm_moved(&cm_unknown, "#abc", "#ABC", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
 	/* the exact maps: the server's own rule, no mark */
@@ -4297,13 +4330,18 @@ static void test_casemap_decrypt_marked(void)
 
 	/* what the display shows */
 	plain = e2e_plain_with_via("moved line", "#a[b");
-	g_assert_cmpstr(plain, ==, "moved line (E2E key of #a[b)");
+	g_assert_cmpstr(plain, ==, "moved line\017 (E2E key of #a[b)");
 	g_free(plain);
 	plain = e2e_plain_with_via("\001ACTION waves\001", "#a[b");
-	g_assert_cmpstr(plain, ==, "\001ACTION waves (E2E key of #a[b)\001");
+	g_assert_cmpstr(plain, ==, "\001ACTION waves\017 (E2E key of #a[b)\001");
 	g_free(plain);
 	plain = e2e_plain_with_via("x", "#a\003" "4b");
-	g_assert_cmpstr(plain, ==, "x (E2E key of #a?4b)");
+	g_assert_cmpstr(plain, ==, "x\017 (E2E key of #a?4b)");
+	g_free(plain);
+	/* R-E26: formatting left on by the text (black on black) is reset
+	   before the mark */
+	plain = e2e_plain_with_via("x\00301,01", "#a[b");
+	g_assert_cmpstr(plain, ==, "x\00301,01\017 (E2E key of #a[b)");
 	g_free(plain);
 }
 
@@ -4350,8 +4388,8 @@ static void test_casemap_before_005(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
 	PEER p = { .kr = kr };
-	E2E_NET pre = { (char *) "E2E", e2e_casemap_of_server(FALSE, NULL), FALSE };
-	E2E_NET post = { (char *) "E2E", e2e_casemap_of_server(TRUE, NULL), FALSE };
+	E2E_NET pre = { (char *) "E2E", e2e_casemap_of_server(NULL, FALSE), FALSE };
+	E2E_NET post = { (char *) "E2E", e2e_casemap_of_server(NULL, TRUE), FALSE };
 
 	enable(&p, "E2E\x1f" ZABA_LOWER, "normal");
 	g_assert_cmpint(cm_gate(kr, &pre, ZABA_UPPER, NULL), ==, E2E_GATE_REFUSE);
@@ -4453,6 +4491,47 @@ static void test_casemap_guard_bare_rows(void)
 	                                 no_resolve, NULL, &m, &t), !=, E2E_GATE_REFUSE);
 	g_free(m);
 	g_free(t);
+	/* R-E26: rpe2e.pl does not split "#x,#y": a piece the server takes
+	   for a channel E2E is on for there, the same name too */
+	line = "PRIVMSG #x," ZABA_LOWER " :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	line = "PRIVMSG #x," ZABA_UPPER " :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	line = "PRIVMSG #x," ZABA_LOWER " :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_rfc1459, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	line = "PRIVMSG #multi,#x :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_ascii, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	line = "PRIVMSG #x,#y :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_PASS);
+	g_free(m);
+	g_free(t);
+	/* R-E26: the script encrypts from its own row whatever the module's
+	   config of the name says - one that is off does not hide it */
+	enable(&p, "E2E\x1f" ZABA_LOWER, "normal");
+	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f" ZABA_LOWER, NULL), "enabled", 0);
+	line = "PRIVMSG " ZABA_UPPER " :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	line = "PRIVMSG " ZABA_LOWER " :hello";
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_PASS);
+	g_free(m);
+	g_free(t);
 	/* off: nothing */
 	e2e_json_set_int(path_get(kr, "channels", "#multi", NULL), "enabled", 0);
 	line = "PRIVMSG #MULTI :hello";
@@ -4474,6 +4553,17 @@ static void test_casemap_ircnet_short_name(void)
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!SECRET", NULL), ==, E2E_GATE_REFUSE);
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!other", NULL), ==, E2E_GATE_PASS);
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!AB12Csecret", NULL), ==, E2E_GATE_CIPHER);
+	e2e_json_free(kr);
+	/* R-E26: an ID written in lower case, and the other way round: a
+	   short name with E2E on, the full name as the target */
+	kr = e2e_keyring_new();
+	p.kr = kr;
+	enable(&p, "E2E\x1f!ab12cchan", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!chan", NULL), ==, E2E_GATE_REFUSE);
+	enable(&p, "E2E\x1f!short", "normal");
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!AB12Cshort", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!ab12cSHORT", NULL), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!AB12Cother", NULL), ==, E2E_GATE_PASS);
 	e2e_json_free(kr);
 }
 

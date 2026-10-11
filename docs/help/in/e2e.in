@@ -191,33 +191,37 @@
     family fold them; rfc7613, rfc8265 and utf8 with a wider fold (NFKC,
     case folding and the rfc1459 specials), which may refuse a message
     to a channel the server keeps apart, but never lets one out in clear
-    text to a channel with E2E on. Until the server has sent its 005
-    (ISUPPORT) line the wider fold is used. A name the wider fold cannot
-    decide - not valid UTF-8 or holding an unassigned character on such
-    a server, and any non-ASCII name on a server whose CASEMAPPING erssi
-    does not know (it may be a byte code page such as cp1251) - is not
-    sent in clear text while E2E is on for any channel of that network
-    (and while E2E is on for such a name, other names there that cannot
-    be told apart from it get no clear text either). On IRCnet, !name is
-    refused while E2E is on for a !XXXXXname of that name.
+    text to a channel with E2E on. Until the server has named its
+    CASEMAPPING, or ended its MOTD without one, the wider fold is used.
+    A name the wider fold cannot decide - not valid UTF-8 or holding an
+    unassigned character on such a server, and any non-ASCII name on a
+    server whose CASEMAPPING erssi does not know (it may be a byte code
+    page such as cp1251) - is not sent in clear text while E2E is on for
+    any channel of that network (and while E2E is on for such a name,
+    other names there that cannot be told apart from it get no clear
+    text either). On IRCnet, !name is refused while E2E is on for a
+    !XXXXXname of that name.
 
     A message of a peer that opens only under the key of a channel the
     wider fold takes for this one, though some servers keep the two
     apart (for example #a[b and #a{b), is shown with "(E2E key of
     #a[b)": the server may have moved it from that channel.
 
-    Known limitations: NOTICEs, CTCPs other than ACTION, bot commands
-    and IRCv3 message tags are never encrypted. Nicks in ACCEPT, REVOKE,
-    VERIFY etc. are resolved with the last nick stored in the keyring,
-    which may meanwhile belong to someone else - check the ident@host
-    the command prints. As in repartee, the server can replay an
-    encrypted message within 5 minutes, and drop or reorder the parts of
-    a long one. A key request carries no ident@host: someone who
-    forwards your peer's request before the peer's first contact with
-    you ties that key to their own address, and the peer's own request
-    is then held back as a changed address until /E2E REVERIFY (nobody
-    gets a key that way). The rpe2e.pl script is recognised by its file
-    name (rpe2e*.pl).
+    Known limitations: a server that names rfc1459, ascii or
+    strict-rfc1459 but folds the bytes of another code page (koi8-r,
+    cp1251) is not covered: such names may be one channel to it and two
+    to erssi. NOTICEs, CTCPs other than ACTION, bot commands and IRCv3
+    message tags are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY
+    etc. are resolved with the last nick stored in the keyring, which
+    may meanwhile belong to someone else - check the ident@host the
+    command prints. As in repartee, the server can replay an encrypted
+    message within 5 minutes, and drop or reorder the parts of a long
+    one. A key request carries no ident@host: someone who forwards your
+    peer's request before the peer's first contact with you ties that
+    key to their own address, and the peer's own request is then held
+    back as a changed address until /E2E REVERIFY (nobody gets a key
+    that way). The rpe2e.pl script is recognised by its file name
+    (rpe2e*.pl).
 
     Networks: keys, sessions and settings are kept per network - the
     chatnet name of the server, otherwise its tag - so #test on one

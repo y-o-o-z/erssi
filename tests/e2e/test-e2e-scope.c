@@ -68,12 +68,13 @@ static void test_casemap_parse(void)
 	g_assert_cmpint(e2e_casemap_parse("ascii2"), ==, E2E_CASEMAP_UNKNOWN);
 	g_assert_cmpint(e2e_casemap_parse("utf8x"), ==, E2E_CASEMAP_UNKNOWN);
 
-	/* R-E24 M1: before the server's 005 nothing is known: the widest */
-	g_assert_cmpint(e2e_casemap_of_server(FALSE, NULL), ==, E2E_CASEMAP_UNICODE);
-	g_assert_cmpint(e2e_casemap_of_server(FALSE, "ascii"), ==, E2E_CASEMAP_UNICODE);
-	g_assert_cmpint(e2e_casemap_of_server(TRUE, NULL), ==, E2E_CASEMAP_RFC1459);
-	g_assert_cmpint(e2e_casemap_of_server(TRUE, "ascii"), ==, E2E_CASEMAP_ASCII);
-	g_assert_cmpint(e2e_casemap_of_server(TRUE, "cp1251"), ==, E2E_CASEMAP_UNKNOWN);
+	/* R-E24 M1, R-E26: until the server named its CASEMAPPING, or ended
+	   its MOTD without one (it sends none: rfc1459), the widest */
+	g_assert_cmpint(e2e_casemap_of_server(NULL, FALSE), ==, E2E_CASEMAP_UNICODE);
+	g_assert_cmpint(e2e_casemap_of_server("ascii", FALSE), ==, E2E_CASEMAP_ASCII);
+	g_assert_cmpint(e2e_casemap_of_server(NULL, TRUE), ==, E2E_CASEMAP_RFC1459);
+	g_assert_cmpint(e2e_casemap_of_server("ascii", TRUE), ==, E2E_CASEMAP_ASCII);
+	g_assert_cmpint(e2e_casemap_of_server("cp1251", FALSE), ==, E2E_CASEMAP_UNKNOWN);
 }
 
 /* every string the casefold test uses, for the idempotence check */
@@ -284,36 +285,49 @@ static void test_casefold_ignorables(void)
 	SAME("#\xc3\x81\xcd\x8f", "#a\xcc\x81", E2E_CASEMAP_UNICODE);
 }
 
-/* R-E22: what every server of the map takes for one name, at least */
+/* R-E22, R-E26: what every server of the map takes for one name, at
+   least: two names e2e_casefold_narrow() keeps apart may be two channels */
+static void assert_narrow(const char *a, const char *b, E2E_CASEMAP map, gboolean same)
+{
+	char *na = e2e_casefold_narrow(a, map), *nb = e2e_casefold_narrow(b, map);
+
+	g_assert_nonnull(na);
+	g_assert_nonnull(nb);
+	if (same)
+		g_assert_cmpstr(na, ==, nb);
+	else
+		g_assert_cmpstr(na, !=, nb);
+	g_free(na);
+	g_free(nb);
+}
+
 static void test_casefold_narrow(void)
 {
-	char *s;
-
-	s = e2e_casefold_narrow("#\xc5\xbb" "aba", E2E_CASEMAP_UNICODE);
-	g_assert_cmpstr(s, ==, "#\xc5\xbc" "aba");
-	g_free(s);
-	s = e2e_casefold_narrow("#z\xcc\x87" "aba", E2E_CASEMAP_UNKNOWN); /* NFKC */
-	g_assert_cmpstr(s, ==, "#\xc5\xbc" "aba");
-	g_free(s);
-	/* no rfc1459 specials, nothing dropped, no Turkish i */
-	s = e2e_casefold_narrow("#A[b", E2E_CASEMAP_UNICODE);
-	g_assert_cmpstr(s, ==, "#a[b");
-	g_free(s);
-	s = e2e_casefold_narrow("#a\xe2\x80\x8b" "b", E2E_CASEMAP_UNICODE);
-	g_assert_cmpstr(s, ==, "#a\xe2\x80\x8b" "b");
-	g_free(s);
-	s = e2e_casefold_narrow("#\xc4\xb1", E2E_CASEMAP_UNICODE);
-	g_assert_cmpstr(s, ==, "#\xc4\xb1");
-	g_free(s);
-	/* not UTF-8 on a Unicode map: nothing */
+	/* UNICODE: per code point simple lower case (towlower, Go) and NFKC
+	   with case folding (the PRECIS / utf8 servers) must both agree */
+	assert_narrow("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);  /* Ż / ż */
+	assert_narrow("#ABC", "#abc", E2E_CASEMAP_UNICODE, TRUE);
+	assert_narrow("#k", "#\xe2\x84\xaa", E2E_CASEMAP_UNICODE, TRUE);                 /* Kelvin sign */
+	assert_narrow("#ss", "#\xc3\x9f", E2E_CASEMAP_UNICODE, FALSE);                    /* ß */
+	assert_narrow("#e\xcc\x81", "#\xc3\xa9", E2E_CASEMAP_UNICODE, FALSE);           /* NFD é */
+	assert_narrow("#ff", "#\xef\xac\x80", E2E_CASEMAP_UNICODE, FALSE);               /* ﬀ */
+	assert_narrow("#i", "#\xc4\xb0", E2E_CASEMAP_UNICODE, FALSE);                     /* İ: tolower i, casefold i+U+0307 */
+	assert_narrow("#i", "#\xc4\xb1", E2E_CASEMAP_UNICODE, FALSE);                     /* ı */
+	assert_narrow("#a[b", "#A{B", E2E_CASEMAP_UNICODE, FALSE);                          /* no specials */
+	assert_narrow("#ab", "#a\xe2\x80\x8b" "b", E2E_CASEMAP_UNICODE, FALSE);          /* nothing dropped */
 	g_assert_null(e2e_casefold_narrow("#\xff", E2E_CASEMAP_UNICODE));
+	/* UNKNOWN: a byte code page may fold any non-ASCII byte its own way,
+	   or none: ASCII letters only */
+	assert_narrow("#ABC", "#abc", E2E_CASEMAP_UNKNOWN, TRUE);
+	assert_narrow("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNKNOWN, FALSE);
+	assert_narrow("#\xd0\x98", "#\xd0\xb8", E2E_CASEMAP_UNKNOWN, FALSE);            /* И / и */
+	assert_narrow("#a[", "#a{", E2E_CASEMAP_UNKNOWN, FALSE);
+	assert_narrow("#\xff", "#\xff", E2E_CASEMAP_UNKNOWN, TRUE);
 	/* the exact maps: their fold without the Latin-1 bytes */
-	s = e2e_casefold_narrow("#A[\xc9", E2E_CASEMAP_RFC1459);
-	g_assert_cmpstr(s, ==, "#a{\xc9");
-	g_free(s);
-	s = e2e_casefold_narrow("#A[~", E2E_CASEMAP_ASCII);
-	g_assert_cmpstr(s, ==, "#a[~");
-	g_free(s);
+	assert_narrow("#A[\xc9", "#a{\xc9", E2E_CASEMAP_RFC1459, TRUE);
+	assert_narrow("#\xc9", "#\xe9", E2E_CASEMAP_RFC1459, FALSE);
+	assert_narrow("#A[~", "#a[~", E2E_CASEMAP_ASCII, TRUE);
+	assert_narrow("#a[", "#a{", E2E_CASEMAP_ASCII, FALSE);
 	g_assert_null(e2e_casefold_narrow(NULL, E2E_CASEMAP_RFC1459));
 }
 

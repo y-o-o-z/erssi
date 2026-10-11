@@ -84,12 +84,16 @@ PERLLIB=$(dirname "$(find "$WORK/inst" -name Irssi.pm | head -n 1)")
 
 PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 PORT2=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+PORT3=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 # E2E compares names in ASCII ([ and { are two channels), E2E2 by Unicode
 python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" --casemapping ascii &
 IRCD_PID=$!
 python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --network E2E2Test --casemapping utf8 &
 IRCD_PID="$IRCD_PID $!"
-for port in "$PORT" "$PORT2"; do
+# E2E3 folds as rfc1459 and names no CASEMAPPING: decided after its MOTD
+python3 "$IRCD" --port "$PORT3" --wire "$WORK/wire3.log" --network E2E3Test --casemapping rfc1459 --hide-casemapping &
+IRCD_PID="$IRCD_PID $!"
+for port in "$PORT" "$PORT2" "$PORT3"; do
     i=0
     while ! python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1)" 2>/dev/null; do
         i=$((i + 1)); [ $i -gt 50 ] && { echo "test server did not start"; exit 1; }
@@ -109,7 +113,7 @@ for nick in alice bob mallory carol erin; do
     cp "$SRC/themes/default.theme" "$home/default.theme"
     # alice on both networks, erin on E2E2 only, the others on E2E
     case $nick in
-    alice) nets="E2E:$PORT E2E2:$PORT2" ;;
+    alice) nets="E2E:$PORT E2E2:$PORT2 E2E3:$PORT3" ;;
     erin)  nets="E2E2:$PORT2" ;;
     *)     nets="E2E:$PORT" ;;
     esac
@@ -596,6 +600,16 @@ if grep -aqF "bracket upper secret" "$WORK/wire.log" "$WORK/wire2.log"; then
 else
     pass "ascii CASEMAPPING: #A[B (E2E on for #a[b) is not sent in plain text"
 fi
+# E2E3 names no CASEMAPPING: after its MOTD that is rfc1459, where #Żaba
+# is another channel than #żaba (before it, the widest fold)
+say alice "/join -E2E3 #żaba"
+say alice "/e2e on"
+say alice "/msg -E2E3 #Żaba rfc1459 plain before upgrade"
+if wait_for "$WORK/wire3.log" "alice PRIVMSG #Żaba :rfc1459 plain before upgrade" 10; then
+    pass "no CASEMAPPING, MOTD over: rfc1459 (#Żaba is another channel than #żaba)"
+else
+    bad "no CASEMAPPING, MOTD over: #Żaba was refused as if the fold were Unicode"
+fi
 say alice "/join -E2E $CHAN"
 
 # ---- an old keyring on two networks: refused until /e2e adopt ----
@@ -733,6 +747,13 @@ else
     pass "/upgrade sent no queued message in plain text"
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "upgrade queued three"
+# the end of E2E3's MOTD is kept over /upgrade: still rfc1459 there
+say alice "/msg -E2E3 #Żaba rfc1459 plain after upgrade"
+if wait_for "$WORK/wire3.log" "alice PRIVMSG #Żaba :rfc1459 plain after upgrade" 20; then
+    pass "/upgrade keeps the end of the MOTD: still rfc1459 where no CASEMAPPING was named"
+else
+    bad "/upgrade lost the end of the MOTD: #Żaba refused as if the fold were Unicode"
+fi
 
 # ---- rpe2e.pl keeps what only the module writes ----
 # bob's rpe2e.pl loads and saves alice's keyring: "accepted" and
@@ -808,6 +829,14 @@ if wait_for "$WORK/bob/all.log" "rpe2e.pl compares names exactly" 5; then
     pass "bob is told rpe2e.pl compares names exactly"
 else
     bad "bob is not told why #MULTI was not sent"
+fi
+# a target list: the script looks "#x,#multi" up as one name (R-E26)
+say bob "/quote PRIVMSG #x,#multi :list piece to multi"
+sleep 1
+if grep -aqF "list piece to multi" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: #x,#multi (E2E on for #multi in its entry) went out in plain text"
+else
+    pass "rpe2e.pl loaded: #x,#multi (E2E on for #multi in its entry) is not sent in plain text"
 fi
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"

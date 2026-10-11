@@ -25,7 +25,8 @@
 
  CASEMAPPING: ascii, rfc1459 and strict-rfc1459 are folded exactly, and
  Latin-1 bytes as the ircu family folds them; no value means rfc1459
- (before the server's 005: E2E_CASEMAP_UNICODE, nothing is known);
+ (before the server named it or ended its MOTD: E2E_CASEMAP_UNICODE,
+ nothing is known);
  rfc7613, rfc8265 and utf8 get the superset fold E2E_CASEMAP_UNICODE,
  which can only equate more names than the server does, never fewer;
  every other value (unknown, empty) gets the same fold as
@@ -80,9 +81,10 @@ void e2e_net_clear(E2E_NET *net);
 /* ASCII case-insensitive; NULL -> RFC1459; utf8, rfc7613, rfc8265 ->
    UNICODE; anything else -> UNKNOWN */
 E2E_CASEMAP e2e_casemap_parse(const char *value);
-/* the map of a server: UNICODE until its 005 (isupport) came, then
-   e2e_casemap_parse(value) */
-E2E_CASEMAP e2e_casemap_of_server(gboolean isupport_known, const char *value);
+/* the map of a server: e2e_casemap_parse(value) once it named its
+   CASEMAPPING (value) or ended its MOTD without one (motd_done: it sends
+   none, rfc1459); UNICODE before (R-E24, R-E26) */
+E2E_CASEMAP e2e_casemap_of_server(const char *value, gboolean motd_done);
 /*
  The folded form of name under map (NULL for NULL):
   - ASCII: A-Z -> a-z;
@@ -114,7 +116,12 @@ E2E_CASEMAP e2e_casemap_of_server(gboolean isupport_known, const char *value);
     back to it becomes the smaller of the two (CaseFolding.txt's target).
     The result is valid UTF-8 and holds none of the characters of step 1.
   - UNICODE, invalid UTF-8: the byte-wise RFC1459 fold, Latin-1 bytes
-    too. fold(fold(x)) == fold(x).
+    too.
+ fold(fold(x)) == fold(x) for the exact maps and for valid UTF-8; not
+ always for invalid UTF-8 under UNICODE, where the Latin-1 byte fold can
+ make it valid UTF-8 ("\xc4\x80\x80" becomes U+4000), which the second
+ fold then takes the Unicode way. Compare fold(a) with fold(b), never a
+ fold with a name folded twice.
  Step 4 covers servers that map case per code point (towlower, Go's
  unicode.ToLower, an upper-case irccmp), which take U+0130 to plain i and
  U+0131 to I: dotted, dotless and plain i fold to one letter (U+1D6A4
@@ -133,11 +140,15 @@ char *e2e_casefold(const char *name, E2E_CASEMAP map);
    otherwise, the exact maps always */
 char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact);
 /* what every server of map takes for the same name, at least: the exact
-   maps' fold without the Latin-1 bytes; for UNICODE and UNKNOWN NFKC and
-   then full case folding (GLib) - no rfc1459 specials, nothing dropped -
-   and NULL for a name that is not valid UTF-8. Two names that differ
-   here may be two channels to the server although e2e_casefold() joins
-   them. Never persisted, as e2e_casefold(). */
+   maps' fold without the Latin-1 bytes; for UNKNOWN the ASCII letters
+   only (a byte code page may fold any other byte its own way, or not at
+   all); for UNICODE what both a per code point server (simple lower
+   case, g_unichar_tolower: towlower, Go) and a PRECIS / utf8 one (NFKC,
+   then full case folding) take for one name - no rfc1459 specials,
+   nothing dropped, no normalisation in the first - and NULL for a name
+   that is not valid UTF-8. Two names that differ here may be two
+   channels to the server although e2e_casefold() joins them (R-E22,
+   R-E26). Never persisted, as e2e_casefold(). */
 char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map);
 
 

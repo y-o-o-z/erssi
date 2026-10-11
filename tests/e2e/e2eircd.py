@@ -11,6 +11,7 @@ so two of these can play two networks. --casemapping ascii, rfc1459,
 strict-rfc1459 or utf8 sends CASEMAPPING=<value> in 005 and folds channel
 and nick names that way (utf8: NFKC, then Python's casefold); without it
 no CASEMAPPING is sent and names are folded with str.lower().
+--hide-casemapping folds as --casemapping says but names none in 005.
 """
 import argparse
 import asyncio
@@ -19,6 +20,7 @@ import unicodedata
 SRV = "e2e.test"
 NETWORK = "E2ETest"
 CASEMAPPING = None
+HIDE_CASEMAPPING = False
 clients = {}   # nick (folded) -> Client
 channels = {}  # channel (folded) -> set(nick folded)
 
@@ -90,7 +92,7 @@ async def handle(reader, writer, wire_path):
                 for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
                                  ("004", f"{SRV} e2e io biklmnopstv")):
                     me.send(f":{SRV} {num} {me.nick} :{msg}")
-                cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING else ""
+                cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING and not HIDE_CASEMAPPING else ""
                 me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm} :are supported")
                 me.send(f":{SRV} 376 {me.nick} :End of MOTD")
             elif cmd == "PING":
@@ -156,10 +158,13 @@ async def main():
     parser.add_argument("--wire", required=True)
     parser.add_argument("--network", default="E2ETest")
     parser.add_argument("--casemapping", choices=("ascii", "rfc1459", "strict-rfc1459", "utf8"))
+    parser.add_argument("--hide-casemapping", action="store_true",
+                        help="fold as --casemapping says, but name no CASEMAPPING in 005")
     args = parser.parse_args()
-    global NETWORK, CASEMAPPING
+    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING
     NETWORK = args.network
     CASEMAPPING = args.casemapping
+    HIDE_CASEMAPPING = args.hide_casemapping
     server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire), "127.0.0.1", args.port)
     async with server:
         await server.serve_forever()
