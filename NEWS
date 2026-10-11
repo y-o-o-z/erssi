@@ -41,7 +41,8 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - shellter-install.sh: FreeBSD's base OpenSSL is enough
 	  - shellter-install.sh refuses a source directory (--src, kept for
 	    erssi --update) that is a link to, or lies in, a directory another user
-	    can write to or owns (shared, sticky such as /tmp, group-writable, ACL),
+	    can write to or a directory that belongs to another user (root
+	    excepted) (shared, sticky such as /tmp, group-writable, ACL),
 	    and a source directory or venv of another user's; choose a --src under
 	    a directory only you can write, such as the default ~/.local/src/erssi
 	  - tests and fuzz harnesses that start the core use their own temporary

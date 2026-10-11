@@ -293,8 +293,9 @@ from a web client were older than the fork; the rest is fork-only):
   home, never as root, never over the binary or over a file; the source
   lock is taken before the venv; FreeBSD's base OpenSSL is enough; the
   source directory, its venv and every directory above it must belong to
-  you (or root) and be writable only by you, otherwise the install is
-  refused with the fix in the message.
+  you or root and be writable only by you (a root-owned sticky directory
+  such as /tmp is allowed above the parent of --src, never as its parent),
+  otherwise the install is refused with the fix in the message.
 - Tests and fuzz harnesses that start the core use their own temporary
   home.
 
