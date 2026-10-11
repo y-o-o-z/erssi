@@ -66,11 +66,16 @@ int chmod(const char *path, mode_t mode)
  * fsync()) come through here while watch_renames is set. */
 static gboolean watch_renames;
 static int renames, bad_renames, syncs;
+static gboolean fail_fsync;	/* fsync() fails with EIO (Linux) */
 
 #ifdef __linux__
 int fsync(int fd)
 {
 	syncs++;
+	if (fail_fsync) {
+		errno = EIO;
+		return -1;
+	}
 	return syscall(SYS_fsync, fd);
 }
 #endif
@@ -336,6 +341,227 @@ static void test_hash_list_write_fails_cleanly(Fixture *f, gconstpointer data)
 	g_assert_cmpstr(entries, ==, "default-files.sha256 t.theme");
 	g_free(entries);
 	g_free(list);
+}
+
+/* D/t.theme unchanged since erssi recorded it ("recorded v0\n") */
+static void write_recorded(Fixture *f)
+{
+	char *dst = path_in(f->dir, "t.theme");
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *hash = sha256("recorded v0\n");
+	char *line = g_strdup_printf("%s  t.theme\n", hash);
+
+	write_file(dst, "recorded v0\n");
+	write_file(list, line);
+	g_free(line);
+	g_free(hash);
+	g_free(list);
+	g_free(dst);
+}
+
+static void assert_file(const char *dir, const char *name, const char *expected)
+{
+	char *path = path_in(dir, name);
+	char *content = read_file(path);
+
+	g_assert_cmpstr(content, ==, expected);
+	g_free(content);
+	g_free(path);
+}
+
+/* the replacing write fails (D not writable): nothing is recorded, so the
+ * old file is not taken for the user's own at the next start */
+static void test_replace_fails_nothing_recorded(Fixture *f, gconstpointer data)
+{
+	DEFAULT_FILES_REC *rec;
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *list_before, *entries;
+
+	if (geteuid() == 0) {
+		g_test_skip("root writes into any directory");
+		g_free(list);
+		return;
+	}
+	write_recorded(f);
+	list_before = read_file(list);
+	g_assert_cmpint(g_chmod(f->dir, 0500), ==, 0);
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_SKIPPED);
+	g_assert_false(rec->hashes_changed);
+	g_assert_false(rec->themes_changed);
+	g_assert_null(rec->notes);
+	default_files_close(rec);
+	g_assert_cmpint(g_chmod(f->dir, 0700), ==, 0);
+
+	assert_file(f->dir, "t.theme", "recorded v0\n");
+	assert_file(f->dir, "default-files.sha256", list_before);
+	entries = dir_entries(f->dir);
+	g_assert_cmpstr(entries, ==, "default-files.sha256 t.theme");
+	g_free(entries);
+	g_free(list_before);
+	g_free(list);
+}
+
+/* a failing fsync(): the file is not replaced, no temporary file is left */
+static void test_fsync_fails_not_replaced(Fixture *f, gconstpointer data)
+{
+#ifdef __linux__
+	DEFAULT_FILES_REC *rec;
+	char *entries;
+
+	write_recorded(f);
+	rec = default_files_open(f->dir, KNOWN);
+	fail_fsync = TRUE;
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_SKIPPED);
+	fail_fsync = FALSE;
+	g_assert_false(rec->hashes_changed);
+	g_assert_false(rec->themes_changed);
+	default_files_close(rec);
+
+	assert_file(f->dir, "t.theme", "recorded v0\n");
+	entries = dir_entries(f->dir);
+	g_assert_cmpstr(entries, ==, "default-files.sha256 t.theme");
+	g_free(entries);
+#else
+	g_test_skip("fsync() is observed on Linux only");
+#endif
+}
+
+/* a theme replaced, then startup (not a theme) replaced: the themes are
+ * still to be reloaded */
+static void test_themes_changed_sticks(Fixture *f, gconstpointer data)
+{
+	DEFAULT_FILES_REC *rec;
+	char *shipped_dir = g_path_get_dirname(f->shipped);
+	char *shipped_startup = path_in(shipped_dir, "startup");
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *theme_hash = sha256("recorded v0\n");
+	char *startup_hash = sha256("startup v1\n");
+	char *lines = g_strdup_printf("%s  startup\n%s  t.theme\n", startup_hash, theme_hash);
+	char *dst;
+
+	write_file(shipped_startup, "startup v2\n");
+	dst = path_in(f->dir, "t.theme");
+	write_file(dst, "recorded v0\n");
+	g_free(dst);
+	dst = path_in(f->dir, "startup");
+	write_file(dst, "startup v1\n");
+	g_free(dst);
+	write_file(list, lines);
+
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_UPDATED);
+	g_assert_cmpint(default_files_update(rec, shipped_startup, "startup", FALSE), ==,
+	                DEFAULT_FILE_UPDATED);
+	g_assert_true(rec->themes_changed);
+	default_files_close(rec);
+	assert_file(f->dir, "startup", "startup v2\n");
+	assert_file(f->dir, "t.theme", SHIPPED);
+
+	g_free(lines);
+	g_free(startup_hash);
+	g_free(theme_hash);
+	g_free(list);
+	g_free(shipped_startup);
+	g_free(shipped_dir);
+}
+
+/* D/t.theme matches a hash the list records, but the list is not read
+ * (a link, FIFO or too large): no record, so the file is kept with a note,
+ * and the list written at the end is a regular 0600 file */
+static void assert_list_not_read(Fixture *f)
+{
+	DEFAULT_FILES_REC *rec;
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *hash = sha256(SHIPPED);
+	char *line = g_strdup_printf("%s  t.theme\n", hash);
+	struct stat st;
+
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpuint(g_hash_table_size(rec->hashes), ==, 0);
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_KEPT);
+	g_assert_cmpuint(g_slist_length(rec->notes), ==, 1);
+	default_files_close(rec);
+	assert_file(f->dir, "t.theme", "recorded v0\n");
+
+	g_assert_cmpint(lstat(list, &st), ==, 0);
+	g_assert_true(S_ISREG(st.st_mode));
+	g_assert_cmpint(st.st_mode & 07777, ==, 0600);
+	assert_file(f->dir, "default-files.sha256", line);
+	g_free(line);
+	g_free(hash);
+	g_free(list);
+}
+
+static void test_list_symlink_no_record(Fixture *f, gconstpointer data)
+{
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *target = path_in(f->dir, "elsewhere");
+	char *hash = sha256("recorded v0\n");
+	char *line = g_strdup_printf("%s  t.theme\n", hash);
+
+	write_recorded(f);
+	g_assert_cmpint(g_rename(list, target), ==, 0);
+	g_assert_cmpint(symlink(target, list), ==, 0);
+	assert_list_not_read(f);
+	/* the link was replaced, not written through */
+	assert_file(f->dir, "elsewhere", line);
+	g_free(line);
+	g_free(hash);
+	g_free(target);
+	g_free(list);
+}
+
+static void test_list_fifo_no_record(Fixture *f, gconstpointer data)
+{
+	if (g_test_subprocess()) {
+		char *list = path_in(f->dir, "default-files.sha256");
+
+		write_recorded(f);
+		g_assert_cmpint(g_unlink(list), ==, 0);
+		g_assert_cmpint(mkfifo(list, 0600), ==, 0);
+		assert_list_not_read(f);
+		g_free(list);
+		return;
+	}
+	g_test_trap_subprocess(NULL, 2 * G_USEC_PER_SEC, 0);
+	g_test_trap_assert_passed();
+}
+
+/* the list with its record, padded with comment lines to size bytes */
+static void write_padded_list(Fixture *f, gsize size)
+{
+	char *list = path_in(f->dir, "default-files.sha256");
+	char *hash = sha256("recorded v0\n");
+	GString *out = g_string_new(NULL);
+
+	g_string_append_printf(out, "%s  t.theme\n", hash);
+	while (out->len < size)
+		g_string_append_c(out, out->len % 100 == 99 ? '\n' : '#');
+	g_assert_true(g_file_set_contents(list, out->str, out->len, NULL));
+	g_string_free(out, TRUE);
+	g_free(hash);
+	g_free(list);
+}
+
+static void test_list_oversized_no_record(Fixture *f, gconstpointer data)
+{
+	DEFAULT_FILES_REC *rec;
+
+	/* at the limit: read */
+	write_recorded(f);
+	write_padded_list(f, DEFAULT_FILES_LIST_MAX);
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpuint(g_hash_table_size(rec->hashes), ==, 1);
+	default_files_close(rec);
+
+	/* one byte more: not read */
+	write_padded_list(f, DEFAULT_FILES_LIST_MAX + 1);
+	assert_list_not_read(f);
 }
 
 static void test_current_untouched(Fixture *f, gconstpointer data)
@@ -637,6 +863,13 @@ int main(int argc, char **argv)
 	ADD("/default-files/user-changed-kept", test_user_changed_kept, NULL);
 	ADD("/default-files/missing-copied-0600", test_missing_copied_0600, NULL);
 	ADD("/default-files/hash-list-write-fails-cleanly", test_hash_list_write_fails_cleanly, NULL);
+	ADD("/default-files/replace-fails-nothing-recorded",
+	    test_replace_fails_nothing_recorded, NULL);
+	ADD("/default-files/fsync-fails-not-replaced", test_fsync_fails_not_replaced, NULL);
+	ADD("/default-files/themes-changed-sticks", test_themes_changed_sticks, NULL);
+	ADD("/default-files/list-symlink-no-record", test_list_symlink_no_record, NULL);
+	ADD("/default-files/list-fifo-no-record", test_list_fifo_no_record, NULL);
+	ADD("/default-files/list-oversized-no-record", test_list_oversized_no_record, NULL);
 	ADD("/default-files/current-untouched", test_current_untouched, NULL);
 	ADD("/default-files/recorded-unchanged-updated", test_recorded_unchanged_updated, NULL);
 	ADD("/default-files/known-hash-updated", test_known_hash_updated, NULL);
