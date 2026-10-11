@@ -7,15 +7,37 @@ WHOIS (311 - rpe2e.pl learns its own ident@host from it), PRIVMSG/NOTICE to a
 channel and to a nick (CTCP too, which carries KEYREQ/KEYRSP). Every
 PRIVMSG/NOTICE line is also written to the --wire file, so the test can check
 what really crossed the server. --network names the network in 005 NETWORK=,
-so two of these can play two networks.
+so two of these can play two networks. --casemapping ascii, rfc1459,
+strict-rfc1459 or utf8 sends CASEMAPPING=<value> in 005 and folds channel
+and nick names that way (utf8: NFKC, then Python's casefold); without it
+no CASEMAPPING is sent and names are folded with str.lower().
 """
 import argparse
 import asyncio
+import unicodedata
 
 SRV = "e2e.test"
 NETWORK = "E2ETest"
-clients = {}   # nick (lower) -> Client
-channels = {}  # channel (lower) -> set(nick lower)
+CASEMAPPING = None
+clients = {}   # nick (folded) -> Client
+channels = {}  # channel (folded) -> set(nick folded)
+
+RFC1459_UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ[]\\~", "abcdefghijklmnopqrstuvwxyz{}|^")
+STRICT_UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ[]\\", "abcdefghijklmnopqrstuvwxyz{}|")
+ASCII_UPPER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def fold(name):
+    """a channel or nick name as this server compares it"""
+    if CASEMAPPING == "utf8":
+        return unicodedata.normalize("NFKC", name).casefold()
+    if CASEMAPPING == "rfc1459":
+        return name.translate(RFC1459_UPPER)
+    if CASEMAPPING == "strict-rfc1459":
+        return name.translate(STRICT_UPPER)
+    if CASEMAPPING == "ascii":
+        return name.translate(ASCII_UPPER)
+    return name.lower()
 
 
 class Client:
@@ -33,7 +55,7 @@ class Client:
 
 
 def members(chan):
-    return [clients[n] for n in channels.get(chan.lower(), ()) if n in clients]
+    return [clients[n] for n in channels.get(fold(chan), ()) if n in clients]
 
 
 async def handle(reader, writer, wire_path):
@@ -53,28 +75,29 @@ async def handle(reader, writer, wire_path):
                 if me.nick != "*":
                     seen = {me}
                     for chan, nicks in channels.items():
-                        if me.nick.lower() in nicks:
-                            nicks.discard(me.nick.lower())
-                            nicks.add(new.lower())
+                        if fold(me.nick) in nicks:
+                            nicks.discard(fold(me.nick))
+                            nicks.add(fold(new))
                             for other in [clients[n] for n in nicks if n in clients]:
                                 seen.add(other)
                     for c in seen:
                         c.send(f":{me.prefix} NICK :{new}")
-                    clients.pop(me.nick.lower(), None)
+                    clients.pop(fold(me.nick), None)
                 me.nick = new
-                clients[me.nick.lower()] = me
+                clients[fold(me.nick)] = me
             elif cmd == "USER":
                 me.user = args[0]
                 for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
                                  ("004", f"{SRV} e2e io biklmnopstv")):
                     me.send(f":{SRV} {num} {me.nick} :{msg}")
-                me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK} :are supported")
+                cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING else ""
+                me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm} :are supported")
                 me.send(f":{SRV} 376 {me.nick} :End of MOTD")
             elif cmd == "PING":
                 me.send(f":{SRV} PONG {SRV} :{args[0].lstrip(':') if args else ''}")
             elif cmd == "JOIN":
                 for chan in args[0].split(","):
-                    channels.setdefault(chan.lower(), set()).add(me.nick.lower())
+                    channels.setdefault(fold(chan), set()).add(fold(me.nick))
                     for other in members(chan):
                         other.send(f":{me.prefix} JOIN {chan}")
                     names = " ".join(c.nick for c in members(chan))
@@ -96,13 +119,13 @@ async def handle(reader, writer, wire_path):
                 for chan in args[0].split(","):
                     for c in members(chan):
                         c.send(f":{me.prefix} PART {chan} :{trailing if len(args) > 1 else ''}")
-                    channels.get(chan.lower(), set()).discard(me.nick.lower())
+                    channels.get(fold(chan), set()).discard(fold(me.nick))
             elif cmd == "WHO" and args:
                 for c in members(args[0]):
                     me.send(f":{SRV} 352 {me.nick} {args[0]} {c.user} 127.0.0.1 {SRV} {c.nick} H :0 {c.nick}")
                 me.send(f":{SRV} 315 {me.nick} {args[0]} :End of WHO")
             elif cmd == "WHOIS" and args:
-                target = clients.get(args[-1].lower())
+                target = clients.get(fold(args[-1]))
                 if target:
                     me.send(f":{SRV} 311 {me.nick} {target.nick} {target.user} 127.0.0.1 * :{target.nick}")
                 me.send(f":{SRV} 318 {me.nick} {args[-1]} :End of WHOIS")
@@ -115,15 +138,15 @@ async def handle(reader, writer, wire_path):
                     for c in members(target):
                         if c is not me:
                             c.send(out)
-                elif target.lower() in clients:
-                    clients[target.lower()].send(out)
+                elif fold(target) in clients:
+                    clients[fold(target)].send(out)
             elif cmd == "QUIT":
                 break
             await writer.drain()
     finally:
-        clients.pop(me.nick.lower(), None)
+        clients.pop(fold(me.nick), None)
         for chan in channels.values():
-            chan.discard(me.nick.lower())
+            chan.discard(fold(me.nick))
         writer.close()
 
 
@@ -132,9 +155,11 @@ async def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--wire", required=True)
     parser.add_argument("--network", default="E2ETest")
+    parser.add_argument("--casemapping", choices=("ascii", "rfc1459", "strict-rfc1459", "utf8"))
     args = parser.parse_args()
-    global NETWORK
+    global NETWORK, CASEMAPPING
     NETWORK = args.network
+    CASEMAPPING = args.casemapping
     server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire), "127.0.0.1", args.port)
     async with server:
         await server.serve_forever()

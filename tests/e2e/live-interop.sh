@@ -84,9 +84,10 @@ PERLLIB=$(dirname "$(find "$WORK/inst" -name Irssi.pm | head -n 1)")
 
 PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 PORT2=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" &
+# E2E compares names in ASCII ([ and { are two channels), E2E2 by Unicode
+python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" --casemapping ascii &
 IRCD_PID=$!
-python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --network E2E2Test &
+python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --network E2E2Test --casemapping utf8 &
 IRCD_PID="$IRCD_PID $!"
 for port in "$PORT" "$PORT2"; do
     i=0
@@ -542,6 +543,60 @@ fi
 say alice "/join -E2E $CHAN"
 say alice "back on the first network"
 check "$WORK/bob/logs/E2E/$CHAN.log" "back on the first network"
+
+# ---- CASEMAPPING: names compared as each server compares them ----
+# E2E2 (utf8): #Żaba is #żaba to the server, never clear text there
+say alice "/join -E2E2 #żaba"
+say alice "/e2e on"
+say alice "/msg -E2E2 #Żaba unicode case secret"
+say alice "/msg -E2E2 #żaba unicode exact secret"
+sleep 1
+if grep -aqF "unicode case secret" "$WORK/wire2.log" "$WORK/wire.log"; then
+    bad "utf8 CASEMAPPING: #Żaba (E2E on for #żaba) went out in plain text"
+else
+    pass "utf8 CASEMAPPING: #Żaba (E2E on for #żaba) is not sent in plain text"
+fi
+if wait_for "$WORK/alice/all.log" "the same channel as #Żaba for the server" 5; then
+    pass "alice is told #Żaba is the same channel as #żaba"
+else
+    bad "alice is not told why #Żaba was not sent"
+fi
+if grep -aq "^alice PRIVMSG #żaba :+RPE2E01 " "$WORK/wire2.log" &&
+   ! grep -aqF "unicode exact secret" "$WORK/wire2.log"; then
+    pass "utf8 CASEMAPPING: #żaba itself is encrypted"
+else
+    bad "utf8 CASEMAPPING: #żaba itself is not encrypted"
+fi
+# R-E11: a name that is not UTF-8 cannot be folded as a utf8 server does
+say alice "/script exec Irssi::server_find_tag('E2E2')->command('msg #a'.chr(255).' not utf8 secret')"
+sleep 1
+if grep -aqF "not utf8 secret" "$WORK/wire2.log" "$WORK/wire.log"; then
+    bad "utf8 CASEMAPPING: a channel name that is not UTF-8 went out in plain text"
+else
+    pass "utf8 CASEMAPPING: a channel name that is not UTF-8 is not sent in plain text"
+fi
+if wait_for "$WORK/alice/all.log" "is not valid UTF-8: " 5; then
+    pass "alice is told why the name that is not UTF-8 was not sent"
+else
+    bad "alice is not told why the name that is not UTF-8 was not sent"
+fi
+# E2E (ascii): #a{b is another channel than #a[b, #A[B is the same
+say alice "/join -E2E #a[b"
+say alice "/e2e on"
+say alice "/msg -E2E #a{b bracket plain ok"
+say alice "/msg -E2E #A[B bracket upper secret"
+sleep 1
+if grep -aqF "alice PRIVMSG #a{b :bracket plain ok" "$WORK/wire.log"; then
+    pass "ascii CASEMAPPING: #a{b (another channel than #a[b) gets clear text"
+else
+    bad "ascii CASEMAPPING: #a{b was refused, though the server keeps it apart from #a[b"
+fi
+if grep -aqF "bracket upper secret" "$WORK/wire.log" "$WORK/wire2.log"; then
+    bad "ascii CASEMAPPING: #A[B (E2E on for #a[b) went out in plain text"
+else
+    pass "ascii CASEMAPPING: #A[B (E2E on for #a[b) is not sent in plain text"
+fi
+say alice "/join -E2E $CHAN"
 
 # ---- an old keyring on two networks: refused until /e2e adopt ----
 # alice's E2E entries become old ones of no network (as rpe2e.pl or erssi
