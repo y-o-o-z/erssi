@@ -11,6 +11,9 @@
 
 #include <glib.h>
 
+/* a larger <dir>/default-files.sha256 is not read (as if there were none) */
+#define DEFAULT_FILES_LIST_MAX (64 * 1024)
+
 typedef enum {
 	DEFAULT_FILE_COPIED,   /* was missing */
 	DEFAULT_FILE_CURRENT,  /* already the shipped version */

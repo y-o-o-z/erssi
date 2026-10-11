@@ -159,7 +159,13 @@ test_test_default_files = executable('test-default-files',
   dependencies : dep,
 )
 
+# under AddressSanitizer with leak detection, whatever the rest of the
+# suite uses: a leak here (a note, a record) fails the test
+test_default_files_env = environment()
+test_default_files_env.set('HOME', meson.build_root() / 'test-home')
+test_default_files_env.set('ASAN_OPTIONS', 'detect_leaks=1:abort_on_error=1')
+
 test('test-default-files test', test_test_default_files,
-  env : test_env,
+  env : test_default_files_env,
   args : ['--tap'],
   protocol : 'tap')

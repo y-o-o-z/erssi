@@ -27,17 +27,23 @@
 
 #define DEFAULT_FILES_SHA256 "default-files.sha256"
 
+static gboolean read_regular(const char *path, gsize max, char **data, gsize *len);
+
 DEFAULT_FILES_REC *default_files_open(const char *dir, const char *const known[][2])
 {
 	DEFAULT_FILES_REC *rec;
 	char *path, *contents, **lines, **line;
+	gsize len;
 
 	rec = g_new0(DEFAULT_FILES_REC, 1);
 	rec->dir = g_strdup(dir);
 	rec->known = known;
 	rec->hashes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	path = g_strdup_printf("%s/" DEFAULT_FILES_SHA256, dir);
-	if (g_file_get_contents(path, &contents, NULL, NULL)) {
+	/* like the files: not through a link, not a FIFO, and not a huge file;
+	 * a list that is not read is no record (files are then kept, and the
+	 * list written at the end replaces it) */
+	if (read_regular(path, DEFAULT_FILES_LIST_MAX, &contents, &len)) {
 		/* "<sha256>  <name>", as sha256sum writes it */
 		lines = g_strsplit(contents, "\n", -1);
 		for (line = lines; *line != NULL; line++) {
@@ -93,8 +99,9 @@ static int open_regular(const char *path)
 	return fd;
 }
 
-/* reads fd to its end into buf and/or sum, then closes it */
-static gboolean read_all(int fd, GString *buf, GChecksum *sum)
+/* reads fd to its end into buf and/or sum, then closes it; with max > 0
+ * a file of more than max bytes is an error */
+static gboolean read_all(int fd, GString *buf, GChecksum *sum, gsize max)
 {
 	char chunk[8192];
 	ssize_t n;
@@ -105,12 +112,16 @@ static gboolean read_all(int fd, GString *buf, GChecksum *sum)
 			g_string_append_len(buf, chunk, n);
 		if (n > 0 && sum != NULL)
 			g_checksum_update(sum, (guchar *) chunk, n);
+		if (max > 0 && buf != NULL && buf->len > max) {
+			n = -1;
+			break;
+		}
 	}
 	close(fd);
 	return n == 0;
 }
 
-gboolean default_files_read_regular(const char *path, char **data, gsize *len)
+static gboolean read_regular(const char *path, gsize max, char **data, gsize *len)
 {
 	GString *buf;
 	int fd;
@@ -119,13 +130,18 @@ gboolean default_files_read_regular(const char *path, char **data, gsize *len)
 	if (fd < 0)
 		return FALSE;
 	buf = g_string_new(NULL);
-	if (!read_all(fd, buf, NULL)) {
+	if (!read_all(fd, buf, NULL, max)) {
 		g_string_free(buf, TRUE);
 		return FALSE;
 	}
 	*len = buf->len;
 	*data = g_string_free(buf, FALSE);
 	return TRUE;
+}
+
+gboolean default_files_read_regular(const char *path, char **data, gsize *len)
+{
+	return read_regular(path, 0, data, len);
 }
 
 /* the sha256 of a regular file (as default_files_read_regular() reads it),
@@ -140,7 +156,7 @@ static char *hash_regular(const char *path)
 	if (fd < 0)
 		return NULL;
 	sum = g_checksum_new(G_CHECKSUM_SHA256);
-	if (read_all(fd, NULL, sum))
+	if (read_all(fd, NULL, sum, 0))
 		hash = g_strdup(g_checksum_get_string(sum));
 	g_checksum_free(sum);
 	return hash;

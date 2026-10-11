@@ -286,7 +286,11 @@ Fixed since `4833f418`:
   `chmod()` set 0600 afterwards. A FIFO swapped in for a file after the
   `lstat()` is opened without blocking and refused, so it cannot hang the
   start; a file's sha256 is computed as it is read, not on a copy in
-  memory.
+  memory. The list is read the same way and only up to 64 KiB: a list
+  that is a link, a FIFO or larger counts as no record, so the files are
+  kept (with a note) and the list written at the end replaces it with a
+  regular 0600 file. A file whose replacement fails is not recorded as
+  replaced.
 
 ## 6. How to take a change that is not in a pull request
 
