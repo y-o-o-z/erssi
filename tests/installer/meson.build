@@ -6,8 +6,9 @@ test('installer versions test', find_program('sh'),
 foreach c : ['ascii', 'utf8',
     'link-home', 'link-system-prefix', 'link-root', 'link-same-dir',
     'lock-before-venv', 'lock-held-during-venv',
-    'freebsd-base-openssl', 'freebsd-no-openssl']
+    'freebsd-base-openssl', 'freebsd-no-openssl',
+    'src-foreign', 'src-writable', 'src-shared-parent']
   test('installer ' + c, find_program('sh'),
-    args : [files('test-shellter-install.sh'), meson.source_root(), c],
+    args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)
 endforeach

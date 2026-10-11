@@ -267,8 +267,8 @@ newest_signed() {
 }
 # ~/.local/bin/erssi -> $PREFIX/bin/erssi only for an install of the user's
 # own in the home: never as root, never for a prefix outside the home, and
-# never when ~/.local/bin is $PREFIX/bin (ln -sf would replace the installed
-# binary with a link to itself). Paths compared as resolved (pwd -P).
+# never when ~/.local/bin is $PREFIX/bin (the link would replace the
+# installed binary). Paths compared as resolved (pwd -P).
 bin_link_wanted() {
     [ "$ROOT" = 0 ] || return 1
     p=$(cd "$PREFIX" 2>/dev/null && pwd -P) || return 1
@@ -277,6 +277,44 @@ bin_link_wanted() {
     pb=$(cd "$PREFIX/bin" 2>/dev/null && pwd -P) || return 1
     lb=$(cd "$HOME/.local/bin" 2>/dev/null && pwd -P) || lb=""
     [ "$pb" != "$lb" ]
+}
+# The source directory, its venv and the directory holding them must be the
+# user's own: whoever can make or change them runs code as this user (the
+# venv's meson and ninja, the build files of the checkout), and --src is kept
+# for every erssi --update.
+# 0 when another user can write to $1: other write, or group write by any
+# group but the user's own private group (the user's gid, named like the user)
+# shellcheck disable=SC2012 # find -printf is not POSIX; ls -n is
+mode_gid() { ls -ldn "$1" 2>/dev/null | awk '{print $1, $4}'; }
+others_can_write() {
+    pg=$(mode_gid "$1")
+    [ -n "$pg" ] || return 0
+    case "${pg%% *}" in
+        ????????w*) return 0 ;;
+        ?????w*)
+            if [ "${pg#* }" = "$(id -g)" ] && [ "$(id -gn)" = "$(id -un)" ]; then return 1; fi
+            return 0 ;;
+    esac
+    return 1
+}
+safe_dir() {   # dir - when it exists: the user's, and only the user can write to it
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    o=$(owner "$1")
+    [ "$o" = "$(id -u)" ] || die "$1 belongs to another user (uid ${o:-unknown}) - use a directory of your own: --src DIR"
+    if others_can_write "$1"; then
+        die "$1 can be changed by other users - use a directory of your own (--src DIR) or take their write access away"
+    fi
+}
+safe_parent() {   # dir - the user's or root's; others may write only when sticky
+    o=$(owner "$1")
+    [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$1 belongs to another user (uid ${o:-unknown}) - use --src in a directory of your own"
+    pg=$(mode_gid "$1")
+    case "${pg%% *}" in
+        ?????????[tT]*) return 0 ;;     # sticky: nobody else removes or renames ours
+    esac
+    if others_can_write "$1"; then
+        die "$1 is writable by other users - use --src in a directory of your own"
+    fi
 }
 conf_get() {   # key -> value from shellter-install.conf (never run as shell)
     [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -n 1
@@ -370,8 +408,11 @@ if [ "$CHECK" = 0 ]; then
     # anything is written: the log, the meson/ninja venv ($SRC.venv, step 1)
     # and the checkout
     mkdir -p "$(dirname "$SRC")"
+    safe_parent "$(dirname "$SRC")"
     mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
     trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
+    safe_dir "$SRC"
+    safe_dir "$SRC.venv"
 fi
 # root: never a user's XDG_STATE_HOME (su without -)
 if [ "$ROOT" = 1 ]; then STATE="$HOME/.local/state/erssi"; else STATE="${XDG_STATE_HOME:-$HOME/.local/state}/erssi"; fi
@@ -586,6 +627,7 @@ else
         if [ ! -x "$VENV/bin/meson" ] || [ ! -x "$VENV/bin/ninja" ]; then
             warn "meson/ninja not found - installing $MESON_PIP and $NINJA_PIP into $VENV (no root needed)"
             run_logged "$PY" -m venv "$VENV" || die_log "$PY -m venv failed ($(pm_hint python3-venv))"
+            safe_dir "$VENV"    # and not somebody's made meanwhile
             run_logged "$VENV/bin/pip" install -q "$MESON_PIP" "$NINJA_PIP" || die_log "pip could not install meson and ninja"
         fi
         PATH="$VENV/bin:$PATH"; export PATH
@@ -603,6 +645,7 @@ if [ "$CHECK" = 1 ]; then
     git init -q "$WORK"
 else
     WORK=$SRC           # locked above
+    safe_dir "$SRC"         # again: it may have been made meanwhile
     if [ -d "$SRC/.git" ]; then
         [ -z "$(git -C "$SRC" status --porcelain --untracked-files=no)" ] ||
             die "$SRC has local changes - the installer would overwrite them; use another --src"
@@ -611,6 +654,7 @@ else
         [ ! -e "$SRC" ] || [ -z "$(ls -A "$SRC" 2>/dev/null)" ] ||
             die "$SRC exists and is not a git checkout - remove it or use another --src"
         mkdir -p "$SRC"
+        safe_dir "$SRC"
         git -c init.defaultBranch=main init -q "$SRC" || die "cannot create a git repository in $SRC"
         NEW_SRC=1
     fi
@@ -735,8 +779,16 @@ mkdir -p "$PREFIX/share/irssi"
 LINKED=0
 if bin_link_wanted; then
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$PREFIX/bin/erssi" "$HOME/.local/bin/erssi"
-    LINKED=1
+    l="$HOME/.local/bin/erssi"
+    # a link (ours from before, or to anywhere) is replaced; a file or a
+    # directory of the user's own there is kept
+    if [ -L "$l" ] || [ ! -e "$l" ]; then
+        rm -f "$l"
+        ln -s "$PREFIX/bin/erssi" "$l"
+        LINKED=1
+    else
+        warn "$(tilde "$l") exists and is not a link - kept; this erssi is $(tilde "$PREFIX/bin/erssi")"
+    fi
 fi
 # erssi --update runs this installer (the copy of the installed release)
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
