@@ -541,7 +541,7 @@ void ansi_detect_capabilities(ANSI_TERM *term)
  * ======================================================================== */
 
 /* 24-bit colors reach the screen: term_truecolor auto (detected), on, off */
-static int term_truecolor_capable(void)
+int term_truecolor_capable(void)
 {
 	switch (settings_get_choice("term_truecolor")) {
 	case 1:

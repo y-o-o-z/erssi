@@ -72,6 +72,8 @@ extern ANSI_TERM *ansi_term;
 
 /* Terminal capabilities detection */
 void ansi_detect_capabilities(ANSI_TERM *term);
+/* 24-bit colors reach the screen: term_truecolor auto (detected), on, off */
+int term_truecolor_capable(void);
 const char *ansi_graphics_protocol_name(GraphicsProtocol proto);
 
 /* DCS passthrough for multiplexers */
