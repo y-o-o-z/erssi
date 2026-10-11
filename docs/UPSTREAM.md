@@ -185,9 +185,8 @@ Open at `4833f418`. Each item was checked in the code.
    client reach it, e.g. the server tag at `fe-web/fe-web-client.c:144`.
    Use `printtext_string()` or escape `%`. Reported in review, not
    reproduced here.
-8. WebSocket: unmasked client frames are still accepted
-   (`fe-web/fe-web-server.c:563`). RFC 6455 requires closing the
-   connection. This is older than the fork.
+8. Fixed: unmasked client frames (see below). This was older than the
+   fork.
 9. `/UNLOAD fe_web` sent from a web client deinitialises fe-web while
     that client's frame loop runs. Older than the fork.
 10. Capsicum: after `/capsicum enter`, a fe-web restart cannot bind or
@@ -250,6 +249,15 @@ Fixed since `4833f418`:
   and macOS) also returns it when a listener's queue is full, so a second
   erssi removed the socket of a busy one. Without file locks (some network
   file systems) the BSDs keep an old socket and say so.
+- fe-web closes the connection on a client frame that is not masked
+  (RFC 6455 5.1), with a close frame of status 1002 (protocol error),
+  whatever the opcode (text, binary, continuation, ping, pong, close).
+  It is refused on its header, before its payload is waited for; nothing
+  of it and nothing after it in the same read is handled (no command, no
+  pong, no echo of a close status), and what the client sends until it
+  is gone is not read. Before, an unmasked text or binary frame was
+  ignored, an unmasked ping was answered and an unmasked close echoed.
+  Browsers always mask, so does the `ws` client of NexusIRC.
 
 ## 6. How to take a change that is not in a pull request
 

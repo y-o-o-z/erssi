@@ -612,6 +612,26 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 	/* output_failed: the client is closed shortly, nothing it asks for
 	 * can be answered */
 	while (client->input_buffer->len > 0 && !client->output_failed) {
+		/* RFC 6455 5.1: a client masks every frame, and a server closes
+		 * the connection on one that is not masked. Refused on its
+		 * header (the mask bit of byte 2), whatever the opcode, before
+		 * its payload is waited for or anything of it is handled; the
+		 * frames after it in the buffer are not handled either.
+		 * 1002 = protocol error. */
+		if (client->input_buffer->len >= 2 &&
+		    (client->input_buffer->data[1] & 0x80) == 0) {
+			static const guchar status[2] = { 0x03, 0xEA };
+			guchar *close_frame;
+			gsize close_len;
+
+			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2,
+			                                            &close_len);
+			fe_web_client_send_raw(client, close_frame, close_len);
+			g_free(close_frame);
+			fe_web_close_client_flushed(client);
+			return;
+		}
+
 		/* Try to parse frame */
 		ret = fe_web_websocket_parse_frame(client->input_buffer->data,
 		                                    client->input_buffer->len,
@@ -634,61 +654,59 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 
 		/* Handle different opcodes */
 		if (opcode == WS_OPCODE_TEXT || opcode == WS_OPCODE_BINARY) { /* binary = encrypted */
-			/* Unmask payload if needed */
-			if (masked) {
-				unmasked_payload = g_malloc(payload_len + 1);
-				memcpy(unmasked_payload, payload, payload_len);
-				fe_web_websocket_unmask(unmasked_payload, payload_len, mask_key);
-				unmasked_payload[payload_len] = '\0';
+			/* every frame here is masked */
+			unmasked_payload = g_malloc(payload_len + 1);
+			memcpy(unmasked_payload, payload, payload_len);
+			fe_web_websocket_unmask(unmasked_payload, payload_len, mask_key);
+			unmasked_payload[payload_len] = '\0';
 
-				/* Binary frame = encrypted data */
-				if (opcode == WS_OPCODE_BINARY) {
-					unsigned char *decrypted;
-					int decrypted_len;
-					const unsigned char *key;
+			/* Binary frame = encrypted data */
+			if (opcode == WS_OPCODE_BINARY) {
+				unsigned char *decrypted;
+				int decrypted_len;
+				const unsigned char *key;
 
-					if (!client->encryption_enabled) {
-						printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-						          "fe-web: [%s] Received encrypted data but encryption not enabled", client->id);
-						g_free(unmasked_payload);
-						fe_web_close_client(client);
-						return;
-					}
-
-					key = fe_web_crypto_get_key();
-					if (key == NULL) {
-						printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-						          "fe-web: [%s] Encryption key not available", client->id);
-						g_free(unmasked_payload);
-						fe_web_close_client(client);
-						return;
-					}
-
-					/* Allocate buffer for decrypted data */
-					decrypted = g_malloc(payload_len);
-
-					/* Decrypt */
-					if (!fe_web_crypto_decrypt(unmasked_payload, payload_len, key, decrypted, &decrypted_len)) {
-						printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-						          "fe-web: [%s] Decryption failed - wrong password or tampered data", client->id);
-						g_free(unmasked_payload);
-						g_free(decrypted);
-						fe_web_close_client(client);
-						return;
-					}
-
-					/* Null-terminate decrypted JSON */
+				if (!client->encryption_enabled) {
+					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+					          "fe-web: [%s] Received encrypted data but encryption not enabled", client->id);
 					g_free(unmasked_payload);
-					unmasked_payload = g_malloc(decrypted_len + 1);
-					memcpy(unmasked_payload, decrypted, decrypted_len);
-					unmasked_payload[decrypted_len] = '\0';
-					g_free(decrypted);
+					fe_web_close_client(client);
+					return;
 				}
 
-				/* Handle JSON message */
-				fe_web_client_handle_message(client, (const char *)unmasked_payload);
+				key = fe_web_crypto_get_key();
+				if (key == NULL) {
+					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+					          "fe-web: [%s] Encryption key not available", client->id);
+					g_free(unmasked_payload);
+					fe_web_close_client(client);
+					return;
+				}
+
+				/* Allocate buffer for decrypted data */
+				decrypted = g_malloc(payload_len);
+
+				/* Decrypt */
+				if (!fe_web_crypto_decrypt(unmasked_payload, payload_len, key, decrypted, &decrypted_len)) {
+					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+					          "fe-web: [%s] Decryption failed - wrong password or tampered data", client->id);
+					g_free(unmasked_payload);
+					g_free(decrypted);
+					fe_web_close_client(client);
+					return;
+				}
+
+				/* Null-terminate decrypted JSON */
 				g_free(unmasked_payload);
+				unmasked_payload = g_malloc(decrypted_len + 1);
+				memcpy(unmasked_payload, decrypted, decrypted_len);
+				unmasked_payload[decrypted_len] = '\0';
+				g_free(decrypted);
 			}
+
+			/* Handle JSON message */
+			fe_web_client_handle_message(client, (const char *)unmasked_payload);
+			g_free(unmasked_payload);
 		} else if (opcode == WS_OPCODE_CLOSE) {
 			/* RFC 6455 5.5.1: answer with a Close frame (echoing the
 			 * status code), then close - the client then sees an orderly
@@ -699,8 +717,8 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			gsize close_len;
 
 			if (payload_len >= 2) {
-				status[0] = payload[0] ^ (masked ? mask_key[0] : 0);
-				status[1] = payload[1] ^ (masked ? mask_key[1] : 0);
+				status[0] = payload[0] ^ mask_key[0];
+				status[1] = payload[1] ^ mask_key[1];
 			}
 			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
 			fe_web_client_send_raw(client, close_frame, close_len);
@@ -718,8 +736,7 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			/* the pong carries the ping's data, unmasked */
 			pong_data = g_malloc(payload_len + 1);
 			memcpy(pong_data, payload, payload_len);
-			if (masked)
-				fe_web_websocket_unmask(pong_data, payload_len, mask_key);
+			fe_web_websocket_unmask(pong_data, payload_len, mask_key);
 			pong_frame = fe_web_websocket_create_frame(WS_OPCODE_PONG, pong_data, payload_len, &pong_len);
 			g_free(pong_data);
 

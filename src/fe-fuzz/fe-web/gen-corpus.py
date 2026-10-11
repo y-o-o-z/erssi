@@ -151,7 +151,7 @@ def main():
     write("frames", "len16", frame(1, b'{"type":"ping","id":"' + b"x" * 300 + b'"}'))
     write("frames", "len64", frame(1, b'{"type":"ping"}', length_form=64))
     write("frames", "len64-huge", b"\x81\xff" + struct.pack(">Q", 1 << 63) + b"\0\0\0\0")
-    write("frames", "unmasked-text", frame(1, MESSAGES[0], mask=None))
+    write("frames", "unmasked-text", frame(1, MESSAGES[0], mask=None))  # refused: close 1002
     write("frames", "ping", frame(9, b"are you there"))
     write("frames", "ping-empty", frame(9, b""))
     write("frames", "pong", frame(10, b"x"))
