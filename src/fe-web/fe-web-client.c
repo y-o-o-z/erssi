@@ -96,8 +96,24 @@ void fe_web_client_destroy(WEB_CLIENT_REC *client)
 	g_free(client);
 }
 
+/* How many messages of web clients are being handled: more than one when
+ * what one does runs another command (an alias, /EVAL). While one is, fe-web's
+ * input handling of that client is on the stack - also for messages that are
+ * not commands, whose effects (query_destroy(), window_activity(), a chatnet
+ * added) reach signal handlers of scripts that may run commands. */
+static int web_command_depth = 0;
+
+static void handle_message(WEB_CLIENT_REC *client, const char *json);
+
 /* Handle client command (sync_server, command, etc.) */
 void fe_web_client_handle_message(WEB_CLIENT_REC *client, const char *json)
+{
+	web_command_depth++;
+	handle_message(client, json);
+	web_command_depth--;
+}
+
+static void handle_message(WEB_CLIENT_REC *client, const char *json)
 {
 	char *type;
 	char *id;
@@ -349,11 +365,6 @@ void fe_web_client_sync_server(WEB_CLIENT_REC *client, const char *server_tag)
 	fe_web_dump_state(client);
 }
 
-/* How many commands of web clients are running: more than one when such a
- * command runs another (an alias, /EVAL). While one runs, fe-web's input
- * handling of that client is on the stack. */
-static int web_command_depth = 0;
-
 /* Execute IRC command for client */
 void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, WI_ITEM_REC *item)
 {
@@ -367,7 +378,8 @@ void fe_web_client_execute_command(WEB_CLIENT_REC *client, const char *command, 
 	 * for protocol-independent commands (protocol == -1).
 	 * Commands that require a server will emit CMDERR_NOT_CONNECTED automatically.
 	 */
-	/* Signal: "send command", cmd, SERVER_REC, active_item (may be NULL) */
+	/* Signal: "send command", cmd, SERVER_REC, active_item (may be NULL).
+	 * Counted here too: fe_web_client_execute_command() is exported. */
 	web_command_depth++;
 	signal_emit("send command", 3, command, client->server, item);
 	web_command_depth--;
@@ -409,11 +421,11 @@ static gboolean unload_hits_fe_web(const char *data)
 	"fe-web: /UNLOAD of fe-web from a web client is refused (it would remove fe-web " \
 	"while it runs the command) - run it in erssi itself, or /SET fe_web_enabled OFF"
 
-/* /UNLOAD of fe-web while a web client's command runs would deinitialise
- * fe-web - which frees that client - and close fe-web's code, both still
- * in use on the way back. Refused whatever way the command came (an alias,
- * /EVAL, an abbreviation, a script): it is the "command unload" signal
- * itself. Typed in erssi (no web command running) it runs. */
+/* /UNLOAD of fe-web while a web client's message is handled would
+ * deinitialise fe-web - which frees that client - and close fe-web's code,
+ * both still in use on the way back. Refused whatever way the command came
+ * (an alias, /EVAL, an abbreviation, a script): it is the "command unload"
+ * signal itself. Typed in erssi (no web message handled) it runs. */
 static void cmd_unload_from_web(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	WINDOW_REC *window;

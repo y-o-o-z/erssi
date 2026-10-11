@@ -22,6 +22,7 @@
 
 #include "fe-web-test.h"
 
+#include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/modules.h>
 #include <irssi/src/core/modules-load.h>
@@ -120,6 +121,39 @@ static void test_frame_refused(void)
 	assert_refused();
 	g_assert_true(fe_web_fuzz_client_alive(c));
 
+	g_byte_array_unref(f);
+	fe_web_fuzz_client_free(c);
+}
+
+static void emit_unload(void)
+{
+	signal_emit("command unload", 3, "web", NULL, NULL);
+}
+
+/* A web message that is not a command still runs inside fe-web's input
+ * handling: here a network_add, whose "chatnet created" reaches a
+ * script's handler that runs /unload web */
+static void test_non_command_message_refused(void)
+{
+	static const char json[] = "{\"type\":\"network_add\",\"id\":\"1\",\"name\":\"T8Net\"}";
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, FALSE);
+	GByteArray *f = test_frame(WS_OPCODE_TEXT, json, strlen(json), TRUE);
+
+	signal_add("chatnet created", (SIGNAL_FUNC) emit_unload);
+	reset();
+	fe_web_fuzz_client_send(c, f->data, f->len);
+	g_assert_nonnull(chatnet_find("T8Net"));
+	assert_refused();
+	g_assert_true(fe_web_fuzz_client_alive(c));
+
+	/* the same handler for a network added in erssi itself */
+	reset();
+	signal_emit("send command", 3, "/network add T8Net2", NULL, NULL);
+	g_assert_nonnull(chatnet_find("T8Net2"));
+	assert_reached("web");
+
+	signal_remove("chatnet created", (SIGNAL_FUNC) emit_unload);
+	fe_web_fuzz_reset_setup();
 	g_byte_array_unref(f);
 	fe_web_fuzz_client_free(c);
 }
@@ -294,6 +328,8 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/fe-web/unload/web-client-refused", test_web_client_refused);
 	g_test_add_func("/fe-web/unload/frame-refused", test_frame_refused);
+	g_test_add_func("/fe-web/unload/non-command-message-refused",
+	                test_non_command_message_refused);
 	g_test_add_func("/fe-web/unload/submodule-refused", test_submodule_refused);
 	g_test_add_func("/fe-web/unload/case-insensitive", test_case_insensitive);
 	g_test_add_func("/fe-web/unload/alias-refused", test_alias_refused);

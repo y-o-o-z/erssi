@@ -259,18 +259,23 @@ Fixed since `4833f418`:
   ignored, an unmasked ping was answered and an unmasked close echoed.
   Browsers always mask, so does the `ws` client of NexusIRC.
 - fe-web refuses `/UNLOAD` of itself (`/unload web`, `/unload web fe`)
-  while a web client's command runs, with a message in the window the
-  command was for. Before, it deinitialised fe-web, which freed the
+  while it handles a web client's message, with a message in the window
+  the command was for. Before, it deinitialised fe-web, which freed the
   client whose frame loop was running the command, and closed fe-web's
   code under it: any logged-in web client could crash erssi. The guard is
   a `command_bind_first("unload")` handler that acts only while
-  `fe_web_client_execute_command()` is on the stack (a depth counter),
-  so an alias, `/EVAL`, an abbreviation (`/UNL`), upper case, another
-  command character or a script's `signal_emit("command unload")` from
-  that command are refused too. Typed in erssi, `/unload web` still
-  runs; `/unload` of other modules from a web client is not changed.
-  `/QUIT` and `/UPGRADE` from a web client were safe already: they only
-  ask the main loop to stop, and the modules are unloaded after it.
+  `fe_web_client_handle_message()` is on the stack (a depth counter), for
+  commands and for the other messages (`close_query`, `mark_read`,
+  `network_add`, ...), whose effects reach scripts' signal handlers. So
+  an alias, `/EVAL`, an abbreviation (`/UNL`), upper case, another
+  command character or a script's `signal_emit("command unload")` are
+  refused too. Typed in erssi, `/unload web` still runs; `/unload` of
+  other modules from a web client is not changed. `/QUIT` and `/UPGRADE`
+  from a web client were safe already: they only ask the main loop to
+  stop, and the modules are unloaded after it. This fixes the `/UNLOAD`
+  path only: a logged-in web client can still run any command (`/exec`,
+  `/script exec`, `/set`), so access to fe-web equals access to the
+  terminal - guard the fe-web password and socket like a shell login.
 
 ## 6. How to take a change that is not in a pull request
 
