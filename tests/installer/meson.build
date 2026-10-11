@@ -3,7 +3,8 @@ test('installer versions test', find_program('sh'),
 
 # shellter-install.sh with stand-in tools, a local repository and a temporary
 # HOME (test-shellter-install.sh SOURCE_ROOT CASE)
-foreach c : ['ascii', 'utf8']
+foreach c : ['ascii', 'utf8',
+    'link-home', 'link-system-prefix', 'link-root', 'link-same-dir']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.source_root(), c],
     env : test_env, timeout : 60)

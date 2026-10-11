@@ -135,6 +135,10 @@ run_update_check() {
 
 # shellcheck disable=SC2317 # called through check
 ascii_only() { [ "$(LC_ALL=C tr -d '\000-\177' < "$1" | wc -c)" -eq 0 ]; }
+# shellcheck disable=SC2317
+no_grep() { ! grep -q "$1" "$2"; }
+# shellcheck disable=SC2317
+no_link() { [ ! -e "$HOME/.local/bin/erssi" ] && [ ! -L "$HOME/.local/bin/erssi" ]; }
 
 # the ten spinner frames as the installer draws them (sourced only when it
 # can be loaded without running main)
@@ -198,6 +202,81 @@ utf8)
     run_update_check
     check "LANG=C.UTF-8: header with a middle dot" grep -q 'erssi Shellter Edition.*·' "$W/out"
     check "LANG=C.UTF-8: cross" grep -q 'Finding the release.*✗' "$W/out"
+    ;;
+link-home)
+    # the default prefix in the home: ~/.local/bin/erssi links to it
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check ".local/bin/erssi is a link" [ -L "$HOME/.local/bin/erssi" ]
+    check "... to the installed erssi" [ "$(readlink "$HOME/.local/bin/erssi")" = "$HOME/.local/opt/erssi/bin/erssi" ]
+    check "start with the link" grep -q 'start  *~/.local/bin/erssi ' "$W/out"
+    check "PATH hint for ~/.local/bin" grep -q 'path  *~/.local/bin is not in PATH' "$W/out"
+    # a home reached through a link (FreeBSD: /home -> /usr/home) and the
+    # prefix given by its real path: still in the home
+    ln -s "$W/home" "$W/homelink"
+    rm -f "$W/home/.local/bin/erssi"
+    HOME=$W/homelink
+    run_install --prefix "$W/home/opt2/erssi"
+    HOME=$W/home
+    check "home through a link: installed" [ "$RC" = 0 ]
+    check "home through a link: linked" [ "$(readlink "$W/home/.local/bin/erssi")" = "$W/home/opt2/erssi/bin/erssi" ]
+    ;;
+link-system-prefix)
+    # a prefix outside the home: no link in the home
+    run_install --prefix "$W/sys/erssi"
+    check "installed" [ "$RC" = 0 ]
+    check "the binary" [ -x "$W/sys/erssi/bin/erssi" ]
+    check "no ~/.local/bin/erssi" no_link
+    check "start names the installed erssi" grep -qF "start     $W/sys/erssi/bin/erssi " "$W/out"
+    check "PATH hint for the prefix" grep -qF "path      $W/sys/erssi/bin is not in PATH" "$W/out"
+    # the prefix in PATH: started as erssi, no hint
+    PATH=$W/sys/erssi/bin:$PATH
+    run_install --prefix "$W/sys/erssi"
+    PATH=$W/shim:$W/bin
+    check "in PATH: start erssi" grep -q 'start  *erssi ' "$W/out"
+    check "in PATH: no PATH hint" no_grep "not in PATH" "$W/out"
+    check "in PATH: still no link" no_link
+    ;;
+link-root)
+    # root (id -u 0, a home owned by root): no link, whatever the prefix
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec "$TEST_W/bin/id" "$@"\n' | stand id
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nif [ "$1" = -ldn ]; then\n    "$TEST_W/bin/ls" -ldn "$2" | awk %s\nelse\n    exec "$TEST_W/bin/ls" "$@"\nfi\n' \
+        "'{\$3 = \"0\"; print}'" | stand ls
+    use_tool id ls
+    run_install
+    check "installed as root" [ "$RC" = 0 ]
+    check "the binary" [ -x "$HOME/.local/opt/erssi/bin/erssi" ]
+    check "no ~/.local/bin/erssi" no_link
+    check "start names the installed erssi" grep -q 'start  *~/.local/opt/erssi/bin/erssi ' "$W/out"
+    ;;
+link-same-dir)
+    # --prefix ~/.local: the binary is ~/.local/bin/erssi itself
+    run_install --prefix "$HOME/.local"
+    check "installed" [ "$RC" = 0 ]
+    check ".local/bin/erssi is a file" [ -f "$HOME/.local/bin/erssi" ]
+    check "... not a link" [ ! -L "$HOME/.local/bin/erssi" ]
+    check "... and it runs" [ "$("$HOME/.local/bin/erssi" --version 2>&1)" = "erssi 9.9.9 (20261010 1200)" ]
+    check "summary names the version" grep -q 'erssi Shellter Edition 9.9.9 is installed' "$W/out"
+    # ~/.local/bin is a link to the prefix's bin: the same directory too
+    rm -rf "$W/home/.local/bin"
+    mkdir -p "$W/home/apps/erssi/bin"
+    ln -s "$W/home/apps/erssi/bin" "$W/home/.local/bin"
+    run_install --prefix "$HOME/apps/erssi"
+    check "linked bin dir: installed" [ "$RC" = 0 ]
+    check "linked bin dir: the binary is kept" [ ! -L "$HOME/apps/erssi/bin/erssi" ]
+    check "linked bin dir: it runs" [ "$("$HOME/apps/erssi/bin/erssi" --version 2>&1)" = "erssi 9.9.9 (20261010 1200)" ]
+    # an ln -sf that removes the target first (GNU ln refuses "the same
+    # file"; others replace the binary with a link to itself)
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\n[ "$1" = -sf ] && "$TEST_W/bin/rm" -f "$3"\nexec "$TEST_W/bin/ln" "$@"\n' | stand ln
+    use_tool ln
+    rm -f "$W/home/.local/bin"
+    run_install --prefix "$HOME/.local"
+    check "ln replacing the target: installed" [ "$RC" = 0 ]
+    check "ln replacing the target: not a link" [ ! -L "$HOME/.local/bin/erssi" ]
+    check "ln replacing the target: it runs" [ "$("$HOME/.local/bin/erssi" --version 2>&1)" = "erssi 9.9.9 (20261010 1200)" ]
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

@@ -265,6 +265,19 @@ newest_signed() {
     done
     return 1
 }
+# ~/.local/bin/erssi -> $PREFIX/bin/erssi only for an install of the user's
+# own in the home: never as root, never for a prefix outside the home, and
+# never when ~/.local/bin is $PREFIX/bin (ln -sf would replace the installed
+# binary with a link to itself). Paths compared as resolved (pwd -P).
+bin_link_wanted() {
+    [ "$ROOT" = 0 ] || return 1
+    p=$(cd "$PREFIX" 2>/dev/null && pwd -P) || return 1
+    h=$(cd "$HOME" 2>/dev/null && pwd -P) || return 1
+    case "$p" in "$h"/*) ;; *) return 1 ;; esac
+    pb=$(cd "$PREFIX/bin" 2>/dev/null && pwd -P) || return 1
+    lb=$(cd "$HOME/.local/bin" 2>/dev/null && pwd -P) || lb=""
+    [ "$pb" != "$lb" ]
+}
 conf_get() {   # key -> value from shellter-install.conf (never run as shell)
     [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -n 1
     return 0
@@ -698,8 +711,13 @@ fi
 # ── 6. install ───────────────────────────────────────────────────────
 step "Installing"
 run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
-mkdir -p "$HOME/.local/bin" "$PREFIX/share/irssi"
-ln -sf "$PREFIX/bin/erssi" "$HOME/.local/bin/erssi"
+mkdir -p "$PREFIX/share/irssi"
+LINKED=0
+if bin_link_wanted; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$PREFIX/bin/erssi" "$HOME/.local/bin/erssi"
+    LINKED=1
+fi
 # erssi --update runs this installer (the copy of the installed release)
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
 {
@@ -720,11 +738,18 @@ fi
 
 # ── summary ──────────────────────────────────────────────────────────
 IN_PATH=1
-# shellcheck disable=SC2088 # shown, not run
-case ":$PATH:" in
-    *":$HOME/.local/bin:"*) RUN=erssi ;;
-    *) RUN="~/.local/bin/erssi"; IN_PATH=0 ;;
-esac
+if [ "$LINKED" = 1 ]; then
+    # shellcheck disable=SC2088 # shown, not run
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) RUN=erssi ;;
+        *) RUN="~/.local/bin/erssi"; IN_PATH=0 ;;
+    esac
+else
+    case ":$PATH:" in
+        *":$PREFIX/bin:"*) RUN=erssi ;;
+        *) RUN=$(tilde "$PREFIX/bin/erssi"); IN_PATH=0 ;;
+    esac
+fi
 printf '\n'
 if [ -n "${SAME:-}" ]; then
     printf '  %s%sUpdated: %s (%s)%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$SAME" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
@@ -738,8 +763,12 @@ else
     field "connect" "/connect IRCnet"
 fi
 field "update" "erssi --update"
-# shellcheck disable=SC2088 # shown, not run
-[ "$IN_PATH" = 1 ] || field "path" "~/.local/bin is not in PATH - add to ~/.profile: export PATH=\"\$HOME/.local/bin:\$PATH\""
+if [ "$IN_PATH" = 0 ] && [ "$LINKED" = 1 ]; then
+    # shellcheck disable=SC2088 # shown, not run
+    field "path" "~/.local/bin is not in PATH - add to ~/.profile: export PATH=\"\$HOME/.local/bin:\$PATH\""
+elif [ "$IN_PATH" = 0 ]; then
+    field "path" "$(tilde "$PREFIX/bin") is not in PATH"
+fi
 field "log" "$(tilde "$LOG")"
 printf '\n'
 }
