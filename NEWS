@@ -45,6 +45,11 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    excepted) (shared, sticky such as /tmp, group-writable, ACL),
 	    and a source directory or venv of another user's; choose a --src under
 	    a directory only you can write, such as the default ~/.local/src/erssi
+	  - shellter-install.sh: SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 lets it run
+	    in a user namespace (rootless container, bwrap), where root's
+	    directories show as the overflow uid (65534): that uid counts as
+	    root's above the parent of --src, never for the parent, --src or its
+	    venv; outside a user namespace or without /proc it does nothing
 	  - tests and fuzz harnesses that start the core use their own temporary
 	    home
 

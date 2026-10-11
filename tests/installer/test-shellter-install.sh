@@ -32,6 +32,7 @@ find_tool() {
 
 find_tool git >/dev/null || { echo "skip: no git"; exit 77; }
 SCRIPT=$(find_tool script) || SCRIPT=""
+UNSHARE=$(find_tool unshare) || UNSHARE=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
 stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
@@ -797,6 +798,158 @@ acl-bsd)
     no_fakes
     check "FreeBSD, sticky of root's with an ACL further up: refused" [ "$RC" = 1 ]
     check "... named" grep -qF "$W/tmpacl is writable by other users" "$W/out"
+    ;;
+userns)
+    # In a user namespace (rootless container, bwrap, unshare) the
+    # directories of users it does not map, root's among them, show as the
+    # overflow uid. SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts that uid as
+    # root's above the parent of --src only. The namespace is a stand-in
+    # /proc (SHELLTER_PROC: self/uid_map, sys/kernel/overflowuid), the
+    # owners come from ls; the real kernel: case userns-kernel
+    no_meson_python
+    another_user
+    mkdir -p "$W/proc/self" "$W/proc/sys/kernel"
+    echo 65534 > "$W/proc/sys/kernel/overflowuid"
+    U=$(id -u)
+    userns_map() { printf '%10s %10s %10s\n' "$U" "$U" 1 > "$W/proc/self/uid_map"; }
+    init_map() { printf '%10s %10s %10s\n' 0 0 4294967295 > "$W/proc/self/uid_map"; }
+    userns_map
+    SHELLTER_PROC=$W/proc; export SHELLTER_PROC
+    OPT=SHELLTER_INSTALL_TRUST_OVERFLOW_UID
+    # (a) further up: refused without the option, which the message names;
+    # installed with it
+    mkdir -p "$W/up/mine"
+    fake_owner "$W/up" 65534
+    run_install --src "$W/up/mine/erssi"
+    check "overflow uid further up: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/up belongs to another user (uid 65534)" "$W/out"
+    check "... the option named" grep -qF "$OPT=1" "$W/out"
+    check "... nothing made" none_exist "$W/up/mine/erssi" "$W/up/mine/erssi.lock"
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=0; export SHELLTER_INSTALL_TRUST_OVERFLOW_UID
+    run_install --src "$W/up/mine/erssi"
+    check "option 0: refused" [ "$RC" = 1 ]
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
+    run_install --src "$W/up/mine/erssi"
+    check "overflow uid further up, option: installed" [ "$RC" = 0 ]
+    check "... checked out" [ -d "$W/up/mine/erssi/.git" ]
+    # only the overflow uid: another user further up is still refused
+    mkdir -p "$W/other/mine"
+    foreign "$W/other"
+    run_install --src "$W/other/mine/erssi"
+    check "another uid further up, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/other belongs to another user (uid 4242)" "$W/out"
+    no_fakes
+    # (b) the parent, the source directory and the venv: never
+    mkdir -p "$W/ovp"
+    fake_owner "$W/ovp" 65534
+    run_install --src "$W/ovp/erssi"
+    check "overflow uid as the parent, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/ovp belongs to another user (uid 65534)" "$W/out"
+    check "... the option does not cover it" grep -qF "$OPT does not cover the parent of --src" "$W/out"
+    check "... nothing made" none_exist "$W/ovp/erssi" "$W/ovp/erssi.lock"
+    no_fakes
+    mkdir -p "$W/mine2/erssi"
+    fake_owner "$W/mine2/erssi" 65534
+    run_install --src "$W/mine2/erssi"
+    check "overflow uid as the source dir, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/mine2/erssi belongs to another user (uid 65534)" "$W/out"
+    check "... nothing checked out" none_exist "$W/mine2/erssi/.git"
+    no_fakes
+    V=$HOME/.local/src/erssi.venv
+    rm -f "$W/ran-venv" "$W/py.log" "$W/ran-pip"
+    plant_venv "$V"
+    fake_owner "$V" 65534
+    run_install --src "$HOME/.local/src/erssi"
+    check "overflow uid as the venv, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$V belongs to another user (uid 65534)" "$W/out"
+    check "... nothing run" none_exist "$W/ran-venv" "$W/py.log" "$W/ran-pip"
+    no_fakes
+    rm -rf "$V"
+    # (c) further up and writable by others: like root's, only sticky
+    mkdir -p "$W/open/mine"
+    chmod 0777 "$W/open"
+    fake_owner "$W/open" 65534
+    run_install --src "$W/open/mine/erssi"
+    check "overflow uid, open further up, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/open is writable by other users" "$W/out"
+    check "... nothing made" none_exist "$W/open/mine/erssi" "$W/open/mine/erssi.lock"
+    chmod 0775 "$W/open"
+    FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
+    run_install --src "$W/open/mine/erssi"
+    unset FAKE_GROUP_NAME
+    check "overflow uid, group-writable further up, option: refused" [ "$RC" = 1 ]
+    chmod 1777 "$W/open"
+    run_install --src "$W/open/mine/erssi"
+    check "overflow uid, sticky further up (/tmp), option: installed" [ "$RC" = 0 ]
+    run_install --src "$W/open/erssi3"
+    check "overflow uid, sticky as the parent, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/open belongs to another user (uid 65534)" "$W/out"
+    chmod 0755 "$W/open"
+    no_fakes
+    # (d) outside a user namespace (the identity map): the option does nothing
+    rm -rf "$W/up/mine/erssi" "$W/up/mine/erssi.lock"
+    fake_owner "$W/up" 65534
+    init_map
+    run_install --src "$W/up/mine/erssi"
+    check "no user namespace, option: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/up belongs to another user (uid 65534)" "$W/out"
+    check "... the option not named" no_grep "$OPT" "$W/out"
+    check "... nothing made" none_exist "$W/up/mine/erssi" "$W/up/mine/erssi.lock"
+    unset SHELLTER_INSTALL_TRUST_OVERFLOW_UID
+    run_install --src "$W/up/mine/erssi"
+    check "no user namespace, no option: the option not named" no_grep "$OPT" "$W/out"
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1; export SHELLTER_INSTALL_TRUST_OVERFLOW_UID
+    # no /proc (FreeBSD), or no overflowuid in it: nothing, no error
+    SHELLTER_PROC=$W/noproc
+    run_install --src "$W/up/mine/erssi"
+    check "no /proc, option: refused" [ "$RC" = 1 ]
+    check "... only the owner named" grep -qF "error: $W/up belongs to another user (uid 65534) - choose a --src" "$W/out"
+    check "... the option not named" no_grep "$OPT" "$W/out"
+    check "... no other error" [ "$(grep -c 'error\|cannot\|No such' "$W/out")" = 1 ]
+    SHELLTER_PROC=$W/proc
+    userns_map
+    rm -f "$W/proc/sys/kernel/overflowuid"
+    run_install --src "$W/up/mine/erssi"
+    check "no overflowuid, option: refused" [ "$RC" = 1 ]
+    check "... the option not named" no_grep "$OPT" "$W/out"
+    echo 'x' > "$W/proc/sys/kernel/overflowuid"
+    run_install --src "$W/up/mine/erssi"
+    check "overflowuid not a number, option: refused" [ "$RC" = 1 ]
+    echo 65534 > "$W/proc/sys/kernel/overflowuid"
+    run_install --src "$W/up/mine/erssi"
+    no_fakes
+    check "back in the user namespace, option: installed" [ "$RC" = 0 ]
+    ;;
+userns-kernel)
+    # the same in a real user namespace (unshare, only the user mapped):
+    # directories above the temporary directory (/ at least) show as the
+    # overflow uid; skipped where the kernel or unshare does not allow one
+    [ -n "$UNSHARE" ] || { echo "skip: no unshare"; exit 77; }
+    in_ns() { "$UNSHARE" --user --map-current-user "$@"; }
+    # shellcheck disable=SC2016 # run by sh in the namespace
+    ns_root=$(in_ns sh -c 'echo "$(cat /proc/sys/kernel/overflowuid) $(ls -ldn / | awk "{print \$3}")"' 2>/dev/null) ||
+        { echo "skip: no user namespace here (unshare --user --map-current-user)"; exit 77; }
+    [ "${ns_root% *}" = "${ns_root#* }" ] ||
+        { echo "skip: / does not show as the overflow uid in a user namespace ($ns_root)"; exit 77; }
+    mkdir -p "$W/mine"
+    in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --src "$W/mine/erssi" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+    check "user namespace, no option: refused" [ "$RC" = 1 ]
+    check "... the overflow uid named" grep -qF "belongs to another user (uid ${ns_root% *})" "$W/out"
+    check "... the option named" grep -qF "SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1" "$W/out"
+    check "... nothing made" none_exist "$W/mine/erssi" "$W/mine/erssi.lock"
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
+        --src "$W/mine/erssi" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+    check "user namespace, option: installed" [ "$RC" = 0 ]
+    check "... checked out" [ -d "$W/mine/erssi/.git" ]
+    # the parent is never trusted: --src right under /, which shows as the
+    # overflow uid (refused before anything is made there)
+    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
+        --src /erssi-userns-test > "$W/out" 2>&1 < /dev/null
+    RC=$?
+    check "user namespace, option, / as the parent: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "/ belongs to another user (uid ${ns_root% *})" "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

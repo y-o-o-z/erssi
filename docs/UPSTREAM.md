@@ -295,7 +295,11 @@ from a web client were older than the fork; the rest is fork-only):
   source directory, its venv and every directory above it must belong to
   you or root and be writable only by you (a root-owned sticky directory
   such as /tmp is allowed above the parent of --src, never as its parent),
-  otherwise the install is refused with the fix in the message.
+  otherwise the install is refused with the fix in the message; in a user
+  namespace `SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1` counts the overflow uid
+  (how root's directories show there) as root's above the parent of --src
+  only (the namespace is read from /proc/self/uid_map; nothing without
+  /proc).
 - Tests and fuzz harnesses that start the core use their own temporary
   home.
 

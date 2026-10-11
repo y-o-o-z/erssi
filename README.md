@@ -44,6 +44,12 @@ and checks the commit only) — runs the test suite and installs to
 and FreeBSD. Options: `--prefix`, `--ref <tag|branch|commit>` (anything that
 is not a recorded release is built with a warning; a commit as the full SHA), `--no-test`, `--clean` (remove
 the build directory afterwards, for small disk quotas), `--yes`.
+The source directory (`--src`, default `~/.local/src/erssi`) and every
+directory above it must be yours or root's. In a user namespace (a rootless
+container, bwrap, unshare) root's directories show as the overflow uid
+(65534); `SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1` counts it as root's above
+the parent of `--src` (never the parent, `--src` or its venv). Outside a
+user namespace, or without `/proc` (FreeBSD), it does nothing.
 
 ### Update
 
