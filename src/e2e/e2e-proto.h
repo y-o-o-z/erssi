@@ -101,6 +101,10 @@ char *e2e_build_reciprocal_keyreq_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id
 void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoing_stamps,
                        const E2E_NET *net, const char *sender_handle, const char *nick,
                        const char *body, const char *own_handle, char **rsp, char **reciprocal);
+/* the pending_inbound key a KEYREQ from sender for wire waits under on
+   net, as e2e_handle_keyreq stores it; NULL when it cannot wait there */
+char *e2e_pending_inbound_key(const E2E_JSON *kr, const E2E_NET *net, const char *sender,
+                              const char *wire);
 /* TRUE when a session was installed */
 gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_handle,
                            const char *nick, const char *body);

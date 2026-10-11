@@ -277,57 +277,98 @@ static char *oldest_member(const E2E_JSON *obj, const char *field)
    handle is the sender's ident@host, which may hold '|' and 0x1F: the
    context is the row's "channel" member (we wrote it), else what follows
    the row's "handle" member, else what follows the first '|' */
-static gboolean pending_row_on_net(const char *key, const E2E_JSON *row, const E2E_NET *net)
+static const char *pending_row_ctx(const char *key, const E2E_JSON *row)
 {
 	const char *channel = e2e_json_get_string(row, "channel");
 	const char *handle = e2e_json_get_string(row, "handle");
-	const char *ctx, *bar;
+	const char *bar;
 	size_t hl;
 
-	if (net == NULL)
-		return TRUE;
-	if (channel != NULL) {
-		ctx = channel;
-	} else if (handle != NULL && strncmp(key, handle, hl = strlen(handle)) == 0 &&
-	           key[hl] == '|') {
-		ctx = key + hl + 1;
-	} else {
-		bar = strchr(key, '|');
-		ctx = bar != NULL ? bar + 1 : key;
+	if (channel != NULL)
+		return channel;
+	if (handle != NULL && strncmp(key, handle, hl = strlen(handle)) == 0 && key[hl] == '|')
+		return key + hl + 1;
+	bar = strchr(key, '|');
+	return bar != NULL ? bar + 1 : key;
+}
+
+static gboolean pending_row_on_net(const char *key, const E2E_JSON *row, const E2E_NET *net)
+{
+	return net == NULL || e2e_ctx_on_net(pending_row_ctx(key, row), net);
+}
+
+/* the oldest waiting request of the network holding the most of them
+   (old unscoped ones count as one network), so a flood on some networks
+   only pushes out their own */
+static char *oldest_of_fullest(const E2E_JSON *pending)
+{
+	GHashTable *count = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	GPtrArray *keys = e2e_json_keys(pending);
+	E2E_JSON *mine = e2e_json_new(E2E_JSON_OBJECT);
+	char *fullest = NULL, *k;
+	guint i, best = 0;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *key = g_ptr_array_index(keys, i);
+		char *label = e2e_ctx_network(pending_row_ctx(key, e2e_json_get(pending, key)));
+		guint n;
+
+		if (label == NULL)
+			label = g_strdup("");
+		n = GPOINTER_TO_UINT(g_hash_table_lookup(count, label)) + 1;
+		/* the first to reach the highest count wins ties (keys are sorted) */
+		if (n > best) {
+			best = n;
+			g_free(fullest);
+			fullest = g_strdup(label);
+		}
+		g_hash_table_replace(count, label, GUINT_TO_POINTER(n));
 	}
-	return e2e_ctx_on_net(ctx, net);
+	for (i = 0; fullest != NULL && i < keys->len; i++) {
+		const char *key = g_ptr_array_index(keys, i);
+		E2E_JSON *r = e2e_json_get(pending, key);
+		char *label = e2e_ctx_network(pending_row_ctx(key, r));
+
+		if (g_strcmp0(label != NULL ? label : "", fullest) == 0)
+			e2e_json_set_int(mine, key, e2e_json_get_int(r, "received_at", 0));
+		g_free(label);
+	}
+	k = oldest_member(mine, NULL);
+	e2e_json_free(mine);
+	g_ptr_array_unref(keys);
+	g_hash_table_destroy(count);
+	g_free(fullest);
+	return k;
 }
 
 /* requests waiting for /e2e accept: at most E2E_MAX_PENDING_INBOUND on
    net (another network's do not push them out) and
-   E2E_MAX_PENDING_INBOUND_ALL in all; the oldest go first, with the
-   keyless session row stored next to them */
+   E2E_MAX_PENDING_INBOUND_ALL in all (then the network holding the most
+   gives one up); the oldest go first, with the keyless session row
+   stored next to them */
 static void prune_pending_inbound(E2E_JSON *kr, const E2E_NET *net)
 {
 	E2E_JSON *pending = e2e_json_get(kr, "pending_inbound");
 
 	for (;;) {
 		GPtrArray *keys = e2e_json_keys(pending);
-		E2E_JSON *mine = e2e_json_new(E2E_JSON_OBJECT), *all = e2e_json_new(E2E_JSON_OBJECT), *row;
+		E2E_JSON *mine = e2e_json_new(E2E_JSON_OBJECT), *row;
 		char *k = NULL;
 		guint i;
 
 		for (i = 0; i < keys->len; i++) {
 			const char *key = g_ptr_array_index(keys, i);
 			E2E_JSON *r = e2e_json_get(pending, key);
-			gint64 t = e2e_json_get_int(r, "received_at", 0);
 
-			e2e_json_set_int(all, key, t);
 			if (pending_row_on_net(key, r, net))
-				e2e_json_set_int(mine, key, t);
+				e2e_json_set_int(mine, key, e2e_json_get_int(r, "received_at", 0));
 		}
 		g_ptr_array_unref(keys);
 		if (e2e_json_size(mine) > E2E_MAX_PENDING_INBOUND)
 			k = oldest_member(mine, NULL);
-		else if (e2e_json_size(all) > E2E_MAX_PENDING_INBOUND_ALL)
-			k = oldest_member(all, NULL);
+		else if (e2e_json_size(pending) > E2E_MAX_PENDING_INBOUND_ALL)
+			k = oldest_of_fullest(pending);
 		e2e_json_free(mine);
-		e2e_json_free(all);
 		if (k == NULL)
 			break;
 		e2e_json_remove(pending, k);
@@ -999,6 +1040,45 @@ static char *reciprocal_ctx(const char *ctx, const char *own_handle)
 	return out;
 }
 
+/* the old (bare) twin of ctx, a context of net, whose rows still count
+   row by row: on the only network, while this network has rows of its own
+   there as well (e2e_ctx_find gave ctx) - e2e_adopt_legacy would keep
+   each old row nobody of this network has. NULL otherwise. */
+static char *legacy_twin(const E2E_JSON *kr, const E2E_NET *net, const char *ctx)
+{
+	char *found = NULL;
+
+	if (net == NULL || ctx == NULL || strchr(ctx, E2E_SCOPE_SEP) == NULL)
+		return NULL;
+	if (e2e_ctx_lookup(kr, net, e2e_ctx_wire(ctx), &found) == E2E_CTX_LEGACY)
+		return found;
+	g_free(found);
+	return NULL;
+}
+
+/* store's row "<a>|<b>" of ctx, else of its old twin (*used: that key) */
+static E2E_JSON *row_or_twin(const E2E_JSON *kr, const E2E_NET *net, const char *store,
+                             const char *handle, const char *ctx, gboolean handle_first,
+                             char **used)
+{
+	E2E_JSON *rows = e2e_json_get(kr, store), *row;
+	char *twin, *k;
+
+	k = handle_first ? pipe_key(handle, ctx) : pipe_key(ctx, handle);
+	row = e2e_json_get(rows, k);
+	if (row == NULL && (twin = legacy_twin(kr, net, ctx)) != NULL) {
+		g_free(k);
+		k = handle_first ? pipe_key(handle, twin) : pipe_key(twin, handle);
+		row = e2e_json_get(rows, k);
+		g_free(twin);
+	}
+	if (used != NULL)
+		*used = k;
+	else
+		g_free(k);
+	return row;
+}
+
 /* "@<handle>" on net: the config of a DM with handle, where it is (an old
    one is not taken over); NULL: E2E cannot be on there - an old row on
    several networks */
@@ -1226,8 +1306,7 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 	/* only an answer to a request of ours to this sender. rpe2e.pl also
 	   took one to a request sent without a known handle - from anyone. */
 	pending = e2e_json_get(kr, "pending");
-	pk = pipe_key(ctx, sender_handle);
-	row = e2e_json_get(pending, pk);
+	row = row_or_twin(kr, net, "pending", sender_handle, ctx, FALSE, &pk);
 	if (row == NULL) {
 		g_free(pk);
 		goto out;
@@ -1295,7 +1374,7 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	PEER_CHANGE change;
 	unsigned char x_sk[32], key[32];
 	const char *old_fp;
-	char *fp_hex = NULL, *cfg_ctx, *k, *ctx = NULL;
+	char *fp_hex = NULL, *cfg_ctx, *k, *ctx = NULL, *twin, *s_nonce;
 	gboolean ok = FALSE, on;
 
 	rk = e2e_handshake_parse(body, E2E_HS_REKEY);
@@ -1319,15 +1398,27 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	/* it replaces a trusted session of this handle and context with this
 	   key; it never creates one (rpe2e.pl took it from anyone it had seen,
 	   even a peer still waiting for /e2e accept) */
-	k = pipe_key(sender_handle, ctx);
-	sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
-	g_free(k);
+	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
 	if (!is_trusted(sess) || g_strcmp0(e2e_json_get_string(sess, "fp"), fp_hex) != 0)
 		goto out;
 	if (classify_peer_change(kr, fp_hex, sender_handle, &old_fp) == CHANGE_NEW)
 		goto out;
 	if (!check_peer(kr, fp_hex, rk->pub, sender_handle, ctx, &change))
 		goto out;
+	/* a nonce used under the old name is used */
+	twin = legacy_twin(kr, net, ctx);
+	if (twin != NULL) {
+		gboolean used;
+
+		k = pipe_key(fp_hex, twin);
+		s_nonce = e2e_b64_encode(rk->nonce, 16);
+		used = e2e_json_get(e2e_json_get(e2e_json_get(kr, "seen_rekeys"), k), s_nonce) != NULL;
+		g_free(s_nonce);
+		g_free(k);
+		g_free(twin);
+		if (used)
+			goto out;
+	}
 	if (!consume_rekey_nonce(kr, fp_hex, ctx, rk->nonce))
 		goto out;
 	if (!e2e_ed25519_sk_to_x25519(x_sk, id->sk))
@@ -1895,7 +1986,9 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 		res->action = E2E_GATE_CIPHER;
 		goto out;
 	}
-	/* the only network: the old rows become this network's */
+	/* the only network: the old rows become this network's; for a DM
+	   also the peer's sessions to us ("<peer>|@<own>"), not those of
+	   others */
 	if (kind == E2E_CTX_LEGACY) {
 		g_free(ctx);
 		ctx = e2e_ctx_resolve(kr, net, wire, &adopted);
@@ -1904,6 +1997,8 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			res->message = g_strdup(E2E_REFUSE_ENCRYPT);
 			goto out;
 		}
+		if (!is_channel)
+			e2e_adopt_legacy_peer_sessions(kr, net->label, wire + 1);
 	}
 	res->ctx = g_strdup(ctx);
 	res->save_needed = adopted;
@@ -2091,9 +2186,9 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
                           const char *text, E2E_IN_RESULT *res)
 {
 	E2E_WIRE *w;
-	E2E_JSON *incoming, *row;
+	E2E_JSON *row;
 	gboolean is_dm = !e2e_is_channel(p->target);
-	char *k, *wire = NULL, *ctx;
+	char *wire = NULL, *ctx;
 	int i;
 
 	memset(res, 0, sizeof(*res));
@@ -2168,10 +2263,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 	g_free(res->ctx);
 	res->ctx = ctx;
 
-	incoming = e2e_json_get(kr, "incoming");
-	k = pipe_key(p->handle, res->ctx);
-	row = e2e_json_get(incoming, k);
-	g_free(k);
+	row = row_or_twin(kr, p->net, "incoming", p->handle, res->ctx, TRUE, NULL);
 	/* an ambiguous +#chan: prefer the reading with a trusted session (a
 	   wrong pick cannot leak, the AEAD just fails) */
 	for (i = 0; p->alt_ctxs != NULL && p->alt_ctxs[i] != NULL && !is_trusted(row); i++) {
@@ -2180,9 +2272,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 
 		if (actx == NULL)
 			continue;
-		k = pipe_key(p->handle, actx);
-		r = e2e_json_get(incoming, k);
-		g_free(k);
+		r = row_or_twin(kr, p->net, "incoming", p->handle, actx, TRUE, NULL);
 		if (is_trusted(r)) {
 			g_free(res->ctx);
 			res->ctx = actx;
@@ -2416,7 +2506,12 @@ E2E_JSON *e2e_keyring_import(const E2E_JSON *doc, char **error)
 		row = g_ptr_array_index(list->array, i);
 		if (e2e_json_get_string(row, "channel") == NULL)
 			continue;
-		node = e2e_json_new(E2E_JSON_OBJECT);
+		/* every member is kept (the network that took the name over,
+		   members of other clients); the known ones in rpe2e.pl's form */
+		node = e2e_json_copy(row);
+		e2e_json_remove(node, "channel");
+		e2e_json_remove(node, "createdAt");
+		e2e_json_remove(node, "pendingRotation");
 		e2e_json_set(node, "sk", copy_or_null(e2e_json_get(row, "sk")));
 		e2e_json_set(node, "created_at", defined_or(row, "created_at", "createdAt"));
 		rot = defined_or(row, "pending_rotation", "pendingRotation");
@@ -2434,7 +2529,10 @@ E2E_JSON *e2e_keyring_import(const E2E_JSON *doc, char **error)
 		row = g_ptr_array_index(list->array, i);
 		if (e2e_json_get_string(row, "channel") == NULL)
 			continue;
-		node = e2e_json_new(E2E_JSON_OBJECT);
+		/* every member is kept: "nick" of a query's config, the network
+		   that took the name over, members of other clients */
+		node = e2e_json_copy(row);
+		e2e_json_remove(node, "channel");
 		e2e_json_set_int(node, "enabled", e2e_json_truthy(e2e_json_get(row, "enabled")) ? 1 : 0);
 		e2e_json_set_string(node, "mode", string_or(row, "mode", "normal"));
 		e2e_json_set(e2e_json_get(kr, "channels"), e2e_json_get_string(row, "channel"), node);
@@ -2457,4 +2555,18 @@ E2E_JSON *e2e_keyring_import(const E2E_JSON *doc, char **error)
 fail:
 	e2e_json_free(kr);
 	return NULL;
+}
+
+char *e2e_pending_inbound_key(const E2E_JSON *kr, const E2E_NET *net, const char *sender,
+                              const char *wire)
+{
+	char *ctx, *k;
+
+	/* where e2e_handle_keyreq puts it */
+	ctx = e2e_ctx_find(kr, net, wire);
+	if (ctx == NULL)
+		return NULL;
+	k = pipe_key(sender, ctx);
+	g_free(ctx);
+	return k;
 }

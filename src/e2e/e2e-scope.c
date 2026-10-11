@@ -766,3 +766,112 @@ guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire)
 	return n;
 }
 
+
+/* the old own contexts ("@<own>") of peer's sessions and of our requests to
+   peer: incoming "<peer>|@x", pending "@x|<peer>" */
+static void own_ctxs_of(const E2E_JSON *kr, const char *peer, GHashTable *out)
+{
+	E2E_JSON *store = e2e_json_get(kr, "incoming");
+	GPtrArray *keys = e2e_json_keys(store);
+	size_t pl = strlen(peer);
+	guint i;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+
+		if (strncmp(k, peer, pl) == 0 && k[pl] == '|' && k[pl + 1] == '@' &&
+		    strchr(k + pl + 1, E2E_SCOPE_SEP) == NULL)
+			g_hash_table_add(out, g_strdup(k + pl + 1));
+	}
+	g_ptr_array_unref(keys);
+	store = e2e_json_get(kr, "pending");
+	keys = e2e_json_keys(store);
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		size_t kl = strlen(k);
+
+		if (*k == '@' && strchr(k, E2E_SCOPE_SEP) == NULL && kl > pl + 1 &&
+		    strcmp(k + kl - pl, peer) == 0 && k[kl - pl - 1] == '|' &&
+		    g_strcmp0(e2e_json_get_string(e2e_json_get(store, k), "handle"), peer) == 0)
+			g_hash_table_add(out, g_strndup(k, kl - pl - 1));
+	}
+	g_ptr_array_unref(keys);
+}
+
+/* the row at key in store under nk instead; an existing one wins (merge:
+   members it lacks are added) */
+static gboolean move_one(E2E_JSON *store, const char *key, const char *nk, gboolean merge)
+{
+	E2E_JSON *row = e2e_json_get(store, key), *have;
+	gboolean moved = FALSE;
+	guint j;
+
+	if (row == NULL)
+		return FALSE;
+	have = e2e_json_get(store, nk);
+	if (have == NULL) {
+		e2e_json_set(store, nk, e2e_json_copy(row));
+		moved = TRUE;
+	} else if (merge && is_object(have) && is_object(row)) {
+		GPtrArray *members = e2e_json_keys(row);
+
+		for (j = 0; j < members->len; j++) {
+			const char *m = g_ptr_array_index(members, j);
+
+			if (e2e_json_get(have, m) == NULL)
+				e2e_json_set(have, m, e2e_json_copy(e2e_json_get(row, m)));
+		}
+		g_ptr_array_unref(members);
+	}
+	e2e_json_remove(store, key);
+	return moved;
+}
+
+guint e2e_adopt_legacy_peer_sessions(E2E_JSON *kr, const char *label, const char *peer)
+{
+	GHashTable *ctxs;
+	GHashTableIter iter;
+	gpointer c;
+	guint n = 0;
+
+	if (label == NULL || *label == '\0' || strchr(label, E2E_SCOPE_SEP) != NULL ||
+	    strchr(label, '|') != NULL || peer == NULL || *peer == '\0' ||
+	    strchr(peer, E2E_SCOPE_SEP) != NULL || !is_object(kr))
+		return 0;
+	ctxs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	own_ctxs_of(kr, peer, ctxs);
+	g_hash_table_iter_init(&iter, ctxs);
+	while (g_hash_table_iter_next(&iter, &c, NULL)) {
+		char *scoped = g_strdup_printf("%s%c%s", label, E2E_SCOPE_SEP, (char *) c);
+		char *k = g_strconcat(peer, "|", c, NULL), *nk = g_strconcat(peer, "|", scoped, NULL);
+		const char *fp = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "incoming"), k), "fp");
+		char *fk = NULL, *nfk = NULL;
+
+		if (fp != NULL) {
+			fk = g_strconcat(fp, "|", c, NULL);
+			nfk = g_strconcat(fp, "|", scoped, NULL);
+		}
+		if (is_object(e2e_json_get(kr, "incoming")))
+			n += move_one(e2e_json_get(kr, "incoming"), k, nk, FALSE);
+		if (fk != NULL && is_object(e2e_json_get(kr, "seen_rekeys")))
+			n += move_one(e2e_json_get(kr, "seen_rekeys"), fk, nfk, TRUE);
+		g_free(k);
+		g_free(nk);
+		k = g_strconcat(c, "|", peer, NULL);
+		nk = g_strconcat(scoped, "|", peer, NULL);
+		if (is_object(e2e_json_get(kr, "pending"))) {
+			E2E_JSON *row = e2e_json_get(e2e_json_get(kr, "pending"), k);
+
+			if (row != NULL && g_strcmp0(e2e_json_get_string(row, "channel"), c) == 0)
+				e2e_json_set_string(row, "channel", scoped);
+			n += move_one(e2e_json_get(kr, "pending"), k, nk, FALSE);
+		}
+		g_free(k);
+		g_free(nk);
+		g_free(fk);
+		g_free(nfk);
+		g_free(scoped);
+	}
+	g_hash_table_destroy(ctxs);
+	return n;
+}

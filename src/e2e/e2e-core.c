@@ -1086,10 +1086,9 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	if (strcmp(before, after) != 0)
 		e2e_save(kr);
 
-	/* the request waits under this network's context */
+	/* the request waits where e2e_handle_keyreq put it */
 	if (type == E2E_HS_KEYREQ && parsed != NULL && rsp == NULL &&
-	    e2e_ctx_lookup(kr, &net, ctx, &sctx) != E2E_CTX_BLOCKED) {
-		key = g_strconcat(sender, "|", sctx, NULL);
+	    (key = e2e_pending_inbound_key(kr, &net, sender, ctx)) != NULL) {
 		if (e2e_json_get(e2e_json_get(kr, "pending_inbound"), key) != NULL) {
 			/* their key may be here already (they answered our request):
 			   ours still goes to them only after /e2e accept */
