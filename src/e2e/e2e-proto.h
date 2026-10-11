@@ -241,6 +241,7 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
                                  char **message, char **target);
 #define E2E_SCRIPT_REFUSE "E2E is on for %s in the e2e module, which rpe2e.pl does not know - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) to send it encrypted, or unload it, /e2e off here, and load it again"
 #define E2E_SCRIPT_REFUSE_CASE "E2E is on for %s in rpe2e.pl's entries, the same channel as %s for the server, but rpe2e.pl compares names exactly and would send it in clear text - the message shown above was NOT delivered; write the name as %s"
+#define E2E_SCRIPT_REFUSE_LIST "rpe2e.pl looks the target list %s up as one name, and E2E is on for %s in its entries - it would send the message in clear text: the message shown above was NOT delivered; send it to each target separately"
 #define E2E_SCRIPT_REFUSE_OTHER "the e2e module does not let this out to %s in clear text (%s), and rpe2e.pl does not know its per-network entries - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) and settle it with /e2e in this window"
 
 /* one of the IRC lines in buf (split at CR, LF and NUL) is a PRIVMSG */
@@ -284,8 +285,8 @@ typedef struct {
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
                           const char *text, E2E_IN_RESULT *res);
 void e2e_in_result_clear(E2E_IN_RESULT *res);
-/* plain marked "(E2E key of <via>)" - inside the \001 of an ACTION;
-   control bytes of via shown as '?' */
+/* plain marked "\017 (E2E key of <via>)" - the formatting reset first,
+   inside the \001 of an ACTION; control bytes of via shown as '?' */
 char *e2e_plain_with_via(const char *plain, const char *via);
 
 /* ---- /e2e export and import ---- */

@@ -84,9 +84,9 @@ E2E_CASEMAP e2e_casemap_parse(const char *value)
 	return E2E_CASEMAP_UNKNOWN;
 }
 
-E2E_CASEMAP e2e_casemap_of_server(gboolean isupport_known, const char *value)
+E2E_CASEMAP e2e_casemap_of_server(const char *value, gboolean motd_done)
 {
-	return isupport_known ? e2e_casemap_parse(value) : E2E_CASEMAP_UNICODE;
+	return value != NULL || motd_done ? e2e_casemap_parse(value) : E2E_CASEMAP_UNICODE;
 }
 
 /* the exact maps, byte by byte, in place; UNICODE takes RFC1459's.
@@ -384,23 +384,54 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 
 char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 {
-	char *nfkc, *result;
+	GString *out;
+	char *nfkc, *folded;
+	const char *p;
 
 	if (name == NULL)
 		return NULL;
-	if (map != E2E_CASEMAP_UNICODE && map != E2E_CASEMAP_UNKNOWN) {
-		result = g_strdup(name);
-		fold_bytes(result, map, FALSE);
+	if (map != E2E_CASEMAP_UNICODE) {
+		/* the exact maps' own fold; UNKNOWN: ASCII letters only, any
+		   other byte as it is (a byte code page folds them its own way,
+		   or not at all) */
+		char *result = g_strdup(name);
+
+		if (map == E2E_CASEMAP_UNKNOWN) {
+			char *q;
+
+			for (q = result; *q != '\0'; q++)
+				*q = g_ascii_tolower(*q);
+		} else {
+			fold_bytes(result, map, FALSE);
+		}
 		return result;
 	}
 	if (!g_utf8_validate(name, -1, NULL))
 		return NULL;
+	/* both models must take the names for one: per code point simple
+	   lower case (towlower, Go's unicode.ToLower), no normalisation;
+	   then NFKC and full case folding (the PRECIS and utf8 servers). The
+	   first part's length in front keeps the two apart */
+	out = g_string_sized_new(strlen(name) * 2 + 8);
+	for (p = name; *p != '\0'; p = g_utf8_next_char(p))
+		g_string_append_unichar(out, g_unichar_tolower(g_utf8_get_char(p)));
+	g_string_prepend(out, ":");
+	{
+		char *len = g_strdup_printf("%" G_GSIZE_FORMAT, out->len - 1);
+
+		g_string_prepend(out, len);
+		g_free(len);
+	}
 	nfkc = g_utf8_normalize(name, -1, G_NORMALIZE_NFKC);
-	if (nfkc == NULL)
+	if (nfkc == NULL) {
+		g_string_free(out, TRUE);
 		return NULL;
-	result = g_utf8_casefold(nfkc, -1);
+	}
+	folded = g_utf8_casefold(nfkc, -1);
+	g_string_append(out, folded);
+	g_free(folded);
 	g_free(nfkc);
-	return result;
+	return g_string_free(out, FALSE);
 }
 
 char *e2e_casefold(const char *name, E2E_CASEMAP map)

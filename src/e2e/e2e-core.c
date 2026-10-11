@@ -363,17 +363,18 @@ gboolean e2e_legacy_ok(void)
 void e2e_server_net(SERVER_REC *server, E2E_NET *net)
 {
 	const char *casemapping = NULL;
-	gboolean known = FALSE;
+	gboolean motd_done = FALSE;
 
 	if (IS_IRC_SERVER(server) && IRC_SERVER(server)->isupport != NULL)
 		casemapping = g_hash_table_lookup(IRC_SERVER(server)->isupport, "CASEMAPPING");
-	/* before the 005 (isupport_sent, kept over /upgrade) nothing is
-	   known about the server's CASEMAPPING: the widest (R-E24) */
+	/* until the server named its CASEMAPPING (in any 005 line) or ended
+	   its MOTD without one, nothing is known: the widest (R-E24, R-E26).
+	   Both are kept over /upgrade (isupport, motd_got) */
 	if (IS_IRC_SERVER(server))
-		known = IRC_SERVER(server)->isupport_sent;
+		motd_done = IRC_SERVER(server)->motd_got;
 	e2e_net_init(net, server != NULL && server->connrec != NULL ? chatnet_name(server->connrec->chatnet) : NULL,
 	             server != NULL ? server->tag : NULL, casemapping, e2e_legacy_ok());
-	net->casemap = e2e_casemap_of_server(known, casemapping);
+	net->casemap = e2e_casemap_of_server(casemapping, motd_done);
 }
 
 /* ---- the keyring ---- */
@@ -798,6 +799,11 @@ static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf
 		*slot = NULL;
 	}
 	signal_continue(3, server, str, GINT_TO_POINTER(crlf));
+	/* the copy of a line is plain text: not kept after its emission */
+	if ((slot = gated_slot()) != NULL) {
+		gated_line_free(*slot);
+		*slot = NULL;
+	}
 	outgoing_depth--;
 }
 

@@ -1826,27 +1826,34 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 	g_ptr_array_unref(dropped);
 }
 
-/* IRCnet: "!chan" names the "!XXXXXchan" with that channel ID (five of
-   A-Z, 0-9) - wire such a name whose short form folds to want */
-static gboolean ircnet_short_name(const char *wire, const char *want, E2E_CASEMAP map)
+/* IRCnet: "!chan" names the "!XXXXXchan" with that channel ID (five
+   letters or digits, in any case) - longname such a name whose short
+   form folds to shortfold (a folded "!chan") */
+static gboolean ircnet_short_name(const char *longname, const char *shortfold, E2E_CASEMAP map)
 {
 	char *shortname, *folded;
 	gboolean same;
 	int i;
 
-	if (wire[0] != '!' || strlen(wire) < 7 || want[0] != '!')
+	if (longname[0] != '!' || strlen(longname) < 7 || shortfold[0] != '!')
 		return FALSE;
 	for (i = 1; i <= 5; i++) {
-		if (!g_ascii_isupper(wire[i]) && !g_ascii_isdigit(wire[i]))
+		if (!g_ascii_isalnum(longname[i]))
 			return FALSE;
 	}
-	shortname = g_strconcat("!", wire + 6, NULL);
+	shortname = g_strconcat("!", longname + 6, NULL);
 	folded = e2e_casefold(shortname, map);
-	same = strcmp(folded, want) == 0;
+	same = strcmp(folded, shortfold) == 0;
 	g_free(folded);
 	g_free(shortname);
 	return same;
 }
+
+typedef enum {
+	OTHER_NET,		/* the configs of this network (the gate) */
+	OTHER_SCRIPT,		/* rpe2e.pl's own rows, not those named like a reading */
+	OTHER_SCRIPT_ALL	/* rpe2e.pl's own rows, a reading's too */
+} OTHER_ROWS;
 
 /* "#Secret" when E2E is on for "#secret" on this network: the server
    takes both for the same channel (its CASEMAPPING, e2e_casefold), so
@@ -1856,10 +1863,10 @@ static gboolean ircnet_short_name(const char *wire, const char *want, E2E_CASEMA
    config with E2E on cannot be folded as the server folds it (not UTF-8
    or an unassigned code point on a Unicode CASEMAPPING, a non-ASCII name
    on an unknown one) - *bad that name, *other the config's (a reading
-   may be any channel to the server). bare_only: rpe2e.pl's own rows
-   only, not those named like a reading (the script compares exactly) */
+   may be any channel to the server). rows: which configs (OTHER_ROWS);
+   rpe2e.pl compares names exactly, and does not split "#a,#b" */
 static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **readings,
-                                gboolean bare_only, gboolean *undecided, const char **bad,
+                                OTHER_ROWS rows, gboolean *undecided, const char **bad,
                                 const char **other)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels");
@@ -1878,14 +1885,22 @@ static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **r
 			const char *key = g_ptr_array_index(keys, i), *wire;
 			char *have;
 
+			if (rows == OTHER_NET) {
+				if (!config_on_net(kr, key, net, &wire))
+					continue;
+			} else {
+				/* rpe2e.pl's own rows: it encrypts from them whatever
+				   the module's config of the name says (R-E26) */
+				if (strchr(key, E2E_SCOPE_SEP) != NULL)
+					continue;
+				wire = key;
+				/* a reading itself is the script's to encrypt */
+				if (rows == OTHER_SCRIPT &&
+				    g_strv_contains((const char *const *) readings, wire))
+					continue;
+			}
 			/* channels only: a DM config is no channel name (R-E24) */
-			if (!config_on_net(kr, key, net, &wire) || !e2e_ctx_enabled(kr, key) ||
-			    !e2e_is_channel(wire))
-				continue;
-			/* rpe2e.pl's own rows, other than a reading itself (the
-			   script encrypts that one) */
-			if (bare_only && (strchr(key, E2E_SCOPE_SEP) != NULL ||
-			                  g_strv_contains((const char *const *) readings, wire)))
+			if (!e2e_ctx_enabled(kr, key) || !e2e_is_channel(wire))
 				continue;
 			have = e2e_casefold_ex(wire, map, &have_exact);
 			/* an unknown CASEMAPPING decides no non-ASCII name, but a
@@ -1894,7 +1909,8 @@ static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **r
 			   decide counts (R-E23) */
 			if (!have_exact && want_exact && map == E2E_CASEMAP_UNKNOWN)
 				g_free(e2e_casefold_ex(wire, E2E_CASEMAP_UNICODE, &have_exact));
-			if (strcmp(have, want) == 0 || ircnet_short_name(wire, want, map)) {
+			if (strcmp(have, want) == 0 || ircnet_short_name(wire, want, map) ||
+			    ircnet_short_name(readings[j], have, map)) {
 				found = g_strdup(wire);
 			} else if ((!want_exact || !have_exact) && !*undecided) {
 				*undecided = TRUE;
@@ -2107,7 +2123,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	if (!lookup_enabled(kr, net, kind, ctx, wire)) {
 		gboolean undecided = FALSE;
 		const char *bad = NULL, *config = NULL;
-		char *other = is_channel ? enabled_other_case(kr, net, readings, FALSE, &undecided, &bad, &config)
+		char *other = is_channel ? enabled_other_case(kr, net, readings, OTHER_NET, &undecided, &bad, &config)
 		                         : e2e_enabled_dm_elsewhere(kr, net, target, wire + 1);
 
 		if (other != NULL && is_channel) {
@@ -2586,10 +2602,11 @@ char *e2e_plain_with_via(const char *plain, const char *via)
 	size_t len = strlen(plain);
 	char *shown = e2e_text_display(via), *out;
 
+	/* \017 first: colours the text left on must not hide the mark */
 	if (e2e_is_action(plain))
-		out = g_strdup_printf("%.*s (E2E key of %s)\001", (int) (len - 1), plain, shown);
+		out = g_strdup_printf("%.*s\017 (E2E key of %s)\001", (int) (len - 1), plain, shown);
 	else
-		out = g_strdup_printf("%s (E2E key of %s)", plain, shown);
+		out = g_strdup_printf("%s\017 (E2E key of %s)", plain, shown);
 	g_free(shown);
 	return out;
 }
@@ -2893,34 +2910,42 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 	return view;
 }
 
-/* rpe2e.pl compares channel names exactly: a channel E2E is on for in
-   its own (bare) rows that the server may take for to under another name
-   gets clear text from the script (R-E24). The refusal, or NULL. The
-   script's escape hatches (non-ACTION CTCP) stay. */
+/* rpe2e.pl compares channel names exactly, and looks "#a,#b" up as one
+   name: a channel E2E is on for in its own (bare) rows that the server
+   may take for to under another name, or for a piece of a target list
+   (R-E24, R-E26), gets clear text from the script. The refusal, or NULL.
+   The script's escape hatches (non-ACTION CTCP) stay. */
 static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const char *to,
                                const char *body)
 {
-	char **readings, *other, *msg = NULL;
+	char **pieces, **readings, *other = NULL, *msg = NULL;
 	const char *bad, *config;
-	gboolean undecided;
+	gboolean undecided = FALSE, list = strchr(to, ',') != NULL;
+	int i;
 
 	if (kr == NULL || (e2e_is_ctcp(body) && !e2e_is_action(body)))
 		return NULL;
-	readings = e2e_channel_readings(to);
-	if (readings[0] != NULL) {
-		other = enabled_other_case(kr, net, readings, TRUE, &undecided, &bad, &config);
-		if (other != NULL) {
-			msg = g_strdup_printf(E2E_SCRIPT_REFUSE_CASE, other, to, other);
-		} else if (undecided) {
-			char *why = g_strdup_printf(REFUSE_UNDECIDED, bad, to, config);
-
-			msg = g_strdup_printf("rpe2e.pl compares channel names exactly - %s; the message shown above was NOT delivered",
-			                      why);
-			g_free(why);
-		}
-		g_free(other);
+	pieces = g_strsplit(to, ",", -1);
+	for (i = 0; pieces[i] != NULL && other == NULL && !undecided; i++) {
+		readings = e2e_channel_readings(pieces[i]);
+		if (readings[0] != NULL)
+			other = enabled_other_case(kr, net, readings, list ? OTHER_SCRIPT_ALL : OTHER_SCRIPT,
+			                           &undecided, &bad, &config);
+		g_strfreev(readings);
 	}
-	g_strfreev(readings);
+	if (other != NULL && list) {
+		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_LIST, to, other);
+	} else if (other != NULL) {
+		msg = g_strdup_printf(E2E_SCRIPT_REFUSE_CASE, other, to, other);
+	} else if (undecided) {
+		char *why = g_strdup_printf(REFUSE_UNDECIDED, bad, to, config);
+
+		msg = g_strdup_printf("rpe2e.pl compares channel names exactly - %s; the message shown above was NOT delivered",
+		                      why);
+		g_free(why);
+	}
+	g_free(other);
+	g_strfreev(pieces);
 	return msg;
 }
 
