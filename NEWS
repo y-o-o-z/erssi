@@ -47,9 +47,14 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    a directory only you can write, such as the default ~/.local/src/erssi
 	  - shellter-install.sh: SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 lets it run
 	    in a user namespace (rootless container, bwrap), where root's
-	    directories show as the overflow uid (65534): that uid counts as
-	    root's above the parent of --src, never for the parent, --src or its
-	    venv; outside a user namespace or without /proc it does nothing
+	    directories, like every unmapped user's, show as the overflow uid
+	    (65534): that uid counts as root's above the parent of --src, so
+	    every unmapped user's directories there are trusted, not only
+	    root's; never for the parent, --src or its venv; outside a user
+	    namespace or without /proc it does nothing
+	  - shellter-install.sh refuses a user namespace that does not map your
+	    uid (id -u is then the overflow uid, and every unmapped user's
+	    directory looked like yours)
 	  - tests and fuzz harnesses that start the core use their own temporary
 	    home
 

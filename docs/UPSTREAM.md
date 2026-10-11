@@ -292,14 +292,17 @@ from a web client were older than the fork; the rest is fork-only):
   locale is not UTF-8; the `~/.local/bin` link only for a prefix in your
   home, never as root, never over the binary or over a file; the source
   lock is taken before the venv; FreeBSD's base OpenSSL is enough; the
-  source directory, its venv and every directory above it must belong to
-  you or root and be writable only by you (a root-owned sticky directory
+  source directory and its venv must belong to you, every directory above
+  them to you or root, and all be writable only by you (a root-owned sticky directory
   such as /tmp is allowed above the parent of --src, never as its parent),
   otherwise the install is refused with the fix in the message; in a user
   namespace `SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1` counts the overflow uid
-  (how root's directories show there) as root's above the parent of --src
-  only (the namespace is read from /proc/self/uid_map; nothing without
-  /proc).
+  (how the directories of root and of every other unmapped user show there,
+  and possibly a mapped user such as rootless podman's nobody) as root's
+  above the parent of --src only, so every unmapped user's directories there
+  are trusted, not only root's (the namespace is read from
+  /proc/self/uid_map; nothing without /proc); a namespace that does not map
+  the user's own uid is refused.
 - Tests and fuzz harnesses that start the core use their own temporary
   home.
 
