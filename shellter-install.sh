@@ -294,10 +294,17 @@ private_group() {
     members=$(getent group "$(id -gn)" | cut -d: -f4)
     [ -z "$members" ] || [ "$members" = "$(id -un)" ]
 }
+# an ACL ("+") outside Linux: FreeBSD and macOS (NFSv4/ZFS ACLs) can grant
+# write without the mode bits showing it; on Linux the group bits are the
+# ACL mask
+untrusted_acl() {   # mode
+    case "$1" in *+) [ "$(uname -s)" != Linux ] ;; *) return 1 ;; esac
+}
 # 0 when another user can write to $1
 others_can_write() {
     pg=$(mode_gid "$1")
     [ -n "$pg" ] || return 0
+    if untrusted_acl "${pg%% *}"; then return 0; fi
     case "${pg%% *}" in
         ????????w*) return 0 ;;
         ?????w*) if private_group "${pg%% *}" "${pg#* }"; then return 1; fi; return 0 ;;
@@ -324,10 +331,15 @@ safe_path() {
         o=$(owner "$d")
         [ "$o" = "$(id -u)" ] || [ "$o" = 0 ] || die "$d belongs to another user (uid ${o:-unknown}) - $hint"
         if others_can_write "$d"; then
+            # above the parent: a sticky directory of root's without an
+            # untrusted ACL (/tmp) is fine
             pg=$(mode_gid "$d")
-            case "$d:$o:${pg%% *}" in
-                "$1":*) die "$d is writable by other users - $hint" ;;
-                *:0:?????????[tT]*) ;;
+            m=${pg%% *}
+            if [ "$d" = "$1" ] || [ "$o" != 0 ] || untrusted_acl "$m"; then
+                die "$d is writable by other users - $hint"
+            fi
+            case "$m" in
+                ?????????[tT]*) ;;
                 *) die "$d is writable by other users - $hint" ;;
             esac
         fi
@@ -432,8 +444,14 @@ if [ "$CHECK" = 0 ]; then
     d=$(cd -P -- "$(dirname -- "$SRC")" && pwd -P) || die "cannot open $(dirname -- "$SRC")"
     SRC="${d%/}/$(basename -- "$SRC")"
     if [ -L "$SRC" ]; then
-        SRC=$(cd -P -- "$SRC" 2>/dev/null && pwd -P) || die "$SRC is a link, but not to a directory - use --src DIR"
+        t=$(cd -P -- "$SRC" 2>/dev/null && pwd -P) || die "$SRC is a link, but not to a directory - use --src DIR"
+        SRC=$t
     fi
+    # the resolved path: checked as the given one was
+    case "$SRC" in
+        -*|*"
+"*) die "invalid directory: $SRC" ;;
+    esac
     safe_path "$(dirname -- "$SRC")"
     mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
     trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT

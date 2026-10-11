@@ -102,9 +102,23 @@ EOF
 [ "$1" = charmap ] && printf '%s\n' "${FAKE_CHARMAP:-}"
 exit 0
 EOF
-    use_tool pkg-config cc perl meson ninja locale
+    # getent group: the user's group, members $FAKE_GROUP_MEMBERS (none)
+    stand getent <<'EOF'
+#!/bin/sh
+[ "$1" = group ] && echo "$2:x:$("$TEST_W/bin/id" -g):${FAKE_GROUP_MEMBERS:-}"
+EOF
+    use_tool pkg-config cc perl meson ninja locale getent
     PATH=$W/shim:$W/bin; export PATH
     make_repo
+    # the installer refuses a --src under a directory others can write to:
+    # $W and every directory above it must pass its own check
+    if ! msg=$(SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init
+            owner() { ls -ldn "$1" 2>/dev/null | awk "{print \$3}"; }
+            safe_path "$2"' sh "$SRC/shellter-install.sh" "$W" 2>&1); then
+        echo "skip: the temporary directory is not private - set TMPDIR to a directory only you can write:"
+        printf '%s\n' "$msg" | sed -n 's/^ *error: //p'
+        exit 77
+    fi
 }
 
 # a local repository with one commit holding the installer under test
@@ -188,11 +202,7 @@ case "$*" in
     *) exec "$TEST_W/bin/id" "$@" ;;
 esac
 EOF
-    stand getent <<'EOF'
-#!/bin/sh
-[ "$1" = group ] && echo "$2:x:$("$TEST_W/bin/id" -g):${FAKE_GROUP_MEMBERS:-}"
-EOF
-    use_tool ls id getent
+    use_tool ls id
 }
 foreign() { for f in "$@"; do printf '%s 4242 -\n' "$f" >> "$W/lsfake"; done; }
 fake_owner() { printf '%s %s -\n' "$1" "$2" >> "$W/lsfake"; }
@@ -668,6 +678,10 @@ src-shared-parent)
     check "open further up: refused" [ "$RC" = 1 ]
     check "open further up: named" grep -qF "$W/open is writable by other users" "$W/out"
     check "open further up: nothing made" none_exist "$W/open/mine/erssi" "$W/open/mine/erssi.lock"
+    fake_owner "$W/open" 0
+    run_install --src "$W/open/mine/erssi"
+    no_fakes
+    check "open further up, root's, not sticky: refused" [ "$RC" = 1 ]
     chmod 1777 "$W/open"
     run_install --src "$W/open/mine/erssi"
     check "sticky further up, not root's: refused" [ "$RC" = 1 ]
@@ -705,6 +719,84 @@ src-shared-parent)
     chmod 0755 "$W/open2"
     check "link into an open directory: refused" [ "$RC" = 1 ]
     check "link into an open directory: named" grep -qF "$W/open2 is writable by other users" "$W/out"
+    # an open directory of ours named like "owner 0, sticky mode"
+    P="$W/x:0:abcdefghit"
+    mkdir -p "$P/mine"
+    chmod 0777 "$P"
+    run_install --src "$P/mine/erssi"
+    chmod 0755 "$P"
+    check "open directory named like root's sticky one: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$P is writable by other users" "$W/out"
+    check "... nothing made" none_exist "$P/mine/erssi" "$P/mine/erssi.lock"
+    # a link to nothing, or to a file: named in the message
+    ln -s "$W/nowhere" "$W/dangling"
+    run_install --src "$W/dangling"
+    check "dangling link: refused" [ "$RC" = 1 ]
+    check "dangling link: named" grep -qF "$W/dangling is a link, but not to a directory" "$W/out"
+    : > "$W/afile"
+    ln -s "$W/afile" "$W/filelink"
+    run_install --src "$W/filelink"
+    check "link to a file: refused" [ "$RC" = 1 ]
+    check "link to a file: named" grep -qF "$W/filelink is a link, but not to a directory" "$W/out"
+    # a link to a directory whose name has a newline: invalid
+    NL=$(printf 'a\nb')
+    mkdir -p "$W/$NL"
+    ln -s "$W/$NL" "$W/nllink"
+    run_install --src "$W/nllink"
+    check "link to a name with a newline: refused" [ "$RC" = 1 ]
+    check "... invalid directory" grep -qF "invalid directory" "$W/out"
+    check "... nothing made" none_exist "$W/$NL.lock" "$W/$NL/.git"
+    ;;
+acl-bsd)
+    # FreeBSD and macOS: an ACL ("+") can grant write without the mode
+    # bits showing it, so it is not trusted there; on Linux the group bits
+    # are the ACL mask and the mode rule stays
+    no_meson_python
+    another_user
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\necho "${FAKE_UNAME:-Linux}"\n' | stand uname
+    use_tool uname
+    SHELLTER_OS_RELEASE=$W/none; export SHELLTER_OS_RELEASE
+    V=$HOME/.local/src/erssi.venv
+    plant_venv "$V"
+    fake_mode "$V" drwxr-xr-x+
+    FAKE_UNAME=Linux; export FAKE_UNAME
+    run_install
+    check "Linux, venv with an ACL and no group write: installed" [ "$RC" = 0 ]
+    check "... reused" [ -s "$W/ran-venv" ]
+    rm -f "$W/ran-venv"
+    FAKE_UNAME=FreeBSD
+    run_install
+    check "FreeBSD, venv with an ACL: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$V can be changed by other users" "$W/out"
+    check "... nothing run" none_exist "$W/ran-venv"
+    FAKE_UNAME=Darwin
+    run_install
+    check "macOS, venv with an ACL: refused" [ "$RC" = 1 ]
+    no_fakes
+    FAKE_UNAME=FreeBSD
+    fake_mode "$HOME/.local/src/erssi" drwxr-xr-x+
+    run_install
+    no_fakes
+    check "FreeBSD source dir with an ACL: refused" [ "$RC" = 1 ]
+    fake_mode "$HOME/.local/src" drwxr-xr-x+
+    run_install
+    check "FreeBSD parent with an ACL: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$HOME/.local/src is writable by other users" "$W/out"
+    FAKE_UNAME=Linux
+    run_install
+    no_fakes
+    check "Linux parent with an ACL and no group write: installed" [ "$RC" = 0 ]
+    # further up: a sticky directory of root's with an ACL
+    mkdir -p "$W/tmpacl/mine"
+    printf '%s 0 drwxrwxrwt+\n' "$W/tmpacl" >> "$W/lsfake"
+    run_install --src "$W/tmpacl/mine/erssi"
+    check "Linux, sticky of root's with an ACL further up: installed" [ "$RC" = 0 ]
+    FAKE_UNAME=FreeBSD
+    run_install --src "$W/tmpacl/mine/erssi"
+    no_fakes
+    check "FreeBSD, sticky of root's with an ACL further up: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/tmpacl is writable by other users" "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
