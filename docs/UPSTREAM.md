@@ -207,8 +207,8 @@ Open at `4833f418`. Each item was checked in the code.
 14. The shellter themes still carry format sections for scripts erssi
     does not ship, including the author's own (`themes/shellter.theme:753-880`,
     same in `shellter-light.theme`). Remove them before shipping the themes.
-15. Fork-only: the default-file hash list is written with
-    `g_file_set_contents()` and then `chmod()` (`fe-ansi/irssi.c:412-413`).
+15. Fixed: the default-file hash list is 0600 from the start (see below).
+    Fork-only.
 16. Commit hygiene: `18851c12`, `4b56253e` and `d4e22458` are review-fix
     commits that mix several fixes. `92c1a7ac` and `69c0526e` mix a fix with
     a behaviour change. Take them per file (section 6).
@@ -276,6 +276,17 @@ Fixed since `4833f418`:
   path only: a logged-in web client can still run any command (`/exec`,
   `/script exec`, `/set`), so access to fe-web equals access to the
   terminal - guard the fe-web password and socket like a shell login.
+- The update of the files erssi ships into `~/.erssi` (themes, startup)
+  is its own unit, `fe-ansi/default-files.c`, with tests
+  (`tests/fe-ansi/test-default-files.c`); `irssi.c` keeps the walk over
+  the shipped files. The hash list `default-files.sha256` is written like
+  the files: a temporary file in `~/.erssi` with mode 0600 from the start,
+  written out to the disk (`fsync()`), then renamed over the old one.
+  Before, `g_file_set_contents()` created it with the umask's mode and a
+  `chmod()` set 0600 afterwards. A FIFO swapped in for a file after the
+  `lstat()` is opened without blocking and refused, so it cannot hang the
+  start; a file's sha256 is computed as it is read, not on a copy in
+  memory.
 
 ## 6. How to take a change that is not in a pull request
 

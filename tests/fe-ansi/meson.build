@@ -141,3 +141,25 @@ test('test-term-colors test', test_test_term_colors,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_default_files = executable('test-default-files',
+  files(
+    '../../src/fe-ansi/default-files.c',
+    'test-default-files.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-default-files test', test_test_default_files,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

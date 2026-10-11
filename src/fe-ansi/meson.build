@@ -9,6 +9,7 @@ fe_ansi_sources = files(
   'gui-printtext.c',
   'gui-readline.c',
   'gui-windows.c',
+  'default-files.c',
   'irssi.c',
   'lastlog.c',
   'mainwindow-activity.c',
