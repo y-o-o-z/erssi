@@ -632,6 +632,35 @@ else
     bad "status, list -all or autotrust do not show <network>:<name>"
     grep -aE "encrypted:|autotrust|E2E:#|E2E#" "$WORK/alice/all.log" | tail -n 8 | sed 's/^/    /'
 fi
+# control bytes stored in the keyring (a handle, a nick) are shown as '?',
+# never as formatting codes
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the display check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["peers"]["e" * 32] = {"pk": "", "last_handle": "evil\x03" "4@h", "last_nick": "evil\x02nick",
+                        "status": "pending", "first_seen": 1, "last_seen": 1}
+k["incoming"]["evil\x03" "4@h|E2E\x1f#test"] = {"fp": "e" * 32, "sk": "", "status": "pending", "created_at": 1}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say alice "/e2e list -all"
+say alice "/e2e list"
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the display check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+del k["peers"]["e" * 32]
+del k["incoming"]["evil\x03" "4@h|E2E\x1f#test"]
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+if grep -qF "evil?4@h  [pending]  nick=evil?nick" "$WORK/alice/all.log" &&
+   grep -qF "evil?4@h  E2E:$CHAN  [pending]" "$WORK/alice/all.log" &&
+   grep -qF "evil?4@h on E2E:$CHAN" "$WORK/alice/all.log"; then
+    pass "list and list -all show control bytes of the keyring as '?'"
+else
+    bad "list or list -all print control bytes of the keyring"
+    grep -aF "evil" "$WORK/alice/all.log" | sed 's/^/    /'
+fi
 
 # ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
 say alice "/join -E2E $CHAN"
@@ -672,7 +701,15 @@ say bob "/window goto $CHAN"
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
 say bob "scoped only from bob"
 say bob "!seen scopedbot"
+# a wire typed (or pasted) by the user is text, not the script's chunk
+TYPED_WIRE=$(grep -a "^alice PRIVMSG $CHAN :+RPE2E01 " "$WORK/wire.log" | tail -n 1 | cut -d' ' -f4- | cut -c2-)
+say bob "$TYPED_WIRE"
 sleep 1
+if [ -n "$TYPED_WIRE" ] && ! grep -aqF "bob PRIVMSG $CHAN :$TYPED_WIRE" "$WORK/wire.log"; then
+    pass "rpe2e.pl loaded: a wire typed by the user to that channel is not sent"
+else
+    bad "rpe2e.pl loaded: a wire typed by the user went out (or none to type)"
+fi
 if grep -aqF "scoped only from bob" "$WORK/wire.log"; then
     bad "rpe2e.pl loaded: a channel only the module encrypts went out in plain text"
 else
@@ -690,6 +727,19 @@ else
     bad "rpe2e.pl loaded: the bot command was stopped"
 fi
 say bob "/e2e mode quiet"
+# the script decides a raw buffer of several lines by its first target:
+# a PRIVMSG behind it to a channel E2E is on for in the script's own
+# (bare) entry must not leave in clear either
+say bob "/join #multi"
+say bob "/e2e on"
+say bob "/window goto $CHAN"
+say bob "/script exec Irssi::active_server->send_raw('PRIVMSG #pub :multi lead'.chr(13).chr(10).'PRIVMSG #multi :multi secret')"
+sleep 1
+if grep -aqF "multi secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: a second line of a raw buffer went out in plain text"
+else
+    pass "rpe2e.pl loaded: a second line of a raw buffer is not sent in plain text"
+fi
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
 import json, sys

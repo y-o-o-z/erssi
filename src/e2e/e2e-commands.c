@@ -578,8 +578,9 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 			if (strcmp(status, "trusted") == 0 && !e2e_fingerprint_accepted(kr, fp))
 				status = "key held, not accepted";
 			e2e_print_item(item, "  %s  [%s]  nick=%s fp=%.16s",
-			               str_or(e2e_json_get_string(p, "last_handle"), "—"), status,
-			               str_or(e2e_json_get_string(p, "last_nick"), "—"), fp);
+			               shown_text(str_or(e2e_json_get_string(p, "last_handle"), "—")), status,
+			               shown_text(str_or(e2e_json_get_string(p, "last_nick"), "—")),
+			               shown_text(fp));
 			any = TRUE;
 		}
 		g_ptr_array_unref(keys);
@@ -593,7 +594,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 			split_key(g_ptr_array_index(keys, i), &handle, &channel);
 			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", shown_text(handle), shown(channel),
 			               session_label(kr, handle, channel, row),
-			               str_or(e2e_json_get_string(row, "fp"), ""));
+			               shown_text(str_or(e2e_json_get_string(row, "fp"), "")));
 			g_free(handle);
 			g_free(channel);
 			any = TRUE;
@@ -632,8 +633,8 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		                       e2e_ctx_on_net(channel, &net)
 		                     : g_strcmp0(channel, ctx) == 0;
 		if (match) {
-			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", handle, shown(channel),
-			               str_or(e2e_json_get_string(row, "fp"), ""),
+			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", shown_text(handle), shown(channel),
+			               shown_text(str_or(e2e_json_get_string(row, "fp"), "")),
 			               session_label(kr, handle, channel, row));
 			any = TRUE;
 		}

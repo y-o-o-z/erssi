@@ -213,22 +213,29 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
                          E2E_RESOLVE_FUNC resolve, void *resolve_data);
 /*
  While rpe2e.pl is loaded (R-E19): the outgoing buffer buf, which the
- script let pass unchanged, decided as the module would decide it on the
- rows rpe2e.pl cannot see - a copy of kr holding only the per-network
- (scoped) rows of the context stores - with a dry gate: kr is never
- changed, nothing is adopted, no key is made. Pieces that are no PRIVMSG
- and PRIVMSGs whose body is a wire (the script's own chunks) pass.
+ script let pass unchanged, decided as the module would decide it with a
+ dry gate: kr is never changed, nothing is adopted, no key is made.
+  - One line: decided on the rows rpe2e.pl cannot see - a copy of kr
+    holding only the per-network (scoped) rows of the context stores;
+    old (unscoped) rows are the script's own business. A body that is a
+    wire passes only in a nested emission (nested: "server outgoing
+    modify" emitted while another runs - the script sending its chunks
+    with send_raw_now); a wire the user typed is text like any other.
+  - Several lines (CR, LF or NUL inside): the script decides such a
+    buffer by its first line only, so every PRIVMSG in it is decided on
+    the whole keyring, old rows too, and no wire passes.
+  - Pieces that are no PRIVMSG pass.
    E2E_GATE_REFUSE  a PRIVMSG the module would encrypt or refuse (E2E is
-                    on there in the module's entries, a name another
-                    network took over, an unreadable keyring): *message
-                    the refusal, *target its target
+                    on there, a name another network took over, an
+                    unreadable keyring - lost: the E2E_REFUSE_LOST hint):
+                    *message the refusal, *target its target
    E2E_GATE_BYPASS  a bot command on such a channel: *message the warning
    E2E_GATE_PASS    everything else (*message NULL)
- Old (unscoped) rows are the script's own business and do not count.
 */
-E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
-                                 const char *buf, gsize len, E2E_RESOLVE_FUNC resolve,
-                                 void *resolve_data, char **message, char **target);
+E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lost,
+                                 gboolean nested, const E2E_NET *net, const char *buf,
+                                 gsize len, E2E_RESOLVE_FUNC resolve, void *resolve_data,
+                                 char **message, char **target);
 #define E2E_SCRIPT_REFUSE "E2E is on for %s in the e2e module, which rpe2e.pl does not know - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) to send it encrypted, or unload it, /e2e off here, and load it again"
 #define E2E_SCRIPT_REFUSE_OTHER "the e2e module does not let this out to %s in clear text (%s), and rpe2e.pl does not know its per-network entries - the message shown above was NOT delivered. Unload rpe2e.pl (/script unload rpe2e) and settle it with /e2e in this window"
 
