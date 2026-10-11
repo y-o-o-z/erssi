@@ -909,6 +909,9 @@ void fe_web_uid_map_set_text(const char *text)
  * most FE_WEB_UID_MAP_MAX bytes; an error, or more: not known, so no) */
 static gboolean uid_map_is_whole(void)
 {
+	/* the map of a namespace is written once, and erssi never moves to
+	 * another: read it once (-1: not yet) */
+	static int whole = -1;
 	char buf[FE_WEB_UID_MAP_MAX + 1];
 	gsize fill = 0;
 	ssize_t n = 0;
@@ -916,6 +919,8 @@ static gboolean uid_map_is_whole(void)
 
 	if (uid_map_text != NULL)
 		return fe_web_uid_map_whole(uid_map_text, strlen(uid_map_text));
+	if (whole >= 0)
+		return whole;
 	fd = open("/proc/self/uid_map", O_RDONLY | O_NOCTTY | O_CLOEXEC);
 	if (fd < 0)
 		return FALSE;
@@ -931,7 +936,8 @@ static gboolean uid_map_is_whole(void)
 	if (n < 0)
 		return FALSE;
 	/* more than FE_WEB_UID_MAP_MAX: refused there */
-	return fe_web_uid_map_whole(buf, fill);
+	whole = fe_web_uid_map_whole(buf, fill);
+	return whole;
 }
 
 /* the uid /proc shows for one outside our user namespace (65534 unless
