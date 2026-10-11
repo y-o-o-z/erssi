@@ -56,11 +56,13 @@ void e2e_outq_free(E2E_OUTQ *q)
 
 gboolean e2e_outq_empty(const E2E_OUTQ *q)
 {
+	g_return_val_if_fail(q != NULL, TRUE);
 	return q->lines.length == 0;
 }
 
 guint e2e_outq_length(const E2E_OUTQ *q)
 {
+	g_return_val_if_fail(q != NULL, 0);
 	return q->lines.length;
 }
 
@@ -68,6 +70,11 @@ void e2e_outq_push_front(E2E_OUTQ *q, E2E_OUT_KIND kind, const GPtrArray *lines)
 {
 	guint i;
 
+	g_return_if_fail(q != NULL);
+	g_return_if_fail(lines != NULL);
+	/* all or nothing */
+	for (i = 0; i < lines->len; i++)
+		g_return_if_fail(g_ptr_array_index(lines, i) != NULL);
 	/* last first, so the batch keeps its order ahead of everything */
 	for (i = lines->len; i > 0; i--)
 		g_queue_push_head(&q->lines,
@@ -76,11 +83,14 @@ void e2e_outq_push_front(E2E_OUTQ *q, E2E_OUT_KIND kind, const GPtrArray *lines)
 
 void e2e_outq_push_back(E2E_OUTQ *q, E2E_OUT_KIND kind, const char *line)
 {
+	g_return_if_fail(q != NULL);
+	g_return_if_fail(line != NULL);
 	g_queue_push_tail(&q->lines, out_line_new(kind, line));
 }
 
 E2E_OUT_LINE *e2e_outq_pop(E2E_OUTQ *q)
 {
+	g_return_val_if_fail(q != NULL, NULL);
 	return g_queue_pop_head(&q->lines);
 }
 
@@ -89,6 +99,9 @@ guint e2e_outq_drop(E2E_OUTQ *q, guint *plain)
 	E2E_OUT_LINE *l;
 	guint n = 0, p = 0;
 
+	if (plain != NULL)
+		*plain = 0;
+	g_return_val_if_fail(q != NULL, 0);
 	while ((l = g_queue_pop_head(&q->lines)) != NULL) {
 		n++;
 		if (l->kind == E2E_OUT_PLAIN)

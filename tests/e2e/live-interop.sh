@@ -909,6 +909,59 @@ k = json.load(open(p, encoding="utf-8"))
 del k["channels"]["zed"]
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
+# R-E30: a non-ASCII nick the module finds only in the keyring's cache:
+# rpe2e.pl before erssi/y-o-o-z (13) compared last_nick by lc() on the
+# decoded string and did not find it (kótek) - not sent in clear, by any
+# copy of the script. And a nick
+# whose newest address has E2E off while a query of that nick has it on
+# (DM moved): refused as the module refuses it
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E30 checks failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["@kt@h9"] = {"enabled": 1, "mode": "normal"}
+# stored as the module and the script store irssi's bytes: one character
+# per byte ("kÃ³tek")
+k["peers"]["9" * 32] = {"pk": "", "last_nick": "kótek".encode("utf-8").decode("latin-1"),
+                        "last_handle": "kt@h9", "status": "pending",
+                        "first_seen": 1, "last_seen": 1}
+k["channels"]["@yan@h1"] = {"enabled": 1, "mode": "normal"}
+k["peers"]["1" * 32] = {"pk": "", "last_nick": "yan", "last_handle": "yan@h1", "status": "pending",
+                        "first_seen": 1, "last_seen": 1}
+k["peers"]["2" * 32] = {"pk": "", "last_nick": "YAN", "last_handle": "other@h2", "status": "pending",
+                        "first_seen": 2, "last_seen": 2}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG kótek :script nonascii secret')"
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG yan :script moved secret')"
+sleep 1
+# the script of erssi/y-o-o-z (13) finds the peer and encrypts; an older
+# copy does not, and the module refuses the line
+if grep -aqF "script nonascii secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: kótek (E2E on for its query, found only in the keyring) went out in plain text"
+elif grep -aqF "bob PRIVMSG kótek :+RPE2E01 " "$WORK/wire.log" ||
+     wait_for "$WORK/bob/all.log" "rpe2e.pl cannot find it now" 5; then
+    pass "rpe2e.pl loaded: kótek (E2E on for its query, found only in the keyring) is encrypted or refused, not sent in plain text"
+else
+    bad "rpe2e.pl loaded: kótek was neither encrypted nor refused with a reason"
+fi
+if grep -aqF "script moved secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: yan (now at another address, E2E on at the old one) went out in plain text"
+elif wait_for "$WORK/bob/all.log" "yan is now other@h2" 5; then
+    pass "rpe2e.pl loaded: yan (now at another address, E2E on at the old one) is not sent in plain text"
+else
+    bad "rpe2e.pl loaded: yan was not sent, but bob is not told why"
+fi
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E30 checks failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+for c in ("@kt@h9", "@yan@h1"):
+    del k["channels"][c]
+for f in ("9" * 32, "1" * 32, "2" * 32):
+    del k["peers"][f]
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
 # a bot command bypasses E2E on a channel only; the channel piece of a
 # list does not make the DM piece a bot command (R-E29)
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG #x,alice :!help script bypass secret')"

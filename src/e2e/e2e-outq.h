@@ -12,6 +12,10 @@
  The queue owns copies of its lines and wipes each one when it frees it:
  e2e_outq_free(), e2e_outq_drop() and e2e_out_line_free() on a popped
  line. Pure: no irssi.
+
+ A NULL queue, a NULL line, or a batch holding a NULL line is a
+ programming error (g_return_if_fail): nothing is queued. Only
+ e2e_outq_free() and e2e_out_line_free() take NULL as a no-op.
 */
 
 #include <glib.h>
