@@ -666,6 +666,29 @@ fi
 cp "$WORK/bob/rpe2e/keyring.json" "$WORK/bob-keyring.json"
 cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
+# R-E19: rpe2e.pl on a keyring whose #test is set up only in the module's
+# per-network entries ("E2E\x1f#test"): the script would send in clear
+# text, the inactive module stops it; a bot command still goes out
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say bob "scoped only from bob"
+say bob "!seen scopedbot"
+sleep 1
+if grep -aqF "scoped only from bob" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: a channel only the module encrypts went out in plain text"
+else
+    pass "rpe2e.pl loaded: a channel only the module encrypts is not sent in plain text"
+fi
+if wait_for "$WORK/bob/logs/E2E/$CHAN.log" "E2E is on for E2E:$CHAN in the e2e module, which rpe2e.pl does not know" 5; then
+    pass "bob is told why it was not delivered"
+else
+    bad "bob is not told why his message was not delivered"
+fi
+if grep -aqF "bob PRIVMSG $CHAN :!seen scopedbot" "$WORK/wire.log" &&
+   grep -qF "bot-style message to $CHAN sent in CLEARTEXT" "$WORK/bob/logs/E2E/$CHAN.log"; then
+    pass "rpe2e.pl loaded: a bot command on that channel still goes out, with the warning"
+else
+    bad "rpe2e.pl loaded: the bot command was stopped"
+fi
 say bob "/e2e mode quiet"
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
@@ -679,11 +702,24 @@ assert b["identity"] == a["identity"]
 PY
 # the downgrade: rpe2e.pl on a keyring with per-network entries cannot
 # see them - the native module (inactive) warns
-say bob "after copy"
+say bob "after copy $LONG_A"
 if wait_for "$WORK/bob/all.log" "does not know the per-network entries" 5; then
     pass "bob: the native module warns that rpe2e.pl cannot see the per-network entries"
 else
     bad "bob: no downgrade warning with rpe2e.pl on a scoped keyring"
+fi
+# #test is on in rpe2e.pl's own (bare) entry now: the script encrypts,
+# and its chunks pass the module
+sleep 2
+if tail -n +"$((WIRE_MARK + 1))" "$WORK/wire.log" | python3 -c '
+import sys
+lines = [l for l in sys.stdin if l.startswith("bob PRIVMSG #test :")]
+wires = [l for l in lines if l.startswith("bob PRIVMSG #test :+RPE2E01 ")]
+clear = [l for l in lines if "after copy" in l or "zażółć" in l]
+sys.exit(0 if len(wires) >= 2 and not clear else 1)'; then
+    pass "rpe2e.pl loaded: its own encrypted chunks still go out"
+else
+    bad "rpe2e.pl loaded: the script's chunks were dropped or plain text went out"
 fi
 
 # ---- one network, an old keyring: nothing to do ----

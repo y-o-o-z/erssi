@@ -411,16 +411,33 @@ gboolean e2e_ctx_on_net(const char *ctx, const E2E_NET *net)
 	return strlen(net->label) == len && memcmp(ctx, net->label, len) == 0;
 }
 
+char *e2e_text_display(const char *text)
+{
+	char *out, *p;
+
+	if (text == NULL)
+		return NULL;
+	out = g_strdup(text);
+	for (p = out; *p != '\0'; p++)
+		if ((unsigned char) *p < 0x20 || *p == 0x7f)
+			*p = '?';
+	return out;
+}
+
 char *e2e_ctx_display(const char *ctx)
 {
 	const char *sep;
+	char *joined, *out;
 
 	if (ctx == NULL)
 		return NULL;
 	sep = strchr(ctx, E2E_SCOPE_SEP);
 	if (sep == NULL)
-		return g_strdup(ctx);
-	return g_strdup_printf("%.*s:%s", (int) (sep - ctx), ctx, sep + 1);
+		return e2e_text_display(ctx);
+	joined = g_strdup_printf("%.*s:%s", (int) (sep - ctx), ctx, sep + 1);
+	out = e2e_text_display(joined);
+	g_free(joined);
+	return out;
 }
 
 /* ---- legacy rows ---- */

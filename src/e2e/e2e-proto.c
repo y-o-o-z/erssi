@@ -2627,3 +2627,101 @@ char *e2e_pending_inbound_key(const E2E_JSON *kr, const E2E_NET *net, const char
 	g_free(ctx);
 	return k;
 }
+
+/* what rpe2e.pl cannot see: kr with only the per-network rows of the
+   stores keyed by a context (identity, peers and the rules stay) */
+static E2E_JSON *scoped_view(const E2E_JSON *kr)
+{
+	static const char *const stores[] = {
+		"channels", "outgoing", "incoming", "accepted", "pending", "pending_inbound",
+		"outgoing_recipients", "seen_rekeys", NULL
+	};
+	E2E_JSON *view = kr != NULL ? e2e_json_copy(kr) : e2e_json_new(E2E_JSON_OBJECT), *list;
+	GPtrArray *keys, *doomed;
+	guint i, j;
+
+	for (i = 0; stores[i] != NULL; i++) {
+		E2E_JSON *store = e2e_json_get(view, stores[i]);
+
+		keys = e2e_json_keys(store);
+		doomed = g_ptr_array_new_with_free_func(g_free);
+		for (j = 0; j < keys->len; j++)
+			if (strchr(g_ptr_array_index(keys, j), E2E_SCOPE_SEP) == NULL)
+				g_ptr_array_add(doomed, g_strdup(g_ptr_array_index(keys, j)));
+		g_ptr_array_unref(keys);
+		for (j = 0; j < doomed->len; j++)
+			e2e_json_remove(store, g_ptr_array_index(doomed, j));
+		g_ptr_array_unref(doomed);
+	}
+	list = e2e_json_get(view, "pending_trust_change");
+	for (i = 0; list != NULL && list->type == E2E_JSON_ARRAY && i < list->array->len;) {
+		const char *c = e2e_json_get_string(g_ptr_array_index(list->array, i), "channel");
+
+		if (c == NULL || strchr(c, E2E_SCOPE_SEP) == NULL)
+			g_ptr_array_remove_index(list->array, i);
+		else
+			i++;
+	}
+	return view;
+}
+
+E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                                 const char *buf, gsize len, E2E_RESOLVE_FUNC resolve,
+                                 void *resolve_data, char **message, char **target)
+{
+	E2E_GATE_ACTION action = E2E_GATE_PASS;
+	E2E_JSON *view = scoped_view(kr);
+	gsize start, end;
+
+	*message = NULL;
+	*target = NULL;
+	/* every piece a server may take for a line of its own */
+	for (start = 0; start < len && action != E2E_GATE_REFUSE; start = end + 1) {
+		char *line, *tags, *to, *body;
+		E2E_GATE_RESULT res;
+		E2E_WIRE *w;
+
+		for (end = start; end < len && buf[end] != '\r' && buf[end] != '\n' && buf[end] != '\0'; end++)
+			;
+		line = g_strndup(buf + start, end - start);
+		if (*line == '\0' || !e2e_parse_privmsg_line(line, &tags, &to, &body)) {
+			e2e_wipe(line, strlen(line));
+			g_free(line);
+			continue;
+		}
+		e2e_wipe(line, strlen(line));
+		g_free(line);
+		/* the script's own ciphertext */
+		w = e2e_wire_parse(body);
+		if (w != NULL) {
+			e2e_wire_free(w);
+		} else {
+			/* dry: nothing in the view changes, nothing is adopted */
+			gate_decide(view, kr_ok, NULL, net, to, body, resolve, resolve_data, TRUE, &res);
+			if (res.action == E2E_GATE_CIPHER || res.action == E2E_GATE_REFUSE) {
+				char *where = e2e_ctx_display(res.ctx);
+
+				g_free(*message);
+				*message = res.action == E2E_GATE_CIPHER ?
+					g_strdup_printf(E2E_SCRIPT_REFUSE, where) :
+					g_strdup_printf(E2E_SCRIPT_REFUSE_OTHER, to, res.message);
+				g_free(where);
+				g_free(*target);
+				*target = g_strdup(to);
+				action = E2E_GATE_REFUSE;
+			} else if (res.action == E2E_GATE_BYPASS && action == E2E_GATE_PASS &&
+			           res.message != NULL) {
+				*message = g_strdup(res.message);
+				*target = g_strdup(to);
+				action = E2E_GATE_BYPASS;
+			}
+			e2e_gate_result_clear(&res);
+		}
+		g_free(tags);
+		g_free(to);
+		e2e_wipe(body, strlen(body));
+		g_free(body);
+	}
+	e2e_json_free(view);
+	return action;
+}
