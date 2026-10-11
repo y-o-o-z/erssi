@@ -43,6 +43,8 @@ setup() {
     trap 'exit 1' HUP INT TERM
     TEST_W=$W; export TEST_W
     HOME=$W/home; export HOME
+    GIT_CONFIG_NOSYSTEM=1; export GIT_CONFIG_NOSYSTEM
+    umask 022
     mkdir -p "$HOME" "$W/bin" "$W/shim" "$W/stand"
     for t in sh awk sed grep date mktemp ls cut tr tail head sort rm mkdir rmdir cp mv ln chmod cat \
             dirname basename sleep env uname id git readlink wc touch; do
@@ -134,17 +136,49 @@ run_update_check() {
 }
 
 # no meson or ninja in PATH, but a python3 that builds a venv with them; it
-# logs whether the source lock is held when it runs
+# logs whether the source lock is held when it runs. Another user acting
+# while it runs: FAKE_VENV_FOREIGN=1 (the venv is theirs), FAKE_PLANT_SRC=1
+# or git (they make the source directory, empty or a git checkout)
 no_meson_python() {
     rm -f "$W/shim/meson" "$W/shim/ninja"
-    printf '#!/bin/sh\nexit 0\n' | stand pip
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\necho pip >> "$TEST_W/ran-pip"\nexit 0\n' | stand pip
     stand python3 <<'EOF'
 #!/bin/sh
 if [ -d "$HOME/.local/src/erssi.lock" ]; then echo "venv locked"; else echo "venv unlocked"; fi >> "$TEST_W/py.log"
 [ "$1" = -m ] && [ "$2" = venv ] || exit 0
 mkdir -p "$3/bin" && cp "$TEST_W/stand/meson" "$TEST_W/stand/ninja" "$TEST_W/stand/pip" "$3/bin/"
+[ "${FAKE_VENV_FOREIGN:-0}" != 1 ] || echo "$3" >> "$TEST_W/foreign"
+case "${FAKE_PLANT_SRC:-0}" in
+    1) mkdir -p "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi" >> "$TEST_W/foreign" ;;
+    git) git -c init.defaultBranch=main init -q "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi" >> "$TEST_W/foreign" ;;
+esac
+exit 0
 EOF
     use_tool python3
+}
+
+# ls -ldn reports owner 4242 ("another user") for the paths listed in
+# $W/foreign; id -un is "tester", id -gn $FAKE_GROUP_NAME (default "tester":
+# a user private group)
+another_user() {
+    : >> "$W/foreign"
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\nif [ "$1" = -ldn ] && grep -qxF "$2" "$TEST_W/foreign"; then\n    "$TEST_W/bin/ls" -ldn "$2" | awk %s\nelse\n    exec "$TEST_W/bin/ls" "$@"\nfi\n' \
+        "'{\$3 = \"4242\"; print}'" | stand ls
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\ncase "$*" in\n    -un) echo tester ;;\n    -gn) echo "${FAKE_GROUP_NAME:-tester}" ;;\n    *) exec "$TEST_W/bin/id" "$@" ;;\nesac\n' | stand id
+    use_tool ls id
+}
+foreign() { for f in "$@"; do printf '%s\n' "$f" >> "$W/foreign"; done; }
+# a venv in $1 whose meson and ninja log to $W/ran-venv when run
+plant_venv() {
+    mkdir -p "$1/bin"
+    for t in meson ninja; do
+        # shellcheck disable=SC2016
+        { printf '#!/bin/sh\necho %s >> "$TEST_W/ran-venv"\n' "$t"; tail -n +2 "$W/stand/$t"; } > "$1/bin/$t"
+        chmod 755 "$1/bin/$t"
+    done
 }
 
 # uname says FreeBSD, no os-release, no openssl.pc; the base OpenSSL is
@@ -169,6 +203,8 @@ base_openssl_files() {
 ascii_only() { [ "$(LC_ALL=C tr -d '\000-\177' < "$1" | wc -c)" -eq 0 ]; }
 # shellcheck disable=SC2317
 no_grep() { ! grep -q "$1" "$2"; }
+# shellcheck disable=SC2317
+none_exist() { for f in "$@"; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; done; }
 # shellcheck disable=SC2317
 no_link() { [ ! -e "$HOME/.local/bin/erssi" ] && [ ! -L "$HOME/.local/bin/erssi" ]; }
 
@@ -252,6 +288,30 @@ link-home)
     HOME=$W/home
     check "home through a link: installed" [ "$RC" = 0 ]
     check "home through a link: linked" [ "$(readlink "$W/home/.local/bin/erssi")" = "$W/home/opt2/erssi/bin/erssi" ]
+    rm -f "$W/home/homelink"
+    # a link to a directory: replaced by the link, nothing made inside
+    mkdir -p "$W/somedir"
+    rm -f "$HOME/.local/bin/erssi"
+    ln -s "$W/somedir" "$HOME/.local/bin/erssi"
+    run_install
+    check "link to a directory: replaced" [ "$(readlink "$HOME/.local/bin/erssi")" = "$HOME/.local/opt/erssi/bin/erssi" ]
+    check "link to a directory: nothing inside it" [ ! -e "$W/somedir/erssi" ]
+    # a file of the user's own there: kept, with a warning
+    rm -f "$HOME/.local/bin/erssi"
+    echo "my own erssi" > "$HOME/.local/bin/erssi"
+    run_install
+    check "own file: installed" [ "$RC" = 0 ]
+    check "own file: kept" [ "$(cat "$HOME/.local/bin/erssi")" = "my own erssi" ]
+    check "own file: warning" grep -q '! ~/.local/bin/erssi exists and is not a link - kept' "$W/out"
+    check "own file: start names the installed erssi" grep -q 'start  *~/.local/opt/erssi/bin/erssi ' "$W/out"
+    # a directory there: kept
+    rm -f "$HOME/.local/bin/erssi"
+    mkdir -p "$HOME/.local/bin/erssi"
+    run_install
+    check "directory: installed" [ "$RC" = 0 ]
+    check "directory: kept" [ -d "$HOME/.local/bin/erssi" ]
+    check "directory: nothing inside" none_exist "$HOME/.local/bin/erssi/erssi"
+    check "directory: warning" grep -q '! ~/.local/bin/erssi exists and is not a link - kept' "$W/out"
     ;;
 link-system-prefix)
     # a prefix outside the home: no link in the home
@@ -291,6 +351,7 @@ link-same-dir)
     check "... not a link" [ ! -L "$HOME/.local/bin/erssi" ]
     check "... and it runs" [ "$("$HOME/.local/bin/erssi" --version 2>&1)" = "erssi 9.9.9 (20261010 1200)" ]
     check "summary names the version" grep -q 'erssi Shellter Edition 9.9.9 is installed' "$W/out"
+    check "no warning about the binary" no_grep 'is not a link' "$W/out"
     # ~/.local/bin is a link to the prefix's bin: the same directory too
     rm -rf "$W/home/.local/bin"
     mkdir -p "$W/home/apps/erssi/bin"
@@ -383,6 +444,121 @@ freebsd-no-openssl)
     run_install
     check "Linux: refused" [ "$RC" = 1 ]
     check "Linux: sudo apt install libssl-dev" grep -qF 'sudo apt install libssl-dev' "$W/out"
+    ;;
+src-foreign)
+    # a venv or an empty source directory made by another user, or a parent
+    # directory of theirs: refused before anything in it runs
+    no_meson_python
+    another_user
+    V=$HOME/.local/src/erssi.venv
+    plant_venv "$V"
+    foreign "$V"
+    run_install
+    check "their venv: refused" [ "$RC" = 1 ]
+    check "their venv: named" grep -qF "$V belongs to another user" "$W/out"
+    check "their venv: nothing run" none_exist "$W/ran-venv" "$W/py.log" "$W/ran-pip"
+    check "their venv: lock released" [ ! -e "$HOME/.local/src/erssi.lock" ]
+    # the same venv, ours: reused
+    : > "$W/foreign"
+    run_install
+    check "our venv: installed" [ "$RC" = 0 ]
+    check "our venv: reused" [ -s "$W/ran-venv" ]
+    check "our venv: no venv built" none_exist "$W/py.log"
+    # an empty source directory of theirs
+    rm -rf "$HOME/.local/src" "$HOME/.local/opt" "$W/ran-venv"
+    mkdir -p "$HOME/.local/src/erssi"
+    foreign "$HOME/.local/src/erssi"
+    run_install
+    check "their source dir: refused" [ "$RC" = 1 ]
+    check "their source dir: named" grep -qF "$HOME/.local/src/erssi belongs to another user" "$W/out"
+    check "their source dir: nothing checked out, no venv" none_exist "$HOME/.local/src/erssi/.git" "$W/py.log"
+    # made by them while the venv is built (after the first check)
+    : > "$W/foreign"
+    rm -rf "$HOME/.local/src"
+    FAKE_PLANT_SRC=1; export FAKE_PLANT_SRC
+    run_install
+    unset FAKE_PLANT_SRC
+    check "source dir made meanwhile: refused" [ "$RC" = 1 ]
+    check "source dir made meanwhile: nothing checked out" [ ! -e "$HOME/.local/src/erssi/.git" ]
+    # ... as a git checkout of theirs
+    : > "$W/foreign"
+    rm -rf "$HOME/.local/src"
+    FAKE_PLANT_SRC=git; export FAKE_PLANT_SRC
+    run_install
+    unset FAKE_PLANT_SRC
+    check "checkout made meanwhile: refused" [ "$RC" = 1 ]
+    check "checkout made meanwhile: named" grep -qF "$HOME/.local/src/erssi belongs to another user" "$W/out"
+    check "checkout made meanwhile: not fetched into" none_exist "$HOME/.local/src/erssi/.git/FETCH_HEAD"
+    # made by them just before the installer's own mkdir -p of it
+    : > "$W/foreign"
+    rm -rf "$HOME/.local/src"
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\nif [ "$1" = -p ] && [ "$2" = "$FAKE_RACE_DIR" ]; then\n    "$TEST_W/bin/mkdir" -p "$2" && echo "$2" >> "$TEST_W/foreign"; exit\nfi\nexec "$TEST_W/bin/mkdir" "$@"\n' | stand mkdir
+    use_tool mkdir
+    FAKE_RACE_DIR=$HOME/.local/src/erssi; export FAKE_RACE_DIR
+    run_install
+    unset FAKE_RACE_DIR
+    rm -f "$W/shim/mkdir"
+    check "source dir made just before mkdir: refused" [ "$RC" = 1 ]
+    check "source dir made just before mkdir: nothing checked out" none_exist "$HOME/.local/src/erssi/.git"
+    # the venv taken over while it is built: pip not run
+    : > "$W/foreign"
+    rm -rf "$HOME/.local/src" "$W/ran-pip"
+    FAKE_VENV_FOREIGN=1; export FAKE_VENV_FOREIGN
+    run_install
+    unset FAKE_VENV_FOREIGN
+    check "venv theirs after building: refused" [ "$RC" = 1 ]
+    check "venv theirs after building: pip not run" [ ! -e "$W/ran-pip" ]
+    # a parent directory of theirs
+    : > "$W/foreign"
+    mkdir -p "$W/other"
+    foreign "$W/other"
+    run_install --src "$W/other/erssi"
+    check "their parent dir: refused" [ "$RC" = 1 ]
+    check "their parent dir: named" grep -qF "$W/other belongs to another user" "$W/out"
+    check "their parent dir: nothing made" none_exist "$W/other/erssi" "$W/other/erssi.lock"
+    ;;
+src-writable)
+    # a venv or source directory other users can write to: refused; group
+    # write by the user's own private group: allowed
+    no_meson_python
+    another_user
+    V=$HOME/.local/src/erssi.venv
+    plant_venv "$V"
+    chmod g+w "$V"
+    FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
+    run_install
+    check "group-writable venv, shared group: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$V can be changed by other users" "$W/out"
+    check "... nothing run" none_exist "$W/ran-venv" "$W/py.log"
+    unset FAKE_GROUP_NAME
+    run_install
+    check "group-writable venv, private group: installed" [ "$RC" = 0 ]
+    check "... reused" [ -s "$W/ran-venv" ]
+    chmod g-w,o+w "$V"
+    rm -f "$W/ran-venv"
+    run_install
+    check "other-writable venv: refused" [ "$RC" = 1 ]
+    check "... nothing run" [ ! -e "$W/ran-venv" ]
+    chmod o-w "$V"
+    chmod o+w "$HOME/.local/src/erssi"
+    run_install
+    check "other-writable source dir: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$HOME/.local/src/erssi can be changed by other users" "$W/out"
+    ;;
+src-shared-parent)
+    # a sticky directory open to all (like /tmp): our own source dir is fine
+    mkdir -p "$W/shared"
+    chmod 1777 "$W/shared"
+    run_install --src "$W/shared/erssi"
+    check "sticky parent: installed" [ "$RC" = 0 ]
+    check "sticky parent: checked out" [ -d "$W/shared/erssi/.git" ]
+    # the same without the sticky bit: others could replace it
+    chmod 0777 "$W/shared"
+    run_install --src "$W/shared/erssi"
+    check "open parent, not sticky: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/shared is writable by other users" "$W/out"
+    chmod 0755 "$W/shared"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
