@@ -97,6 +97,7 @@ install_headers(
     'term.h',
     'textbuffer.h',
     'textbuffer-formats.h',
+    'textbuffer-unformat.h',
     'textbuffer-view.h',
   ),
   subdir : incdir / 'src' / 'fe-ansi',
