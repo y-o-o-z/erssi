@@ -133,6 +133,20 @@ run_update_check() {
     RC=$?
 }
 
+# no meson or ninja in PATH, but a python3 that builds a venv with them; it
+# logs whether the source lock is held when it runs
+no_meson_python() {
+    rm -f "$W/shim/meson" "$W/shim/ninja"
+    printf '#!/bin/sh\nexit 0\n' | stand pip
+    stand python3 <<'EOF'
+#!/bin/sh
+if [ -d "$HOME/.local/src/erssi.lock" ]; then echo "venv locked"; else echo "venv unlocked"; fi >> "$TEST_W/py.log"
+[ "$1" = -m ] && [ "$2" = venv ] || exit 0
+mkdir -p "$3/bin" && cp "$TEST_W/stand/meson" "$TEST_W/stand/ninja" "$TEST_W/stand/pip" "$3/bin/"
+EOF
+    use_tool python3
+}
+
 # shellcheck disable=SC2317 # called through check
 ascii_only() { [ "$(LC_ALL=C tr -d '\000-\177' < "$1" | wc -c)" -eq 0 ]; }
 # shellcheck disable=SC2317
@@ -277,6 +291,29 @@ link-same-dir)
     check "ln replacing the target: installed" [ "$RC" = 0 ]
     check "ln replacing the target: not a link" [ ! -L "$HOME/.local/bin/erssi" ]
     check "ln replacing the target: it runs" [ "$("$HOME/.local/bin/erssi" --version 2>&1)" = "erssi 9.9.9 (20261010 1200)" ]
+    ;;
+lock-before-venv)
+    # another installer holds the source lock: nothing is built, not even
+    # the meson/ninja venv, and its lock and log are left alone
+    no_meson_python
+    mkdir -p "$HOME/.local/src/erssi.lock" "$HOME/.local/state/erssi"
+    echo "the other installer's log" > "$HOME/.local/state/erssi/install.log"
+    run_install
+    check "refused" [ "$RC" = 1 ]
+    check "names the other installer" grep -q 'another installer is using' "$W/out"
+    check "no venv built" [ ! -e "$W/py.log" ]
+    check "the other installer's lock is kept" [ -d "$HOME/.local/src/erssi.lock" ]
+    check "the other installer's log is kept" \
+        [ "$(cat "$HOME/.local/state/erssi/install.log")" = "the other installer's log" ]
+    ;;
+lock-held-during-venv)
+    # the venv is built while this installer holds the lock
+    no_meson_python
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "venv built under the lock" [ "$(head -n 1 "$W/py.log" 2>/dev/null)" = "venv locked" ]
+    check "meson from the venv" grep -q 'meson 1.12.1' "$W/out"
+    check "the lock is gone afterwards" [ ! -e "$HOME/.local/src/erssi.lock" ]
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
