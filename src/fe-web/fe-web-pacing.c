@@ -827,6 +827,113 @@ gboolean fe_web_proc_budget_take(FE_WEB_PROC_BUDGET *budget, time_t now)
 }
 
 #ifdef __linux__
+typedef struct {
+	guint64 first, count;
+} UID_RANGE;
+
+static int uid_range_cmp(const void *a, const void *b)
+{
+	const UID_RANGE *x = a, *y = b;
+
+	return x->first < y->first ? -1 : x->first > y->first;
+}
+
+/* Spaces, then a number of at most G_MAXUINT32 followed by a space or a
+ * newline */
+static gboolean uid_map_number(const char **p, const char *end, guint64 *value)
+{
+	const char *start;
+	guint64 v = 0;
+
+	while (*p < end && **p == ' ')
+		(*p)++;
+	start = *p;
+	while (*p < end && **p >= '0' && **p <= '9') {
+		v = v * 10 + (guint64) (**p - '0');
+		if (v > G_MAXUINT32)
+			return FALSE;
+		(*p)++;
+	}
+	if (*p == start || *p == end || (**p != ' ' && **p != '\n'))
+		return FALSE;
+	*value = v;
+	return TRUE;
+}
+
+gboolean fe_web_uid_map_whole(const char *text, gsize len)
+{
+	UID_RANGE ranges[FE_WEB_UID_MAP_LINES];
+	const char *p = text, *end;
+	guint64 first, outside, count, covered = 0;
+	int n = 0, i;
+
+	if (text == NULL || len == 0 || len > FE_WEB_UID_MAP_MAX)
+		return FALSE;
+	end = text + len;
+	while (p < end) {
+		if (n == FE_WEB_UID_MAP_LINES)
+			return FALSE;
+		if (!uid_map_number(&p, end, &first) || !uid_map_number(&p, end, &outside) ||
+		    !uid_map_number(&p, end, &count))
+			return FALSE;
+		/* the line ends after the count */
+		if (*p != '\n')
+			return FALSE;
+		p++;
+		/* uids are 0..4294967294; (uid_t) -1 is none */
+		if (count == 0 || first + count > G_MAXUINT32 || outside + count > G_MAXUINT32)
+			return FALSE;
+		ranges[n].first = first;
+		ranges[n].count = count;
+		n++;
+	}
+	/* the ranges, in order, leave no uid out */
+	qsort(ranges, n, sizeof(ranges[0]), uid_range_cmp);
+	for (i = 0; i < n; i++) {
+		if (ranges[i].first > covered)
+			return FALSE;
+		covered = MAX(covered, ranges[i].first + ranges[i].count);
+	}
+	return covered == G_MAXUINT32;
+}
+
+static char *uid_map_text = NULL;
+
+void fe_web_uid_map_set_text(const char *text)
+{
+	g_free(uid_map_text);
+	uid_map_text = g_strdup(text);
+}
+
+/* Does our user namespace map every uid (/proc/self/uid_map, read at
+ * most FE_WEB_UID_MAP_MAX bytes; an error, or more: not known, so no) */
+static gboolean uid_map_is_whole(void)
+{
+	char buf[FE_WEB_UID_MAP_MAX + 1];
+	gsize fill = 0;
+	ssize_t n = 0;
+	int fd;
+
+	if (uid_map_text != NULL)
+		return fe_web_uid_map_whole(uid_map_text, strlen(uid_map_text));
+	fd = open("/proc/self/uid_map", O_RDONLY | O_NOCTTY | O_CLOEXEC);
+	if (fd < 0)
+		return FALSE;
+	while (fill < sizeof(buf)) {
+		n = read(fd, buf + fill, sizeof(buf) - fill);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		fill += n;
+	}
+	close(fd);
+	if (n < 0)
+		return FALSE;
+	/* more than FE_WEB_UID_MAP_MAX: refused there */
+	return fe_web_uid_map_whole(buf, fill);
+}
+
 /* the uid /proc shows for one outside our user namespace (65534 unless
  * changed) */
 static uid_t overflow_uid(void)
@@ -1154,7 +1261,9 @@ int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *u
 		return 0;
 	if (!tcp_peer_of(&c, (struct sockaddr *) &peer, (struct sockaddr *) &local))
 		return 0;
-	unmapped = overflow_uid();
+	/* the overflow uid is a real user when every uid is mapped; (uid_t)
+	 * -1, refused anyway, then refuses nothing more */
+	unmapped = uid_map_is_whole() ? (uid_t) -1 : overflow_uid();
 	/* the kernel's answer for this one socket */
 	if (tcp_peer_diag_uid(&c, unmapped, now, uid) == 1)
 		return 1;

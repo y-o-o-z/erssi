@@ -224,6 +224,25 @@ int fe_web_sock_diag_status(const void *buf, gsize len, guint32 seq);
 #define FE_WEB_SOCK_DIAG_BACKOFF 60
 /* forget the failures (for the tests) */
 void fe_web_sock_diag_reset(void);
+
+/* The uid the kernel shows for a uid outside our user namespace
+ * (/proc/sys/kernel/overflowuid, 65534) is refused as a peer's uid -
+ * unless the namespace maps every uid (the initial one: "0 0
+ * 4294967295"), where no uid is outside and 65534 is a real user
+ * (nobody). With a map that leaves any uid out it is refused even when
+ * 65534 itself is mapped: a 65534 could then be either.
+ *
+ * Does the text of /proc/self/uid_map ('len' bytes) map every uid
+ * 0..4294967294: lines "<first> <first outside> <count>" as the kernel
+ * prints them, at most FE_WEB_UID_MAP_LINES of them and
+ * FE_WEB_UID_MAP_MAX bytes in all, each ended by a newline. Anything
+ * else: FALSE (refused). */
+#define FE_WEB_UID_MAP_LINES 340 /* the kernel's limit */
+#define FE_WEB_UID_MAP_MAX 16384
+gboolean fe_web_uid_map_whole(const char *text, gsize len);
+/* for the tests: the uid_map text to use instead of /proc/self/uid_map
+ * (NULL: the file) */
+void fe_web_uid_map_set_text(const char *text);
 #endif
 
 #endif
