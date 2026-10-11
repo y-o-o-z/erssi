@@ -22,6 +22,7 @@
 #include <irssi/src/irc/anti-floodnet/anti-floodnet.h>
 
 #include <string.h>
+#include "../../test-home.h"
 
 /* irc-core.c */
 void irc_core_init(void);
@@ -310,6 +311,8 @@ int main(int argc, char **argv)
 	    test_protection_ends_without_messages);
 	add("/anti-floodnet/ctcp-state-dropped-on-disconnect",
 	    test_ctcp_state_dropped_on_disconnect);
+
+	test_home_setup();
 
 	core_preinit(*argv);
 	irssi_gui = IRSSI_GUI_NONE;

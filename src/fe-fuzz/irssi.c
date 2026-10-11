@@ -33,15 +33,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../tests/test-home.h"
 
 int LLVMFuzzerInitialize(int *argc, char ***argv) {
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 	g_log_set_null_logger();
 #endif
-	core_register_options();
 	fe_common_core_register_options();
-	/* no args */
-	args_execute(0, NULL);
+	test_home_setup();
 	core_preinit((*argv)[0]);
 	core_init();
 	fe_common_core_init();

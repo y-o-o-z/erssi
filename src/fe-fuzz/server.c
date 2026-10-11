@@ -43,6 +43,7 @@
 #include <irssi/src/irc/core/irc-servers.h>
 #include <irssi/src/irc/core/irc-channels.h>
 #include <irssi/src/fe-fuzz/null-logger.h>
+#include "../../tests/test-home.h"
 
 /* irc-core.c */
 void irc_core_init(void);
@@ -147,10 +148,8 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 	g_log_set_null_logger();
 #endif
-	core_register_options();
 	fe_common_core_register_options();
-	/* no args */
-	args_execute(0, NULL);
+	test_home_setup();
 	core_preinit((*argv)[0]);
 	core_init();
 	irssi_ssl_init();
