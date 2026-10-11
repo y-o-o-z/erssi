@@ -84,3 +84,24 @@ test('test-shellter-defaults test', test_test_shellter_defaults,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_fe_settings = executable('test-fe-settings',
+  files(
+    'test-fe-settings.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-fe-settings test', test_test_fe_settings,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
