@@ -1,8 +1,8 @@
 # this file is part of irssi
 
 # The protocol code without irssi: crypto, JSON, wire format, keyring file,
-# handshake. A static library so tests/e2e and the fuzz targets
-# (src/fe-fuzz/e2e) use exactly what the module runs.
+# handshake, and the send queue. A static library so tests/e2e and the fuzz
+# targets (src/fe-fuzz/e2e) use exactly what the module runs.
 e2e_proto_sources = files(
   'e2e-crypto.c',
   'e2e-wire.c',
@@ -10,6 +10,7 @@ e2e_proto_sources = files(
   'e2e-keyring.c',
   'e2e-proto.c',
   'e2e-scope.c',
+  'e2e-outq.c',
 )
 
 libe2e_proto_a = static_library('e2e_proto',
@@ -43,6 +44,7 @@ shared_library('e2e_core',
 #   'e2e-formats.h',
 #   'e2e-json.h',
 #   'e2e-keyring.h',
+#   'e2e-outq.h',
 #   'e2e-proto.h',
 #   'e2e-scope.h',
 #   'e2e-wire.h',
