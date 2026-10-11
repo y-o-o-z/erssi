@@ -325,6 +325,31 @@ static void test_casefold_narrow(void)
 	assert_narrow("#\xce\xb8", "#\xcf\xb4", E2E_CASEMAP_UNICODE, FALSE);             /* θ / ϴ */
 	assert_narrow("#\xcf\x89", "#\xe2\x84\xa6", E2E_CASEMAP_UNICODE, FALSE);        /* ω / Ohm sign */
 	assert_narrow("#\xce\xa9", "#\xcf\x89", E2E_CASEMAP_UNICODE, TRUE);              /* Ω / ω */
+	/* R-E29: and Unicode's own Final_Sigma (a cased letter before, case
+	   ignorables skipped both ways, no cased letter after); GLib's rule
+	   ("the next character is not a letter") takes a final Σ before a
+	   letter without case for σ */
+	assert_narrow("#\xce\x91\xce\xa3\xe4\xb8\xad", "#\xce\xb1\xcf\x83\xe4\xb8\xad",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #ΑΣ中 / #ασ中 */
+	assert_narrow("#\xce\x91\xce\xa3\xd7\x91", "#\xce\xb1\xcf\x83\xd7\x91",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #ΑΣב / #ασב */
+	assert_narrow("#\xce\x91\xce\xa3\xe0\xa4\x95", "#\xce\xb1\xcf\x83\xe0\xa4\x95",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #ΑΣक / #ασक */
+	assert_narrow("#\xce\x91\xce\xa3\xca\xb0", "#\xce\xb1\xcf\x83\xca\xb0",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #ΑΣʰ / #ασʰ: ʰ case ignorable */
+	assert_narrow("#\xce\x91\xcc\x81\xce\xa3\xe4\xb8\xad", "#\xce\xb1\xcc\x81\xcf\x83\xe4\xb8\xad",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #Ά́Σ中: a mark before Σ skipped */
+	assert_narrow("#\xce\x91'\xce\xa3\xe4\xb8\xad", "#\xce\xb1'\xcf\x83\xe4\xb8\xad",
+	              E2E_CASEMAP_UNICODE, FALSE);                                            /* #Α'Σ中: an apostrophe skipped */
+	assert_narrow("#\xce\x91\xce\xa3\xce\x91", "#\xce\xb1\xcf\x83\xce\xb1",
+	              E2E_CASEMAP_UNICODE, TRUE);                                             /* #ΑΣΑ / #ασα: not final */
+	assert_narrow("#\xce\x91\xce\xa3\xca\xb0\xce\x91", "#\xce\xb1\xcf\x83\xca\xb0\xce\xb1",
+	              E2E_CASEMAP_UNICODE, TRUE);                                             /* #ΑΣʰΑ: ʰ skipped, Α after */
+	assert_narrow("#\xce\x91\xce\xa3\xc2\xaa", "#\xce\xb1\xcf\x83\xc2\xaa",
+	              E2E_CASEMAP_UNICODE, TRUE);                                             /* #ΑΣª: ª is cased (Lo) */
+	assert_narrow("#\xce\xa3\xe4\xb8\xad", "#\xcf\x83\xe4\xb8\xad",
+	              E2E_CASEMAP_UNICODE, TRUE);                                             /* #Σ中: no cased letter before, σ */
+	assert_narrow("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);  /* #Żaba / #żaba */
 	assert_narrow("#ss", "#\xc3\x9f", E2E_CASEMAP_UNICODE, FALSE);                    /* ß */
 	assert_narrow("#e\xcc\x81", "#\xc3\xa9", E2E_CASEMAP_UNICODE, FALSE);           /* NFD é */
 	assert_narrow("#ff", "#\xef\xac\x80", E2E_CASEMAP_UNICODE, FALSE);               /* ﬀ */
