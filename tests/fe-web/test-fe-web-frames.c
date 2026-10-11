@@ -14,7 +14,10 @@
 
 #include "fe-web-test.h"
 
+#include <irssi/src/fe-web/fe-web-crypto.h>
+
 #include <string.h>
+#include <sys/ioctl.h>
 
 #define CHUNK 300007
 
@@ -198,6 +201,86 @@ static void test_masked_ping_pongs(void)
 	fe_web_fuzz_client_free(c);
 }
 
+/* positive: a masked ping with more data than the 4 bytes of its mask
+ * key is echoed exactly */
+static void test_masked_ping_long_pongs(void)
+{
+	static const guchar pong[] = { 0x8A, 0x09, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i' };
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, FALSE);
+
+	send_frame(c, WS_OPCODE_PING, "abcdefghi", 9, TRUE);
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_cmpuint(fe_web_fuzz_received()->len, ==, sizeof(pong));
+	g_assert_cmpmem(fe_web_fuzz_received()->data, sizeof(pong), pong, sizeof(pong));
+	fe_web_fuzz_client_free(c);
+}
+
+/* The JSON of the first (encrypted, binary) frame fe-web sent; to be
+ * freed */
+static char *first_reply(void)
+{
+	const GByteArray *got = fe_web_fuzz_received();
+	int fin, opcode, masked, plain_len = 0;
+	guint64 payload_len;
+	guchar mask_key[4];
+	const guchar *payload;
+	guchar *plain;
+	char *json;
+
+	g_assert_cmpint(fe_web_websocket_parse_frame(got->data, got->len, &fin, &opcode,
+	                                             &masked, &payload_len, mask_key,
+	                                             &payload),
+	                ==, 1);
+	g_assert_cmpint(opcode, ==, WS_OPCODE_BINARY);
+	g_assert_false(masked);
+	plain = g_malloc(payload_len + 1);
+	g_assert_true(fe_web_crypto_decrypt(payload, payload_len, fe_web_crypto_get_key(),
+	                                    plain, &plain_len));
+	json = g_strndup((const char *) plain, plain_len);
+	g_free(plain);
+	return json;
+}
+
+/* A masked JSON ping whose id is 'id_len' bytes is answered with a pong
+ * for that id: the whole payload was unmasked */
+static void assert_long_ping_answered(gsize id_len)
+{
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, FALSE);
+	GString *msg = g_string_new("{\"type\":\"ping\",\"id\":\"");
+	char *id, *want, *json;
+	gsize i;
+
+	for (i = 0; i < id_len; i++)
+		g_string_append_c(msg, 'a' + i % 26);
+	id = g_strndup(msg->str + strlen("{\"type\":\"ping\",\"id\":\""), id_len);
+	g_string_append(msg, "\"}");
+
+	send_frame(c, WS_OPCODE_TEXT, msg->str, msg->len, TRUE);
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	json = first_reply();
+	g_assert_nonnull(strstr(json, "\"type\":\"pong\""));
+	want = g_strdup_printf("\"response_to\":\"%s\"", id);
+	g_assert_nonnull(strstr(json, want));
+
+	g_free(want);
+	g_free(json);
+	g_free(id);
+	g_string_free(msg, TRUE);
+	fe_web_fuzz_client_free(c);
+}
+
+/* the 16-bit length form (126 to 65535 bytes) */
+static void test_masked_text_len16_answered(void)
+{
+	assert_long_ping_answered(300);
+}
+
+/* the 64-bit length form (65536 bytes and more) */
+static void test_masked_text_len64_answered(void)
+{
+	assert_long_ping_answered(70000);
+}
+
 /* positive: a masked JSON ping is answered (a binary frame: the
  * harness's clients have encryption on, as fe-web's own) */
 static void test_masked_text_answered(void)
@@ -260,8 +343,8 @@ static void test_refusal_after_queued_output(void)
 	GByteArray *bad = test_frame(WS_OPCODE_TEXT, json_ping, strlen(json_ping), FALSE);
 	GByteArray *ping = test_frame(WS_OPCODE_PING, "abc", 3, TRUE);
 	const GByteArray *got;
-	gsize sent;
-	int rounds;
+	gsize sent, buffered;
+	int rounds, unread = 0;
 
 	sent = fill_socket(c);
 	fe_web_fuzz_peer_write(bad->data, bad->len);
@@ -269,11 +352,18 @@ static void test_refusal_after_queued_output(void)
 	g_assert_true(fe_web_fuzz_client_alive(c));
 	g_assert_true(c->closing);
 
-	/* more frames, a masked ping and the unmasked one again */
+	/* more frames, a masked ping and the unmasked one again: not read
+	 * at all (the closing guard of client_input_once()), they stay in
+	 * the socket and the input buffer keeps what it had */
+	buffered = c->input_buffer->len;
 	fe_web_fuzz_peer_write(ping->data, ping->len);
 	fe_web_fuzz_peer_write(bad->data, bad->len);
 	fe_web_fuzz_client_input(c);
 	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_cmpint(c->recv_tag, ==, -1);
+	g_assert_cmpuint(c->input_buffer->len, ==, buffered);
+	g_assert_cmpint(ioctl(c->fd, FIONREAD, &unread), ==, 0);
+	g_assert_cmpint(unread, ==, (int) (ping->len + bad->len));
 
 	for (rounds = 0; rounds < 100000 && fe_web_fuzz_client_alive(c); rounds++) {
 		fe_web_fuzz_read_peer(0);
@@ -323,7 +413,12 @@ int main(int argc, char **argv)
 	                test_unmasked_empty_ping_closes);
 	g_test_add_func("/fe-web/frames/masked-ping-pongs", test_masked_ping_pongs);
 	g_test_add_func("/fe-web/frames/masked-ping-split-pongs", test_masked_ping_split_pongs);
+	g_test_add_func("/fe-web/frames/masked-ping-long-pongs", test_masked_ping_long_pongs);
 	g_test_add_func("/fe-web/frames/masked-text-answered", test_masked_text_answered);
+	g_test_add_func("/fe-web/frames/masked-text-len16-answered",
+	                test_masked_text_len16_answered);
+	g_test_add_func("/fe-web/frames/masked-text-len64-answered",
+	                test_masked_text_len64_answered);
 	g_test_add_func("/fe-web/frames/nothing-after-refusal", test_nothing_after_refusal);
 	g_test_add_func("/fe-web/frames/refusal-after-queued-output",
 	                test_refusal_after_queued_output);
