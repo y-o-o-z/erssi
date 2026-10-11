@@ -745,7 +745,51 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 	return TRUE;
 }
 
-static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
+/* how many "server outgoing modify" emissions are running: above 1, a
+   handler is sending a line while another is being sent (rpe2e.pl
+   sends its chunks with send_raw_now from its gate). Counted by a hook
+   ahead of every other, which runs the rest of the emission itself
+   (signal_continue), so the count also comes down when a handler stops
+   the signal. */
+static int outgoing_depth;
+/* per running emission (index outgoing_depth): the module's gate
+   decided it - it ran while the module was active. The rpe2e.pl guard
+   leaves a line to that gate only then: a script of rpe2e.pl's name
+   that dies in its gate is unloaded at once, and the module, inactive
+   when its gate ran, is active by the time the guard runs */
+static GArray *gated_emissions;
+
+static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf)
+{
+	outgoing_depth++;
+	if (gated_emissions != NULL) {
+		if (gated_emissions->len <= (guint) outgoing_depth)
+			g_array_set_size(gated_emissions, outgoing_depth + 1);
+		g_array_index(gated_emissions, gboolean, outgoing_depth) = FALSE;
+	}
+	signal_continue(3, server, str, GINT_TO_POINTER(crlf));
+	outgoing_depth--;
+}
+
+/* the module's gate decides the running emission */
+static void mark_gated(void)
+{
+	if (gated_emissions != NULL && outgoing_depth > 0 &&
+	    (guint) outgoing_depth < gated_emissions->len)
+		g_array_index(gated_emissions, gboolean, outgoing_depth) = TRUE;
+}
+
+/* the module's gate decided the running emission; FALSE when that is
+   not known (no count: decided again, fail closed) */
+static gboolean was_gated(void)
+{
+	return gated_emissions != NULL && outgoing_depth > 0 &&
+	       (guint) outgoing_depth < gated_emissions->len &&
+	       g_array_index(gated_emissions, gboolean, outgoing_depth);
+}
+
+/* the module's gate on the line in str */
+static void native_gate(SERVER_REC *server, GString *str)
 {
 	E2E_GATE_RESULT res;
 	E2E_IDENTITY id;
@@ -757,8 +801,6 @@ static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 	gsize len;
 	guint i;
 
-	if (!IS_IRC_SERVER(server) || str == NULL || !e2e_native_active())
-		return;
 	len = str->len;
 	while (len > 0 && (str->str[len - 1] == '\n' || str->str[len - 1] == '\r'))
 		len--;
@@ -850,19 +892,12 @@ out:
 	g_free(body);
 }
 
-/* how many "server outgoing modify" emissions are running: above 1, a
-   handler is sending a line while another is being sent (rpe2e.pl
-   sends its chunks with send_raw_now from its gate). Counted by a hook
-   ahead of every other, which runs the rest of the emission itself
-   (signal_continue), so the count also comes down when a handler stops
-   the signal. */
-static int outgoing_depth;
-
-static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf)
+static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 {
-	outgoing_depth++;
-	signal_continue(3, server, str, GINT_TO_POINTER(crlf));
-	outgoing_depth--;
+	if (!IS_IRC_SERVER(server) || str == NULL || !e2e_native_active())
+		return;
+	mark_gated();
+	native_gate(server, str);
 }
 
 /* R-E19: while rpe2e.pl is loaded, after the script's gate (last, so
@@ -879,8 +914,18 @@ static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crl
 	char *error = NULL, *msg, *target;
 
 	if (!IS_IRC_SERVER(server) || str == NULL ||
-	    !e2e_buffer_has_privmsg(str->str, str->len) || e2e_native_active())
+	    !e2e_buffer_has_privmsg(str->str, str->len))
 		return;
+	if (e2e_native_active()) {
+		/* the module's gate let this line pass - unless it ran while the
+		   module was inactive (rpe2e.pl, loaded, died in its gate since):
+		   then no gate has seen it, the module's decides it now */
+		if (!was_gated()) {
+			mark_gated();
+			native_gate(server, str);
+		}
+		return;
+	}
 	/* an unreadable keyring may hold such an entry: fail closed */
 	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
 	g_free(error);
@@ -1245,6 +1290,7 @@ void e2e_core_init(void)
 	keyreq_in = e2e_stamps_new();
 	own_wait_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	gated_emissions = g_array_new(FALSE, TRUE, sizeof(gboolean));
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
 	signal_add_full(MODULE_NAME, SIGNAL_PRIORITY_HIGH - 1, "server outgoing modify",
@@ -1310,6 +1356,8 @@ void e2e_core_deinit(void)
 	g_hash_table_destroy(keyreq_in);
 	g_hash_table_destroy(own_wait_notice);
 	g_hash_table_destroy(own_handles);
+	g_array_free(gated_emissions, TRUE);
+	gated_emissions = NULL;
 	g_hash_table_destroy(own_lines);
 	g_free(keyring_file);
 	g_free(keyring_dir);

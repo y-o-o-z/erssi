@@ -860,6 +860,73 @@ assert "alice@127.0.0.1|" + c not in new["incoming"]
 assert new["identity"] == old["identity"]
 PY
 
+# ---- a script of rpe2e.pl's name dies inside its gate ----
+# loaded first, then the module (/unload, /load): the module's gate runs
+# ahead of the script's, at the same priority, while the module is
+# inactive. The script dies there and irssi unloads it at once, so the
+# module is active again when its last hook (the rpe2e.pl guard) runs -
+# the line has met no gate yet and must not go out in clear text
+cat > "$WORK/alice/scripts/rpe2e_die.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'rpe2e_die');
+Irssi::command_bind('e2e', sub { });
+Irssi::signal_add_first('server outgoing modify', sub {
+    my ($server, $line) = @_;    # $line: a reference to the line
+    die "rpe2e_die: dies in its gate\n" if $$line =~ /dies in the gate/;
+});
+PERL
+# the flood queue is slow since the /upgrade check: back to the defaults
+say alice "/set -default cmds_max_at_once"
+say alice "/set -default cmd_queue_speed"
+# the same with a script that hooks in right after the module's gate,
+# and no reload: the module decided earlier lines while it was active,
+# never this one
+cat > "$WORK/alice/scripts/rpe2e_die2.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'rpe2e_die2');
+Irssi::command_bind('e2e', sub { });
+# -99: after the module's gate (-100), before every default handler
+Irssi::signal_add_priority('server outgoing modify', sub {
+    my ($server, $line) = @_;    # $line: a reference to the line
+    die "rpe2e_die2: dies after the module's gate\n" if $$line =~ /dies right after/;
+}, -99);
+PERL
+say alice "/join -E2E $CHAN"
+say alice "an encrypted line before the script"
+say alice "/script load rpe2e_die2"
+say alice "a secret line the script dies right after the gate for"
+if wait_for "$WORK/alice/all.log" "rpe2e_die2: dies after the module's gate" 15; then
+    sleep 1
+    pass "the script hooked in after the module's gate died there"
+else
+    bad "the script hooked in after the module's gate did not die (the check proves nothing)"
+fi
+if grep -aqF "dies right after the gate for" "$WORK/wire.log"; then
+    bad "a line went out in plain text when the script died right after the module's gate"
+else
+    pass "no plain text when the script dies right after the module's gate"
+fi
+check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies right after the gate for"
+say alice "/script load rpe2e_die"
+say alice "/unload e2e"
+say alice "/load e2e"
+say alice "/join -E2E $CHAN"
+say alice "a secret line the script dies in the gate for"
+if wait_for "$WORK/alice/all.log" "rpe2e_die: dies in its gate" 15; then
+    sleep 1
+    pass "the script of rpe2e.pl's name died in its gate"
+else
+    bad "the script of rpe2e.pl's name did not die in its gate (the check proves nothing)"
+fi
+if grep -aqF "dies in the gate for" "$WORK/wire.log"; then
+    bad "a line went out in plain text when the script died in its gate"
+else
+    pass "no plain text when the script dies in its gate"
+fi
+check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies in the gate for"
+
 for f in "$WORK"/asan-* "$WORK"/ubsan-*; do
     [ -e "$f" ] || continue
     bad "sanitizer report: $(basename "$f")"
