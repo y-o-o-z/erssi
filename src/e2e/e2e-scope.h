@@ -131,8 +131,12 @@ char *e2e_ctx_network(const char *ctx);
 /* TRUE when ctx is scoped to net's label, or unscoped (a legacy row); a
    scoped ctx is on no net without a label, and a NULL ctx on none */
 gboolean e2e_ctx_on_net(const char *ctx, const E2E_NET *net);
-/* "IRCnet:#chan" for a scoped ctx, a bare one unchanged; NULL for NULL */
+/* "IRCnet:#chan" for a scoped ctx, a bare one as it is; every other C0
+   control byte (a further 0x1F, formatting codes) and DEL as '?'; NULL
+   for NULL */
 char *e2e_ctx_display(const char *ctx);
+/* text with every C0 control byte and DEL as '?'; NULL for NULL */
+char *e2e_text_display(const char *text);
 
 /* ---- the keyring: legacy (unscoped) rows ---- */
 
@@ -246,6 +250,6 @@ E2E_ADOPT_RESULT e2e_adopt_explicit(E2E_JSON *kr, const E2E_NET *net, const char
 gboolean e2e_keyring_has_scoped(const E2E_JSON *kr);
 
 /* what the module says when rpe2e.pl is loaded on such a keyring */
-#define E2E_SCRIPT_SCOPED_WARN "rpe2e.pl does not know the per-network entries of this keyring (written by the e2e module): conversations encrypted there are NOT encrypted by the script. Unload the script to use them (/e2e export keeps a copy)"
+#define E2E_SCRIPT_SCOPED_WARN "rpe2e.pl does not know the per-network entries of this keyring (written by the e2e module): the script does not encrypt the conversations set up there, so messages to them are NOT sent while it is loaded. Unload the script to use them (/e2e export keeps a copy)"
 
 #endif

@@ -54,6 +54,19 @@ static const char *shown(const char *ctx)
 	return ring[at] != NULL ? ring[at] : "";
 }
 
+/* text from the keyring (a handle) as the user reads it: control bytes
+   neutralised. Valid until the fourth call after. */
+static const char *shown_text(const char *text)
+{
+	static char *ring[4];
+	static int at;
+
+	at = (at + 1) % G_N_ELEMENTS(ring);
+	g_free(ring[at]);
+	ring[at] = e2e_text_display(text);
+	return ring[at] != NULL ? ring[at] : "";
+}
+
 /* the bare context of a window: the channel, or "@<peer handle>" in a
    query */
 static char *window_wire(const E2E_JSON *kr, WI_ITEM_REC *item, const char *nick)
@@ -578,7 +591,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 			E2E_JSON *row = e2e_json_get(src, g_ptr_array_index(keys, i));
 
 			split_key(g_ptr_array_index(keys, i), &handle, &channel);
-			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", handle, shown(channel),
+			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", shown_text(handle), shown(channel),
 			               session_label(kr, handle, channel, row),
 			               str_or(e2e_json_get_string(row, "fp"), ""));
 			g_free(handle);
@@ -1202,16 +1215,22 @@ static void cmd_autotrust(SERVER_REC *server, WI_ITEM_REC *item, char **args)
 		} else if (strchr(args[1], E2E_SCOPE_SEP) != NULL) {
 			e2e_print_item(item, "autotrust: a scope cannot hold the control character 0x1F");
 		} else {
-			/* a channel or address is the window's network's */
-			if (strcmp(args[1], "global") == 0 || server == NULL) {
+			/* a channel or address is the window's network's; without
+			   a network it would hold on every network: refused */
+			if (strcmp(args[1], "global") == 0) {
 				scope = g_strdup(args[1]);
+			} else if (server == NULL) {
+				scope = NULL;
+				e2e_print_item(item, "autotrust: %s is kept per network - add it in a window of that network, or use the scope global",
+				               args[1]);
 			} else {
 				e2e_server_net(server, &net);
 				scope = e2e_ctx_scoped(&net, args[1]);
 				e2e_net_clear(&net);
 			}
 			if (scope == NULL) {
-				e2e_print_item(item, "autotrust: the network has no name - nothing added");
+				if (server != NULL)
+					e2e_print_item(item, "autotrust: the network has no name - nothing added");
 			} else {
 				rule = e2e_json_new(E2E_JSON_OBJECT);
 				e2e_json_set_string(rule, "scope", scope);
@@ -1274,8 +1293,13 @@ static void cmd_adopt(WI_ITEM_REC *item)
 	e2e_server_net(item->server, &net);
 	switch (e2e_adopt_explicit(kr, &net, wire, query_nick(item), &moved)) {
 	case E2E_ADOPT_MOVED:
-		if (e2e_save(kr))
+		if (!e2e_save(kr))
+			break;
+		if (moved > 0)
 			e2e_print_item(item, "adopted %s for %s: %u entries", wire, net.label, moved);
+		else
+			e2e_print_item(item, "adopted %s for %s: %s had entries of its own for each old one - those are kept, the old ones are dropped",
+			               wire, net.label, net.label);
 		break;
 	case E2E_ADOPT_OWN:
 		if (e2e_save(kr))
@@ -1283,8 +1307,8 @@ static void cmd_adopt(WI_ITEM_REC *item)
 			               wire, net.label);
 		break;
 	case E2E_ADOPT_ALREADY:
-		e2e_print_item(item, "E2E is already set up for %s on %s; the old entries stay", wire,
-		               net.label);
+		e2e_print_item(item, "E2E is already set up for %s on %s; the old entries stay (to use them here instead: /e2e export, remove this network's entries for %s from the file, /e2e import it, then /e2e adopt)",
+		               wire, net.label, wire);
 		break;
 	case E2E_ADOPT_NONE:
 		e2e_print_item(item, "no old entries of %s to adopt for %s", wire, net.label);

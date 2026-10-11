@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <irssi/src/e2e/e2e-json.h>
+#include <irssi/src/e2e/e2e-keyring.h>
 #include <irssi/src/e2e/e2e-proto.h>
 #include <irssi/src/e2e/e2e-scope.h>
 
@@ -671,9 +672,20 @@ static void test_contexts(void)
 	t = e2e_ctx_rescope("IRCnet\x1f#a\x1f" "b", "#c");
 	g_assert_cmpstr(t, ==, "IRCnet\x1f#c");
 	g_free(t);
+	/* never a raw control byte: a further 0x1F, formatting codes */
 	t = e2e_ctx_display("IRCnet\x1f#a\x1f" "b");
-	g_assert_cmpstr(t, ==, "IRCnet:#a\x1f" "b");
+	g_assert_cmpstr(t, ==, "IRCnet:#a?b");
 	g_free(t);
+	t = e2e_ctx_display("#a\x02" "b\x03" "4c\x7f");
+	g_assert_cmpstr(t, ==, "#a?b?4c?");
+	g_free(t);
+	t = e2e_text_display("bob\x1f@h\x0f");
+	g_assert_cmpstr(t, ==, "bob?@h?");
+	g_free(t);
+	t = e2e_text_display("ża\x01");
+	g_assert_cmpstr(t, ==, "ża?");
+	g_free(t);
+	g_assert_null(e2e_text_display(NULL));
 
 	/* a wire context holding the separator cannot be scoped */
 	g_assert_null(e2e_ctx_scoped(&net, "#a\x1f" "b"));
@@ -1471,6 +1483,299 @@ static void test_legacy_autotrust_old_rule(void)
 	e2e_json_free(kr);
 }
 
+/* ---- rpe2e.pl loaded (R-E19): what the module still stops ---- */
+
+static char *guard_resolve(const char *nick, const E2E_JSON *kr, void *data)
+{
+	return g_ascii_strcasecmp(nick, "bob") == 0 ? g_strdup("bob@127.0.0.1") : NULL;
+}
+
+static E2E_GATE_ACTION guard(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                             const char *buf, const char *want_target, const char *want_in_msg)
+{
+	char *message = (char *) "unset", *target = (char *) "unset", *before, *after;
+	E2E_GATE_ACTION a;
+
+	before = e2e_json_encode(kr, FALSE);
+	a = e2e_script_guard(kr, kr_ok, net, buf, strlen(buf), guard_resolve, NULL, &message, &target);
+	after = e2e_json_encode(kr, FALSE);
+	/* never changes the keyring */
+	g_assert_cmpstr(before, ==, after);
+	g_free(before);
+	g_free(after);
+	g_assert_cmpstr(target, ==, want_target);
+	if (want_in_msg == NULL) {
+		g_assert_null(message);
+	} else {
+		g_assert_nonnull(message);
+		if (strstr(message, want_in_msg) == NULL)
+			g_test_message("%s: \"%s\" not in \"%s\"", buf, want_in_msg, message);
+		g_assert_nonnull(strstr(message, want_in_msg));
+	}
+	if (message != NULL)
+		g_assert_null(strchr(message, '\x1f'));
+	g_free(message);
+	g_free(target);
+	return a;
+}
+
+static void put_cfg(E2E_JSON *kr, const char *ctx, int enabled, const char *nick)
+{
+	E2E_JSON *cfg = e2e_json_new(E2E_JSON_OBJECT);
+
+	e2e_json_set_int(cfg, "enabled", enabled);
+	e2e_json_set_string(cfg, "mode", "normal");
+	if (nick != NULL)
+		e2e_json_set_string(cfg, "nick", nick);
+	e2e_json_set(store_of(kr, "channels"), ctx, cfg);
+}
+
+static void test_legacy_script_guard(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET a1 = { (char *) "E2E", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_NET b = { (char *) "E2E2", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = fixture();
+	unsigned char key[32];
+	const char *error = NULL;
+	GPtrArray *wires;
+	char *line;
+	guint moved;
+
+	put_cfg(kr, "E2E\x1f#only", 1, NULL);
+	put_cfg(kr, "E2E\x1f#off", 0, NULL);
+	put_cfg(kr, "E2E\x1f@bob@127.0.0.1", 1, "bob");
+	put_cfg(kr, "E2E\x1f@carol@127.0.0.1", 1, "carol");
+	/* E2E only in the module's entries: refused, named <network>:<name> */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :secret words", "#only",
+	                      "E2E is on for E2E:#only in the e2e module"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "@time=x PRIVMSG #only :secret\r\n", "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #ONLY :secret", "#ONLY", "the same channel as #ONLY"), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :\001ACTION waves\001", "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	/* a query, also while the address is unknown */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG bob :secret", "bob", "E2E:@bob@127.0.0.1"), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG carol :secret", "carol", "rpe2e.pl does not know"),
+	                ==, E2E_GATE_REFUSE);
+	/* several lines, several targets */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :a\r\nPRIVMSG #only :b", "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	/* (a server may end a line at CR alone) */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :a\rPRIVMSG #only :b", "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free,#only :b", "#free,#only", "rpe2e.pl"), ==,
+	                E2E_GATE_REFUSE);
+	/* passes: off, not set up, another network, no PRIVMSG, CTCP */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #off :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &b, "PRIVMSG #only :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "NOTICE #only :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :\001VERSION\001", NULL, NULL), ==,
+	                E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "", NULL, NULL), ==, E2E_GATE_PASS);
+	/* the old rows are the script's: on, off or of unknown network (two
+	   networks), they never refuse here */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #test :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	g_assert_cmpint(guard(kr, TRUE, &a1, "PRIVMSG #other :hi", NULL, NULL), ==, E2E_GATE_PASS);
+	/* the script's own chunks pass */
+	memset(key, 0x42, sizeof(key));
+	wires = e2e_encrypt_plain(key, "#only", "from the script", 1791564000, &error);
+	g_assert_nonnull(wires);
+	line = g_strconcat("PRIVMSG #only :", (char *) g_ptr_array_index(wires, 0), NULL);
+	g_assert_cmpint(guard(kr, TRUE, &a, line, NULL, NULL), ==, E2E_GATE_PASS);
+	g_free(line);
+	/* ... but a wire does not cover a clear line next to it */
+	line = g_strconcat("PRIVMSG #only :", (char *) g_ptr_array_index(wires, 0),
+	                   "\nPRIVMSG #only :clear", NULL);
+	g_assert_cmpint(guard(kr, TRUE, &a, line, "#only", "E2E:#only"), ==, E2E_GATE_REFUSE);
+	g_free(line);
+	g_ptr_array_unref(wires);
+	/* "+RPE2E01 " that is no wire is text */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :+RPE2E01 not a wire", "#only", "E2E:#only"),
+	                ==, E2E_GATE_REFUSE);
+	/* a bot command goes out, with the warning */
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :!seen x", "#only", "CLEARTEXT"), ==,
+	                E2E_GATE_BYPASS);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :!seen x", NULL, NULL), ==, E2E_GATE_PASS);
+	/* a keyring that cannot be read: nothing but bot commands and CTCPs */
+	g_assert_cmpint(guard(kr, FALSE, &a, "PRIVMSG #free :hi", "#free", "keyring"), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, FALSE, &a, "PRIVMSG #free :!seen x", "#free", "CLEARTEXT"), ==,
+	                E2E_GATE_BYPASS);
+	/* a name another network took over: refused there too */
+	g_assert_cmpint(e2e_adopt_explicit(kr, &a, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
+	g_assert_cmpint(guard(kr, TRUE, &b, "PRIVMSG #test :hi", "#test", "rpe2e.pl does not know"), ==,
+	                E2E_GATE_REFUSE);
+	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #test :hi", "#test", "E2E:#test"), ==,
+	                E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+}
+
+/* ---- the review's regression scenarios (Task 3) ---- */
+
+static E2E_NET rv_a = { (char *) "A", E2E_CASEMAP_RFC1459, FALSE };
+static E2E_NET rv_b = { (char *) "B", E2E_CASEMAP_RFC1459, FALSE };
+static E2E_NET rv_c = { (char *) "C", E2E_CASEMAP_RFC1459, FALSE };
+
+/* the gate's action on a copy (the gate may adopt or make a key) */
+static E2E_GATE_ACTION rv_gate(E2E_JSON *kr, const E2E_NET *net, const char *target)
+{
+	E2E_JSON *copy = e2e_json_copy(kr);
+	E2E_GATE_RESULT g;
+	E2E_GATE_ACTION a;
+
+	e2e_gate_decide(copy, TRUE, NULL, net, target, "secret words", guard_resolve, NULL, &g);
+	a = g.action;
+	e2e_gate_result_clear(&g);
+	e2e_json_free(copy);
+	return a;
+}
+
+static gboolean not_clear(E2E_GATE_ACTION a)
+{
+	return a == E2E_GATE_REFUSE || a == E2E_GATE_CIPHER;
+}
+
+/* old rows on several networks: refused everywhere until adopted; then
+   only the adopting network encrypts */
+static void test_regress_refused_until_adopt(void)
+{
+	E2E_NET b1 = { (char *) "B", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_JSON *kr = fixture();
+	guint moved;
+
+	g_assert_cmpint(rv_gate(kr, &rv_a, "#test"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(rv_gate(kr, &rv_b, "#test"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
+	g_assert_cmpuint(moved, ==, LEGACY_ROWS_TEST);
+	g_assert_true(not_clear(rv_gate(kr, &rv_a, "#test")));
+	g_assert_cmpint(rv_gate(kr, &rv_b, "#test"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(rv_gate(kr, &rv_c, "#test"), ==, E2E_GATE_REFUSE);
+	g_assert_cmpint(rv_gate(kr, &rv_a, "#other"), ==, E2E_GATE_REFUSE);
+	/* B as the only network: still blocked by A's marker */
+	g_assert_cmpint(rv_gate(kr, &b1, "#test"), ==, E2E_GATE_REFUSE);
+	e2e_json_free(kr);
+}
+
+/* adopt on B (OWN) and on C (MOVED, new old rows) never touch A's rows
+   or marker; networks not adopted stay refused */
+static void test_regress_adopt_b_keeps_a(void)
+{
+	E2E_NET d = { (char *) "D", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = fixture();
+	char *a0, *a1, *b0;
+	guint moved;
+
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
+	a0 = rows_of(kr, "A");
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_b, "#test", NULL, &moved), ==, E2E_ADOPT_OWN);
+	a1 = rows_of(kr, "A");
+	g_assert_cmpstr(a0, ==, a1);
+	g_free(a1);
+	/* B: a config only - no key, no session, no marker */
+	b0 = rows_of(kr, "B");
+	g_assert_cmpstr(b0, ==, "channels/B\x1f#test={\"enabled\":1,\"mode\":\"normal\"}\n");
+	g_assert_true(not_clear(rv_gate(kr, &rv_b, "#test")));
+	g_assert_cmpint(rv_gate(kr, &rv_c, "#test"), ==, E2E_GATE_REFUSE);
+	put_cfg(kr, "#test", 1, NULL);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_c, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
+	a1 = rows_of(kr, "A");
+	g_assert_cmpstr(a0, ==, a1);
+	g_free(a1);
+	a1 = rows_of(kr, "B");
+	g_assert_cmpstr(b0, ==, a1);
+	g_free(a1);
+	g_assert_cmpint(rv_gate(kr, &d, "#test"), ==, E2E_GATE_REFUSE);
+	g_free(a0);
+	g_free(b0);
+	e2e_json_free(kr);
+}
+
+/* ALREADY, NONE and UNSCOPABLE change nothing at all */
+static void test_regress_no_change_outcomes(void)
+{
+	E2E_NET nolabel = { NULL, E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = fixture();
+	char *before, *after;
+	guint moved;
+
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
+	before = e2e_json_encode(kr, FALSE);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#test", NULL, &moved), ==, E2E_ADOPT_ALREADY);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#nothing", NULL, &moved), ==, E2E_ADOPT_NONE);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &rv_a, "#a\x1f" "b", NULL, &moved), ==,
+	                E2E_ADOPT_UNSCOPABLE);
+	g_assert_cmpint(e2e_adopt_explicit(kr, &nolabel, "#other", NULL, &moved), ==,
+	                E2E_ADOPT_UNSCOPABLE);
+	g_assert_cmpint(e2e_adopt_explicit(kr, NULL, "#other", NULL, &moved), ==,
+	                E2E_ADOPT_UNSCOPABLE);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(before);
+	g_free(after);
+	e2e_json_free(kr);
+}
+
+/* a rule of A never auto-trusts on B; an old bare rule holds for that
+   exact name on every network; a NULL ctx never matches */
+static void test_regress_autotrust_scope(void)
+{
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT);
+
+	add_rule(kr, "A\x1f#sec", "*@*");
+	add_rule(kr, "#old", "bob@*");
+	g_assert_true(e2e_autotrust_matches(kr, "eve@x", "A\x1f#sec"));
+	g_assert_false(e2e_autotrust_matches(kr, "eve@x", "B\x1f#sec"));
+	g_assert_false(e2e_autotrust_matches(kr, "eve@x", "#sec"));
+	g_assert_false(e2e_autotrust_matches(kr, "eve@x", "#sec\x1f" "A"));
+	g_assert_false(e2e_autotrust_matches(kr, "eve@x", NULL));
+	g_assert_true(e2e_autotrust_matches(kr, "bob@h", "Z\x1f#old"));
+	g_assert_false(e2e_autotrust_matches(kr, "eve@h", "Z\x1f#old"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@h", "Z\x1f#OLD"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@h", "Z\x1f#old2"));
+	e2e_json_free(kr);
+}
+
+/* the premise of R-E19: a channel only the module set up has no row
+   rpe2e.pl reads, while the module itself never lets it out in clear;
+   the dry decisions leave the keyring alone */
+static void test_regress_r_e19_premise(void)
+{
+	static const char line[] = "PRIVMSG #only :secret words";
+	E2E_JSON *kr = e2e_keyring_new();
+	char *before, *after, *msg;
+
+	put_cfg(kr, "A\x1f#only", 1, NULL);
+	g_assert_true(e2e_keyring_has_scoped(kr));
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#only"));
+	g_assert_true(not_clear(rv_gate(kr, &rv_a, "#only")));
+	before = e2e_json_encode(kr, FALSE);
+	msg = e2e_gate_multiline(kr, TRUE, &rv_a, line, strlen(line), guard_resolve, NULL);
+	g_assert_nonnull(msg);
+	g_free(msg);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_assert_null(e2e_gate_multiline(kr, TRUE, &rv_a, "PRIVMSG #free :hi", 17, guard_resolve, NULL));
+	g_assert_null(e2e_gate_multiline(kr, TRUE, &rv_b, line, strlen(line), guard_resolve, NULL));
+	g_free(before);
+	g_free(after);
+	e2e_json_free(kr);
+}
+
+/* has_scoped looks at incoming keys too */
+static void test_regress_has_scoped_incoming(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+
+	g_assert_false(e2e_keyring_has_scoped(kr));
+	put_row(kr, "incoming", "bob@h|A\x1f#x");
+	g_assert_true(e2e_keyring_has_scoped(kr));
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -1493,6 +1798,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/legacy/adopt-query", test_legacy_adopt_query);
 	g_test_add_func("/e2e/legacy/has-scoped", test_legacy_has_scoped);
 	g_test_add_func("/e2e/legacy/autotrust-old-rule", test_legacy_autotrust_old_rule);
+	g_test_add_func("/e2e/legacy/script-guard", test_legacy_script_guard);
+	g_test_add_func("/e2e/regress/t3-refused-until-adopt", test_regress_refused_until_adopt);
+	g_test_add_func("/e2e/regress/t3-adopt-b-keeps-a", test_regress_adopt_b_keeps_a);
+	g_test_add_func("/e2e/regress/t3-no-change-outcomes", test_regress_no_change_outcomes);
+	g_test_add_func("/e2e/regress/t3-autotrust-scope", test_regress_autotrust_scope);
+	g_test_add_func("/e2e/regress/t3-r-e19-premise", test_regress_r_e19_premise);
+	g_test_add_func("/e2e/regress/t3-has-scoped-incoming", test_regress_has_scoped_incoming);
 
 	return g_test_run();
 }

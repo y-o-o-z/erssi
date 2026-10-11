@@ -239,7 +239,7 @@ gboolean e2e_native_active(void)
 
 	if (script && !script_seen) {
 		script_seen = TRUE;
-		e2e_print_item(NULL, "the rpe2e.pl script is loaded: the native e2e module leaves encryption to it and stays inactive. Unload the script (/script unload rpe2e, and remove it from scripts/autorun) to use the native module - it uses the same keyring, no new keys are needed.");
+		e2e_print_item(NULL, "the rpe2e.pl script is loaded: the native e2e module leaves encryption to it and stays inactive - it only stops messages to conversations that its own per-network entries encrypt, which the script does not know. Unload the script (/script unload rpe2e, and remove it from scripts/autorun) to use the native module - it uses the same keyring, no new keys are needed.");
 	} else if (!script && script_seen) {
 		script_seen = FALSE;
 		e2e_print_item(NULL, "rpe2e.pl is no longer loaded: the native e2e module encrypts now (same keyring)");
@@ -854,6 +854,41 @@ out:
    past "server outgoing modify". Send it the normal way first (in order),
    so every queued PRIVMSG meets the gate; redirected commands stay for
    irssi, which does not send those either. */
+/* R-E19: while rpe2e.pl is loaded, after the script's gate (last, so
+   it sees only what the script let pass unchanged): a PRIVMSG that the
+   module's per-network entries - which the script cannot see - would
+   encrypt or refuse is not sent in clear text either. Decided on those
+   entries only, dry: the keyring is not changed */
+static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crlf)
+{
+	E2E_LOAD_STATUS status;
+	E2E_GATE_ACTION action;
+	E2E_JSON *kr;
+	E2E_NET net;
+	char *error = NULL, *msg, *target;
+
+	if (!IS_IRC_SERVER(server) || str == NULL || e2e_native_active() ||
+	    !e2e_buffer_has_privmsg(str->str, str->len))
+		return;
+	/* an unreadable keyring may hold such an entry: fail closed */
+	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	g_free(error);
+	e2e_server_net(server, &net);
+	action = e2e_script_guard(kr, status == E2E_LOAD_OK, &net, str->str, str->len, resolve_cb,
+	                          server, &msg, &target);
+	e2e_net_clear(&net);
+	if (action == E2E_GATE_REFUSE) {
+		e2e_print_item(e2e_notice_item(server, target, target), "%s", msg);
+		g_string_truncate(str, 0);
+		signal_stop();
+	} else if (msg != NULL) {
+		e2e_print_item(e2e_notice_item(server, target, target), "%s", msg);
+	}
+	g_free(msg);
+	g_free(target);
+	e2e_json_free(kr);
+}
+
 static void sig_session_save_server(SERVER_REC *server)
 {
 	IRC_SERVER_REC *irc = IRC_SERVER(server);
@@ -1197,6 +1232,7 @@ void e2e_core_init(void)
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
 	signal_add_first("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
+	signal_add_last("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_script);
 	signal_add_first("session save server", (SIGNAL_FUNC) sig_session_save_server);
 	signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
 	signal_add_first("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);
@@ -1232,6 +1268,7 @@ void e2e_core_init(void)
 void e2e_core_deinit(void)
 {
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
+	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_script);
 	signal_remove("session save server", (SIGNAL_FUNC) sig_session_save_server);
 	signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
 	signal_remove("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);

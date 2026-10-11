@@ -75,7 +75,8 @@
                  ident@host with * and ? (case-insensitive); matching
                  people are accepted automatically. A channel added here
                  is the one of the window's network (listed as
-                 <network>:<name>); rules from rpe2e.pl or from erssi
+                 <network>:<name>; a window without a server cannot add
+                 one); rules from rpe2e.pl or from erssi
                  before networks were kept apart name a channel of every
                  network (listed with "(every network)"). REMOVE removes
                  the rules with that pattern.
@@ -86,9 +87,13 @@
                  erssi uses several networks: until then E2E there is
                  refused. When another network took the old entries
                  over already, they stay there and this network gets
-                 encryption of its own (on, normal mode; keys are
-                 exchanged anew). When the network has entries of its
-                 own for the name, nothing changes.
+                 encryption of its own - always turned on, in normal
+                 mode (keys are exchanged anew; /E2E OFF afterwards
+                 sends in clear text there). When the network has
+                 entries of its own for the name, nothing changes (to
+                 use the old ones there instead: /E2E EXPORT, remove
+                 that network's entries for the name from the file,
+                 /E2E IMPORT it, then /E2E ADOPT).
     RESET:       Only after a corrupt keyring was moved aside (see below):
                  starts a new keyring with a new identity. Encryption is
                  then off everywhere until /E2E ON, and your peers see a
@@ -106,11 +111,13 @@
     If the rpe2e.pl script is loaded too, the module stays inactive and
     says so; unload the script (/SCRIPT UNLOAD rpe2e, and remove it from
     scripts/autorun) to use the module. The script does not know the
-    module's per-network entries (see Networks): a channel or query that
-    only the module set up is NOT encrypted by the script, and the module
-    warns about it once while the script is loaded. Going back to
-    rpe2e.pl after the module wrote such entries is a downgrade; /E2E
-    EXPORT keeps a copy.
+    module's per-network entries (see Networks), so it would send a
+    channel or query that only the module set up in clear text: while
+    the script is loaded the module still stops such messages (they are
+    NOT sent, and you are told), lets bot commands out with a warning,
+    and warns once that the keyring has such entries. Going back to
+    rpe2e.pl after the module wrote them is a downgrade - unload the
+    script to send there encrypted; /E2E EXPORT keeps a copy.
 
     Subcommands work in the context of the active window: in a channel
     window it is the channel, in a query window - the person identified by
