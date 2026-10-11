@@ -575,7 +575,7 @@ if grep -aqF "not utf8 secret" "$WORK/wire2.log" "$WORK/wire.log"; then
 else
     pass "utf8 CASEMAPPING: a channel name that is not UTF-8 is not sent in plain text"
 fi
-if wait_for "$WORK/alice/all.log" "is not valid UTF-8: " 5; then
+if wait_for "$WORK/alice/all.log" " may be the same channel as " 5; then
     pass "alice is told why the name that is not UTF-8 was not sent"
 else
     bad "alice is not told why the name that is not UTF-8 was not sent"
@@ -795,6 +795,20 @@ if grep -aqF "multi secret" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: a second line of a raw buffer is not sent in plain text"
 fi
+# rpe2e.pl compares names exactly: #MULTI is #multi to this (ascii)
+# server, and E2E is on for #multi in the script's own entry (R-E24)
+say bob "/msg #MULTI other case to multi"
+sleep 1
+if grep -aqF "other case to multi" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: #MULTI (E2E on for #multi in its entry) went out in plain text"
+else
+    pass "rpe2e.pl loaded: #MULTI (E2E on for #multi in its entry) is not sent in plain text"
+fi
+if wait_for "$WORK/bob/all.log" "rpe2e.pl compares names exactly" 5; then
+    pass "bob is told rpe2e.pl compares names exactly"
+else
+    bad "bob is not told why #MULTI was not sent"
+fi
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json" "$CHAN" <<'PY' && pass "rpe2e.pl loads and saves the module's keyring, its own members kept" || bad "rpe2e.pl lost what the module stored"
 import json, sys
@@ -879,6 +893,31 @@ PERL
 # the flood queue is slow since the /upgrade check: back to the defaults
 say alice "/set -default cmds_max_at_once"
 say alice "/set -default cmd_queue_speed"
+
+# ---- a handler rewrites a line after the module's gate let it pass ----
+# (R-E24) the module's last hook sees another line than its gate did:
+# it decides that one too
+cat > "$WORK/alice/scripts/e2erewrite.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'e2erewrite');
+# -99: after the module's gate (-100), before every default handler
+Irssi::signal_add_priority('server outgoing modify', sub {
+    my ($server, $line) = @_;    # $line: a reference to the line
+    $$line = "PRIVMSG #test :a rewritten secret line" if $$line =~ /^PRIVMSG #pub :rewrite me/;
+}, -99);
+PERL
+say alice "/join -E2E $CHAN"
+say alice "/script load e2erewrite"
+say alice "/msg -E2E #pub rewrite me"
+# the flood queue may hold it a while: once bob has it, it was sent
+check "$WORK/bob/logs/E2E/$CHAN.log" "a rewritten secret line"
+if grep -aqF "a rewritten secret line" "$WORK/wire.log"; then
+    bad "a line rewritten after the module's gate went out in plain text"
+else
+    pass "a line rewritten after the module's gate is gated again"
+fi
+say alice "/script unload e2erewrite"
 # the same with a script that hooks in right after the module's gate,
 # and no reload: the module decided earlier lines while it was active,
 # never this one

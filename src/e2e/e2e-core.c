@@ -363,11 +363,17 @@ gboolean e2e_legacy_ok(void)
 void e2e_server_net(SERVER_REC *server, E2E_NET *net)
 {
 	const char *casemapping = NULL;
+	gboolean known = FALSE;
 
 	if (IS_IRC_SERVER(server) && IRC_SERVER(server)->isupport != NULL)
 		casemapping = g_hash_table_lookup(IRC_SERVER(server)->isupport, "CASEMAPPING");
+	/* before the 005 (isupport_sent, kept over /upgrade) nothing is
+	   known about the server's CASEMAPPING: the widest (R-E24) */
+	if (IS_IRC_SERVER(server))
+		known = IRC_SERVER(server)->isupport_sent;
 	e2e_net_init(net, server != NULL && server->connrec != NULL ? chatnet_name(server->connrec->chatnet) : NULL,
 	             server != NULL ? server->tag : NULL, casemapping, e2e_legacy_ok());
+	net->casemap = e2e_casemap_of_server(known, casemapping);
 }
 
 /* ---- the keyring ---- */
@@ -752,40 +758,68 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
    (signal_continue), so the count also comes down when a handler stops
    the signal. */
 static int outgoing_depth;
-/* per running emission (index outgoing_depth): the module's gate
-   decided it - it ran while the module was active. The rpe2e.pl guard
-   leaves a line to that gate only then: a script of rpe2e.pl's name
-   that dies in its gate is unloaded at once, and the module, inactive
-   when its gate ran, is active by the time the guard runs */
-static GArray *gated_emissions;
+/* per running emission (index outgoing_depth): the line as the module's
+   gate decided it - the gate ran while the module was active - or NULL.
+   The rpe2e.pl guard leaves a line to that gate only when it is still
+   that line: a script of rpe2e.pl's name that dies in its gate is
+   unloaded at once, and the module, inactive when its gate ran, is
+   active by the time the guard runs; a handler between the two may have
+   rewritten what the gate let pass (R-E24) */
+static GPtrArray *gated_emissions;
+
+static void gated_line_free(gpointer data)
+{
+	GString *line = data;
+
+	if (line != NULL) {
+		e2e_wipe(line->str, line->len);
+		g_string_free(line, TRUE);
+	}
+}
+
+/* the record of the running emission (index outgoing_depth) */
+static gpointer *gated_slot(void)
+{
+	if (gated_emissions == NULL || outgoing_depth <= 0 ||
+	    (guint) outgoing_depth >= gated_emissions->len)
+		return NULL;
+	return &g_ptr_array_index(gated_emissions, outgoing_depth);
+}
 
 static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf)
 {
+	gpointer *slot;
+
 	outgoing_depth++;
-	if (gated_emissions != NULL) {
-		if (gated_emissions->len <= (guint) outgoing_depth)
-			g_array_set_size(gated_emissions, outgoing_depth + 1);
-		g_array_index(gated_emissions, gboolean, outgoing_depth) = FALSE;
+	if (gated_emissions != NULL && gated_emissions->len <= (guint) outgoing_depth)
+		g_ptr_array_set_size(gated_emissions, outgoing_depth + 1);
+	if ((slot = gated_slot()) != NULL) {
+		gated_line_free(*slot);
+		*slot = NULL;
 	}
 	signal_continue(3, server, str, GINT_TO_POINTER(crlf));
 	outgoing_depth--;
 }
 
-/* the module's gate decides the running emission */
-static void mark_gated(void)
+/* the module's gate decides str in the running emission */
+static void mark_gated(const GString *str)
 {
-	if (gated_emissions != NULL && outgoing_depth > 0 &&
-	    (guint) outgoing_depth < gated_emissions->len)
-		g_array_index(gated_emissions, gboolean, outgoing_depth) = TRUE;
+	gpointer *slot = gated_slot();
+
+	if (slot != NULL) {
+		gated_line_free(*slot);
+		*slot = g_string_new_len(str->str, str->len);
+	}
 }
 
-/* the module's gate decided the running emission; FALSE when that is
-   not known (no count: decided again, fail closed) */
-static gboolean was_gated(void)
+/* the module's gate decided str, as it is now, in the running emission;
+   FALSE when that is not known (no count: decided again, fail closed) */
+static gboolean was_gated(const GString *str)
 {
-	return gated_emissions != NULL && outgoing_depth > 0 &&
-	       (guint) outgoing_depth < gated_emissions->len &&
-	       g_array_index(gated_emissions, gboolean, outgoing_depth);
+	gpointer *slot = gated_slot();
+	const GString *line = slot != NULL ? *slot : NULL;
+
+	return line != NULL && line->len == str->len && memcmp(line->str, str->str, str->len) == 0;
 }
 
 /* the module's gate on the line in str */
@@ -896,7 +930,7 @@ static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 {
 	if (!IS_IRC_SERVER(server) || str == NULL || !e2e_native_active())
 		return;
-	mark_gated();
+	mark_gated(str);
 	native_gate(server, str);
 }
 
@@ -918,10 +952,11 @@ static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crl
 		return;
 	if (e2e_native_active()) {
 		/* the module's gate let this line pass - unless it ran while the
-		   module was inactive (rpe2e.pl, loaded, died in its gate since):
-		   then no gate has seen it, the module's decides it now */
-		if (!was_gated()) {
-			mark_gated();
+		   module was inactive (rpe2e.pl, loaded, died in its gate since),
+		   or a handler rewrote the line after it: then no gate has seen
+		   it as it is, the module's decides it now */
+		if (!was_gated(str)) {
+			mark_gated(str);
 			native_gate(server, str);
 		}
 		return;
@@ -1126,6 +1161,15 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			signal_stop();
 			break;
 		}
+		/* opened with the key of a channel the server may keep apart
+		   from this one (R-E22): shown with that channel's name */
+		if (res.via != NULL) {
+			char *marked = e2e_plain_with_via(res.plain, res.via);
+
+			e2e_wipe(res.plain, strlen(res.plain));
+			g_free(res.plain);
+			res.plain = marked;
+		}
 		/* the wire's own target, so the routing (channel / query) stays */
 		newdata = g_strconcat(target, " :", res.plain, NULL);
 		signal_continue(4, server, newdata, orig_nick, orig_address);
@@ -1290,7 +1334,7 @@ void e2e_core_init(void)
 	keyreq_in = e2e_stamps_new();
 	own_wait_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-	gated_emissions = g_array_new(FALSE, TRUE, sizeof(gboolean));
+	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
 	signal_add_full(MODULE_NAME, SIGNAL_PRIORITY_HIGH - 1, "server outgoing modify",
@@ -1356,7 +1400,7 @@ void e2e_core_deinit(void)
 	g_hash_table_destroy(keyreq_in);
 	g_hash_table_destroy(own_wait_notice);
 	g_hash_table_destroy(own_handles);
-	g_array_free(gated_emissions, TRUE);
+	g_ptr_array_unref(gated_emissions);
 	gated_emissions = NULL;
 	g_hash_table_destroy(own_lines);
 	g_free(keyring_file);

@@ -109,14 +109,19 @@
  are compared as the server's CASEMAPPING compares them (e2e_casefold):
  ascii, rfc1459 and strict-rfc1459 exactly, rfc1459 when the server
  sends none; rfc7613, rfc8265, utf8 and unknown values with a superset
- fold (NFKC + case folding + the rfc1459 specials). Over-folding can only
- refuse a line, or make one more decryption attempt that the AEAD
- rejects: the gate refuses a name the server takes for a channel with E2E
- on, and on a Unicode CASEMAPPING a name that is not UTF-8 while E2E is
- on for a channel of that network (it cannot be folded as the server
- does); a wire for a channel written otherwise is also tried with the
- sender's session of the same channel to the server (AAD: that
- session's name), on this network only.
+ fold (NFKC + case folding + the rfc1459 specials); the exact maps also
+ fold Latin-1 bytes C0-DE as the ircu family does. Over-folding refuses
+ more on the way out: the gate refuses a name the server may take for a
+ channel with E2E on, and one it cannot decide (not UTF-8 or unassigned
+ on a Unicode CASEMAPPING, non-ASCII on an unknown one, anything before
+ the server's 005) while E2E is on for a channel of that network. On the
+ way in, a wire for a channel written otherwise is also tried with the
+ sender's session of the same channel by the fold (AAD: that session's
+ name), on this network only. The AEAD does not reject what the fold
+ joins: a server that keeps #a[b and #a{b apart can deliver the
+ sender's #a[b line as #a{b, so a line opened under a name that is not
+ the target's to every server of the CASEMAPPING is shown with
+ "(E2E key of <name>)" (R-E22).
  Not addressed (known limitations, /help e2e):
  NOTICEs, non-ACTION CTCPs, bot commands and IRCv3 tags stay clear text;
  nicks in /e2e accept etc. resolve through the keyring's last_nick; a
@@ -147,7 +152,7 @@
 #define REFUSE_DM_MOVED  "E2E is on for %s at %s, but %s is now %s — message NOT sent. If it is the same person: /e2e on in the query encrypts to the new address (a new key exchange); /e2e off %s turns E2E off for the old one"
 #define REFUSE_DM_UNKNOWN "E2E is on for %s at %s, but the address of %s is not known now (no query or common channel) — message NOT sent; /e2e off %s turns E2E off for it"
 #define REFUSE_RAW_LINES "a raw line holding several IRC lines (CR/LF) includes a PRIVMSG that the E2E gate does not let out as it is (%s) — NOTHING of it was sent"
-#define REFUSE_UNDECIDED "the server compares channel names by Unicode (CASEMAPPING) and %s is not valid UTF-8: %s may be the same channel as %s, where E2E is on - message NOT sent; use channel names in valid UTF-8"
+#define REFUSE_UNDECIDED "how the server's CASEMAPPING compares %s cannot be decided (not valid UTF-8, an unassigned character, or a CASEMAPPING erssi does not know): %s may be the same channel as %s, where E2E is on - message NOT sent"
 #define REFUSE_UNSCOPED  "E2E cannot be kept per network for %s (its name holds the control character 0x1F, or the network has no name) and may be on for it — message NOT sent"
 
 static gint64 default_now(void)
@@ -1652,18 +1657,19 @@ static E2E_CASEMAP net_casemap(const E2E_NET *net)
 	return net != NULL ? net->casemap : E2E_CASEMAP_RFC1459;
 }
 
-/* a and b are one nick to the server of net (its CASEMAPPING; without
-   a network, rfc1459) */
-static gboolean same_nick(const E2E_NET *net, const char *a, const char *b)
+/* a and b may be one nick to the server of net (its CASEMAPPING, the
+   superset fold; without a network, rfc1459); narrow: only when every
+   server of that CASEMAPPING takes them for one (e2e_casefold_narrow) */
+static gboolean same_nick(const E2E_NET *net, const char *a, const char *b, gboolean narrow)
 {
 	char *fa, *fb;
 	gboolean same;
 
 	if (a == NULL || b == NULL)
 		return FALSE;
-	fa = e2e_casefold(a, net_casemap(net));
-	fb = e2e_casefold(b, net_casemap(net));
-	same = strcmp(fa, fb) == 0;
+	fa = narrow ? e2e_casefold_narrow(a, net_casemap(net)) : e2e_casefold(a, net_casemap(net));
+	fb = narrow ? e2e_casefold_narrow(b, net_casemap(net)) : e2e_casefold(b, net_casemap(net));
+	same = fa != NULL && fb != NULL && strcmp(fa, fb) == 0;
 	g_free(fa);
 	g_free(fb);
 	return same;
@@ -1672,7 +1678,8 @@ static gboolean same_nick(const E2E_NET *net, const char *a, const char *b)
 /* the handles of the "@<handle>" configs with E2E on that belong to nick:
    its "nick" member, or a peer last seen as nick under that handle (nicks
    compared by the CASEMAPPING of net) */
-GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
+static GPtrArray *dm_configs(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
+                             gboolean narrow)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
 	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
@@ -1687,11 +1694,11 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char 
 		if (!config_on_net(kr, key, net, &ctx) || *ctx != '@' || !e2e_ctx_enabled(kr, key))
 			continue;
 		cnick = e2e_json_get_string(e2e_json_get(channels, key), "nick");
-		match = same_nick(net, cnick, nick);
+		match = same_nick(net, cnick, nick, narrow);
 		for (j = 0; j < pkeys->len && !match; j++) {
 			E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(pkeys, j));
 
-			match = same_nick(net, e2e_json_get_string(peer, "last_nick"), nick) &&
+			match = same_nick(net, e2e_json_get_string(peer, "last_nick"), nick, narrow) &&
 			        g_strcmp0(e2e_json_get_string(peer, "last_handle"), ctx + 1) == 0;
 		}
 		if (match)
@@ -1700,6 +1707,11 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char 
 	g_ptr_array_unref(keys);
 	g_ptr_array_unref(pkeys);
 	return out;
+}
+
+GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
+{
+	return dm_configs(kr, net, nick, FALSE);
 }
 
 GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
@@ -1713,7 +1725,9 @@ GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const c
 		g_ptr_array_add(out, g_strconcat("@", live, NULL));
 		return out;
 	}
-	mine = e2e_dm_configs_of(kr, net, nick);
+	/* the nick of this query, not every nick the fold may take for it
+	   (R-E24): what turns E2E off is never wider than the server's rule */
+	mine = dm_configs(kr, net, nick, TRUE);
 	if (mine->len == 1)
 		g_ptr_array_add(out, g_strconcat("@", (char *) g_ptr_array_index(mine, 0), NULL));
 	g_ptr_array_unref(mine);
@@ -1812,15 +1826,41 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 	g_ptr_array_unref(dropped);
 }
 
+/* IRCnet: "!chan" names the "!XXXXXchan" with that channel ID (five of
+   A-Z, 0-9) - wire such a name whose short form folds to want */
+static gboolean ircnet_short_name(const char *wire, const char *want, E2E_CASEMAP map)
+{
+	char *shortname, *folded;
+	gboolean same;
+	int i;
+
+	if (wire[0] != '!' || strlen(wire) < 7 || want[0] != '!')
+		return FALSE;
+	for (i = 1; i <= 5; i++) {
+		if (!g_ascii_isupper(wire[i]) && !g_ascii_isdigit(wire[i]))
+			return FALSE;
+	}
+	shortname = g_strconcat("!", wire + 6, NULL);
+	folded = e2e_casefold(shortname, map);
+	same = strcmp(folded, want) == 0;
+	g_free(folded);
+	g_free(shortname);
+	return same;
+}
+
 /* "#Secret" when E2E is on for "#secret" on this network: the server
    takes both for the same channel (its CASEMAPPING, e2e_casefold), so
    the line must not go out in clear text. The bare name of the config
-   found. When none is found, *undecided (R-E11): on a Unicode
-   CASEMAPPING a reading or the name of a config with E2E on is not
-   UTF-8, so it cannot be folded as the server folds it - *bad that name,
-   *other the config's (a reading may be any channel to the server) */
+   found (also an IRCnet "!XXXXXchan" for a "!chan"). When none is found,
+   *undecided (R-E11, R-E23, R-E24): a reading or the name of a channel
+   config with E2E on cannot be folded as the server folds it (not UTF-8
+   or an unassigned code point on a Unicode CASEMAPPING, a non-ASCII name
+   on an unknown one) - *bad that name, *other the config's (a reading
+   may be any channel to the server). bare_only: rpe2e.pl's own rows
+   only, not those named like a reading (the script compares exactly) */
 static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **readings,
-                                gboolean *undecided, const char **bad, const char **other)
+                                gboolean bare_only, gboolean *undecided, const char **bad,
+                                const char **other)
 {
 	E2E_JSON *channels = e2e_json_get(kr, "channels");
 	GPtrArray *keys = e2e_json_keys(channels);
@@ -1838,10 +1878,23 @@ static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **r
 			const char *key = g_ptr_array_index(keys, i), *wire;
 			char *have;
 
-			if (!config_on_net(kr, key, net, &wire) || !e2e_ctx_enabled(kr, key))
+			/* channels only: a DM config is no channel name (R-E24) */
+			if (!config_on_net(kr, key, net, &wire) || !e2e_ctx_enabled(kr, key) ||
+			    !e2e_is_channel(wire))
+				continue;
+			/* rpe2e.pl's own rows, other than a reading itself (the
+			   script encrypts that one) */
+			if (bare_only && (strchr(key, E2E_SCOPE_SEP) != NULL ||
+			                  g_strv_contains((const char *const *) readings, wire)))
 				continue;
 			have = e2e_casefold_ex(wire, map, &have_exact);
-			if (strcmp(have, want) == 0) {
+			/* an unknown CASEMAPPING decides no non-ASCII name, but a
+			   byte code page keeps ASCII names apart from the others:
+			   for an ASCII reading only what the superset fold cannot
+			   decide counts (R-E23) */
+			if (!have_exact && want_exact && map == E2E_CASEMAP_UNKNOWN)
+				g_free(e2e_casefold_ex(wire, E2E_CASEMAP_UNICODE, &have_exact));
+			if (strcmp(have, want) == 0 || ircnet_short_name(wire, want, map)) {
 				found = g_strdup(wire);
 			} else if ((!want_exact || !have_exact) && !*undecided) {
 				*undecided = TRUE;
@@ -2054,7 +2107,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	if (!lookup_enabled(kr, net, kind, ctx, wire)) {
 		gboolean undecided = FALSE;
 		const char *bad = NULL, *config = NULL;
-		char *other = is_channel ? enabled_other_case(kr, net, readings, &undecided, &bad, &config)
+		char *other = is_channel ? enabled_other_case(kr, net, readings, FALSE, &undecided, &bad, &config)
 		                         : e2e_enabled_dm_elsewhere(kr, net, target, wire + 1);
 
 		if (other != NULL && is_channel) {
@@ -2299,13 +2352,41 @@ static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const c
 	return key + len + 1;
 }
 
+/* have (an e2e_casefold_narrow() result, or NULL) is name's */
+static gboolean narrow_same(const char *have, const char *name, E2E_CASEMAP map)
+{
+	char *want = e2e_casefold_narrow(name, map);
+	gboolean same = have != NULL && want != NULL && strcmp(have, want) == 0;
+
+	g_free(want);
+	return same;
+}
+
+/* wire is the target of p (or another reading of it) to every server of
+   map: the same under e2e_casefold_narrow() */
+static gboolean surely_same_channel(const char *wire, const E2E_IN_PARAMS *p, E2E_CASEMAP map)
+{
+	char *have = e2e_casefold_narrow(wire, map);
+	gboolean same = narrow_same(have, p->target, map);
+	int i;
+
+	for (i = 0; !same && p->alt_ctxs != NULL && p->alt_ctxs[i] != NULL; i++)
+		same = narrow_same(have, p->alt_ctxs[i], map);
+	g_free(have);
+	return same;
+}
+
 /* No session of the sender for the channel as the wire names it: the
-   sender's sessions for a channel the server takes for the same one (its
-   CASEMAPPING), each one more AEAD attempt with the AAD of the name it
-   was set up for - the name the sender encrypts under. Each name is
-   looked up on this network as the wire's own name would be (in_ctx: an
-   old row of unknown network is not used, another network's never), and
-   an AEAD failure only drops the message. TRUE when one opened it. */
+   sender's sessions for a channel the server may take for the same one
+   (its CASEMAPPING, the superset fold), each one more AEAD attempt with
+   the AAD of the name it was set up for - the name the sender encrypts
+   under. Each name is looked up on this network as the wire's own name
+   would be (in_ctx: an old row of unknown network is not used, another
+   network's never). The AEAD does NOT reject a line of the sender's
+   that the server moved from such a channel to the target (the AAD is
+   that channel's name): where the two names are not one channel to
+   every server of the CASEMAPPING, res->via names the session's channel
+   for the display (R-E22). TRUE when one opened it. */
 static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, const E2E_WIRE *w,
                                    E2E_IN_RESULT *res)
 {
@@ -2352,6 +2433,11 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 			g_free(res->ctx);
 			res->ctx = ctx;
 			done = TRUE;
+			/* a name only the superset fold takes for the target's:
+			   the server may keep them apart and have moved the line
+			   (R-E22) - say whose key opened it */
+			if (!surely_same_channel(wire, p, map))
+				res->via = g_strdup(wire);
 		} else {
 			g_free(ctx);
 		}
@@ -2495,8 +2581,22 @@ out:
 	e2e_wire_free(w);
 }
 
+char *e2e_plain_with_via(const char *plain, const char *via)
+{
+	size_t len = strlen(plain);
+	char *shown = e2e_text_display(via), *out;
+
+	if (e2e_is_action(plain))
+		out = g_strdup_printf("%.*s (E2E key of %s)\001", (int) (len - 1), plain, shown);
+	else
+		out = g_strdup_printf("%s (E2E key of %s)", plain, shown);
+	g_free(shown);
+	return out;
+}
+
 void e2e_in_result_clear(E2E_IN_RESULT *res)
 {
+	g_free(res->via);
 	if (res->plain != NULL)
 		e2e_wipe(res->plain, strlen(res->plain));
 	g_free(res->plain);
@@ -2793,6 +2893,37 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 	return view;
 }
 
+/* rpe2e.pl compares channel names exactly: a channel E2E is on for in
+   its own (bare) rows that the server may take for to under another name
+   gets clear text from the script (R-E24). The refusal, or NULL. The
+   script's escape hatches (non-ACTION CTCP) stay. */
+static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const char *to,
+                               const char *body)
+{
+	char **readings, *other, *msg = NULL;
+	const char *bad, *config;
+	gboolean undecided;
+
+	if (kr == NULL || (e2e_is_ctcp(body) && !e2e_is_action(body)))
+		return NULL;
+	readings = e2e_channel_readings(to);
+	if (readings[0] != NULL) {
+		other = enabled_other_case(kr, net, readings, TRUE, &undecided, &bad, &config);
+		if (other != NULL) {
+			msg = g_strdup_printf(E2E_SCRIPT_REFUSE_CASE, other, to, other);
+		} else if (undecided) {
+			char *why = g_strdup_printf(REFUSE_UNDECIDED, bad, to, config);
+
+			msg = g_strdup_printf("rpe2e.pl compares channel names exactly - %s; the message shown above was NOT delivered",
+			                      why);
+			g_free(why);
+		}
+		g_free(other);
+	}
+	g_strfreev(readings);
+	return msg;
+}
+
 /* buf (without its final CR / LF) holds a CR, LF or NUL: several lines */
 static gboolean several_lines(const char *buf, gsize len)
 {
@@ -2823,7 +2954,7 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
 	*target = NULL;
 	/* every piece a server may take for a line of its own */
 	for (start = 0; start < len && action != E2E_GATE_REFUSE; start = end + 1) {
-		char *line, *tags, *to, *body;
+		char *line, *tags, *to, *body, *case_msg;
 		E2E_GATE_RESULT res;
 		E2E_WIRE *w;
 
@@ -2857,6 +2988,14 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
 				else
 					*message = g_strdup_printf(E2E_SCRIPT_REFUSE_OTHER, to, res.message);
 				g_free(where);
+				g_free(*target);
+				*target = g_strdup(to);
+				action = E2E_GATE_REFUSE;
+			} else if (res.action == E2E_GATE_PASS && !multi &&
+			           (case_msg = script_other_case(kr, net, to, body)) != NULL) {
+				/* several lines: the whole keyring was decided above */
+				g_free(*message);
+				*message = case_msg;
 				g_free(*target);
 				*target = g_strdup(to);
 				action = E2E_GATE_REFUSE;

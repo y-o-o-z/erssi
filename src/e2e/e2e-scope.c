@@ -10,9 +10,11 @@
 
  The superset fold (E2E_CASEMAP_UNICODE) is for servers whose CASEMAPPING
  is not one of the three exact ones. Folding more than the server does
- can only make two names look like one channel - a refusal, or a
- decryption attempt that the AEAD rejects - while folding less could
- treat one channel as two, so every step only adds equalities.
+ can only make two names look like one channel - a refusal on the way
+ out, or on the way in one more decryption attempt, which opens a line
+ the server moved between the two (the reader marks those:
+ e2e_casefold_narrow) - while folding less could treat one channel as
+ two and let clear text out, so every step only adds equalities.
 */
 
 #include "e2e-scope.h"
@@ -76,17 +78,30 @@ E2E_CASEMAP e2e_casemap_parse(const char *value)
 		return E2E_CASEMAP_STRICT_RFC1459;
 	if (g_ascii_strcasecmp(value, "ascii") == 0)
 		return E2E_CASEMAP_ASCII;
-	return E2E_CASEMAP_UNICODE;
+	if (g_ascii_strcasecmp(value, "utf8") == 0 || g_ascii_strcasecmp(value, "rfc7613") == 0 ||
+	    g_ascii_strcasecmp(value, "rfc8265") == 0)
+		return E2E_CASEMAP_UNICODE;
+	return E2E_CASEMAP_UNKNOWN;
 }
 
-/* the exact maps, byte by byte, in place; UNICODE takes RFC1459's */
-static void fold_bytes(char *s, E2E_CASEMAP map)
+E2E_CASEMAP e2e_casemap_of_server(gboolean isupport_known, const char *value)
+{
+	return isupport_known ? e2e_casemap_parse(value) : E2E_CASEMAP_UNICODE;
+}
+
+/* the exact maps, byte by byte, in place; UNICODE takes RFC1459's.
+   latin1: also the Latin-1 capitals C0-DE (not D7) to E0-FE, as the
+   ircu family folds them (R-E23) - never inside valid UTF-8 that must
+   stay valid */
+static void fold_bytes(char *s, E2E_CASEMAP map, gboolean latin1)
 {
 	for (; *s != '\0'; s++) {
-		char c = *s;
+		unsigned char c = (unsigned char) *s;
 
 		if (c >= 'A' && c <= 'Z')
-			*s = c - 'A' + 'a';
+			*s = (char) (c - 'A' + 'a');
+		else if (latin1 && c >= 0xc0 && c <= 0xde && c != 0xd7)
+			*s = (char) (c + 0x20);
 		else if (map == E2E_CASEMAP_ASCII)
 			continue;
 		else if (c == '[')
@@ -304,7 +319,7 @@ static char *fold_unicode(const char *name)
 	if (s == NULL)
 		return NULL;
 	/* the specials are ASCII, so this keeps the string valid UTF-8 */
-	fold_bytes(s, E2E_CASEMAP_RFC1459);
+	fold_bytes(s, E2E_CASEMAP_RFC1459, FALSE);
 	return s;
 }
 
@@ -317,33 +332,74 @@ static gboolean is_ascii(const char *s)
 	return TRUE;
 }
 
+/* a code point of s (valid UTF-8) is unassigned in GLib's tables */
+static gboolean has_unassigned(const char *s)
+{
+	for (; *s != '\0'; s = g_utf8_next_char(s)) {
+		if (g_unichar_type(g_utf8_get_char(s)) == G_UNICODE_UNASSIGNED)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 {
+	gboolean decided = TRUE;
 	char *result;
 
 	if (exact != NULL)
 		*exact = FALSE;
 	if (name == NULL)
 		return NULL;
+	if (map == E2E_CASEMAP_UNKNOWN) {
+		/* the superset fold; but a byte code page (cp1251, koi8-r)
+		   folds the bytes of a name in UTF-8 its own way: only ASCII
+		   names are decided (R-E23) */
+		map = E2E_CASEMAP_UNICODE;
+		decided = is_ascii(name);
+	}
 	if (map == E2E_CASEMAP_UNICODE && is_ascii(name))
 		map = E2E_CASEMAP_RFC1459; /* the Unicode fold of ASCII, faster */
 	if (map == E2E_CASEMAP_UNICODE) {
 		result = fold_unicode(name);
 		if (result != NULL) {
+			/* a server with newer tables may fold an unassigned
+			   code point any way (R-E24) */
 			if (exact != NULL)
-				*exact = TRUE;
+				*exact = decided && !has_unassigned(name);
 			return result;
 		}
 		/* not UTF-8: no Unicode fold can be decided, keep rfc1459's
-		   and say so */
+		   (Latin-1 bytes too) and say so */
 		result = g_strdup(name);
-		fold_bytes(result, E2E_CASEMAP_RFC1459);
+		fold_bytes(result, E2E_CASEMAP_RFC1459, TRUE);
 		return result;
 	}
 	result = g_strdup(name);
-	fold_bytes(result, map);
+	fold_bytes(result, map, TRUE);
 	if (exact != NULL)
-		*exact = TRUE;
+		*exact = decided;
+	return result;
+}
+
+char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
+{
+	char *nfkc, *result;
+
+	if (name == NULL)
+		return NULL;
+	if (map != E2E_CASEMAP_UNICODE && map != E2E_CASEMAP_UNKNOWN) {
+		result = g_strdup(name);
+		fold_bytes(result, map, FALSE);
+		return result;
+	}
+	if (!g_utf8_validate(name, -1, NULL))
+		return NULL;
+	nfkc = g_utf8_normalize(name, -1, G_NORMALIZE_NFKC);
+	if (nfkc == NULL)
+		return NULL;
+	result = g_utf8_casefold(nfkc, -1);
+	g_free(nfkc);
 	return result;
 }
 

@@ -23,10 +23,14 @@
  row whose name holds 0x1F reads as scoped; callers flag such rows rather
  than reinterpret them.
 
- CASEMAPPING: ascii, rfc1459 and strict-rfc1459 are folded exactly; no
- value means rfc1459; every other value (rfc7613, rfc8265, utf8, unknown,
- empty) gets the superset fold E2E_CASEMAP_UNICODE, which can only equate
- more names than the server does, never fewer.
+ CASEMAPPING: ascii, rfc1459 and strict-rfc1459 are folded exactly, and
+ Latin-1 bytes as the ircu family folds them; no value means rfc1459
+ (before the server's 005: E2E_CASEMAP_UNICODE, nothing is known);
+ rfc7613, rfc8265 and utf8 get the superset fold E2E_CASEMAP_UNICODE,
+ which can only equate more names than the server does, never fewer;
+ every other value (unknown, empty) gets the same fold as
+ E2E_CASEMAP_UNKNOWN, where only ASCII names are decided - it may be a
+ byte code page such as cp1251.
 
  Old (unscoped) rows: a keyring of rpe2e.pl, or of the module before the
  scope, holds bare contexts. e2e_ctx_lookup() decides what a wire context
@@ -55,7 +59,9 @@ typedef enum {
 	E2E_CASEMAP_RFC1459,
 	E2E_CASEMAP_STRICT_RFC1459,
 	E2E_CASEMAP_ASCII,
-	E2E_CASEMAP_UNICODE
+	E2E_CASEMAP_UNICODE,
+	E2E_CASEMAP_UNKNOWN	/* a value erssi does not know: UNICODE's fold,
+				   non-ASCII names undecided */
 } E2E_CASEMAP;
 
 typedef struct {
@@ -71,13 +77,21 @@ void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char
 /* frees the label; safe to call twice */
 void e2e_net_clear(E2E_NET *net);
 
-/* ASCII case-insensitive; NULL -> RFC1459, anything unknown -> UNICODE */
+/* ASCII case-insensitive; NULL -> RFC1459; utf8, rfc7613, rfc8265 ->
+   UNICODE; anything else -> UNKNOWN */
 E2E_CASEMAP e2e_casemap_parse(const char *value);
+/* the map of a server: UNICODE until its 005 (isupport) came, then
+   e2e_casemap_parse(value) */
+E2E_CASEMAP e2e_casemap_of_server(gboolean isupport_known, const char *value);
 /*
  The folded form of name under map (NULL for NULL):
   - ASCII: A-Z -> a-z;
   - STRICT_RFC1459: ASCII and [ ] \ -> { } |;
   - RFC1459: STRICT_RFC1459 and ~ -> ^;
+  - the three exact maps also fold the Latin-1 bytes C0-DE to E0-FE (but
+    not D7), as servers of the ircu family do; continuation bytes
+    (80-BF) stay, so two names in valid UTF-8 never meet that way;
+  - UNKNOWN: as UNICODE;
   - UNICODE, pure ASCII: the RFC1459 fold (what the steps below give).
   - UNICODE, valid UTF-8, in this order:
       1. drop the invisible characters (general category Cf, variation
@@ -99,8 +113,8 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
     Cherokee: a code point whose fold is a single other code point folding
     back to it becomes the smaller of the two (CaseFolding.txt's target).
     The result is valid UTF-8 and holds none of the characters of step 1.
-  - UNICODE, invalid UTF-8: the byte-wise RFC1459 fold.
- Bytes above 0x7f are left alone by the exact maps. fold(fold(x)) == fold(x).
+  - UNICODE, invalid UTF-8: the byte-wise RFC1459 fold, Latin-1 bytes
+    too. fold(fold(x)) == fold(x).
  Step 4 covers servers that map case per code point (towlower, Go's
  unicode.ToLower, an upper-case irccmp), which take U+0130 to plain i and
  U+0131 to I: dotted, dotless and plain i fold to one letter (U+1D6A4
@@ -111,11 +125,21 @@ E2E_CASEMAP e2e_casemap_parse(const char *value);
  sides at comparison time.
 */
 char *e2e_casefold(const char *name, E2E_CASEMAP map);
-/* e2e_casefold(), and *exact (if not NULL) says whether the fold is the
-   one map asks for: FALSE when UNICODE fell back to the byte-wise RFC1459
-   fold (invalid UTF-8, or GLib refused to normalise) and for a NULL name;
-   TRUE otherwise, the exact maps always */
+/* e2e_casefold(), and *exact (if not NULL) says whether the fold
+   decides the name: FALSE when UNICODE fell back to the byte-wise RFC1459
+   fold (invalid UTF-8, or GLib refused to normalise), for a name with an
+   unassigned code point (a server with newer tables may fold it any
+   way), for any non-ASCII name under UNKNOWN, and for a NULL name; TRUE
+   otherwise, the exact maps always */
 char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact);
+/* what every server of map takes for the same name, at least: the exact
+   maps' fold without the Latin-1 bytes; for UNICODE and UNKNOWN NFKC and
+   then full case folding (GLib) - no rfc1459 specials, nothing dropped -
+   and NULL for a name that is not valid UTF-8. Two names that differ
+   here may be two channels to the server although e2e_casefold() joins
+   them. Never persisted, as e2e_casefold(). */
+char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map);
+
 
 /* "<label>\x1f<wire>"; a bare copy when net is NULL; NULL when net has no
    label (never a bare key in its place), and for a NULL wire or one that
