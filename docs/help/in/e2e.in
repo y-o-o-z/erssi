@@ -200,7 +200,8 @@
     any channel of that network (and while E2E is on for such a name,
     other names there that cannot be told apart from it get no clear
     text either). On IRCnet, !name is refused while E2E is on for a
-    !XXXXXname of that name.
+    !XXXXXname of that name. The nick of a query with E2E on, also one
+    rpe2e.pl keeps by nick, is compared the same way.
 
     A message of a peer that opens only under the key of a channel the
     wider fold takes for this one, though some servers keep the two

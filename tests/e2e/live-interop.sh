@@ -679,6 +679,32 @@ if grep -aqF "native list dm secret" "$WORK/wire.log"; then
 else
     pass "a target list with a query E2E is on for is not sent"
 fi
+# an old bare-nick row (rpe2e.pl's config of a query by nick) with E2E
+# on, the nick's address unknown now: every spelling the server takes
+# for that nick is refused, not only the stored one (E2E: ascii)
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the bare-nick check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["zed"] = {"enabled": 1, "mode": "normal"}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say alice "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG ZED :bare nick other case secret')"
+say alice "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG zed :bare nick exact secret')"
+sleep 1
+if grep -aqF "bare nick other case secret" "$WORK/wire.log" ||
+   grep -aqF "bare nick exact secret" "$WORK/wire.log"; then
+    bad "ZED (an old bare-nick row zed with E2E on) went out in plain text"
+else
+    pass "ZED (an old bare-nick row zed with E2E on) is not sent in plain text"
+fi
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the bare-nick check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+del k["channels"]["zed"]
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
 python3 - "$WORK/alice-scoped.json" "$WORK/alice/rpe2e/keyring.json" "$WORK/wire.log" "$WORK/wire2.log" <<'PY' && pass "adopted: E2E's keys as before, E2E2's entries untouched, nothing in clear" || bad "the adoption changed keys or another network's entries"
 import json, sys
 old, new = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
@@ -858,6 +884,31 @@ if grep -aqF "script list dm secret" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: alice,carol (E2E on for alice in its entry) is not sent in plain text"
 fi
+# a single nick: the script looks an old bare-nick row up exactly, and
+# ZED is zed to this (ascii) server
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the script bare-nick check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["zed"] = {"enabled": 1, "mode": "normal"}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG ZED :script bare nick secret')"
+sleep 1
+if grep -aqF "script bare nick secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: ZED (E2E on for zed in its entry) went out in plain text"
+elif wait_for "$WORK/bob/all.log" "rpe2e.pl does not find it under that name" 5; then
+    pass "rpe2e.pl loaded: ZED (E2E on for zed in its entry) is not sent in plain text, and bob is told why"
+else
+    bad "rpe2e.pl loaded: ZED was not sent, but bob is not told why"
+fi
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the script bare-nick check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+del k["channels"]["zed"]
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
 # a bot command bypasses E2E on a channel only; the channel piece of a
 # list does not make the DM piece a bot command (R-E29)
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG #x,alice :!help script bypass secret')"
