@@ -160,6 +160,10 @@ static const char *const ignorables[] = {
 	"\xf3\xa0\x84\x80", /* U+E0100 variation selector 17 */
 	"\xf3\xa0\x87\xaf", /* U+E01EF variation selector 256 */
 	"\xcd\x8f",         /* U+034F combining grapheme joiner */
+	"\xe1\xa0\x8b",     /* U+180B Mongolian free variation selector 1 */
+	"\xe1\xa0\x8c",     /* U+180C Mongolian free variation selector 2 */
+	"\xe1\xa0\x8d",     /* U+180D Mongolian free variation selector 3 */
+	"\xe1\xa0\x8f",     /* U+180F Mongolian free variation selector 4 */
 	"\xe1\x85\x9f",     /* U+115F Hangul choseong filler */
 	"\xe1\x85\xa0",     /* U+1160 Hangul jungseong filler */
 	"\xe3\x85\xa4",     /* U+3164 Hangul filler */
@@ -173,6 +177,8 @@ static const char *const kept_neighbours[] = {
 	"\xf3\xa0\x83\xbf", /* U+E00FF */
 	"\xf3\xa0\x87\xb0", /* U+E01F0 */
 	"\xcd\x8e",         /* U+034E */
+	"\xe1\xa0\x8a",     /* U+180A */
+	"\xe1\xa0\x90",     /* U+1810 */
 	"\xe1\x85\x9e",     /* U+115E */
 	"\xe1\x85\xa1",     /* U+1161 */
 	"\xe3\x85\xa5",     /* U+3165 */
@@ -182,8 +188,8 @@ static const char *const kept_neighbours[] = {
 static gboolean oracle_ignorable(gunichar c)
 {
 	return g_unichar_type(c) == G_UNICODE_FORMAT || (c >= 0xfe00 && c <= 0xfe0f) ||
-	       (c >= 0xe0100 && c <= 0xe01ef) || c == 0x34f || c == 0x115f || c == 0x1160 ||
-	       c == 0x3164 || c == 0xffa0;
+	       (c >= 0xe0100 && c <= 0xe01ef) || (c >= 0x180b && c <= 0x180d) || c == 0x180f ||
+	       c == 0x34f || c == 0x115f || c == 0x1160 || c == 0x3164 || c == 0xffa0;
 }
 
 static void test_casefold_ignorables(void)
@@ -208,6 +214,8 @@ static void test_casefold_ignorables(void)
 		DIFF("#ab", with, E2E_CASEMAP_UNICODE);
 		g_free(with);
 	}
+	SAME("#a\xe1\xa0\x8b" "b", "#ab", E2E_CASEMAP_UNICODE); /* U+180B */
+	DIFF("#a\xe1\xa0\x8b" "b", "#ab", E2E_CASEMAP_RFC1459);
 	/* a joiner between marks blocks reordering until it is dropped */
 	SAME("#a\xcc\x81\xcd\x8f\xcc\x80", "#a\xcc\x81\xcc\x80", E2E_CASEMAP_UNICODE);
 	SAME("#\xc3\x81\xcd\x8f", "#a\xcc\x81", E2E_CASEMAP_UNICODE);
