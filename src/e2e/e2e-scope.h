@@ -119,9 +119,10 @@ E2E_CASEMAP e2e_casemap_of_server(const char *value, gboolean motd_done);
     too.
  fold(fold(x)) == fold(x) for the exact maps and for valid UTF-8; not
  always for invalid UTF-8 under UNICODE, where the Latin-1 byte fold can
- make it valid UTF-8 ("\xc4\x80\x80" becomes U+4000), which the second
- fold then takes the Unicode way. Compare fold(a) with fold(b), never a
- fold with a name folded twice.
+ make it valid UTF-8, which the second fold then takes the Unicode way:
+ "#\xcf\xbc\xa1" folds to "#\xef\xbc\xa1" (U+FF21), and that folds to
+ "#a". Compare fold(a) with fold(b), never a fold with a name folded
+ twice.
  Step 4 covers servers that map case per code point (towlower, Go's
  unicode.ToLower, an upper-case irccmp), which take U+0130 to plain i and
  U+0131 to I: dotted, dotless and plain i fold to one letter (U+1D6A4

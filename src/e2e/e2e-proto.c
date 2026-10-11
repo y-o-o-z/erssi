@@ -2912,11 +2912,51 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 
 /* rpe2e.pl compares channel names exactly, and looks "#a,#b" up as one
    name: a channel E2E is on for in its own (bare) rows that the server
-   may take for to under another name, or for a piece of a target list
-   (R-E24, R-E26), gets clear text from the script. The refusal, or NULL.
+   may take for to under another name, or for a piece of a target list,
+   and a query with E2E on that a nick in such a list may be (R-E24,
+   R-E26, R-E28), gets clear text from the script. The refusal, or NULL.
    The script's escape hatches (non-ACTION CTCP) stay. */
+/* the query (a "@<handle>" config, the script's own or this network's)
+   with E2E on that the nick piece of a target list may be: its address
+   now (resolve), or the config's "nick", or a peer last seen as that nick
+   under the config's handle - nicks folded by the map. Its bare name, or
+   NULL. */
+static char *list_query_on(const E2E_JSON *kr, const E2E_NET *net, const char *piece,
+                           E2E_RESOLVE_FUNC resolve, void *resolve_data)
+{
+	E2E_JSON *channels = e2e_json_get(kr, "channels"), *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(channels), *pkeys = e2e_json_keys(peers);
+	char *handle = resolve != NULL ? resolve(piece, kr, resolve_data) : NULL, *found = NULL;
+	guint i, j;
+
+	for (i = 0; i < keys->len && found == NULL; i++) {
+		const char *key = g_ptr_array_index(keys, i), *wire = e2e_ctx_wire(key);
+		gboolean match;
+
+		if (*wire != '@' || !e2e_ctx_enabled(kr, key) ||
+		    (strchr(key, E2E_SCOPE_SEP) != NULL && !e2e_ctx_on_net(key, net)))
+			continue;
+		match = handle != NULL && *handle != '\0' && strcmp(wire + 1, handle) == 0;
+		if (!match)
+			match = same_nick(net, e2e_json_get_string(e2e_json_get(channels, key), "nick"), piece,
+			                  FALSE);
+		for (j = 0; j < pkeys->len && !match; j++) {
+			E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(pkeys, j));
+
+			match = same_nick(net, e2e_json_get_string(peer, "last_nick"), piece, FALSE) &&
+			        g_strcmp0(e2e_json_get_string(peer, "last_handle"), wire + 1) == 0;
+		}
+		if (match)
+			found = g_strdup(wire);
+	}
+	g_free(handle);
+	g_ptr_array_unref(keys);
+	g_ptr_array_unref(pkeys);
+	return found;
+}
+
 static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const char *to,
-                               const char *body)
+                               const char *body, E2E_RESOLVE_FUNC resolve, void *resolve_data)
 {
 	char **pieces, **readings, *other = NULL, *msg = NULL;
 	const char *bad, *config;
@@ -2931,6 +2971,10 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 		if (readings[0] != NULL)
 			other = enabled_other_case(kr, net, readings, list ? OTHER_SCRIPT_ALL : OTHER_SCRIPT,
 			                           &undecided, &bad, &config);
+		else if (list && *pieces[i] != '\0')
+			/* a nick in a list: the script resolves no query for it
+			   (R-E28) */
+			other = list_query_on(kr, net, pieces[i], resolve, resolve_data);
 		g_strfreev(readings);
 	}
 	if (other != NULL && list) {
@@ -3017,7 +3061,8 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
 				*target = g_strdup(to);
 				action = E2E_GATE_REFUSE;
 			} else if (res.action == E2E_GATE_PASS && !multi &&
-			           (case_msg = script_other_case(kr, net, to, body)) != NULL) {
+			           (case_msg = script_other_case(kr, net, to, body, resolve,
+			                                         resolve_data)) != NULL) {
 				/* several lines: the whole keyring was decided above */
 				g_free(*message);
 				*message = case_msg;

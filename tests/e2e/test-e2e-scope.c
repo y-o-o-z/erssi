@@ -92,7 +92,7 @@ static const char *const fold_inputs[] = {
 static void test_casefold(void)
 {
 	gsize i, j;
-	char *s;
+	char *s, *t;
 
 	SAME("#Secret", "#secret", E2E_CASEMAP_ASCII);
 	SAME("#a[b]\\~", "#a{b}|^", E2E_CASEMAP_RFC1459);
@@ -128,6 +128,14 @@ static void test_casefold(void)
 	/* not in the superset fold of valid UTF-8 (it would break it) */
 	DIFF("#\xc3\xa9", "#\xe3\xa9", E2E_CASEMAP_UNICODE);
 	SAME("#\xe9", "#\xc9", E2E_CASEMAP_UNICODE); /* not UTF-8: byte-wise */
+	/* not idempotent on invalid UTF-8 (e2e-scope.h): the Latin-1 byte
+	   fold makes it valid, which the next fold takes the Unicode way */
+	s = e2e_casefold("#\xcf\xbc\xa1", E2E_CASEMAP_UNICODE);
+	g_assert_cmpstr(s, ==, "#\xef\xbc\xa1");
+	t = e2e_casefold(s, E2E_CASEMAP_UNICODE);
+	g_assert_cmpstr(t, ==, "#a");
+	g_free(s);
+	g_free(t);
 	/* unknown values fold as the superset does */
 	SAME("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNKNOWN);
 	SAME("#a[B", "#A{b", E2E_CASEMAP_UNKNOWN);
@@ -307,7 +315,16 @@ static void test_casefold_narrow(void)
 	   with case folding (the PRECIS / utf8 servers) must both agree */
 	assert_narrow("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);  /* Ż / ż */
 	assert_narrow("#ABC", "#abc", E2E_CASEMAP_UNICODE, TRUE);
-	assert_narrow("#k", "#\xe2\x84\xaa", E2E_CASEMAP_UNICODE, TRUE);                 /* Kelvin sign */
+	/* R-E28: and whole-string lower case (Final_Sigma), and upper case
+	   (servers that compare in upper case) */
+	assert_narrow("#\xc5\xbb" "ABA", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);
+	assert_narrow("#k", "#\xe2\x84\xaa", E2E_CASEMAP_UNICODE, FALSE);                /* Kelvin sign: K / U+212A in upper case */
+	assert_narrow("#\xce\x91\xce\xa3", "#\xce\xb1\xcf\x83", E2E_CASEMAP_UNICODE, FALSE); /* #ΑΣ / #ασ: ας */
+	assert_narrow("#\xc3\x85", "#\xe2\x84\xab", E2E_CASEMAP_UNICODE, FALSE);        /* Å / Angstrom sign */
+	assert_narrow("#\xc3\x9f", "#\xe1\xba\x9e", E2E_CASEMAP_UNICODE, FALSE);        /* ß / ẞ */
+	assert_narrow("#\xce\xb8", "#\xcf\xb4", E2E_CASEMAP_UNICODE, FALSE);             /* θ / ϴ */
+	assert_narrow("#\xcf\x89", "#\xe2\x84\xa6", E2E_CASEMAP_UNICODE, FALSE);        /* ω / Ohm sign */
+	assert_narrow("#\xce\xa9", "#\xcf\x89", E2E_CASEMAP_UNICODE, TRUE);              /* Ω / ω */
 	assert_narrow("#ss", "#\xc3\x9f", E2E_CASEMAP_UNICODE, FALSE);                    /* ß */
 	assert_narrow("#e\xcc\x81", "#\xc3\xa9", E2E_CASEMAP_UNICODE, FALSE);           /* NFD é */
 	assert_narrow("#ff", "#\xef\xac\x80", E2E_CASEMAP_UNICODE, FALSE);               /* ﬀ */

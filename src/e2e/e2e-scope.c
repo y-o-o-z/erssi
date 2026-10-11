@@ -382,9 +382,15 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 	return result;
 }
 
+/* "<length>:<s>" onto out */
+static void append_part(GString *out, const char *s)
+{
+	g_string_append_printf(out, "%" G_GSIZE_FORMAT ":%s", strlen(s), s);
+}
+
 char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 {
-	GString *out;
+	GString *out, *part;
 	char *nfkc, *folded;
 	const char *p;
 
@@ -408,27 +414,33 @@ char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 	}
 	if (!g_utf8_validate(name, -1, NULL))
 		return NULL;
-	/* both models must take the names for one: per code point simple
-	   lower case (towlower, Go's unicode.ToLower), no normalisation;
-	   then NFKC and full case folding (the PRECIS and utf8 servers). The
-	   first part's length in front keeps the two apart */
-	out = g_string_sized_new(strlen(name) * 2 + 8);
+	/* every model must take the names for one (R-E26, R-E28):
+	   - per code point simple lower case (towlower, Go's
+	     unicode.ToLower), no normalisation;
+	   - whole-string lower case (Final_Sigma: #ΑΣ is #ας);
+	   - whole-string upper case (servers that compare in upper case:
+	     the Kelvin, Angstrom and Ohm signs, ß / ẞ, θ / ϴ stay apart);
+	   - NFKC and full case folding (the PRECIS and utf8 servers).
+	   Each part with its length in front, so no two names collide */
+	out = g_string_sized_new(strlen(name) * 4 + 16);
+	part = g_string_sized_new(strlen(name) * 2);
 	for (p = name; *p != '\0'; p = g_utf8_next_char(p))
-		g_string_append_unichar(out, g_unichar_tolower(g_utf8_get_char(p)));
-	g_string_prepend(out, ":");
-	{
-		char *len = g_strdup_printf("%" G_GSIZE_FORMAT, out->len - 1);
-
-		g_string_prepend(out, len);
-		g_free(len);
-	}
+		g_string_append_unichar(part, g_unichar_tolower(g_utf8_get_char(p)));
+	append_part(out, part->str);
+	g_string_free(part, TRUE);
+	folded = g_utf8_strdown(name, -1);
+	append_part(out, folded);
+	g_free(folded);
+	folded = g_utf8_strup(name, -1);
+	append_part(out, folded);
+	g_free(folded);
 	nfkc = g_utf8_normalize(name, -1, G_NORMALIZE_NFKC);
 	if (nfkc == NULL) {
 		g_string_free(out, TRUE);
 		return NULL;
 	}
 	folded = g_utf8_casefold(nfkc, -1);
-	g_string_append(out, folded);
+	append_part(out, folded);
 	g_free(folded);
 	g_free(nfkc);
 	return g_string_free(out, FALSE);
