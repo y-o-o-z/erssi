@@ -185,15 +185,26 @@
     needs one /E2E ACCEPT, and does not get your new key when it rotates
     before that.
 
-    Channel names are compared as the server's CASEMAPPING compares them:
-    ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the server
-    names none); rfc7613, rfc8265, utf8 and unknown values with a wider
-    fold (NFKC, case folding and the rfc1459 specials), which may refuse
-    a message to a channel the server keeps apart, but never lets one out
-    in clear text to a channel with E2E on. On such a server a channel
-    name that is not valid UTF-8 cannot be compared: messages to it are
-    not sent while E2E is on for any channel of that network (and while
-    E2E is on for such a name, no other channel there gets clear text).
+    Channel names are compared as the server's CASEMAPPING compares
+    them: ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the
+    server names none), and Latin-1 letters as servers of the ircu
+    family fold them; rfc7613, rfc8265 and utf8 with a wider fold (NFKC,
+    case folding and the rfc1459 specials), which may refuse a message
+    to a channel the server keeps apart, but never lets one out in clear
+    text to a channel with E2E on. Until the server has sent its 005
+    (ISUPPORT) line the wider fold is used. A name the wider fold cannot
+    decide - not valid UTF-8 or holding an unassigned character on such
+    a server, and any non-ASCII name on a server whose CASEMAPPING erssi
+    does not know (it may be a byte code page such as cp1251) - is not
+    sent in clear text while E2E is on for any channel of that network
+    (and while E2E is on for such a name, other names there that cannot
+    be told apart from it get no clear text either). On IRCnet, !name is
+    refused while E2E is on for a !XXXXXname of that name.
+
+    A message of a peer that opens only under the key of a channel the
+    wider fold takes for this one, though some servers keep the two
+    apart (for example #a[b and #a{b), is shown with "(E2E key of
+    #a[b)": the server may have moved it from that channel.
 
     Known limitations: NOTICEs, CTCPs other than ACTION, bot commands
     and IRCv3 message tags are never encrypted. Nicks in ACCEPT, REVOKE,
