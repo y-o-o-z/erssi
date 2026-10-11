@@ -355,10 +355,26 @@ ok = total >= 20 and cipher == total
 ok = ok and all(len(multi.get(k, ())) >= 1 for k in (("alice", chan), ("bob", chan), ("alice", "bob"), ("bob", "alice")))
 sys.exit(0 if ok else 1)
 EOF
+# the words are looked for in what is neither a +RPE2E01 wire nor an
+# RPEE2E key exchange: a case-insensitive word can turn up in base64
+# ("nods" did, in about 0.7% of runs)
+wire_plain() {  # wire_plain <wire log>: the text of every other line
+    python3 - "$1" <<'PY'
+import re, sys
+WIRE = re.compile(r'^\+RPE2E01 [0-9a-f]+ \d+ \d+/\d+ [A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$')
+KX = re.compile(r'^\x01?RPEE2E [A-Z]+( [a-z]+=\S*)*\x01?$')
+for l in open(sys.argv[1], encoding="utf-8"):
+    parts = l.rstrip("\n").split(" ", 3)
+    text = parts[3][1:] if len(parts) == 4 and parts[3].startswith(":") else l
+    if not (WIRE.match(text) or KX.match(text)):
+        print(text)
+PY
+}
+wire_plain "$WORK/wire.log" > "$WORK/wire-plain.log"
 leak=0
 for word in "secret message" "reply from bob" "waves" "nods" "ellipsis" "lower case" "sent with msg" \
             "private from" "zaż" "gęś" "jaźń" "zażółć1" "gęślą1"; do
-    if grep -qiF -- "$word" "$WORK/wire.log"; then bad "plain text crossed the server: $word"; leak=1; fi
+    if grep -qiF -- "$word" "$WORK/wire-plain.log"; then bad "plain text crossed the server: $word"; leak=1; fi
 done
 [ $leak = 0 ] && pass "no plain text crossed the server"
 if grep -q "RPEE2E KEYREQ" "$WORK/wire.log" && grep -q "RPEE2E KEYRSP" "$WORK/wire.log"; then
@@ -960,6 +976,38 @@ for c in ("@kt@h9", "@yan@h1"):
     del k["channels"][c]
 for f in ("9" * 32, "1" * 32, "2" * 32):
     del k["peers"][f]
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+# R-E31: two addresses tie for a nick in the keyring (no last_seen): the
+# script of erssi/y-o-o-z (14) takes the smallest fingerprint, as the
+# module does, and encrypts to the query E2E is on for; an older one
+# takes either by Perl's hash order, and the module refuses the line
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E31 check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["@ti@h1"] = {"enabled": 1, "mode": "normal"}
+k["peers"]["a9" + "0" * 30] = {"pk": "", "last_nick": "tia", "last_handle": "ti@h1", "status": "pending"}
+k["peers"]["f2" + "0" * 30] = {"pk": "", "last_nick": "tia", "last_handle": "tj@h2", "status": "pending"}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG tia :script tie secret')"
+sleep 1
+if grep -aqF "script tie secret" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: tia (two addresses tie in the keyring) went out in plain text"
+elif grep -aqF "bob PRIVMSG tia :+RPE2E01 " "$WORK/wire.log" ||
+     wait_for "$WORK/bob/all.log" "may deliver a message to tia" 5; then
+    pass "rpe2e.pl loaded: tia (two addresses tie in the keyring) is encrypted or refused, not sent in plain text"
+else
+    bad "rpe2e.pl loaded: tia was neither encrypted nor refused with a reason"
+fi
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E31 check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+del k["channels"]["@ti@h1"]
+for f in ("a9", "f2"):
+    del k["peers"][f + "0" * 30]
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
 # a bot command bypasses E2E on a channel only; the channel piece of a

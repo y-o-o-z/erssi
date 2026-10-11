@@ -620,18 +620,24 @@ gboolean e2e_ctx_enabled(const E2E_JSON *kr, const char *ctx)
 	                                    "enabled"));
 }
 
-const char *e2e_find_handle_by_nick(const E2E_JSON *kr, const char *nick)
+/* the keyring's cache of nick: the last_handle of the peer last seen as
+   nick (ASCII case only), the newest last_seen first (null or missing:
+   0), on a tie the smallest fingerprint key in byte order - the order
+   e2e_json_keys() gives, the same in rpe2e.pl (R-E31). *tie (if not
+   NULL): peers of another last_handle share that newest last_seen. */
+static const char *find_handle_by_nick(const E2E_JSON *kr, const char *nick, gboolean *tie)
 {
 	E2E_JSON *peers = e2e_json_get(kr, "peers");
 	GPtrArray *keys = e2e_json_keys(peers);
 	const char *best = NULL;
 	gint64 best_seen = 0;
-	gboolean found = FALSE;
+	gboolean found = FALSE, tied = FALSE;
 	guint i;
 
 	for (i = 0; i < keys->len; i++) {
 		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
 		const char *last = e2e_json_get_string(peer, "last_nick");
+		const char *handle = e2e_json_get_string(peer, "last_handle");
 		gint64 seen;
 
 		if (last == NULL || g_ascii_strcasecmp(last, nick) != 0)
@@ -639,12 +645,22 @@ const char *e2e_find_handle_by_nick(const E2E_JSON *kr, const char *nick)
 		seen = e2e_json_get_int(peer, "last_seen", 0);
 		if (!found || seen > best_seen) {
 			found = TRUE;
+			tied = FALSE;
 			best_seen = seen;
-			best = e2e_json_get_string(peer, "last_handle");
+			best = handle;
+		} else if (seen == best_seen && g_strcmp0(handle, best) != 0) {
+			tied = TRUE;
 		}
 	}
 	g_ptr_array_unref(keys);
+	if (tie != NULL)
+		*tie = tied;
 	return best;
+}
+
+const char *e2e_find_handle_by_nick(const E2E_JSON *kr, const char *nick)
+{
+	return find_handle_by_nick(kr, nick, NULL);
 }
 
 const char *e2e_find_peer_by_handle(const E2E_JSON *kr, const char *handle, E2E_JSON **peer)
@@ -3128,13 +3144,26 @@ static gboolean ascii_only(const char *s)
 	return TRUE;
 }
 
+/* addresses of several peers tie for nick in the keyring's cache: an
+   rpe2e.pl before erssi/y-o-o-z (14) picks one by Perl's hash order, which
+   changes from process to process (R-E31) */
+static gboolean cache_tied(const E2E_JSON *kr, const char *nick)
+{
+	gboolean tie;
+
+	find_handle_by_nick(kr, nick, &tie);
+	return tie;
+}
+
 /*
  A single DM target, rpe2e.pl loaded. The script resolves the nick as the
  module does - live (an open query, a common channel), then the keyring's
  last_nick by lc(), which matches the module's ASCII case only for an
  ASCII nick (on a non-ASCII one it may compare another form of the
- stored name, R-E30) - and with no address looks an old bare-nick row up
- exactly. The refusal, or NULL:
+ stored name, R-E30), and picks among peers tied on last_seen by its hash
+ order (R-E31) - and with no address looks an old bare-nick row up
+ exactly. A cache-only address of a non-ASCII nick, or of a tie, counts
+ as none. The refusal, or NULL:
   - an address the script has as well, its "@<handle>" config off, and E2E
     on for the nick at another address (as the module's REFUSE_DM_MOVED);
   - no such address: a query with E2E on, or an old bare-nick row, the
@@ -3149,7 +3178,7 @@ static char *script_single_nick(const E2E_JSON *kr, const E2E_NET *net, const ch
 	char *other, *msg = NULL;
 	const char *spelling;
 
-	if (handle != NULL && *handle != '\0' && !ascii_only(nick)) {
+	if (handle != NULL && *handle != '\0' && (!ascii_only(nick) || cache_tied(kr, nick))) {
 		/* only a live address is sure to be the script's as well */
 		char *live = resolve(nick, NULL, resolve_data);
 

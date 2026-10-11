@@ -5096,6 +5096,106 @@ static void test_casemap_script_dm_moved(void)
 	e2e_json_free(kr);
 }
 
+/* a peer as rpe2e.pl may store it: last_seen a number, null or missing */
+static void tie_peer(E2E_JSON *kr, const char *fp, const char *nick, const char *handle,
+                     const char *seen)
+{
+	E2E_JSON *peer = e2e_json_new(E2E_JSON_OBJECT);
+
+	e2e_json_set_string(peer, "last_nick", nick);
+	e2e_json_set_string(peer, "last_handle", handle);
+	if (seen != NULL && strcmp(seen, "null") == 0)
+		e2e_json_set(peer, "last_seen", e2e_json_new(E2E_JSON_NULL));
+	else if (seen != NULL)
+		e2e_json_set_int(peer, "last_seen", g_ascii_strtoll(seen, NULL, 10));
+	e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
+}
+
+/* R-E31: the newest last_seen wins, a tie goes to the smallest
+   fingerprint key (byte order), null or missing is 0 - whatever order
+   the peers were stored in */
+static void test_cache_tie_order(void)
+{
+	static const char *const seens[] = { NULL, "null", "0" };
+	int order, i, j;
+
+	for (i = 0; i < 3; i++) {
+		for (j = 0; j < 3; j++) {
+			for (order = 0; order < 2; order++) {
+				E2E_JSON *kr = e2e_keyring_new();
+
+				if (order == 0) {
+					tie_peer(kr, "a9", "bob", BOB, seens[i]);
+					tie_peer(kr, "f2", "BOB", "h2@x", seens[j]);
+				} else {
+					tie_peer(kr, "f2", "BOB", "h2@x", seens[j]);
+					tie_peer(kr, "a9", "bob", BOB, seens[i]);
+				}
+				g_assert_cmpstr(e2e_find_handle_by_nick(kr, "bob"), ==, BOB);
+				/* newer wins over the key */
+				e2e_json_set_int(path_get(kr, "peers", "f2", NULL), "last_seen", 1);
+				g_assert_cmpstr(e2e_find_handle_by_nick(kr, "bob"), ==, "h2@x");
+				e2e_json_free(kr);
+			}
+		}
+	}
+}
+
+/* rpe2e.pl loaded: two addresses tie for the nick in the keyring's cache.
+   An older script picks one by Perl's hash order, which changes from
+   process to process: the module's pick may not be the script's, so a
+   cache-only address with a tie counts as not resolved (R-E31). */
+static void test_casemap_script_cache_tie(void)
+{
+	int order;
+
+	for (order = 0; order < 2; order++) {
+		E2E_JSON *kr = e2e_keyring_new();
+		PEER p = { .kr = kr };
+		char *msg = NULL;
+
+		enable(&p, "@" BOB, "normal");
+		if (order == 0) {
+			tie_peer(kr, "a9", "bob", BOB, "null");
+			tie_peer(kr, "f2", "bob", "h2@x", "null");
+		} else {
+			tie_peer(kr, "a9", "bob", "h2@x", NULL);
+			tie_peer(kr, "f2", "bob", BOB, "0");
+		}
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob :x", cache_resolve, &msg), ==,
+		                E2E_GATE_REFUSE);
+		g_assert_nonnull(strstr(msg, "cannot find it now"));
+		g_free(msg);
+		/* a live address is the script's as well */
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob :x", live_resolve_bob, NULL), ==,
+		                E2E_GATE_PASS);
+		/* the tie broken by last_seen: the script's pick is the module's */
+		e2e_json_set_int(path_get(kr, "peers", order == 0 ? "a9" : "f2", NULL), "last_seen", 7);
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob :x", cache_resolve, NULL), ==,
+		                E2E_GATE_PASS);
+		e2e_json_free(kr);
+	}
+	/* two peers of one address: no doubt which */
+	{
+		E2E_JSON *kr = e2e_keyring_new();
+		PEER p = { .kr = kr };
+
+		enable(&p, "@" BOB, "normal");
+		tie_peer(kr, "a9", "bob", BOB, NULL);
+		tie_peer(kr, "f2", "BOB", BOB, NULL);
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob :x", cache_resolve, NULL), ==,
+		                E2E_GATE_PASS);
+		/* a tie below the newest does not count, whichever comes
+		   first (the newest is the last key here) */
+		tie_peer(kr, "c3", "bob", "h3@x", NULL);
+		tie_peer(kr, "c4", "bob", "h4@x", NULL);
+		e2e_json_set_int(path_get(kr, "peers", "f2", NULL), "last_seen", 3);
+		g_assert_cmpint(guard_msg(kr, &cm_rfc1459, "PRIVMSG bob :x", cache_resolve, NULL), ==,
+		                E2E_GATE_PASS);
+		e2e_json_free(kr);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5184,6 +5284,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/script-nonascii-cache", test_casemap_script_nonascii_cache);
 	g_test_add_func("/e2e/casemap/blocked-folded-peer", test_casemap_blocked_folded_peer);
 	g_test_add_func("/e2e/casemap/script-dm-moved", test_casemap_script_dm_moved);
+	g_test_add_func("/e2e/proto/cache-tie-order", test_cache_tie_order);
+	g_test_add_func("/e2e/casemap/script-cache-tie", test_casemap_script_cache_tie);
 
 	return g_test_run();
 }
