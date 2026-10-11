@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <irssi/src/e2e/e2e-json.h>
+#include <irssi/src/e2e/e2e-proto.h>
 #include <irssi/src/e2e/e2e-scope.h>
 
 #include "e2e-legacy-fixture.h"
@@ -1166,6 +1167,310 @@ static void test_adopt_legacy(void)
 	e2e_json_free(kr);
 }
 
+/* every row of every store (and trust change) whose key or "channel"
+   names a context of label: what another network must never change */
+static char *rows_of(const E2E_JSON *kr, const char *label)
+{
+	char *mark = g_strdup_printf("%s\x1f", label);
+	GString *out = g_string_new(NULL);
+	GPtrArray *stores = e2e_json_keys(kr);
+	guint i, j;
+
+	for (i = 0; i < stores->len; i++) {
+		const char *name = g_ptr_array_index(stores, i);
+		E2E_JSON *store = e2e_json_get(kr, name);
+
+		if (store->type == E2E_JSON_OBJECT) {
+			GPtrArray *keys = e2e_json_keys(store);
+
+			for (j = 0; j < keys->len; j++) {
+				const char *k = g_ptr_array_index(keys, j);
+				char *text;
+
+				if (strstr(k, mark) == NULL)
+					continue;
+				text = e2e_json_encode(e2e_json_get(store, k), FALSE);
+				g_string_append_printf(out, "%s/%s=%s\n", name, k, text);
+				g_free(text);
+			}
+			g_ptr_array_unref(keys);
+		} else if (store->type == E2E_JSON_ARRAY) {
+			for (j = 0; j < store->array->len; j++) {
+				E2E_JSON *row = g_ptr_array_index(store->array, j);
+				const char *c = e2e_json_get_string(row, "channel");
+				char *text;
+
+				if (c == NULL || strstr(c, mark) == NULL)
+					continue;
+				text = e2e_json_encode(row, FALSE);
+				g_string_append_printf(out, "%s[]=%s\n", name, text);
+				g_free(text);
+			}
+		}
+	}
+	g_ptr_array_unref(stores);
+	g_free(mark);
+	return g_string_free(out, FALSE);
+}
+
+static E2E_ADOPT_RESULT adopt(E2E_JSON *kr, const E2E_NET *net, const char *wire,
+                              const char *nick, guint want_moved)
+{
+	guint moved = 12345;
+	E2E_ADOPT_RESULT r = e2e_adopt_explicit(kr, net, wire, nick, &moved);
+
+	g_assert_cmpuint(moved, ==, want_moved);
+	return r;
+}
+
+/* /e2e adopt: the user's decision, on any number of networks; one
+   network's rows never become another's */
+static void test_legacy_adopt_explicit(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET a1 = { (char *) "E2E", E2E_CASEMAP_RFC1459, TRUE };
+	E2E_NET b = { (char *) "E2E2", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET c = { (char *) "E2E3", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET none = { NULL, E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = fixture(), *cfg;
+	char *before, *after, *rows_a, *rows_b;
+
+	/* the brief's lines: the 9 rows of the fixture */
+	g_assert_cmpuint(e2e_adopt_legacy(kr, "E2E", "#test"), ==, 9);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "E2E\x1f#test"));
+	e2e_json_free(kr);
+
+	/* several networks, old rows: BLOCKED until /e2e adopt */
+	kr = fixture();
+	g_assert_cmpint(lookup(kr, &a, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	g_assert_cmpint(adopt(kr, &a, "#test", NULL, LEGACY_ROWS_TEST), ==, E2E_ADOPT_MOVED);
+	g_assert_cmpint(lookup(kr, &a, "#test", "E2E\x1f#test"), ==, E2E_CTX_SCOPED);
+	g_assert_cmpstr(row_str(kr, "channels", "E2E\x1f#test", "adopted"), ==, "E2E");
+	g_assert_cmpstr(row_str(kr, "outgoing", "E2E\x1f#test", "sk"), ==, LEGACY_OUT_SK);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+	/* only #test: the others stay old */
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "#other"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|#te"));
+	/* again: the config is there, nothing changes */
+	before = e2e_json_encode(kr, FALSE);
+	g_assert_cmpint(adopt(kr, &a, "#test", NULL, 0), ==, E2E_ADOPT_ALREADY);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	g_free(before);
+
+	/* the other network: BLOCKED by E2E's marker; /e2e adopt there writes
+	   E2E2's own config and touches none of E2E's rows */
+	g_assert_cmpint(lookup(kr, &b, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	rows_a = rows_of(kr, "E2E");
+	/* (a nick is only a query's) */
+	g_assert_cmpint(adopt(kr, &b, "#test", "bob", 0), ==, E2E_ADOPT_OWN);
+	after = rows_of(kr, "E2E");
+	g_assert_cmpstr(rows_a, ==, after);
+	g_free(after);
+	cfg = e2e_json_get(e2e_json_get(kr, "channels"), "E2E2\x1f#test");
+	g_assert_nonnull(cfg);
+	g_assert_cmpint(e2e_json_get_int(cfg, "enabled", 0), ==, 1);
+	g_assert_cmpstr(e2e_json_get_string(cfg, "mode"), ==, "normal");
+	/* nothing was taken over on E2E2: no marker, no key, no session */
+	g_assert_null(e2e_json_get(cfg, "adopted"));
+	g_assert_null(e2e_json_get(cfg, "nick"));
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "outgoing"), "E2E2\x1f#test"));
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|E2E2\x1f#test"));
+	g_assert_cmpint(lookup(kr, &b, "#test", "E2E2\x1f#test"), ==, E2E_CTX_SCOPED);
+	g_assert_cmpint(lookup(kr, &a, "#test", "E2E\x1f#test"), ==, E2E_CTX_SCOPED);
+	/* for E2E2 only: a third network is still refused */
+	g_assert_cmpint(lookup(kr, &c, "#test", "#test"), ==, E2E_CTX_BLOCKED);
+	before = e2e_json_encode(kr, FALSE);
+	g_assert_cmpint(adopt(kr, &b, "#test", NULL, 0), ==, E2E_ADOPT_ALREADY);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	g_free(before);
+
+	/* old rows written again later (rpe2e.pl): E2E3's /e2e adopt takes
+	   them, E2E's and E2E2's rows stay as they are */
+	put_row(kr, "channels", "#test");
+	put_row(kr, "incoming", "eve@127.0.0.1|#test");
+	g_free(rows_a);
+	rows_a = rows_of(kr, "E2E");
+	rows_b = rows_of(kr, "E2E2");
+	g_assert_cmpint(adopt(kr, &c, "#test", NULL, 2), ==, E2E_ADOPT_MOVED);
+	after = rows_of(kr, "E2E");
+	g_assert_cmpstr(rows_a, ==, after);
+	g_free(after);
+	after = rows_of(kr, "E2E2");
+	g_assert_cmpstr(rows_b, ==, after);
+	g_free(after);
+	g_free(rows_a);
+	g_free(rows_b);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "eve@127.0.0.1|E2E3\x1f#test"));
+	g_assert_cmpstr(row_str(kr, "channels", "E2E3\x1f#test", "adopted"), ==, "E2E3");
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "#test"));
+
+	/* nothing old, nothing elsewhere: nothing to do (a DM session of a
+	   handle "nothing" is not a row of the channel #nothing) */
+	put_row(kr, "incoming", "nothing|@me@127.0.0.1");
+	before = e2e_json_encode(kr, FALSE);
+	g_assert_cmpint(adopt(kr, &a, "#nothing", NULL, 0), ==, E2E_ADOPT_NONE);
+	/* a name that cannot be scoped, a network without a label */
+	g_assert_cmpint(adopt(kr, &a, "#te\x1fst", NULL, 0), ==, E2E_ADOPT_UNSCOPABLE);
+	g_assert_cmpint(adopt(kr, &none, "#other", NULL, 0), ==, E2E_ADOPT_UNSCOPABLE);
+	g_assert_cmpint(adopt(kr, &a, NULL, NULL, 0), ==, E2E_ADOPT_UNSCOPABLE);
+	after = e2e_json_encode(kr, FALSE);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	g_free(before);
+	/* the only network: the same */
+	g_assert_cmpint(adopt(kr, &a1, "#other", NULL, 7), ==, E2E_ADOPT_MOVED);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "E2E\x1f#other"));
+	/* old rows whose scoped twins exist already: those win, the old ones
+	   go (and that is saved) */
+	put_row(kr, "incoming", "eve@127.0.0.1|#twin");
+	put_row(kr, "incoming", "eve@127.0.0.1|E2E\x1f#twin");
+	e2e_json_set_int(e2e_json_get(e2e_json_get(kr, "incoming"), "eve@127.0.0.1|E2E\x1f#twin"), "mine", 1);
+	g_assert_cmpint(adopt(kr, &a, "#twin", NULL, 0), ==, E2E_ADOPT_MOVED);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "incoming"), "eve@127.0.0.1|#twin"));
+	g_assert_cmpint(e2e_json_get_int(e2e_json_get(e2e_json_get(kr, "incoming"), "eve@127.0.0.1|E2E\x1f#twin"),
+	                                 "mine", 0), ==, 1);
+	e2e_json_free(kr);
+}
+
+/* /e2e adopt in a query: "@<peer>" and the peer's own rows under every old
+   "@<own>" - its sessions, used nonces and our requests to it - as the
+   user's own DM line does; other peers' DM rows stay old */
+static void test_legacy_adopt_query(void)
+{
+	E2E_NET a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_NET b = { (char *) "E2E2", E2E_CASEMAP_RFC1459, FALSE };
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT), *row, *cfg;
+	char *rows_a, *after;
+
+	put_row(kr, "channels", "@bob@127.0.0.1");
+	put_row(kr, "outgoing", "@bob@127.0.0.1");
+	put_row(kr, "incoming", "bob@127.0.0.1|@me@127.0.0.1");
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|@me@127.0.0.1"),
+	                    "fp", LEGACY_BOB_FP);
+	put_row(kr, "seen_rekeys", LEGACY_BOB_FP "|@me@127.0.0.1");
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(row, "handle", "bob@127.0.0.1");
+	e2e_json_set_string(row, "channel", "@me@127.0.0.1");
+	e2e_json_set(store_of(kr, "pending"), "@me@127.0.0.1|bob@127.0.0.1", row);
+	put_row(kr, "incoming", "carol@127.0.0.1|@me@127.0.0.1");
+	put_row(kr, "channels", "@carol@127.0.0.1");
+
+	g_assert_cmpint(adopt(kr, &a, "@bob@127.0.0.1", "bob", 5), ==, E2E_ADOPT_MOVED);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "E2E\x1f@bob@127.0.0.1"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "outgoing"), "E2E\x1f@bob@127.0.0.1"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|E2E\x1f@me@127.0.0.1"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "seen_rekeys"), LEGACY_BOB_FP "|E2E\x1f@me@127.0.0.1"));
+	g_assert_cmpstr(row_str(kr, "pending", "E2E\x1f@me@127.0.0.1|bob@127.0.0.1", "channel"), ==,
+	                "E2E\x1f@me@127.0.0.1");
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@127.0.0.1|@me@127.0.0.1"));
+	/* carol's are not bob's */
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "carol@127.0.0.1|@me@127.0.0.1"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "channels"), "@carol@127.0.0.1"));
+	g_assert_cmpint(lookup(kr, &a, "@bob@127.0.0.1", "E2E\x1f@bob@127.0.0.1"), ==, E2E_CTX_SCOPED);
+	/* bob on the other network: blocked by the marker, then a config of
+	   its own with the query's nick, E2E's rows untouched */
+	g_assert_cmpint(lookup(kr, &b, "@bob@127.0.0.1", "@bob@127.0.0.1"), ==, E2E_CTX_BLOCKED);
+	rows_a = rows_of(kr, "E2E");
+	g_assert_cmpint(adopt(kr, &b, "@bob@127.0.0.1", "bob", 0), ==, E2E_ADOPT_OWN);
+	after = rows_of(kr, "E2E");
+	g_assert_cmpstr(rows_a, ==, after);
+	g_free(after);
+	g_free(rows_a);
+	cfg = e2e_json_get(e2e_json_get(kr, "channels"), "E2E2\x1f@bob@127.0.0.1");
+	g_assert_cmpstr(e2e_json_get_string(cfg, "nick"), ==, "bob");
+	g_assert_cmpint(e2e_json_get_int(cfg, "enabled", 0), ==, 1);
+	g_assert_cmpint(lookup(kr, &b, "@bob@127.0.0.1", "E2E2\x1f@bob@127.0.0.1"), ==, E2E_CTX_SCOPED);
+	/* only the peer's sessions old, no config: they are taken along */
+	put_row(kr, "incoming", "dave@127.0.0.1|@me@127.0.0.1");
+	g_assert_cmpint(adopt(kr, &a, "@dave@127.0.0.1", "dave", 1), ==, E2E_ADOPT_MOVED);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "dave@127.0.0.1|E2E\x1f@me@127.0.0.1"));
+	/* ... also when their scoped twins exist: those win, the old go */
+	put_row(kr, "incoming", "erin@127.0.0.1|@me@127.0.0.1");
+	put_row(kr, "incoming", "erin@127.0.0.1|E2E\x1f@me@127.0.0.1");
+	g_assert_cmpint(adopt(kr, &a, "@erin@127.0.0.1", "erin", 0), ==, E2E_ADOPT_MOVED);
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "incoming"), "erin@127.0.0.1|@me@127.0.0.1"));
+	g_assert_null(e2e_json_get(e2e_json_get(kr, "channels"), "E2E\x1f@erin@127.0.0.1"));
+	e2e_json_free(kr);
+}
+
+static void test_legacy_has_scoped(void)
+{
+	static const char *const stores[] = { "channels", "outgoing", "incoming", NULL };
+	E2E_JSON *rpe2e_pl_fixture = fixture(), *after_adopt = fixture(), *kr;
+	int i;
+
+	g_assert_cmpuint(e2e_adopt_legacy(after_adopt, "E2E", "#test"), ==, LEGACY_ROWS_TEST);
+	g_assert_false(e2e_keyring_has_scoped(rpe2e_pl_fixture));
+	g_assert_true(e2e_keyring_has_scoped(after_adopt));
+	g_assert_false(e2e_keyring_has_scoped(NULL));
+	/* each of the three stores alone */
+	for (i = 0; stores[i] != NULL; i++) {
+		kr = fixture();
+		put_row(kr, stores[i], stores[i][0] == 'i' ? "bob@h|E2E\x1f#x" : "E2E\x1f#x");
+		g_assert_true(e2e_keyring_has_scoped(kr));
+		e2e_json_free(kr);
+	}
+	/* a 0x1F in a value is no scoped entry */
+	kr = fixture();
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "channels"), "#test"), "note", "E2E\x1f#x");
+	g_assert_false(e2e_keyring_has_scoped(kr));
+	e2e_json_free(kr);
+	e2e_json_free(rpe2e_pl_fixture);
+	e2e_json_free(after_adopt);
+}
+
+static void add_rule(E2E_JSON *kr, const char *scope, const char *pattern)
+{
+	E2E_JSON *rule = e2e_json_new(E2E_JSON_OBJECT), *rules = e2e_json_get(kr, "autotrust");
+
+	if (rules == NULL) {
+		rules = e2e_json_new(E2E_JSON_ARRAY);
+		e2e_json_set(kr, "autotrust", rules);
+	}
+	e2e_json_set_string(rule, "scope", scope);
+	e2e_json_set_string(rule, "handle_pattern", pattern);
+	e2e_json_array_add(rules, rule);
+}
+
+/* an old rule (a bare channel) applies to that name on every network; a
+   rule of one network ("<label>\x1f#chan") only there */
+static void test_legacy_autotrust_old_rule(void)
+{
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT);
+
+	add_rule(kr, "#test", "*@127.0.0.1");
+	g_assert_true(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E\x1f#test"));
+	g_assert_true(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E2\x1f#test"));
+	g_assert_true(e2e_autotrust_matches(kr, "bob@127.0.0.1", "#test"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@example.org", "E2E\x1f#test"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E\x1f#test2"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E\x1f#tes"));
+	e2e_json_free(kr);
+
+	kr = e2e_json_new(E2E_JSON_OBJECT);
+	add_rule(kr, "E2E\x1f#x", "*@127.0.0.1");
+	add_rule(kr, "E2E\x1f@bob@127.0.0.1", "bob@127.0.0.1");
+	g_assert_true(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E\x1f#x"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E2\x1f#x"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "#x"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E"));
+	/* a rule of a network never matches through what follows a context's
+	   first separator */
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "X\x1f" "E2E\x1f#x"));
+	g_assert_true(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E\x1f@bob@127.0.0.1"));
+	g_assert_false(e2e_autotrust_matches(kr, "bob@127.0.0.1", "E2E2\x1f@bob@127.0.0.1"));
+	/* global: every context of every network */
+	add_rule(kr, "global", "*.example.org");
+	g_assert_true(e2e_autotrust_matches(kr, "eve@a.example.org", "E2E2\x1f#y"));
+	g_assert_true(e2e_autotrust_matches(kr, "eve@a.example.org", "#y"));
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -1184,6 +1489,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/adopt-peer-sessions-own-only", test_adopt_peer_sessions_own_only);
 	g_test_add_func("/e2e/scope/ctx-adopted-elsewhere", test_ctx_adopted_elsewhere);
 	g_test_add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
+	g_test_add_func("/e2e/legacy/adopt-explicit", test_legacy_adopt_explicit);
+	g_test_add_func("/e2e/legacy/adopt-query", test_legacy_adopt_query);
+	g_test_add_func("/e2e/legacy/has-scoped", test_legacy_has_scoped);
+	g_test_add_func("/e2e/legacy/autotrust-old-rule", test_legacy_autotrust_old_rule);
 
 	return g_test_run();
 }

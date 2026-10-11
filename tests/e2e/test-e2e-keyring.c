@@ -28,6 +28,7 @@
 #include <irssi/src/e2e/e2e-json.h>
 #include <irssi/src/e2e/e2e-keyring.h>
 #include <irssi/src/e2e/e2e-proto.h>
+#include <irssi/src/e2e/e2e-scope.h>
 #include <irssi/src/e2e/e2e-wire.h>
 
 static char *dir;
@@ -468,22 +469,9 @@ static void test_backup_and_new_file(void)
 
 /* what contrib/rpe2e/rpe2e-from-repartee writes: json.dump(indent=3,
    sort_keys=True), \u escapes, a final newline */
-static void test_migration_tool_file(void)
+static char *migration_tool_text(const char *fp, const char *pkb, const char *skb)
 {
-	E2E_LOAD_STATUS status;
-	E2E_IDENTITY id;
-	E2E_JSON *kr;
-	unsigned char seed[32], pk[32], sk[64];
-	char *error = NULL, *pkb, *skb, *fp, *text;
-	gboolean created;
-
-	setup();
-	memset(seed, 0x41, sizeof(seed));
-	g_assert_true(e2e_ed25519_seed_keypair(seed, pk, sk));
-	pkb = e2e_b64_encode(pk, 32);
-	skb = e2e_b64_encode(sk, 64);
-	fp = e2e_fingerprint_hex(pk);
-	text = g_strdup_printf(
+	return g_strdup_printf(
 		"{\n"
 		"   \"autotrust\": [],\n"
 		"   \"channels\": {\n"
@@ -506,6 +494,24 @@ static void test_migration_tool_file(void)
 		"   \"pending_inbound\": {},\n"
 		"   \"pending_trust_change\": []\n"
 		"}\n", fp, pkb, skb);
+}
+
+static void test_migration_tool_file(void)
+{
+	E2E_LOAD_STATUS status;
+	E2E_IDENTITY id;
+	E2E_JSON *kr;
+	unsigned char seed[32], pk[32], sk[64];
+	char *error = NULL, *pkb, *skb, *fp, *text;
+	gboolean created;
+
+	setup();
+	memset(seed, 0x41, sizeof(seed));
+	g_assert_true(e2e_ed25519_seed_keypair(seed, pk, sk));
+	pkb = e2e_b64_encode(pk, 32);
+	skb = e2e_b64_encode(sk, 64);
+	fp = e2e_fingerprint_hex(pk);
+	text = migration_tool_text(fp, pkb, skb);
 	spew(path, text);
 	kr = e2e_keyring_load_checked(path, &status, &error);
 	g_assert_cmpint(status, ==, E2E_LOAD_OK);
@@ -616,6 +622,149 @@ static void test_own_members(void)
 	remove_tree();
 }
 
+/* ---- old keyrings and the network scope ---- */
+
+#define SK_A "ZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY="
+#define SK_B "ERERERERERERERERERERERERERERERERERERERERERE="
+#define FP_B "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+
+/* an export of repartee, whose contexts are "<network>" U+001F "#chan" */
+static const char repartee_export[] =
+	"{\"version\":1,\"exportedAt\":1791564000,\"identity\":null,"
+	"\"peers\":[{\"fingerprint\":\"" FP_B "\",\"pk\":\"" SK_B "\",\"status\":\"trusted\"}],"
+	"\"incomingSessions\":[{\"handle\":\"bob@127.0.0.1\",\"channel\":\"IRCnet\\u001f#test\","
+	  "\"fingerprint\":\"" FP_B "\",\"sk\":\"" SK_B "\",\"status\":\"trusted\",\"createdAt\":1791564000}],"
+	"\"outgoingSessions\":[{\"channel\":\"IRCnet\\u001f#test\",\"sk\":\"" SK_A "\","
+	  "\"createdAt\":1791564000,\"pendingRotation\":false}],"
+	"\"channels\":[{\"channel\":\"IRCnet\\u001f#test\",\"enabled\":true,\"mode\":\"normal\"}],"
+	"\"autotrust\":[],"
+	"\"outgoingRecipients\":[{\"channel\":\"IRCnet\\u001f#test\",\"handle\":\"bob@127.0.0.1\","
+	  "\"fingerprint\":\"" FP_B "\",\"first_sent_at\":1791564000}]}";
+
+static E2E_CTX_KIND lookup_kind(const E2E_JSON *kr, const char *label, gboolean only,
+                                const char *wire)
+{
+	E2E_NET net = { (char *) label, E2E_CASEMAP_RFC1459, only };
+	char *ctx = NULL;
+	E2E_CTX_KIND kind = e2e_ctx_lookup(kr, &net, wire, &ctx);
+
+	g_free(ctx);
+	return kind;
+}
+
+static E2E_JSON *import_text(const char *text)
+{
+	char *error = NULL;
+	E2E_JSON *doc = parse(text), *kr;
+
+	g_assert_nonnull(doc);
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_null(error);
+	g_assert_nonnull(kr);
+	e2e_json_free(doc);
+	return kr;
+}
+
+/* the files the module meets load as they are: rpe2e.pl's, the migration
+   tool's, and a keyring imported from a repartee export */
+static void test_legacy_files_load(void)
+{
+	E2E_LOAD_STATUS status;
+	E2E_JSON *kr;
+	unsigned char seed[32], pk[32], sk[64];
+	char *error = NULL, *pkb, *skb, *fp, *text;
+
+	setup();
+	/* (a) rpe2e.pl: unscoped, erssi's byte strings ("#żaba" as JSON::PP
+	   writes its bytes) */
+	spew(path, "{\"identity\":null,"
+	           "\"channels\":{\"#test\":{\"enabled\":1,\"mode\":\"normal\"},"
+	                        "\"#\xc3\x85\xc2\xbc" "aba\":{\"enabled\":1,\"mode\":\"quiet\"}},"
+	           "\"outgoing\":{\"#test\":{\"sk\":\"" SK_A "\",\"created_at\":1791564000,\"pending_rotation\":0}},"
+	           "\"incoming\":{\"bob@127.0.0.1|#test\":{\"fp\":\"" FP_B "\",\"sk\":\"" SK_B "\",\"status\":\"trusted\",\"created_at\":1791564000}},"
+	           "\"peers\":{},\"pending\":{},\"autotrust\":[],\"outgoing_recipients\":{},"
+	           "\"pending_inbound\":{},\"pending_trust_change\":[]}");
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_false(e2e_keyring_has_scoped(kr));
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", TRUE, "#test"), ==, E2E_CTX_LEGACY);
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", TRUE, "#\xc5\xbc" "aba"), ==, E2E_CTX_LEGACY);
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", FALSE, "#test"), ==, E2E_CTX_BLOCKED);
+	e2e_json_free(kr);
+
+	/* (b) contrib/rpe2e/rpe2e-from-repartee */
+	memset(seed, 0x41, sizeof(seed));
+	g_assert_true(e2e_ed25519_seed_keypair(seed, pk, sk));
+	pkb = e2e_b64_encode(pk, 32);
+	skb = e2e_b64_encode(sk, 64);
+	fp = e2e_fingerprint_hex(pk);
+	text = migration_tool_text(fp, pkb, skb);
+	spew(path, text);
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_false(e2e_keyring_has_scoped(kr));
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", TRUE, "#\xc5\xbc" "aba"), ==, E2E_CTX_LEGACY);
+	e2e_json_free(kr);
+	g_free(text);
+	g_free(pkb);
+	g_free(skb);
+	g_free(fp);
+
+	/* (c) a repartee export, imported and saved: IRCnet's #test, not
+	   Libera's */
+	kr = import_text(repartee_export);
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	e2e_json_free(kr);
+	kr = e2e_keyring_load_checked(path, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_true(e2e_keyring_has_scoped(kr));
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", FALSE, "#test"), ==, E2E_CTX_SCOPED);
+	g_assert_cmpint(lookup_kind(kr, "IRCnet", TRUE, "#test"), ==, E2E_CTX_SCOPED);
+	g_assert_cmpint(lookup_kind(kr, "Libera", FALSE, "#test"), ==, E2E_CTX_NEW);
+	g_assert_cmpint(lookup_kind(kr, "Libera", TRUE, "#test"), ==, E2E_CTX_NEW);
+	g_assert_cmpstr(e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "incoming"),
+	                                                 "bob@127.0.0.1|IRCnet\x1f#test"), "sk"), ==, SK_B);
+	g_assert_cmpstr(e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "outgoing"),
+	                                                 "IRCnet\x1f#test"), "sk"), ==, SK_A);
+	e2e_json_free(kr);
+	remove_tree();
+}
+
+/* /e2e export and /e2e import keep a network's contexts as they are; the
+   file holds U+001F as \u001f, never as a raw byte */
+static void test_legacy_export_keeps_scope(void)
+{
+	static const char *const stores[] = {
+		"channels", "outgoing", "incoming", "outgoing_recipients", "peers", NULL
+	};
+	E2E_JSON *kr = import_text(repartee_export), *doc, *back;
+	char *text, *a, *b;
+	int i;
+
+	e2e_json_set_string(e2e_json_get(e2e_json_get(kr, "channels"), "IRCnet\x1f#test"),
+	                    "adopted", "IRCnet");
+	doc = e2e_keyring_export(kr);
+	text = e2e_json_encode(doc, TRUE);
+	g_assert_null(strchr(text, '\x1f'));
+	g_assert_nonnull(strstr(text, "IRCnet\\u001f#test"));
+	back = import_text(text);
+	for (i = 0; stores[i] != NULL; i++) {
+		a = e2e_json_encode(e2e_json_get(kr, stores[i]), FALSE);
+		b = e2e_json_encode(e2e_json_get(back, stores[i]), FALSE);
+		g_assert_cmpstr(a, ==, b);
+		g_free(a);
+		g_free(b);
+	}
+	g_assert_nonnull(e2e_json_get(e2e_json_get(back, "channels"), "IRCnet\x1f#test"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(back, "incoming"), "bob@127.0.0.1|IRCnet\x1f#test"));
+	g_assert_nonnull(e2e_json_get(e2e_json_get(back, "outgoing_recipients"),
+	                              "IRCnet\x1f#test|bob@127.0.0.1"));
+	g_free(text);
+	e2e_json_free(back);
+	e2e_json_free(doc);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -634,6 +783,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/keyring/partial-write", test_partial_write);
 	g_test_add_func("/e2e/keyring/backup-and-new-file", test_backup_and_new_file);
 	g_test_add_func("/e2e/keyring/migration-tool-file", test_migration_tool_file);
+	g_test_add_func("/e2e/legacy/files-load", test_legacy_files_load);
+	g_test_add_func("/e2e/legacy/export-keeps-scope", test_legacy_export_keeps_scope);
 
 	return g_test_run();
 }

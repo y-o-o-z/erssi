@@ -32,13 +32,26 @@
 static const char *const subcommands[] = {
 	"on", "off", "mode", "fingerprint", "list", "status", "accept", "decline", "revoke",
 	"unrevoke", "forget", "handshake", "verify", "reverify", "rotate", "export", "import",
-	"autotrust", "reset", "help", NULL
+	"autotrust", "adopt", "reset", "help", NULL
 };
 
 /* $witem->{name}: the channel, or the nick of a query */
 static const char *item_name(WI_ITEM_REC *item)
 {
 	return item != NULL && item->name != NULL ? item->name : "";
+}
+
+/* a storage context as the user reads it: "IRCnet:#chan", a bare (old)
+   one as it is - never a raw 0x1F. Valid until the fourth call after. */
+static const char *shown(const char *ctx)
+{
+	static char *ring[4];
+	static int at;
+
+	at = (at + 1) % G_N_ELEMENTS(ring);
+	g_free(ring[at]);
+	ring[at] = e2e_ctx_display(ctx);
+	return ring[at] != NULL ? ring[at] : "";
 }
 
 /* the bare context of a window: the channel, or "@<peer handle>" in a
@@ -310,7 +323,7 @@ static void cmd_on(WI_ITEM_REC *item)
 	} else {
 		set_channel(kr, ctx, 1, "normal", query_nick(item));
 		e2e_save(kr);
-		e2e_print_item(item, "enabled on %s (mode=normal)", e2e_ctx_wire(ctx));
+		e2e_print_item(item, "enabled on %s (mode=normal)", shown(ctx));
 	}
 	g_free(ctx);
 	e2e_json_free(kr);
@@ -369,10 +382,10 @@ static void cmd_off(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 		} else {
 			ctx = off_ctx(kr, &net, wire, &on);
 			if (!on) {
-				e2e_print_item(item, "E2E is not on for %s", wire);
+				e2e_print_item(item, "E2E is not on for %s", shown(ctx));
 			} else {
 				disable_ctx(kr, ctx, NULL);
-				e2e_print_item(item, "disabled on %s", wire);
+				e2e_print_item(item, "disabled on %s", shown(ctx));
 			}
 			e2e_save(kr);
 		}
@@ -384,7 +397,7 @@ static void cmd_off(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 			ctx = off_ctx(kr, &net, wire, &on);
 			disable_ctx(kr, ctx, NULL);
 			e2e_save(kr);
-			e2e_print_item(item, "disabled on %s", wire);
+			e2e_print_item(item, "disabled on %s", shown(ctx));
 		}
 	} else {
 		/* a query: its address only (the live one, else the one config
@@ -396,8 +409,8 @@ static void cmd_off(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 			char *tctx = off_ctx(kr, &net, g_ptr_array_index(targets, i), &on);
 
 			disable_ctx(kr, tctx, nick);
+			e2e_print_item(item, "disabled on %s", shown(tctx));
 			g_free(tctx);
-			e2e_print_item(item, "disabled on %s", (char *) g_ptr_array_index(targets, i));
 		}
 		if (targets->len > 0)
 			e2e_save(kr);
@@ -438,7 +451,7 @@ static void cmd_mode(WI_ITEM_REC *item, const char *mode)
 	} else {
 		set_channel(kr, ctx, 1, mode, query_nick(item));
 		e2e_save(kr);
-		e2e_print_item(item, "mode=%s on %s", mode, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "mode=%s on %s", mode, shown(ctx));
 	}
 	g_free(ctx);
 	e2e_json_free(kr);
@@ -475,9 +488,30 @@ static void cmd_status(WI_ITEM_REC *item)
 {
 	E2E_JSON *kr = e2e_load();
 	const char *fp = e2e_json_get_string(e2e_json_get(kr, "identity"), "fp");
+	GPtrArray *keys = e2e_json_keys(e2e_json_get(kr, "channels"));
+	GString *on = g_string_new(NULL), *old = g_string_new(NULL);
+	guint i;
 
 	e2e_print_item(item, "identity=%s peers=%u enabled_channels=%u", str_or(fp, "(none)"),
 	               e2e_json_size(e2e_json_get(kr, "incoming")), enabled_count(kr));
+	/* where, by network; old entries (of no network) named as such */
+	for (i = 0; i < keys->len; i++) {
+		const char *ctx = g_ptr_array_index(keys, i);
+
+		if (!e2e_ctx_enabled(kr, ctx))
+			continue;
+		g_string_append_printf(on, "%s%s", on->len > 0 ? ", " : "", shown(ctx));
+		if (strchr(ctx, E2E_SCOPE_SEP) == NULL)
+			g_string_append_printf(old, "%s%s", old->len > 0 ? ", " : "", ctx);
+	}
+	g_ptr_array_unref(keys);
+	if (on->len > 0)
+		e2e_print_item(item, "encrypted: %s", on->str);
+	if (old->len > 0)
+		e2e_print_item(item, "old entries of no network (set up before erssi kept networks apart): %s - used where they are while erssi uses one network; /e2e adopt in their window binds them to its network",
+		               old->str);
+	g_string_free(on, TRUE);
+	g_string_free(old, TRUE);
 	if (e2e_keyring_is_lost())
 		e2e_print_item(item, "%s", LOST_REFUSAL);
 	e2e_json_free(kr);
@@ -544,7 +578,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 			E2E_JSON *row = e2e_json_get(src, g_ptr_array_index(keys, i));
 
 			split_key(g_ptr_array_index(keys, i), &handle, &channel);
-			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", handle, str_or(channel, ""),
+			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", handle, shown(channel),
 			               session_label(kr, handle, channel, row),
 			               str_or(e2e_json_get_string(row, "fp"), ""));
 			g_free(handle);
@@ -585,8 +619,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		                       e2e_ctx_on_net(channel, &net)
 		                     : g_strcmp0(channel, ctx) == 0;
 		if (match) {
-			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", handle,
-			               channel != NULL ? e2e_ctx_wire(channel) : "",
+			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", handle, shown(channel),
 			               str_or(e2e_json_get_string(row, "fp"), ""),
 			               session_label(kr, handle, channel, row));
 			any = TRUE;
@@ -630,7 +663,7 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 		goto out;
 	}
 	if (!e2e_ctx_enabled(kr, ctx)) {
-		e2e_print_item(item, "e2e not enabled on %s", e2e_ctx_wire(ctx));
+		e2e_print_item(item, "e2e not enabled on %s", shown(ctx));
 		goto out;
 	}
 	/* a KEYREQ asks for the direction WE receive: for a DM it is stamped
@@ -657,8 +690,8 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 	}
 	e2e_save(kr);
 	e2e_send_notice(server, nick, wire);
-	e2e_print_item(item, "KEYREQ sent to %s for %s", nick, e2e_ctx_wire(ctx));
-	e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, e2e_ctx_wire(ctx));
+	e2e_print_item(item, "KEYREQ sent to %s for %s", nick, shown(ctx));
+	e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, shown(ctx));
 out:
 	g_free(error);
 	g_free(wire);
@@ -717,30 +750,30 @@ static void cmd_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *nick)
 		e2e_send_notice(server, nick, rsp);
 		if (recip != NULL)
 			e2e_send_notice(server, nick, recip);
-		e2e_print_item(item, "accepted %s (%s) on %s — KEYRSP sent", nick, handle, e2e_ctx_wire(ctx));
-		e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "accepted %s (%s) on %s — KEYRSP sent", nick, handle, shown(ctx));
+		e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, shown(ctx));
 		if (recip != NULL)
-			e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, e2e_ctx_wire(ctx));
+			e2e_print_debug(server, ctx, nick, "TX KEYREQ to %s for %s", nick, shown(ctx));
 		break;
 	case E2E_ACCEPT_TRUSTED:
 		e2e_save(kr);
 		e2e_print_item(item, "accepted %s (%s) on %s — their next key request is answered", nick,
-		               handle, e2e_ctx_wire(ctx));
+		               handle, shown(ctx));
 		break;
 	case E2E_ACCEPT_NO_KEY:
 		e2e_print_item(item, "cannot accept %s on %s: no key from them is stored (only a request that is gone) — wait for their next request, or /e2e handshake %s",
-		               nick, e2e_ctx_wire(ctx), nick);
+		               nick, shown(ctx), nick);
 		break;
 	case E2E_ACCEPT_DAMAGED:
 		e2e_print_item(item, "the pending exchange from %s on %s is damaged — /e2e decline %s removes it",
-		               nick, e2e_ctx_wire(ctx), nick);
+		               nick, shown(ctx), nick);
 		break;
 	case E2E_ACCEPT_FAILED:
 		e2e_print_item(item, "cannot answer the key exchange from %s on %s (key material damaged?)",
-		               nick, e2e_ctx_wire(ctx));
+		               nick, shown(ctx));
 		break;
 	case E2E_ACCEPT_NOTHING:
-		e2e_print_item(item, "no pending exchange or session for %s on %s", nick, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "no pending exchange or session for %s on %s", nick, shown(ctx));
 		break;
 	}
 	e2e_identity_wipe(&id);
@@ -773,7 +806,7 @@ static void cmd_decline(WI_ITEM_REC *item, const char *nick)
 			e2e_json_set_string(row, "status", "revoked");
 		e2e_forget_acceptance(kr, handle, ctx);
 		e2e_save(kr);
-		e2e_print_item(item, "declined %s on %s", nick, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "declined %s on %s", nick, shown(ctx));
 	}
 	g_free(handle);
 	g_free(ctx);
@@ -802,7 +835,7 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 		/* trusted without a key would show anything encrypted under
 		   the placeholder as genuine */
 		e2e_print_item(item, "cannot unrevoke %s on %s: no key from them is stored — wait for their key, or /e2e handshake %s",
-		               nick, e2e_ctx_wire(ctx), nick);
+		               nick, shown(ctx), nick);
 		goto out;
 	}
 	if (revoke) {
@@ -822,10 +855,10 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 		e2e_json_set_string(peer, "status", revoke ? "revoked" : "trusted");
 	e2e_save(kr);
 	if (revoke)
-		e2e_print_item(item, "revoked %s on %s — key will rotate", nick, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "revoked %s on %s — key will rotate", nick, shown(ctx));
 	else
 		e2e_print_item(item, "unrevoked %s on %s — you read them again; they get your key after /e2e accept %s",
-		               nick, e2e_ctx_wire(ctx), nick);
+		               nick, shown(ctx), nick);
 out:
 	g_free(own);
 	g_free(handle);
@@ -892,7 +925,7 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 	delete_rows(kr, handle, ctx, own);
 	e2e_forget_acceptance(kr, handle, ctx);
 	e2e_save(kr);
-	e2e_print_item(item, "forgotten %s on %s", who, e2e_ctx_wire(ctx));
+	e2e_print_item(item, "forgotten %s on %s", who, shown(ctx));
 out:
 	g_free(own);
 	g_free(ctx);
@@ -922,7 +955,7 @@ static void cmd_verify(WI_ITEM_REC *item, const char *nick)
 		row = incoming_row(kr, handle, ctx);
 	g_free(own);
 	if (row == NULL) {
-		e2e_print_item(item, "no session for %s on %s", nick, e2e_ctx_wire(ctx));
+		e2e_print_item(item, "no session for %s on %s", nick, shown(ctx));
 		goto out;
 	}
 	if (!e2e_ensure_identity(kr, &id))
@@ -1040,7 +1073,7 @@ static void cmd_rotate(WI_ITEM_REC *item)
 		e2e_json_set(e2e_json_get(kr, "outgoing"), ctx, out);
 	}
 	e2e_save(kr);
-	e2e_print_item(item, "rotation scheduled for %s", e2e_ctx_wire(ctx));
+	e2e_print_item(item, "rotation scheduled for %s", shown(ctx));
 	g_free(ctx);
 	e2e_json_free(kr);
 }
@@ -1142,31 +1175,53 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 /* SYNTAX: E2E AUTOTRUST [LIST] */
 /* SYNTAX: E2E AUTOTRUST ADD <scope> <pattern> */
 /* SYNTAX: E2E AUTOTRUST REMOVE <pattern> */
-static void cmd_autotrust(WI_ITEM_REC *item, char **args)
+static void cmd_autotrust(SERVER_REC *server, WI_ITEM_REC *item, char **args)
 {
 	E2E_JSON *kr = e2e_load(), *rules = e2e_json_get(kr, "autotrust"), *rule;
-	char *op = g_ascii_strdown(args[0] != NULL ? args[0] : "list", -1);
+	char *op = g_ascii_strdown(args[0] != NULL ? args[0] : "list", -1), *scope;
 	guint n = g_strv_length(args), i;
+	E2E_NET net;
 
 	if (strcmp(op, "list") == 0) {
 		if (e2e_json_size(rules) == 0)
 			e2e_print_item(item, "(no autotrust rules)");
 		for (i = 0; i < e2e_json_size(rules); i++) {
+			const char *sc;
+
 			rule = g_ptr_array_index(rules->array, i);
-			e2e_print_item(item, "  %s  %s", str_or(e2e_json_get_string(rule, "scope"), ""),
+			sc = e2e_json_get_string(rule, "scope");
+			/* an old rule (a bare name) holds on every network */
+			e2e_print_item(item, "  %s%s  %s", shown(str_or(sc, "")),
+			               sc != NULL && strcmp(sc, "global") != 0 &&
+			               strchr(sc, E2E_SCOPE_SEP) == NULL ? " (every network)" : "",
 			               str_or(e2e_json_get_string(rule, "handle_pattern"), ""));
 		}
 	} else if (strcmp(op, "add") == 0) {
 		if (n < 3) {
 			e2e_print_item(item, "usage: /e2e autotrust add <scope> <pattern>");
+		} else if (strchr(args[1], E2E_SCOPE_SEP) != NULL) {
+			e2e_print_item(item, "autotrust: a scope cannot hold the control character 0x1F");
 		} else {
-			rule = e2e_json_new(E2E_JSON_OBJECT);
-			e2e_json_set_string(rule, "scope", args[1]);
-			e2e_json_set_string(rule, "handle_pattern", args[2]);
-			e2e_json_set_int(rule, "created_at", e2e_now());
-			e2e_json_array_add(rules, rule);
-			e2e_save(kr);
-			e2e_print_item(item, "autotrust add %s %s", args[1], args[2]);
+			/* a channel or address is the window's network's */
+			if (strcmp(args[1], "global") == 0 || server == NULL) {
+				scope = g_strdup(args[1]);
+			} else {
+				e2e_server_net(server, &net);
+				scope = e2e_ctx_scoped(&net, args[1]);
+				e2e_net_clear(&net);
+			}
+			if (scope == NULL) {
+				e2e_print_item(item, "autotrust: the network has no name - nothing added");
+			} else {
+				rule = e2e_json_new(E2E_JSON_OBJECT);
+				e2e_json_set_string(rule, "scope", scope);
+				e2e_json_set_string(rule, "handle_pattern", args[2]);
+				e2e_json_set_int(rule, "created_at", e2e_now());
+				e2e_json_array_add(rules, rule);
+				e2e_save(kr);
+				e2e_print_item(item, "autotrust add %s %s", shown(scope), args[2]);
+			}
+			g_free(scope);
 		}
 	} else if (strcmp(op, "remove") == 0) {
 		if (n < 2) {
@@ -1186,6 +1241,60 @@ static void cmd_autotrust(WI_ITEM_REC *item, char **args)
 		e2e_print_item(item, "usage: /e2e autotrust <list|add|remove>");
 	}
 	g_free(op);
+	e2e_json_free(kr);
+}
+
+/* SYNTAX: E2E ADOPT */
+static void cmd_adopt(WI_ITEM_REC *item)
+{
+	E2E_JSON *kr;
+	E2E_NET net;
+	char *wire;
+	guint moved;
+
+	if (item == NULL) {
+		e2e_print_item(NULL, "%s", NOT_IN_CONTEXT);
+		return;
+	}
+	kr = e2e_load();
+	wire = window_wire(kr, item, NULL);
+	if (wire == NULL) {
+		e2e_print_item(item, "%s", NOT_IN_CONTEXT);
+		e2e_json_free(kr);
+		return;
+	}
+	if (item->server == NULL) {
+		e2e_print_item(item, "not connected to a server — the network of %s is not known", wire);
+		g_free(wire);
+		e2e_json_free(kr);
+		return;
+	}
+	/* the user's decision: old rows become this network's, whatever the
+	   number of networks; another network's rows are never moved */
+	e2e_server_net(item->server, &net);
+	switch (e2e_adopt_explicit(kr, &net, wire, query_nick(item), &moved)) {
+	case E2E_ADOPT_MOVED:
+		if (e2e_save(kr))
+			e2e_print_item(item, "adopted %s for %s: %u entries", wire, net.label, moved);
+		break;
+	case E2E_ADOPT_OWN:
+		if (e2e_save(kr))
+			e2e_print_item(item, "E2E for %s is on for %s now (mode normal), set up here on its own: the old entries belong to another network and stay there; keys are exchanged anew",
+			               wire, net.label);
+		break;
+	case E2E_ADOPT_ALREADY:
+		e2e_print_item(item, "E2E is already set up for %s on %s; the old entries stay", wire,
+		               net.label);
+		break;
+	case E2E_ADOPT_NONE:
+		e2e_print_item(item, "no old entries of %s to adopt for %s", wire, net.label);
+		break;
+	case E2E_ADOPT_UNSCOPABLE:
+		print_blocked(item, &net, wire);
+		break;
+	}
+	e2e_net_clear(&net);
+	g_free(wire);
 	e2e_json_free(kr);
 }
 
@@ -1278,10 +1387,10 @@ static void cmd_guide(WI_ITEM_REC *item)
 			g_string_append_printf(who, "%s%s", i > 0 ? ", " : "",
 			                       (char *) g_ptr_array_index(trusted, i));
 		if (e2e_json_truthy(e2e_json_get(cfg, "enabled")))
-			e2e_print_item(item, "Here (%s): encryption ON, mode %s", e2e_ctx_wire(ctx),
+			e2e_print_item(item, "Here (%s): encryption ON, mode %s", shown(ctx),
 			               str_or(e2e_json_get_string(cfg, "mode"), "normal"));
 		else
-			e2e_print_item(item, "Here (%s): encryption off", e2e_ctx_wire(ctx));
+			e2e_print_item(item, "Here (%s): encryption off", shown(ctx));
 		e2e_print_item(item, "Keys from: %s", who->len > 0 ? who->str : "nobody yet");
 		g_string_free(who, TRUE);
 		g_ptr_array_unref(trusted);
@@ -1340,7 +1449,7 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 		e2e_print_item(item, "%s", LOST_REFUSAL);
 	} else if (*sub == '\0' || strcmp(sub, "help") == 0) {
 		cmd_guide(item);
-		e2e_print_item(item, "Encryption commands: on off mode fingerprint list status accept decline revoke unrevoke forget handshake verify reverify rotate export import autotrust reset");
+		e2e_print_item(item, "Encryption commands: on off mode fingerprint list status accept decline revoke unrevoke forget handshake verify reverify rotate export import autotrust adopt reset");
 	} else if (strcmp(sub, "on") == 0) {
 		cmd_on(item);
 	} else if (strcmp(sub, "off") == 0) {
@@ -1376,7 +1485,9 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 	} else if (strcmp(sub, "import") == 0) {
 		cmd_import(item, args[0]);
 	} else if (strcmp(sub, "autotrust") == 0) {
-		cmd_autotrust(item, args);
+		cmd_autotrust(server, item, args);
+	} else if (strcmp(sub, "adopt") == 0) {
+		cmd_adopt(item);
 	} else if (strcmp(sub, "reset") == 0) {
 		cmd_reset(item);
 	} else {

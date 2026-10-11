@@ -881,3 +881,81 @@ guint e2e_adopt_legacy_peer_sessions(E2E_JSON *kr, const char *label, const char
 	g_hash_table_destroy(ctxs);
 	return n;
 }
+
+/* the rows of wire's peer under old "@<own>" contexts (for a DM) */
+static gboolean peer_has_old_rows(const E2E_JSON *kr, const char *wire)
+{
+	GHashTable *ctxs;
+	gboolean any;
+
+	if (*wire != '@')
+		return FALSE;
+	ctxs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	own_ctxs_of(kr, wire + 1, ctxs);
+	any = g_hash_table_size(ctxs) > 0;
+	g_hash_table_destroy(ctxs);
+	return any;
+}
+
+E2E_ADOPT_RESULT e2e_adopt_explicit(E2E_JSON *kr, const E2E_NET *net, const char *wire,
+                                    const char *nick, guint *moved)
+{
+	E2E_JSON *channels, *cfg;
+	gboolean had_old;
+	char *scoped;
+
+	*moved = 0;
+	if (net == NULL || !is_object(kr))
+		return E2E_ADOPT_UNSCOPABLE;
+	scoped = e2e_ctx_scoped(net, wire);
+	if (scoped == NULL)
+		return E2E_ADOPT_UNSCOPABLE;
+	channels = e2e_json_get(kr, "channels");
+	/* set up here already (also by an adoption): the old rows stay */
+	if (e2e_json_get(channels, scoped) != NULL) {
+		g_free(scoped);
+		return E2E_ADOPT_ALREADY;
+	}
+	/* old rows: this network's now - for a DM with the peer's sessions to
+	   us, as the user's own DM line takes them */
+	had_old = ctx_exists(kr, wire) || peer_has_old_rows(kr, wire);
+	*moved = e2e_adopt_legacy(kr, net->label, wire);
+	if (*wire == '@')
+		*moved += e2e_adopt_legacy_peer_sessions(kr, net->label, wire + 1);
+	if (had_old || *moved > 0) {
+		g_free(scoped);
+		return E2E_ADOPT_MOVED;
+	}
+	/* another network took the name over: a config of this network's
+	   own settles it here (E2E on, keys are exchanged anew); nothing of
+	   the other network's is read or copied */
+	if (adopted_elsewhere(kr, net, wire) && is_object(channels)) {
+		cfg = e2e_json_new(E2E_JSON_OBJECT);
+		e2e_json_set_int(cfg, "enabled", 1);
+		e2e_json_set_string(cfg, "mode", "normal");
+		if (nick != NULL && *wire == '@')
+			e2e_json_set_string(cfg, "nick", nick);
+		e2e_json_set(channels, scoped, cfg);
+		g_free(scoped);
+		return E2E_ADOPT_OWN;
+	}
+	g_free(scoped);
+	return E2E_ADOPT_NONE;
+}
+
+gboolean e2e_keyring_has_scoped(const E2E_JSON *kr)
+{
+	static const char *const stores[] = { "channels", "outgoing", "incoming", NULL };
+	gboolean found = FALSE;
+	int i;
+	guint j;
+
+	for (i = 0; stores[i] != NULL && !found; i++) {
+		GPtrArray *keys = e2e_json_keys(e2e_json_get(kr, stores[i]));
+
+		for (j = 0; j < keys->len && !found; j++)
+			found = strchr(g_ptr_array_index(keys, j), E2E_SCOPE_SEP) != NULL;
+		g_ptr_array_unref(keys);
+	}
+	return found;
+}
