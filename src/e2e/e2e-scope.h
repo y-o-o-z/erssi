@@ -200,6 +200,12 @@ char *e2e_ctx_find(const E2E_JSON *kr, const E2E_NET *net, const char *wire);
  that cannot make a scoped name.
 */
 guint e2e_adopt_legacy(E2E_JSON *kr, const char *label, const char *wire);
+/* With "@<peer>" (a DM config) taken over by the user's own DM line: the
+   old rows of peer under any old "@<own>" - its sessions to us
+   "<peer>|@x", their used REKEY nonces "<fp>|@x" and our requests to it
+   "@x|<peer>" - become "<label>\x1f@x" too. The rows of other peers
+   there stay old. An existing scoped row wins. Returns rows moved. */
+guint e2e_adopt_legacy_peer_sessions(E2E_JSON *kr, const char *label, const char *peer);
 
 /* the member of a scoped config or key row ("channels", "outgoing") whose
    old rows were taken over: the label. While one exists, the same wire

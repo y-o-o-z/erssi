@@ -180,6 +180,10 @@
     servers connected, connecting, waiting to reconnect and set to
     autoconnect), and becomes that network's with the first message you
     send there - messages and key requests from others never move it.
+    In a query, your first message to the person also takes along the
+    keys of their messages to you; those of other people stay old until
+    you write to them while erssi uses one network - on several networks
+    their messages are not read until /E2E ADOPT.
     With several networks erssi cannot know which network an old entry
     belongs to: a message to such a channel or query is NOT sent (you are
     told why), and nothing is decrypted or answered for it there, until
