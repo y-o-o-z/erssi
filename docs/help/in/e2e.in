@@ -185,20 +185,28 @@
     needs one /E2E ACCEPT, and does not get your new key when it rotates
     before that.
 
-    Known limitations: channel names are compared case-insensitively in
-    ASCII (rfc1459) only - on a server with Unicode case mapping a
-    differently written non-ASCII name is another channel to the module.
-    NOTICEs, CTCPs other than ACTION, bot commands and IRCv3 message tags
-    are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY etc. are resolved
-    with the last nick stored in the keyring, which may meanwhile belong
-    to someone else - check the ident@host the command prints. As in
-    repartee, the server can replay an encrypted message within 5
-    minutes, and drop or reorder the parts of a long one. A key request
-    carries no ident@host: someone who forwards your peer's request before
-    the peer's first contact with you ties that key to their own address,
-    and the peer's own request is then held back as a changed address
-    until /E2E REVERIFY (nobody gets a key that way). The rpe2e.pl script
-    is recognised by its file name (rpe2e*.pl).
+    Channel names are compared as the server's CASEMAPPING compares them:
+    ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the server
+    names none); rfc7613, rfc8265, utf8 and unknown values with a wider
+    fold (NFKC, case folding and the rfc1459 specials), which may refuse
+    a message to a channel the server keeps apart, but never lets one out
+    in clear text to a channel with E2E on. On such a server a channel
+    name that is not valid UTF-8 cannot be compared: messages to it are
+    not sent while E2E is on for any channel of that network (and while
+    E2E is on for such a name, no other channel there gets clear text).
+
+    Known limitations: NOTICEs, CTCPs other than ACTION, bot commands
+    and IRCv3 message tags are never encrypted. Nicks in ACCEPT, REVOKE,
+    VERIFY etc. are resolved with the last nick stored in the keyring,
+    which may meanwhile belong to someone else - check the ident@host
+    the command prints. As in repartee, the server can replay an
+    encrypted message within 5 minutes, and drop or reorder the parts of
+    a long one. A key request carries no ident@host: someone who
+    forwards your peer's request before the peer's first contact with
+    you ties that key to their own address, and the peer's own request
+    is then held back as a changed address until /E2E REVERIFY (nobody
+    gets a key that way). The rpe2e.pl script is recognised by its file
+    name (rpe2e*.pl).
 
     Networks: keys, sessions and settings are kept per network - the
     chatnet name of the server, otherwise its tag - so #test on one
