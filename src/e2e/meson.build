@@ -9,6 +9,7 @@ e2e_proto_sources = files(
   'e2e-json.c',
   'e2e-keyring.c',
   'e2e-proto.c',
+  'e2e-scope.c',
 )
 
 libe2e_proto_a = static_library('e2e_proto',
@@ -43,6 +44,7 @@ shared_library('e2e_core',
 #   'e2e-json.h',
 #   'e2e-keyring.h',
 #   'e2e-proto.h',
+#   'e2e-scope.h',
 #   'e2e-wire.h',
 #   'module.h',
 # )
