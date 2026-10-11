@@ -175,8 +175,8 @@ Open at `4833f418`. Each item was checked in the code.
    (`meson.build` is `2026.10.0`; NEWS has `shellter-v1.3.2` to
    `shellter-v1.3.10` and `shellter-v2026.10.0`, no longer erssi-org's own
    future numbers).
-5. Fixed: the stale-socket check on FreeBSD (see below). Not tested on
-   FreeBSD itself.
+5. The stale-socket check on FreeBSD is fixed (see "Fixed since"). Not
+   tested on FreeBSD itself.
 6. Resolved in 2026.10.0: defaults in C. The Shellter values are in the
    default config (section 2).
 7. Credential encryption is disabled at runtime (`core/credential.c:159`,
@@ -185,40 +185,37 @@ Open at `4833f418`. Each item was checked in the code.
    client reach it, e.g. the server tag at `fe-web/fe-web-client.c:144`.
    Use `printtext_string()` or escape `%`. Reported in review, not
    reproduced here.
-8. Fixed: unmasked client frames (see below). This was older than the
-   fork.
-9. Fixed: `/UNLOAD` of fe-web sent from a web client (see below). This
-    was older than the fork.
-10. Capsicum: after `/capsicum enter`, a fe-web restart cannot bind or
+9. Capsicum: after `/capsicum enter`, a fe-web restart cannot bind or
     write its certificate. Not documented in `/help fe_web`.
-11. image-preview: the address filter (`image-preview-fetch.c:194`) does
+10. image-preview: the address filter (`image-preview-fetch.c:194`) does
     not cover Teredo `2001::/32` or the documentation ranges. Terminal
     detection matches loose substrings ("rio", "foot") in
     `image-preview-chafa.c:98`, `:100`.
-12. Missing /help text for `term_truecolor`, `colors_ansi_24bit`,
+11. Missing /help text for `term_truecolor`, `colors_ansi_24bit`,
     `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`,
     `show_names_on_join_limit` and the `sidepanel_scroll_arrow` format.
     They are described only in README and NEWS.
-13. Not covered by tests: login pacing and eviction, the output queue
-    (partial and WANT_WRITE writes, 32 MB cap), Unix-socket path checks,
-    the default-file update, `fe_settings_is_secret()`, the credential
-    refusal, the anti-floodnet changes, truecolor detection, the Capsicum
+12. Tested since 2026.10.0: the fe-web output queue (partial and refused
+    writes, TLS WANT_READ, 32 MB cap), Unix-socket path checks, login
+    pacing and eviction, frames, the `/UNLOAD` guard,
+    `fe_settings_is_secret()` and /SET, anti-floodnet, truecolor
+    detection, the default-file update, the unformat helper and the
+    installer. Still not covered: the credential refusal and the Capsicum
     resolver.
-14. The shellter themes still carry format sections for scripts erssi
+13. The shellter themes still carry format sections for scripts erssi
     does not ship, including the author's own (`themes/shellter.theme:753-880`,
     same in `shellter-light.theme`). Remove them before shipping the themes.
-15. Fixed: the default-file hash list is 0600 from the start (see below).
-    Fork-only.
-16. Commit hygiene: `18851c12`, `4b56253e` and `d4e22458` are review-fix
+14. Commit hygiene: `18851c12`, `4b56253e` and `d4e22458` are review-fix
     commits that mix several fixes. `92c1a7ac` and `69c0526e` mix a fix with
     a behaviour change. Take them per file (section 6).
-17. The `"fe-text"` block of `irssi.conf` is ignored since fe-text was
+15. The `"fe-text"` block of `irssi.conf` is ignored since fe-text was
     merged into fe-ansi (`scrollback_lines`, `paste_verify_line_count`,
     `lag_min_show`, `term_force_colors`, `colors`, `actlist_sort`). Moving
     it to `"fe-ansi"` would change two values that users see (2000 lines,
     2), so it is left as is.
 
-Fixed since `4833f418`:
+Fixed since `4833f418` (the unmasked client frames and `/UNLOAD` of fe-web
+from a web client were older than the fork; the rest is fork-only):
 
 - fe-web login pacing is per peer: uid on the Unix socket, address (/64
   for IPv6) on TCP; on TCP loopback (Linux) the peer's uid, asked of the
@@ -291,6 +288,15 @@ Fixed since `4833f418`:
   kept (with a note) and the list written at the end replaces it with a
   regular 0600 file. A file whose replacement fails is not recorded as
   replaced.
+- `shellter-install.sh` (fork-only): ASCII spinner and symbols when the
+  locale is not UTF-8; the `~/.local/bin` link only for a prefix in your
+  home, never as root, never over the binary or over a file; the source
+  lock is taken before the venv; FreeBSD's base OpenSSL is enough; the
+  source directory, its venv and every directory above it must belong to
+  you (or root) and be writable only by you, otherwise the install is
+  refused with the fix in the message.
+- Tests and fuzz harnesses that start the core use their own temporary
+  home.
 
 ## 6. How to take a change that is not in a pull request
 
