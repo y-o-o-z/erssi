@@ -35,7 +35,6 @@ typedef enum {
 static ROW_KIND pending_row_parts(const char *key, const E2E_JSON *row, const char **handle,
                                   const char **ctx)
 {
-	const char *wire;
 	size_t hl;
 
 	*handle = e2e_json_get_string(row, "handle");
@@ -45,8 +44,7 @@ static ROW_KIND pending_row_parts(const char *key, const E2E_JSON *row, const ch
 	hl = strlen(*handle);
 	if (strncmp(key, *handle, hl) != 0 || key[hl] != '|' || strcmp(key + hl + 1, *ctx) != 0)
 		return ROW_BAD;
-	wire = e2e_ctx_wire(*ctx);
-	if (!e2e_is_channel(wire) && (*wire != '@' || strcmp(wire + 1, *handle) != 0))
+	if (e2e_dm_row_foreign(*handle, *ctx))
 		return ROW_FOREIGN_DM;
 	return ROW_WAITING;
 }

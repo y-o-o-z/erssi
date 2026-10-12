@@ -65,7 +65,11 @@
                  address: a request from anyone else for it is damaged
                  (rpe2e.pl kept such requests before) - listed by
                  /E2E PENDING and /E2E ACCEPT, never accepted, removed by
-                 /E2E DECLINE alone in that query.
+                 /E2E DECLINE alone in that query. Such an address that
+                 was accepted already (by an erssi before 2026-10) is
+                 damaged too: it gets no new key of the query, /E2E LIST
+                 shows it, and /E2E DECLINE <ident@host> (or alone) in
+                 that query removes it - your key there then rotates.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
                  existing session gets the revoked status and the person
                  is no longer accepted.

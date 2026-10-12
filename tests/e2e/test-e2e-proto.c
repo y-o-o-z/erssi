@@ -5340,6 +5340,134 @@ static void test_accept_foreign_dm(void)
 	peer_free(&x);
 }
 
+static char *put_peer(E2E_JSON *kr, const PEER *p)
+{
+	E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+	char *fp = e2e_fingerprint_hex(p->id.pk), *b = e2e_b64_encode(p->id.pk, 32);
+
+	e2e_json_set_string(row, "pk", b);
+	e2e_json_set_string(row, "last_handle", p->handle);
+	e2e_json_set_string(row, "last_nick", p->nick);
+	e2e_json_set_string(row, "status", "trusted");
+	e2e_json_set_int(row, "last_seen", 1);
+	e2e_json_set(e2e_json_object_member(kr, "peers"), fp, row);
+	g_free(b);
+	return fp;
+}
+
+/* a recipient of our key for ctx, accepted there (as /e2e accept left it) */
+static void put_accepted_recipient(E2E_JSON *kr, const char *handle, const char *ctx, const char *fp)
+{
+	E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+	char *k = g_strconcat(handle, "|", ctx, NULL);
+
+	e2e_json_set_string(row, "fp", fp);
+	e2e_json_set_string(row, "by", "accept");
+	e2e_json_set_int(row, "accepted_at", 1);
+	e2e_json_set(e2e_json_object_member(kr, "accepted"), k, row);
+	g_free(k);
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(row, "channel", ctx);
+	e2e_json_set_string(row, "handle", handle);
+	e2e_json_set_string(row, "fingerprint", fp);
+	e2e_json_set_int(row, "first_sent_at", 1);
+	k = g_strconcat(ctx, "|", handle, NULL);
+	e2e_json_set(e2e_json_object_member(kr, "outgoing_recipients"), k, row);
+	g_free(k);
+}
+
+/* R-E34: an "accepted" y|@x the bug of R-E33 already wrote gets nothing
+   more: no REKEY of x's query, no KEYRSP; told as damaged; dropped by
+   /e2e decline (our key for x then rotates) */
+static void test_damaged_dm_rows(void)
+{
+#define DCTX "E2E\x1f@x@hx"
+	PEER me, x, y;
+	E2E_GATE_RESULT g;
+	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
+	unsigned char key[32], eph[32];
+	gboolean rot, gen, rotated, damaged_told = FALSE;
+	char *fpx, *fpy, *rsp;
+	guint i;
+
+	peer_init(&me, "me", "me@m", -1);
+	peer_init(&x, "x", "x@hx", -1);
+	peer_init(&y, "y", "y@hy", -1);
+	g_hash_table_insert(nicks, (char *) "x", (char *) "x@hx");
+	enable(&me, DCTX, "normal");
+	g_assert_true(e2e_outgoing_key(me.kr, DCTX, key, &rot, &gen));
+	e2e_json_set_int(path_get(me.kr, "outgoing", DCTX, NULL), "pending_rotation", 1);
+	fpx = put_peer(me.kr, &x);
+	fpy = put_peer(me.kr, &y);
+	put_accepted_recipient(me.kr, "x@hx", DCTX, fpx);
+	put_accepted_recipient(me.kr, "y@hy", DCTX, fpy);
+	set_trusted_session(me.kr, "y@hy|" DCTX, LEGACY_BOB_SK);
+
+	g_assert_true(e2e_dm_row_foreign("y@hy", DCTX));
+	g_assert_true(e2e_dm_row_foreign("y@hy", "@x@hx"));
+	g_assert_true(e2e_dm_row_foreign("y@hy", "E2E\x1f" "x"));
+	g_assert_false(e2e_dm_row_foreign("x@hx", DCTX));
+	g_assert_false(e2e_dm_row_foreign("y@hy", "E2E\x1f#test"));
+	g_assert_false(e2e_peer_accepted(me.kr, "y@hy", DCTX, fpy));
+	g_assert_true(e2e_peer_accepted(me.kr, "x@hx", DCTX, fpx));
+
+	/* the rotation reaches x only, and says why not y */
+	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "hello", table_resolve, nicks, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_nonnull(g.notices);
+	g_assert_cmpuint(g.notices->len, ==, 2);
+	g_assert_cmpstr(g_ptr_array_index(g.notices, 0), ==, "x");
+	for (i = 0; g.warnings != NULL && i < g.warnings->len; i++)
+		if (strstr(g_ptr_array_index(g.warnings, i), "damaged") != NULL &&
+		    strstr(g_ptr_array_index(g.warnings, i), "y@hy") != NULL &&
+		    strstr(g_ptr_array_index(g.warnings, i), "/e2e decline") != NULL)
+			damaged_told = TRUE;
+	g_assert_true(damaged_told);
+	e2e_gate_result_clear(&g);
+	/* told once: no longer a recipient */
+	g_assert_null(path_get(me.kr, "outgoing_recipients", DCTX "|y@hy", NULL));
+	g_assert_nonnull(path_get(me.kr, "outgoing_recipients", DCTX "|x@hx", NULL));
+	e2e_json_set_int(path_get(me.kr, "outgoing", DCTX, NULL), "pending_rotation", 1);
+	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "again", table_resolve, nicks, &g);
+	for (i = 0; g.warnings != NULL && i < g.warnings->len; i++)
+		g_assert_null(strstr(g_ptr_array_index(g.warnings, i), "y@hy"));
+	g_assert_cmpuint(g.notices->len, ==, 2);
+	e2e_gate_result_clear(&g);
+
+	/* never a KEYRSP to y for x's query */
+	memset(eph, 0x42, sizeof(eph));
+	rsp = e2e_build_keyrsp_for_req(me.kr, &me.id, DCTX, "y@hy", y.id.pk, eph);
+	g_assert_null(rsp);
+	g_assert_null(path_get(me.kr, "outgoing_recipients", DCTX "|y@hy", NULL));
+
+	/* /e2e decline: y's damaged rows go, x's stay, our key rotates */
+	e2e_json_set_int(path_get(me.kr, "outgoing", DCTX, NULL), "pending_rotation", 0);
+	put_accepted_recipient(me.kr, "y@hy", DCTX, fpy);
+	g_assert_cmpuint(e2e_drop_damaged_dm(me.kr, DCTX, "z@hz", &rotated), ==, 0);
+	g_assert_false(rotated);
+	g_assert_cmpuint(e2e_drop_damaged_dm(me.kr, DCTX, "y@hy", &rotated), ==, 3);
+	g_assert_true(rotated);
+	g_assert_null(path_get(me.kr, "accepted", "y@hy|" DCTX, NULL));
+	g_assert_null(path_get(me.kr, "incoming", "y@hy|" DCTX, NULL));
+	g_assert_null(path_get(me.kr, "outgoing_recipients", DCTX "|y@hy", NULL));
+	g_assert_nonnull(path_get(me.kr, "accepted", "x@hx|" DCTX, NULL));
+	g_assert_nonnull(path_get(me.kr, "outgoing_recipients", DCTX "|x@hx", NULL));
+	g_assert_cmpint(e2e_json_get_int(path_get(me.kr, "outgoing", DCTX, NULL), "pending_rotation", 0), ==, 1);
+	/* NULL: every damaged row of ctx */
+	put_accepted_recipient(me.kr, "y@hy", DCTX, fpy);
+	put_accepted_recipient(me.kr, "w@hw", DCTX, fpy);
+	g_assert_cmpuint(e2e_drop_damaged_dm(me.kr, DCTX, NULL, &rotated), ==, 4);
+	g_assert_nonnull(path_get(me.kr, "accepted", "x@hx|" DCTX, NULL));
+
+	g_hash_table_destroy(nicks);
+	g_free(fpx);
+	g_free(fpy);
+	peer_free(&me);
+	peer_free(&x);
+	peer_free(&y);
+#undef DCTX
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5353,6 +5481,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
 	g_test_add_func("/e2e/proto/accept-foreign-dm", test_accept_foreign_dm);
+	g_test_add_func("/e2e/proto/damaged-dm-rows", test_damaged_dm_rows);
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);

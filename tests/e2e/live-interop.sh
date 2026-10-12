@@ -1500,6 +1500,59 @@ else
     grep -aF " ago — /e2e accept " "$WORK/alice/all.log" | tail -n 5 | sed 's/^/    /'
 fi
 
+# ---- a damaged entry: another address accepted for bob's query ----
+# (R-E34: what rpe2e.pl's request for another person's query left behind)
+# it gets no REKEY of the query, is listed as damaged, and /e2e decline
+# removes it
+python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the damaged-entry check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+c = "E2E\x1f@bob@127.0.0.1"
+fp = next(f for f, r in k["peers"].items() if r.get("last_handle") == "mallory@127.0.0.1")
+assert c in k["outgoing"]
+k["accepted"]["mallory@127.0.0.1|" + c] = {"fp": fp, "accepted_at": 1, "by": "accept"}
+k["outgoing_recipients"][c + "|mallory@127.0.0.1"] = {"channel": c, "handle": "mallory@127.0.0.1",
+                                                      "fingerprint": fp, "first_sent_at": 1}
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say alice "/query bob"
+say alice "/e2e list"
+if wait_for "$WORK/alice/logs/E2E/bob.log" "damaged: mallory@127.0.0.1 on E2E:@bob@127.0.0.1" 5; then
+    pass "/e2e list in bob's query shows mallory's entry as damaged"
+else
+    bad "/e2e list in bob's query does not show the damaged entry"
+fi
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say alice "/e2e rotate"
+say alice "dm after a damaged entry"
+# the flood queue may still hold earlier lines: wait for the REKEY
+n=0
+until tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice PRIVMSG bob :+RPE2E01 " || [ $n -ge 60 ]; do
+    sleep 1; n=$((n + 1))
+done
+sleep 2
+if ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE bob :.RPEE2E REKEY "; then
+    bad "damaged entry: no REKEY to bob after /e2e rotate (the check proves nothing)"
+elif tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E REKEY "; then
+    bad "damaged entry: mallory got the REKEY of bob's query"
+else
+    pass "damaged entry: the REKEY of bob's query reaches bob only"
+fi
+if grep -qF "rekey to mallory@127.0.0.1 skipped: a damaged entry" "$WORK/alice/logs/E2E/bob.log"; then
+    pass "damaged entry: alice is told"
+else
+    bad "damaged entry: alice is not told"
+fi
+say alice "/e2e decline mallory@127.0.0.1"
+if wait_for "$WORK/alice/logs/E2E/bob.log" "removed 1 damaged entry on E2E:@bob@127.0.0.1" 5 &&
+   python3 -c 'import json, sys; k = json.load(open(sys.argv[1], encoding="utf-8")); sys.exit("mallory@127.0.0.1|E2E\x1f@bob@127.0.0.1" in k["accepted"])' "$WORK/alice/rpe2e/keyring.json"; then
+    pass "/e2e decline mallory@127.0.0.1 in bob's query removes the damaged entry"
+else
+    bad "/e2e decline mallory@127.0.0.1 in bob's query did not remove the damaged entry"
+fi
+say alice "/window close"
+
 # ---- /unload e2e with lines waiting ----
 # a message to an encrypted channel still in irssi's flood queue would
 # leave in clear text without the module: dropped and said, with no
