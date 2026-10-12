@@ -17,7 +17,7 @@ char *mentions_log_line(time_t when, const char *tag, const char *where, const c
 gboolean mentions_log_append(const char *path, const char *line, GError **error);
 
 /* Empty or NULL SETTING gives <irssi_dir>/logs/mentions.log (NULL when IRSSI_DIR is
- * NULL), otherwise convert_home(). */
+ * NULL), otherwise convert_home(); a relative result is made relative to IRSSI_DIR. */
 char *mentions_log_path(const char *setting, const char *irssi_dir);
 
 /* TRUE if CHATNET is in LIST (separated by spaces and/or commas, case-insensitive). */

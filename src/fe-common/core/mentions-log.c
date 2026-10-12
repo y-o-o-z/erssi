@@ -175,12 +175,24 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 
 char *mentions_log_path(const char *setting, const char *irssi_dir)
 {
+	char *expanded;
+
 	if (setting == NULL || *setting == '\0') {
 		if (irssi_dir == NULL)
 			return NULL;
 		return g_build_filename(irssi_dir, "logs", "mentions.log", NULL);
 	}
-	return convert_home(setting);
+
+	/* '~' and a relative file name: a relative one is in the irssi dir, not
+	   in the directory erssi happened to be started from */
+	expanded = convert_home(setting);
+	if (irssi_dir != NULL && !g_path_is_absolute(expanded)) {
+		char *joined = g_build_filename(irssi_dir, expanded, NULL);
+
+		g_free(expanded);
+		expanded = joined;
+	}
+	return expanded;
 }
 
 gboolean mentions_network_excluded(const char *chatnet, const char *list)
