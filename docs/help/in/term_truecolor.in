@@ -7,16 +7,18 @@
     Chooses whether erssi sends 24-bit colours to the terminal.
 
     AUTO uses 24-bit colours unless the terminal is known not to show them.
-    The terminal is known not to show them when:
+    COLORTERM=truecolor or 24bit, and kitty, Ghostty, WezTerm and iTerm2, count
+    as 24-bit capable. For any other terminal the 256-colour palette is used
+    when:
 
-        - GNU Screen is anywhere in between (STY is set),
         - TERM is empty, dumb, linux, ansi or starts with vt,
         - TERM ends in -8color, -16color, -mono or -m,
         - TERM starts with rxvt and does not end in -24bit,
-        - the terminal is Apple Terminal and COLORTERM is not truecolor.
+        - the terminal is Apple Terminal.
 
-    There the 256-colour palette is used instead. ON always sends 24-bit
-    colours, OFF never does.
+    Inside GNU Screen (STY is set) the 256-colour palette is always used in
+    AUTO mode, whatever the terminal says. ON assumes the terminal shows
+    24-bit colours (colors_ansi_24bit must be on too), OFF never sends them.
 
     ssh does not pass COLORTERM on, so over ssh a capable terminal is
     assumed. If the colours look wrong, set this to OFF.
