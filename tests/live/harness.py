@@ -78,7 +78,9 @@ class Inst:
 
 
 def install(build, work):
-    """meson install --destdir <work>/inst of an already built tree."""
+    """meson install --destdir <work>/inst. The install step rebuilds what is
+    out of date first: `meson test <name>` rebuilds only the test's own
+    dependencies, so without that a named live test could run a stale binary."""
     build, work = Path(build), Path(work)
     if shutil.which("meson") is None:
         raise Skip("meson not found")
@@ -87,7 +89,7 @@ def install(build, work):
         tmp = work / "inst.tmp"  # an interrupted install is never reused
         shutil.rmtree(tmp, ignore_errors=True)
         r = subprocess.run(["meson", "install", "-C", str(build), "--destdir", str(tmp),
-                            "--no-rebuild", "--quiet"], capture_output=True, text=True)
+                            "--quiet"], capture_output=True, text=True)
         if r.returncode != 0:
             raise AssertionError("meson install failed:\n" + r.stdout + r.stderr)
         tmp.rename(dest)
