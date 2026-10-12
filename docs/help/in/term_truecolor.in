@@ -1,0 +1,34 @@
+%9Setting:%9
+
+    term_truecolor (choice: auto, on, off; default: auto)
+
+%9Description:%9
+
+    Chooses whether erssi sends 24-bit colours to the terminal.
+
+    AUTO uses 24-bit colours unless the terminal is known not to show them.
+    The terminal is known not to show them when:
+
+        - GNU Screen is anywhere in between (STY is set),
+        - TERM is empty, dumb, linux, ansi or starts with vt,
+        - TERM ends in -8color, -16color, -mono or -m,
+        - TERM starts with rxvt and does not end in -24bit,
+        - the terminal is Apple Terminal and COLORTERM is not truecolor.
+
+    There the 256-colour palette is used instead. ON always sends 24-bit
+    colours, OFF never does.
+
+    ssh does not pass COLORTERM on, so over ssh a capable terminal is
+    assumed. If the colours look wrong, set this to OFF.
+
+    The setting works together with colors_ansi_24bit: 24-bit colours are
+    sent only when both allow them.
+
+%9Examples:%9
+
+    /SET term_truecolor off
+    /SET term_truecolor on
+
+%9See also:%9
+
+    SET, COLORS_ANSI_24BIT

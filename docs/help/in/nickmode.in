@@ -1,0 +1,24 @@
+%9Syntax:%9
+
+    $nickmode
+
+%9Description:%9
+
+    $nickmode in a message format is the sender's mode prefix, coloured by
+    nick_mode_color_*: ~ or & for an owner, @ for an op, %% for a halfop and
+    + for a voice.
+
+    A nick without a mode gives one space, so the nick column keeps its
+    width. With show_nickmode_empty OFF it is empty instead, and with
+    show_nickmode OFF $nickmode is always empty. Outside message formats
+    $nickmode is empty.
+
+%9Examples:%9
+
+    pubmsgnick = "{msgnick $nickmode$nickcolored}";
+
+    (a line of the shellter theme, in the formats section)
+
+%9See also:%9
+
+    FORMAT, NICK_MODE_COLOR, SHOW_NICKMODE

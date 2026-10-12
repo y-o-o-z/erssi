@@ -1,0 +1,27 @@
+%9Setting:%9
+
+    print_whois_rpl_in_server_window (boolean; default: OFF, the Shellter
+    default configuration sets ON)
+
+%9Description:%9
+
+    Prints WHOIS and WHOWAS replies in the network's status window.
+
+    That is the window named after the server tag, so a WHOIS typed in a
+    channel does not clutter the channel.
+
+    The window for the replies is chosen in this order:
+
+        1. this setting: the network's status window,
+        2. print_whois_rpl_in_active_window: the active window,
+        3. otherwise the usual window: a query with the nick, or the window
+           that matches the message level.
+
+%9Examples:%9
+
+    /SET print_whois_rpl_in_server_window on
+    /SET print_whois_rpl_in_server_window off
+
+%9See also:%9
+
+    SET, WHOIS, WHOWAS, PRINT_WHOIS_RPL_IN_ACTIVE_WINDOW

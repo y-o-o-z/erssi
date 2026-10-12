@@ -1,0 +1,23 @@
+%9Setting:%9
+
+    colors_ansi_24bit (boolean; default: OFF, the Shellter default
+    configuration sets ON)
+
+%9Description:%9
+
+    Sends 24-bit colours to the terminal where term_truecolor allows them.
+
+    ON sends 24-bit colours for theme codes (%%Z and %%X followed by a hex
+    colour), nick colours and mIRC colours 16-98 in their exact shades.
+    OFF uses the nearest colour of the 256-colour palette instead.
+
+    Whether the terminal shows 24-bit colours is decided by term_truecolor.
+
+%9Examples:%9
+
+    /SET colors_ansi_24bit on
+    /SET colors_ansi_24bit off
+
+%9See also:%9
+
+    SET, TERM_TRUECOLOR
