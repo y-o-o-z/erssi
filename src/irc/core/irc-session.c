@@ -82,6 +82,7 @@ static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
 	config_node_set_str(config, node, "sasl_username", server->connrec->sasl_username);
 	config_node_set_str(config, node, "sasl_password", server->connrec->sasl_password);
 	config_node_set_bool(config, node, "sasl_success", server->sasl_success);
+	config_node_set_bool(config, node, "connected", server->connected);
 
 	config_node_set_int(config, node, "starttls",
 	                    server->connrec->disallow_starttls ? STARTTLS_DISALLOW :
@@ -104,7 +105,7 @@ static void sig_session_restore_server(IRC_SERVER_REC *server,
 				       CONFIG_NODE *node)
 {
 	GSList *tmp;
-	int starttls_mode;
+	int starttls_mode, registered;
 
 	if (!IS_IRC_SERVER(server))
 		return;
@@ -128,8 +129,24 @@ static void sig_session_restore_server(IRC_SERVER_REC *server,
 	server->connrec->sasl_username = g_strdup(config_node_get_str(node, "sasl_username", NULL));
 	g_free(server->connrec->sasl_password);
 	server->connrec->sasl_password = g_strdup(config_node_get_str(node, "sasl_password", NULL));
-	/* not in a session file from an older version: unknown, left FALSE */
-	server->sasl_success = config_node_get_bool(node, "sasl_success", FALSE);
+
+	/* Had it registered (001) before the upgrade? A session file from an
+	 * older version does not say; past the end of the MOTD it had (on a
+	 * broken ircd without 001 the MOTD registers it, see event_motd()).
+	 * Earlier than that the answer is no: one reconnect too many, never
+	 * a login skipped. */
+	registered = config_node_get_bool(node, "connected", server->motd_got);
+	/* Not in a session file from an older version either: a registered
+	 * connection with a SASL mechanism had logged in, or that erssi would
+	 * have dropped it (sasl_disconnect_on_failure). */
+	server->sasl_success = config_node_get_bool(node, "sasl_success",
+	        server->motd_got && server->connrec->sasl_mechanism != SASL_MECHANISM_NONE);
+	if (!registered) {
+		/* Still registering: the CAP and SASL login the upgrade cut off
+		 * cannot be finished on this socket. irc_server_connect() closes
+		 * it and connects again from the start. */
+		server->session_reconnect = FALSE;
+	}
 
 	server->connrec->channels = g_strdup(config_node_get_str(node, "rejoin_channels", NULL));
 
