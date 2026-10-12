@@ -83,6 +83,9 @@ static gboolean script_autoruns(void)
 static void migrate_settings(void)
 {
 	gboolean log_set;
+	int counter;
+
+	counter = mainconfig->modifycounter;
 
 	migrate_key("mentions_window", FALSE);
 	log_set = migrate_key("mentions_log", TRUE);
@@ -91,6 +94,20 @@ static void migrate_settings(void)
 	/* the script logged by default */
 	if (!log_set && script_autoruns())
 		settings_set_bool("mentions_log", TRUE);
+
+	if (mainconfig->modifycounter == counter)
+		return;
+
+	if (config_last_error(mainconfig) != NULL) {
+		/* the file was read only in part: writing it would lose the
+		   rest. The values apply for this run; the counter is put back
+		   so that settings_autosave does not write the file either. */
+		mainconfig->modifycounter = counter;
+	} else if (mainconfig->fname != NULL &&
+	           g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR)) {
+		/* saved at once: /RELOAD or settings_autosave OFF keep it */
+		settings_save(NULL, TRUE);
+	}
 }
 
 static gboolean unload_script(gpointer data)
