@@ -102,6 +102,9 @@ static GHashTable *own_handles;		/* server tag -> own ident@host */
 static GHashTable *own_lines;
 
 static gint64 lost_notice_at;
+/* the keyring file as the module last read or wrote it */
+static gboolean seen_stat_valid;
+static struct stat seen_stat;
 
 static gboolean script_seen;
 static guint script_check_id;
@@ -218,11 +221,11 @@ static gboolean script_loaded(void)
 	return FALSE;
 }
 
-/* the same file as at the last look (stat: device, inode, size, mtime) */
-static gboolean same_file(const struct stat *a, const struct stat *b)
+gboolean e2e_same_file(const struct stat *a, const struct stat *b)
 {
 	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
-	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec;
+	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
 }
 
 /* rpe2e.pl cannot see rows of the network scope: where only those say E2E
@@ -238,7 +241,7 @@ static void warn_scoped_for_script(void)
 
 	if (scoped_warned || keyring_file == NULL || stat(keyring_file, &st) != 0)
 		return;
-	if (scoped_stat_valid && same_file(&st, &scoped_stat))
+	if (scoped_stat_valid && e2e_same_file(&st, &scoped_stat))
 		return;
 	scoped_stat = st;
 	scoped_stat_valid = TRUE;
@@ -416,6 +419,22 @@ gboolean e2e_keyring_is_lost(void)
 	return e2e_keyring_lost(keyring_file);
 }
 
+/* the file now; changed since the module last read or wrote it (by
+   another process, rpe2e.pl): the state of windows may have changed */
+static void note_keyring_stat(gboolean ours)
+{
+	struct stat st;
+	gboolean have = keyring_file != NULL && stat(keyring_file, &st) == 0;
+
+	if (!ours && have != seen_stat_valid)
+		e2e_state_changed();
+	else if (!ours && have && !e2e_same_file(&st, &seen_stat))
+		e2e_state_changed();
+	seen_stat_valid = have;
+	if (have)
+		seen_stat = st;
+}
+
 E2E_JSON *e2e_load_full(gboolean *lost)
 {
 	E2E_LOAD_STATUS status;
@@ -426,6 +445,7 @@ E2E_JSON *e2e_load_full(gboolean *lost)
 	/* the directory 0700, as rpe2e.pl keeps it */
 	chmod(keyring_dir, 0700);
 	was_lost = e2e_keyring_lost(keyring_file);
+	note_keyring_stat(FALSE);
 	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
 	if (lost != NULL)
 		*lost = status == E2E_LOAD_LOST;
@@ -453,6 +473,7 @@ gboolean e2e_save(const E2E_JSON *kr)
 	char *error = NULL;
 
 	if (e2e_keyring_save(keyring_file, kr, &error)) {
+		note_keyring_stat(TRUE);
 		e2e_state_changed();
 		return TRUE;
 	}
@@ -1190,7 +1211,9 @@ static void native_gate(SERVER_REC *server, GString *str)
 	}
 
 	/* rpe2e.pl reads with _load_keyring_checked here: a damaged file is
-	   left alone, and the gate refuses */
+	   left alone, and the gate refuses. Changed by another process since
+	   the module's last look: the statusbar looks again. */
+	note_keyring_stat(FALSE);
 	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
 	g_free(error);
 	error = NULL;
@@ -1883,6 +1906,7 @@ void e2e_core_deinit(void)
 	script_seen = FALSE;
 	scoped_warned = FALSE;
 	scoped_stat_valid = FALSE;
+	seen_stat_valid = FALSE;
 }
 
 void e2e_core_abicheck(int *version)

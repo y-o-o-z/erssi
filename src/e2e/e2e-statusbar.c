@@ -23,7 +23,9 @@
  ("e2e state changed": the module saved the keyring, rpe2e.pl came or
  went, our own address changed), what a window's state is read from
  besides the keyring (a query's address, a nick, a join, the server's
- CASEMAPPING), or an item not cached yet. A window switch with nothing
+ CASEMAPPING, the networks in use: e2e_legacy_ok()), or an item not cached
+ yet. A file changed in the second it was read is read again (its stat
+ may not show the change). A window switch with nothing
  changed only looks at the file (stat). The parsed keyring holds secret
  keys: it is freed (and wiped) right after the refresh, never kept.
 */
@@ -39,6 +41,8 @@
 #include <irssi/src/core/queries.h>
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/signals.h>
+#include <irssi/src/irc/core/irc.h>
+#include <irssi/src/irc/core/irc-servers.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include <irssi/src/fe-common/core/themes.h>
 #include <irssi/src/fe-ansi/statusbar.h>
@@ -57,6 +61,11 @@ static GHashTable *sb_cache;	/* "<tag>\n<name>" -> SB_ENTRY */
 static gboolean sb_valid;
 static gboolean sb_have_stat;
 static struct stat sb_stat;
+/* when the cache was filled (seconds): a file changed in that second may
+   still have the stat seen then (git's racy timestamps) */
+static time_t sb_read_at;
+/* e2e_legacy_ok() then: an old entry of no network is BLOCKED without it */
+static gboolean sb_legacy_ok;
 static gboolean sb_script;	/* rpe2e.pl loaded at the last refresh */
 static gboolean sb_gone;	/* the module is being unloaded */
 static guint sb_idle_id;
@@ -66,13 +75,6 @@ static char *sb_key(WI_ITEM_REC *item)
 	if (item == NULL || item->server == NULL || item->server->tag == NULL || item->name == NULL)
 		return NULL;
 	return g_strconcat(item->server->tag, "\n", item->name, NULL);
-}
-
-static gboolean same_file(const struct stat *a, const struct stat *b)
-{
-	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
-	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
-	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
 }
 
 /* every item of every window has its entry */
@@ -124,7 +126,7 @@ static void refresh(void)
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
 	struct stat st;
-	gboolean have;
+	gboolean have, legacy_ok;
 	char *error = NULL;
 
 	sb_script = e2e_script_loaded();
@@ -133,8 +135,12 @@ static void refresh(void)
 		return;
 	/* the file first: a change while it is read is seen next time */
 	have = stat(file, &st) == 0;
-	if (sb_valid && have == sb_have_stat && (!have || same_file(&st, &sb_stat)) && all_cached())
+	legacy_ok = e2e_legacy_ok();
+	if (sb_valid && have == sb_have_stat && legacy_ok == sb_legacy_ok &&
+	    (!have || (e2e_same_file(&st, &sb_stat) && st.st_mtim.tv_sec < sb_read_at)) &&
+	    all_cached())
 		return;
+	sb_read_at = time(NULL);
 	kr = e2e_keyring_load_checked(file, &status, &error);
 	g_free(error);
 	fill(kr, status == E2E_LOAD_OK);
@@ -142,6 +148,7 @@ static void refresh(void)
 	sb_have_stat = have;
 	if (have)
 		sb_stat = st;
+	sb_legacy_ok = legacy_ok;
 	sb_valid = TRUE;
 }
 
@@ -251,8 +258,12 @@ static void nick_matters(CHANNEL_REC *channel, const char *nick)
 
 	if (server == NULL || nick == NULL)
 		return;
+	/* compared as the server compares nicks */
 	if (query_find(server, nick) != NULL ||
-	    (server->nick != NULL && g_ascii_strcasecmp(server->nick, nick) == 0))
+	    (server->nick != NULL &&
+	     (IS_IRC_SERVER(server) && IRC_SERVER(server)->nick_comp_func != NULL ?
+	      IRC_SERVER(server)->nick_comp_func(server->nick, nick) :
+	      g_ascii_strcasecmp(server->nick, nick)) == 0))
 		invalidate();
 }
 
@@ -297,6 +308,19 @@ void e2e_statusbar_init(void)
 	signal_add("nicklist remove", (SIGNAL_FUNC) sig_nicklist);
 	signal_add("nicklist host changed", (SIGNAL_FUNC) sig_nicklist);
 	signal_add("nicklist changed", (SIGNAL_FUNC) sig_nicklist_changed);
+	/* the networks in use (e2e_legacy_ok) */
+	signal_add("server looking", (SIGNAL_FUNC) invalidate);
+	signal_add("server connected", (SIGNAL_FUNC) invalidate);
+	signal_add("server connect failed", (SIGNAL_FUNC) invalidate);
+	signal_add("server disconnected", (SIGNAL_FUNC) invalidate);
+	signal_add("server quit", (SIGNAL_FUNC) invalidate);
+	signal_add("server destroyed", (SIGNAL_FUNC) invalidate);
+	signal_add("server setup updated", (SIGNAL_FUNC) invalidate);
+	signal_add("server setup destroyed", (SIGNAL_FUNC) invalidate);
+	signal_add("server reconnect remove", (SIGNAL_FUNC) invalidate);
+	signal_add("chatnet created", (SIGNAL_FUNC) invalidate);
+	signal_add("chatnet removed", (SIGNAL_FUNC) invalidate);
+	signal_add("chatnet destroyed", (SIGNAL_FUNC) invalidate);
 
 	e2e_statusbar_redraw();
 }
@@ -320,6 +344,18 @@ void e2e_statusbar_deinit(void)
 	signal_remove("nicklist remove", (SIGNAL_FUNC) sig_nicklist);
 	signal_remove("nicklist host changed", (SIGNAL_FUNC) sig_nicklist);
 	signal_remove("nicklist changed", (SIGNAL_FUNC) sig_nicklist_changed);
+	signal_remove("server looking", (SIGNAL_FUNC) invalidate);
+	signal_remove("server connected", (SIGNAL_FUNC) invalidate);
+	signal_remove("server connect failed", (SIGNAL_FUNC) invalidate);
+	signal_remove("server disconnected", (SIGNAL_FUNC) invalidate);
+	signal_remove("server quit", (SIGNAL_FUNC) invalidate);
+	signal_remove("server destroyed", (SIGNAL_FUNC) invalidate);
+	signal_remove("server setup updated", (SIGNAL_FUNC) invalidate);
+	signal_remove("server setup destroyed", (SIGNAL_FUNC) invalidate);
+	signal_remove("server reconnect remove", (SIGNAL_FUNC) invalidate);
+	signal_remove("chatnet created", (SIGNAL_FUNC) invalidate);
+	signal_remove("chatnet removed", (SIGNAL_FUNC) invalidate);
+	signal_remove("chatnet destroyed", (SIGNAL_FUNC) invalidate);
 	if (sb_idle_id != 0)
 		g_source_remove(sb_idle_id);
 	sb_idle_id = 0;
@@ -331,5 +367,6 @@ void e2e_statusbar_deinit(void)
 
 	g_hash_table_destroy(sb_cache);
 	sb_cache = NULL;
-	sb_valid = sb_script = sb_gone = FALSE;
+	/* sb_gone stays: nothing is drawn from here on */
+	sb_valid = sb_script = FALSE;
 }

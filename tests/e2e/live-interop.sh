@@ -232,8 +232,8 @@ sbar_shows() {  # sbar_shows <nick> <fixed string> <seconds>
     done
     return 1
 }
-sbar_check() {  # sbar_check <nick> <text shown> <text not shown, or ""> <what>
-    if sbar_shows "$1" "$2" 10 && { [ -z "$3" ] || ! sbar "$1" | grep -qF -- "$3"; }; then
+sbar_check() {  # sbar_check <nick> <text shown> <ERE not shown, or ""> <what>
+    if sbar_shows "$1" "$2" 10 && { [ -z "$3" ] || ! sbar "$1" | grep -qE -- "$3"; }; then
         pass "statusbar: $4"
     else
         bad "statusbar: $4 (the bar: '$(sbar "$1")')"
@@ -311,7 +311,7 @@ check "$WORK/bob/logs/E2E/$CHAN.log" "an ellipsis line"
 check "$WORK/bob/logs/E2E/$CHAN.log" "quoted in lower case"
 check "$WORK/bob/logs/E2E/$CHAN.log" "sent with msg"
 check "$WORK/alice/logs/E2E/$CHAN.log" "cannot resolve handle for 100%done"
-sbar_check alice "E2E" "waiting" "alice in E2E's #test after the exchange: E2E"
+sbar_check alice "E2E" "waiting|blocked|error" "alice in E2E's #test after the exchange: E2E"
 # the shipped config (the test's config has no statusbar of its own): the
 # info bar, the line above e2etest, has the item after the window item
 if tmux -L "$SOCK" capture-pane -p -t alice | tail -n 3 | head -n 1 | grep -qE "$CHAN.*E2E"; then
@@ -356,7 +356,7 @@ say bob "$LONG_A"
 sleep 3
 check "$WORK/bob/logs/E2E/alice.log" "private from alice $POLISH"
 check "$WORK/alice/logs/E2E/bob.log" "private from bob $POLISH"
-sbar_check alice "E2E" "waiting" "alice in bob's query after the exchange: E2E"
+sbar_check alice "E2E" "waiting|blocked|error" "alice in bob's query after the exchange: E2E"
 
 # the long messages: several encrypted chunks, each shown as a line; put
 # together they are the message
@@ -1083,7 +1083,7 @@ else
 fi
 say alice "/script unload rpe2e_hold"
 sleep 1
-sbar_check alice "E2E" "" "alice's #test after rpe2e.pl is unloaded: E2E again"
+sbar_check alice "E2E" "blocked|error" "alice's #test after rpe2e.pl is unloaded: E2E again"
 wire_plain "$WORK/wire.log" > "$WORK/wire-plain.log"
 leak=0
 for word in pacedlong secondlong "short after long" "nested from a rawlog" rotatedlong heldlong; do
@@ -1419,6 +1419,14 @@ say bob "/script unload rpe2e"
 sleep 1
 cp "$WORK/bob-keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
+# the old (unscoped) entry is good for the one network in use: E2E; a
+# second network bob would connect to makes it BLOCKED (the gate refuses
+# then), as soon as the server is added - and E2E again when it is gone
+sbar_check bob "E2E" "waiting|blocked|error" "bob's #test on an old keyring, one network: E2E"
+say bob "/server add -auto 192.0.2.1 6667"
+sbar_check bob "E2E blocked" "" "bob's #test with a second network set to autoconnect: E2E blocked"
+say bob "/server remove 192.0.2.1 6667"
+sbar_check bob "E2E" "waiting|blocked|error" "bob's #test with that server removed: E2E again"
 say bob "the native module on an old keyring"
 check "$WORK/alice/logs/E2E/$CHAN.log" "the native module on an old keyring"
 say alice "/join -E2E $CHAN"

@@ -14,6 +14,13 @@
  before that has no erssi/defaults_version marker: it gets the former
  values once, only for the keys it does not have, so nothing the user set
  is changed and a key the user removes later is not added back.
+
+ The statusbar works the same way: a config holds a copy of the default
+ config's bars once it was saved, and a bar's item list in the config
+ replaces the built-in one. The info bar of such a copy gets the items
+ erssi added to it since (the e2e item) once - only when its list is
+ exactly one erssi shipped (erssi/statusbar_version marks it done); a list
+ the user changed is the user's.
 */
 
 #include "module.h"
@@ -102,6 +109,107 @@ int shellter_defaults_migrate(CONFIG_REC *config)
 	return count;
 }
 
+/* statusbar.default.info.items of every irssi.conf erssi shipped since the
+   info bar became the default (53b2a8b1) up to the one with the e2e item
+   (2026.10.0): its items in order, each "<name>[ <key>=<value>...]". All
+   of them shipped the same list. */
+static const char *const shipped_info_items[][7] = {
+	{ "time", "user", "window", "lag", "act", "more alignment=right", NULL },
+};
+
+/* "<name>[ <key>=<value>...]" of an item of a bar, NULL when it is no
+   block of scalars */
+static char *item_text(CONFIG_NODE *item)
+{
+	GString *str;
+	GSList *tmp;
+
+	if (item->key == NULL || item->type != NODE_TYPE_BLOCK)
+		return NULL;
+	str = g_string_new(item->key);
+	for (tmp = config_node_first(item->value); tmp != NULL; tmp = config_node_next(tmp)) {
+		CONFIG_NODE *node = tmp->data;
+
+		if (node->key == NULL || !has_node_value(node)) {
+			g_string_free(str, TRUE);
+			return NULL;
+		}
+		g_string_append_printf(str, " %s=%s", node->key, (char *) node->value);
+	}
+	return g_string_free(str, FALSE);
+}
+
+/* items holds exactly the items of one list erssi shipped */
+static int shipped_info_list(CONFIG_NODE *items)
+{
+	int i, j;
+
+	for (i = 0; i < (int) G_N_ELEMENTS(shipped_info_items); i++) {
+		GSList *tmp = config_node_first(items->value);
+		int same = TRUE;
+
+		for (j = 0; same && shipped_info_items[i][j] != NULL; j++) {
+			char *text = tmp == NULL ? NULL : item_text(tmp->data);
+
+			same = g_strcmp0(text, shipped_info_items[i][j]) == 0;
+			g_free(text);
+			if (tmp != NULL)
+				tmp = config_node_next(tmp);
+		}
+		if (same && tmp == NULL)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* the block at mainnode/statusbar/default/info/items, NULL when the config
+   has none (the built-in bar is used then) or one of another shape */
+static CONFIG_NODE *info_items(CONFIG_REC *config)
+{
+	static const char *const path[] = { "statusbar", "default", "info", "items" };
+	CONFIG_NODE *node = config->mainnode;
+	int i;
+
+	for (i = 0; node != NULL && i < (int) G_N_ELEMENTS(path); i++) {
+		node = config_node_find(node, path[i]);
+		if (node != NULL && node->type != NODE_TYPE_BLOCK)
+			return NULL;
+	}
+	return node;
+}
+
+int shellter_statusbar_migrate(CONFIG_REC *config)
+{
+	CONFIG_NODE *marker, *version, *items, *window;
+	int added = FALSE;
+
+	g_return_val_if_fail(config != NULL, FALSE);
+
+	/* no place for the marker: it would run at every start */
+	if (!block_or_missing(config->mainnode, "erssi"))
+		return FALSE;
+	marker = config_node_find(config->mainnode, "erssi");
+	version = marker == NULL ? NULL : config_node_find(marker, "statusbar_version");
+	if (version != NULL && !has_node_value(version))
+		return FALSE;
+	if (marker != NULL &&
+	    config_node_get_int(marker, "statusbar_version", 0) >= SHELLTER_STATUSBAR_VERSION)
+		return FALSE;
+
+	items = info_items(config);
+	if (items != NULL && shipped_info_list(items) && config_node_find(items, "e2e") == NULL) {
+		window = config_node_find(items, "window");
+		/* every shipped list has window, as a block */
+		config_node_section_index(config, items, "e2e",
+		                          g_slist_index(items->value, window) + 1,
+		                          NODE_TYPE_BLOCK);
+		added = TRUE;
+	}
+
+	config_set_int(config, "erssi", "statusbar_version", SHELLTER_STATUSBAR_VERSION);
+	return added;
+}
+
 void shellter_defaults_init(void)
 {
 	int counter;
@@ -109,6 +217,8 @@ void shellter_defaults_init(void)
 	counter = mainconfig->modifycounter;
 	migrated_state = SHELLTER_DEFAULTS_UNSAVED;
 	migrated_count = shellter_defaults_migrate(mainconfig);
+	/* the item shows itself; no note */
+	shellter_statusbar_migrate(mainconfig);
 	if (mainconfig->modifycounter == counter)
 		return;
 

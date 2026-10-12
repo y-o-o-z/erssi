@@ -10,6 +10,8 @@
 
 #include <irssi/src/core/servers.h>
 
+#include <sys/stat.h>
+
 /* "[E2E] text" in a window item (NULL: the active window) or in the
    window of target on server */
 void e2e_print_item(void *item, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
@@ -19,6 +21,8 @@ void e2e_print_debug(SERVER_REC *server, const char *ctx, const char *nick,
 void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick);
 
 const char *e2e_keyring_file(void);
+/* the same file at two looks (stat: device, inode, size, mtime, ctime) */
+gboolean e2e_same_file(const struct stat *a, const struct stat *b);
 /* load_keyring of rpe2e.pl: problems are printed */
 E2E_JSON *e2e_load(void);
 /* the same; *lost: the keyring is lost (a corrupt one was moved aside),

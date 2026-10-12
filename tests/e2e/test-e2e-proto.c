@@ -5414,6 +5414,13 @@ static void test_damaged_dm_rows(void)
 	   shown as accepted ([trusted]) for it; x is */
 	g_assert_false(e2e_fingerprint_accepted(me.kr, fpy));
 	g_assert_true(e2e_fingerprint_accepted(me.kr, fpx));
+	/* accepted only in a channel: an acceptance (channels are never
+	   damaged rows) */
+	put_accepted_recipient(me.kr, "z@hz", "E2E\x1f#chan", "ab" "ab" "ab" "ab");
+	g_assert_true(e2e_fingerprint_accepted(me.kr, "ab" "ab" "ab" "ab"));
+	e2e_forget_acceptance(me.kr, "z@hz", "E2E\x1f#chan");
+	e2e_json_remove(e2e_json_get(me.kr, "outgoing_recipients"), "E2E\x1f#chan|z@hz");
+	g_assert_false(e2e_fingerprint_accepted(me.kr, "ab" "ab" "ab" "ab"));
 
 	/* the rotation reaches x only, and says why not y */
 	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "hello", table_resolve, nicks, &g);

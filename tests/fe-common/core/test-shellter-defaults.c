@@ -252,6 +252,199 @@ static void test_builtin_config_fresh_values(void)
 	config_close(c);
 }
 
+/* the info bar as every irssi.conf before 2026.10.0 shipped it */
+#define SHIPPED_INFO \
+	"statusbar = { default = { info = {\n" \
+	"  items = {\n" \
+	"    time = { };\n" \
+	"    user = { };\n" \
+	"    window = { };\n" \
+	"    lag = { };\n" \
+	"    act = { };\n" \
+	"    more = { alignment = \"right\"; };\n" \
+	"  };\n" \
+	"  position = \"0\";\n" \
+	"  placement = \"bottom\";\n" \
+	"}; }; };\n"
+
+/* "time user window ..." of a bar's items, NULL when it has none */
+static char *bar_items(CONFIG_REC *c, const char *bar)
+{
+	CONFIG_NODE *node;
+	GString *str;
+	GSList *tmp;
+
+	node = config_node_traverse(c, "statusbar", FALSE);
+	node = node == NULL ? NULL : config_node_find(node, "default");
+	node = node == NULL ? NULL : config_node_find(node, bar);
+	node = node == NULL ? NULL : config_node_find(node, "items");
+	if (node == NULL)
+		return NULL;
+	str = g_string_new(NULL);
+	for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp))
+		g_string_append_printf(str, "%s%s", str->len > 0 ? " " : "",
+		                       ((CONFIG_NODE *) tmp->data)->key);
+	return g_string_free(str, FALSE);
+}
+
+static void assert_bar(CONFIG_REC *c, const char *bar, const char *items)
+{
+	char *got = bar_items(c, bar);
+
+	g_assert_cmpstr(got, ==, items);
+	g_free(got);
+}
+
+/* the shipped list gets e2e after window, the rest of the bar stays */
+static void test_statusbar_shipped_list(void)
+{
+	CONFIG_REC *c;
+
+	c = cfg_parse(SHIPPED_INFO);
+	g_assert_true(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window e2e lag act more");
+	g_assert_cmpstr(config_get_str(c, "statusbar/default/info/items/more", "alignment", NULL),
+	                ==, "right");
+	g_assert_cmpstr(config_get_str(c, "statusbar/default/info", "position", NULL), ==, "0");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	/* the marker does not touch the settings' one */
+	g_assert_cmpint(config_get_int(c, "erssi", "defaults_version", 0), ==, 0);
+	config_close(c);
+}
+
+/* a list the user changed, and other bars, are never touched */
+static void test_statusbar_custom_untouched(void)
+{
+	static const char *const custom[] = {
+		/* an item removed */
+		"statusbar = { default = { info = { items = { time = { }; user = { }; "
+		"window = { }; act = { }; more = { alignment = \"right\"; }; }; }; }; };",
+		/* an item added */
+		"statusbar = { default = { info = { items = { time = { }; user = { }; "
+		"window = { }; lag = { }; act = { }; more = { alignment = \"right\"; }; "
+		"usercount = { }; }; }; }; };",
+		/* the same names in another order */
+		"statusbar = { default = { info = { items = { user = { }; time = { }; "
+		"window = { }; lag = { }; act = { }; more = { alignment = \"right\"; }; }; }; }; };",
+		/* an attribute changed */
+		"statusbar = { default = { info = { items = { time = { }; user = { }; "
+		"window = { }; lag = { }; act = { }; more = { }; }; }; }; };",
+		"statusbar = { default = { info = { items = { time = { priority = \"5\"; }; "
+		"user = { }; window = { }; lag = { }; act = { }; "
+		"more = { alignment = \"right\"; }; }; }; }; };",
+	};
+	CONFIG_REC *c;
+	char *before, *after;
+	int i;
+
+	for (i = 0; i < (int) G_N_ELEMENTS(custom); i++) {
+		c = cfg_parse(custom[i]);
+		before = bar_items(c, "info");
+		g_assert_false(shellter_statusbar_migrate(c));
+		after = bar_items(c, "info");
+		g_assert_cmpstr(after, ==, before);
+		g_assert_null(strstr(after, "e2e"));
+		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+		g_free(before);
+		g_free(after);
+		config_close(c);
+	}
+
+	/* the shipped list on another bar: not the info bar */
+	c = cfg_parse("statusbar = { default = { info2 = { items = { time = { }; user = { }; "
+	              "window = { }; lag = { }; act = { }; more = { alignment = \"right\"; }; "
+	              "}; }; }; };");
+	g_assert_false(shellter_statusbar_migrate(c));
+	assert_bar(c, "info2", "time user window lag act more");
+	config_close(c);
+}
+
+/* once: an e2e the user removed later is not added back */
+static void test_statusbar_runs_once(void)
+{
+	CONFIG_REC *c;
+	CONFIG_NODE *items;
+	int counter;
+
+	c = cfg_parse(SHIPPED_INFO);
+	g_assert_true(shellter_statusbar_migrate(c));
+	items = config_node_traverse(c, "statusbar/default/info/items", FALSE);
+	g_assert_nonnull(items);
+	config_node_remove(c, items, config_node_find(items, "e2e"));
+	assert_bar(c, "info", "time user window lag act more");
+	counter = c->modifycounter;
+	g_assert_false(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window lag act more");
+	g_assert_cmpint(c->modifycounter, ==, counter);
+	config_close(c);
+
+	/* a newer marker */
+	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = \"2\"; };");
+	g_assert_false(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window lag act more");
+	config_close(c);
+}
+
+/* no statusbar section (the built-in bars are used), or one of an odd
+   shape: nothing to do, no g_critical */
+static void test_statusbar_no_section(void)
+{
+	static const char *const odd[] = {
+		"statusbar = \"odd\";",
+		"statusbar = { default = ( \"x\" ); };",
+		"statusbar = { default = { info = \"x\"; }; };",
+		"statusbar = { default = { info = { items = ( \"time\" ); }; }; };",
+		"statusbar = { default = { info = { position = \"3\"; }; }; };",
+	};
+	CONFIG_REC *c;
+	int i, counter;
+
+	c = cfg_parse("settings = { core = { nick = \"alice\"; }; };");
+	g_assert_false(shellter_statusbar_migrate(c));
+	g_assert_null(config_node_find(c->mainnode, "statusbar"));
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	config_close(c);
+
+	c = config_open(NULL, -1);
+	g_assert_false(shellter_statusbar_migrate(c));
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	config_close(c);
+
+	for (i = 0; i < (int) G_N_ELEMENTS(odd); i++) {
+		c = cfg_parse(odd[i]);
+		g_assert_false(shellter_statusbar_migrate(c));
+		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+		config_close(c);
+	}
+
+	/* no place for the marker: nothing changes */
+	c = cfg_parse(SHIPPED_INFO "erssi = \"odd\";");
+	counter = c->modifycounter;
+	g_assert_false(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window lag act more");
+	g_assert_cmpint(c->modifycounter, ==, counter);
+	config_close(c);
+	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = { }; };");
+	g_assert_false(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window lag act more");
+	config_close(c);
+}
+
+/* the built-in irssi.conf has the item and the marker: nothing changes */
+static void test_statusbar_builtin_config(void)
+{
+	CONFIG_REC *c;
+	int counter;
+
+	c = cfg_parse(default_config);
+	assert_bar(c, "info", "time user window e2e lag act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	counter = c->modifycounter;
+	g_assert_false(shellter_statusbar_migrate(c));
+	g_assert_cmpint(c->modifycounter, ==, counter);
+	config_close(c);
+}
+
 static void test_note_saved(void)
 {
 	char *note;
@@ -523,6 +716,31 @@ static void test_upgraded_home(void)
 	g_free(home);
 }
 
+/* a config written from an older irssi.conf: its info bar gets the e2e
+   item, in the file at once */
+static void test_upgraded_home_statusbar(void)
+{
+	CONFIG_REC *c;
+	char *home, *fname;
+
+	if (!run_in_child("settings = { core = { nick = \"alice\"; }; };\n" SHIPPED_INFO
+	                  "erssi = { defaults_version = \"1\"; };\n"))
+		return;
+
+	home = start_in_home();
+	fname = g_build_filename(home, "config", NULL);
+	c = config_open(fname, -1);
+	g_assert_nonnull(c);
+	g_assert_cmpint(config_parse(c), ==, 0);
+	assert_bar(c, "info", "time user window e2e lag act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	/* the settings had their marker: no note about them */
+	g_assert_null(shellter_defaults_note());
+	config_close(c);
+	g_free(fname);
+	g_free(home);
+}
+
 /* a config with errors is not written: the part not read would be lost */
 static void test_broken_config(void)
 {
@@ -576,6 +794,14 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/fresh_home", test_fresh_home);
 	g_test_add_func("/shellter_defaults/upgraded_home", test_upgraded_home);
 	g_test_add_func("/shellter_defaults/broken_config", test_broken_config);
+	g_test_add_func("/shellter_defaults/statusbar_shipped_list", test_statusbar_shipped_list);
+	g_test_add_func("/shellter_defaults/statusbar_custom_untouched",
+	                test_statusbar_custom_untouched);
+	g_test_add_func("/shellter_defaults/statusbar_runs_once", test_statusbar_runs_once);
+	g_test_add_func("/shellter_defaults/statusbar_no_section", test_statusbar_no_section);
+	g_test_add_func("/shellter_defaults/statusbar_builtin_config",
+	                test_statusbar_builtin_config);
+	g_test_add_func("/shellter_defaults/upgraded_home_statusbar", test_upgraded_home_statusbar);
 
 	return g_test_run();
 }
