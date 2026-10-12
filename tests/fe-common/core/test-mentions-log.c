@@ -57,6 +57,52 @@ static void test_line_newlines(void)
 	g_free(line);
 }
 
+static void test_line_controls(void)
+{
+	/* ESC, BEL, BS, DEL, a raw 0x01 and the C1 controls U+009B (CSI) and
+	   U+0085 (NEL) each become one space; U+00A0 and other UTF-8 stay. */
+	char *line = mentions_log_line(make_t0(), "E\x1b]52", "#t\x07", "b\x7fob",
+	                               "a\x1b[31mb\x07" "c\x08" "d\x7f" "e\x01" "f\xc2\x9b" "2J"
+	                               "\xc2\x85g\xc2\xa0h\xc5\xbc");
+
+	g_assert_cmpstr(line, ==,
+	                "2026-10-10 12:34:56 [E ]52] #t  <b ob> "
+	                "a [31mb c d e f 2J g\xc2\xa0h\xc5\xbc\n");
+	g_free(line);
+}
+
+static void test_line_controls_all(void)
+{
+	char text[64];
+	char *line;
+	const char *p;
+	int i;
+
+	/* bytes 0x01..0x1f, 0x7f, then U+0080 and U+009F, then 'x' */
+	for (i = 1; i < 0x20; i++)
+		text[i - 1] = (char) i;
+	text[0x1f] = 0x7f;
+	text[0x20] = (char) 0xc2;
+	text[0x21] = (char) 0x80;
+	text[0x22] = (char) 0xc2;
+	text[0x23] = (char) 0x9f;
+	text[0x24] = 'x';
+	text[0x25] = '\0';
+
+	line = mentions_log_line(make_t0(), "T", "W", "N", text);
+	g_assert_true(g_str_has_suffix(line, "<N> x\n"));
+	for (p = line; *p != '\0'; p++) {
+		unsigned char c = (unsigned char) *p;
+
+		if (c == '\n' && p[1] == '\0')
+			continue;
+		g_assert_true(c >= 0x20 && c != 0x7f);
+		g_assert_false(c == 0xc2 && (unsigned char) p[1] >= 0x80 &&
+		               (unsigned char) p[1] <= 0x9f);
+	}
+	g_free(line);
+}
+
 static void test_append_creates(void)
 {
 	GError *error = NULL;
@@ -146,6 +192,13 @@ static void test_path(void)
 	p = mentions_log_path("/abs/m.log", "/x");
 	g_assert_cmpstr(p, ==, "/abs/m.log");
 	g_free(p);
+
+	/* no irssi dir: the default path is unknown, an explicit one still works */
+	g_assert_null(mentions_log_path("", NULL));
+	g_assert_null(mentions_log_path(NULL, NULL));
+	p = mentions_log_path("/abs/m.log", NULL);
+	g_assert_cmpstr(p, ==, "/abs/m.log");
+	g_free(p);
 }
 
 static void test_network_excluded(void)
@@ -173,6 +226,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/mentions_log/line_utf8_bytes", test_line_utf8_bytes);
 	g_test_add_func("/mentions_log/line_nulls", test_line_nulls);
 	g_test_add_func("/mentions_log/line_newlines", test_line_newlines);
+	g_test_add_func("/mentions_log/line_controls", test_line_controls);
+	g_test_add_func("/mentions_log/line_controls_all", test_line_controls_all);
 	g_test_add_func("/mentions_log/append_creates_0700_0600", test_append_creates);
 	g_test_add_func("/mentions_log/append_tightens_mode", test_append_tightens_mode);
 	g_test_add_func("/mentions_log/append_to_directory_fails", test_append_to_directory_fails);
