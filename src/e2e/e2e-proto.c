@@ -233,11 +233,91 @@ static gboolean is_fresh(gint64 created_at, gint64 ttl)
 	return created_at <= now && created_at > now - ttl;
 }
 
+gboolean e2e_dm_row_foreign(const char *handle, const char *ctx)
+{
+	const char *wire;
+
+	if (handle == NULL || ctx == NULL)
+		return FALSE;
+	/* handles are compared exactly everywhere (the keys of the rows) */
+	wire = e2e_ctx_wire(ctx);
+	return !e2e_is_channel(wire) && (*wire != '@' || strcmp(wire + 1, handle) != 0);
+}
+
+guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gboolean *rotated)
+{
+	static const char *const stores[] = { "pending_inbound", "accepted", "incoming", NULL };
+	E2E_JSON *recipients = e2e_json_get(kr, "outgoing_recipients"), *out;
+	GPtrArray *keys, *doomed;
+	gboolean keyed = FALSE;
+	guint i, j, n = 0;
+	size_t cl;
+
+	if (rotated != NULL)
+		*rotated = FALSE;
+	if (ctx == NULL || e2e_is_channel(e2e_ctx_wire(ctx)))
+		return 0;
+	cl = strlen(ctx);
+	for (i = 0; stores[i] != NULL; i++) {
+		E2E_JSON *store = e2e_json_get(kr, stores[i]);
+
+		keys = e2e_json_keys(store);
+		doomed = g_ptr_array_new_with_free_func(g_free);
+		for (j = 0; j < keys->len; j++) {
+			const char *k = g_ptr_array_index(keys, j);
+			size_t kl = strlen(k);
+			char *h;
+
+			if (kl <= cl + 1 || strcmp(k + kl - cl, ctx) != 0 || k[kl - cl - 1] != '|')
+				continue;
+			h = g_strndup(k, kl - cl - 1);
+			if (e2e_dm_row_foreign(h, ctx) && (handle == NULL || strcmp(h, handle) == 0)) {
+				g_ptr_array_add(doomed, g_strdup(k));
+				keyed |= strcmp(stores[i], "accepted") == 0;
+			}
+			g_free(h);
+		}
+		for (j = 0; j < doomed->len; j++)
+			n += e2e_json_remove(store, g_ptr_array_index(doomed, j));
+		g_ptr_array_unref(doomed);
+		g_ptr_array_unref(keys);
+	}
+	keys = e2e_json_keys(recipients);
+	doomed = g_ptr_array_new_with_free_func(g_free);
+	for (j = 0; j < keys->len; j++) {
+		E2E_JSON *row = e2e_json_get(recipients, g_ptr_array_index(keys, j));
+		const char *h = e2e_json_get_string(row, "handle");
+
+		if (g_strcmp0(e2e_json_get_string(row, "channel"), ctx) == 0 && h != NULL &&
+		    e2e_dm_row_foreign(h, ctx) && (handle == NULL || strcmp(h, handle) == 0)) {
+			g_ptr_array_add(doomed, g_strdup(g_ptr_array_index(keys, j)));
+			keyed = TRUE;
+		}
+	}
+	for (j = 0; j < doomed->len; j++)
+		n += e2e_json_remove(recipients, g_ptr_array_index(doomed, j));
+	g_ptr_array_unref(doomed);
+	g_ptr_array_unref(keys);
+	/* it may hold our key for ctx: a new one goes to the rightful peer */
+	out = e2e_json_get(e2e_json_get(kr, "outgoing"), ctx);
+	if (keyed && out != NULL)
+		e2e_json_set_int(out, "pending_rotation", 1);
+	if (rotated != NULL)
+		*rotated = keyed && out != NULL;
+	return n;
+}
+
 gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                            const char *fp_hex)
 {
-	char *k = pipe_key(handle, ctx);
-	const char *fp = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "accepted"), k), "fp");
+	const char *fp;
+	char *k;
+
+	/* never someone accepted for another person's query (R-E34) */
+	if (e2e_dm_row_foreign(handle, ctx))
+		return FALSE;
+	k = pipe_key(handle, ctx);
+	fp = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "accepted"), k), "fp");
 
 	g_free(k);
 	return fp != NULL && fp_hex != NULL && strcmp(fp, fp_hex) == 0;
@@ -986,6 +1066,9 @@ char *e2e_build_keyrsp_for_req(E2E_JSON *kr, const E2E_IDENTITY *id, const char 
 	gboolean ok;
 	char *info, *fp_hex, *key, *out = NULL;
 
+	/* our key for a query goes to that query's own address only */
+	if (e2e_dm_row_foreign(sender_handle, ctx))
+		return NULL;
 	memset(&hs, 0, sizeof(hs));
 	hs.type = E2E_HS_KEYRSP;
 	hs.channel = (char *) e2e_ctx_wire(ctx);
@@ -1881,6 +1964,18 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 			continue;
 		fp = e2e_json_get_string(row, "fingerprint");
 		handle = e2e_json_get_string(row, "handle");
+		/* someone else than the query's own address (R-E33, R-E34): told
+		   once, then no recipient any more; gets nothing */
+		if (handle != NULL && e2e_dm_row_foreign(handle, ctx)) {
+			char *where = e2e_ctx_display(ctx), *who = e2e_text_display(handle);
+
+			add_warning(res, g_strdup_printf("rekey to %s skipped: a damaged entry - accepted for the query %s of another address (a request rpe2e.pl kept); it gets no key - /e2e decline %s in that query removes it",
+			                                 who, where, who));
+			g_free(where);
+			g_free(who);
+			g_ptr_array_add(dropped, g_strdup(g_ptr_array_index(keys, i)));
+			continue;
+		}
 		/* the new key only to someone accepted here (rpe2e.pl and repartee
 		   handed the old one to whoever held a session): the others are
 		   no recipients any more */

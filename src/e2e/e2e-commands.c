@@ -130,6 +130,25 @@ static char *resolve_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick, gboo
 	return ctx;
 }
 
+/* the context of the window on its network, nothing printed; NULL when
+   there is none */
+static char *window_ctx_quiet(E2E_JSON *kr, WI_ITEM_REC *item)
+{
+	E2E_NET net;
+	char *wire, *ctx;
+
+	if (item == NULL || item->server == NULL)
+		return NULL;
+	wire = window_wire(kr, item, NULL);
+	if (wire == NULL)
+		return NULL;
+	e2e_server_net(item->server, &net);
+	ctx = e2e_ctx_find(kr, &net, wire);
+	e2e_net_clear(&net);
+	g_free(wire);
+	return ctx;
+}
+
 /* the context /e2e off writes for wire on net: the one in use; for an old
    one of unknown network a config of this network with E2E off (it hides
    the old one here); for a name that cannot be scoped the old row itself */
@@ -550,6 +569,68 @@ static const char *session_label(const E2E_JSON *kr, const char *handle, const c
 	return status;
 }
 
+/* the damaged entries of a query context (of ctx; NULL: of all): rows of
+   another address than the query's own (R-E33, R-E34) - a request
+   rpe2e.pl kept, its acceptance, a session or recipient row. They get no
+   key; listed once per address and context. How many. */
+static guint print_damaged(WI_ITEM_REC *item, const E2E_JSON *kr, const char *ctx)
+{
+	static const char *const stores[] = { "accepted", "pending_inbound", "incoming", NULL };
+	E2E_JSON *channels = e2e_json_get(kr, "channels"), *recipients;
+	GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	GPtrArray *found = g_ptr_array_new_with_free_func(g_free), *keys;
+	guint i, j, n;
+
+	for (i = 0; stores[i] != NULL; i++) {
+		keys = e2e_json_keys(e2e_json_get(kr, stores[i]));
+		for (j = 0; j < keys->len; j++) {
+			char *h, *c;
+
+			split_key(g_ptr_array_index(keys, j), &h, &c);
+			/* an incoming row under "@<own>" is a session of ours:
+			   only a query with a config of its own is a peer's */
+			if (c != NULL && (ctx == NULL || strcmp(c, ctx) == 0) && e2e_dm_row_foreign(h, c) &&
+			    (strcmp(stores[i], "incoming") != 0 || e2e_json_get(channels, c) != NULL)) {
+				g_ptr_array_add(found, h);
+				g_ptr_array_add(found, c);
+			} else {
+				g_free(h);
+				g_free(c);
+			}
+		}
+		g_ptr_array_unref(keys);
+	}
+	recipients = e2e_json_get(kr, "outgoing_recipients");
+	keys = e2e_json_keys(recipients);
+	for (j = 0; j < keys->len; j++) {
+		E2E_JSON *row = e2e_json_get(recipients, g_ptr_array_index(keys, j));
+		const char *h = e2e_json_get_string(row, "handle"), *c = e2e_json_get_string(row, "channel");
+
+		if (h != NULL && c != NULL && (ctx == NULL || strcmp(c, ctx) == 0) &&
+		    e2e_dm_row_foreign(h, c)) {
+			g_ptr_array_add(found, g_strdup(h));
+			g_ptr_array_add(found, g_strdup(c));
+		}
+	}
+	g_ptr_array_unref(keys);
+	for (i = 0; i + 1 < found->len; i += 2) {
+		const char *h = g_ptr_array_index(found, i), *c = g_ptr_array_index(found, i + 1);
+		char *k = g_strconcat(h, "\x1f", c, NULL);
+
+		if (g_hash_table_contains(seen, k)) {
+			g_free(k);
+			continue;
+		}
+		g_hash_table_add(seen, k);
+		e2e_print_item(item, "  damaged: %s on %s — an entry of another address for this query (a request rpe2e.pl kept): it gets no key; /e2e decline %s in that query removes it",
+		               shown_text(h), shown(c), shown_text(h));
+	}
+	n = g_hash_table_size(seen);
+	g_hash_table_destroy(seen);
+	g_ptr_array_unref(found);
+	return n;
+}
+
 /* SYNTAX: E2E LIST [-all] */
 static void cmd_list(WI_ITEM_REC *item, char **args)
 {
@@ -593,13 +674,17 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 
 			split_key(g_ptr_array_index(keys, i), &handle, &channel);
 			e2e_print_item(item, "  %s  %s  [%s]  fp=%.16s", shown_text(handle), shown(channel),
-			               session_label(kr, handle, channel, row),
+			               channel != NULL && e2e_dm_row_foreign(handle, channel) &&
+			               e2e_json_get(e2e_json_get(kr, "channels"), channel) != NULL ? "damaged"
+			               : session_label(kr, handle, channel, row),
 			               shown_text(str_or(e2e_json_get_string(row, "fp"), "")));
 			g_free(handle);
 			g_free(channel);
 			any = TRUE;
 		}
 		g_ptr_array_unref(keys);
+		if (print_damaged(item, kr, NULL) > 0)
+			any = TRUE;
 		if (!any)
 			e2e_print_item(item, "(no remembered E2E state)");
 		e2e_json_free(kr);
@@ -642,6 +727,8 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		g_free(channel);
 	}
 	g_ptr_array_unref(keys);
+	if (print_damaged(item, kr, ctx) > 0)
+		any = TRUE;
 	/* the requests waiting here for /e2e accept */
 	pending = e2e_pending_of(kr, ctx);
 	for (i = 0; i < pending->len; i++) {
@@ -1044,10 +1131,9 @@ out:
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 {
 	E2E_JSON *kr, *row;
-	GPtrArray *bad;
-	gboolean refused;
-	char *handle = NULL, *ctx, *nick = NULL, *k;
-	guint i, n;
+	gboolean refused, rotated = FALSE;
+	char *handle = NULL, *ctx = NULL, *nick = NULL, *k;
+	guint n, dropped = 0;
 
 	if (item != NULL)
 		server = item->server;
@@ -1058,33 +1144,32 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 		return;
 	}
 	kr = e2e_load();
-	ctx = who_ctx(kr, server, item, who, &refused);
-	if (ctx == NULL) {
-		if (!refused)
-			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
-		goto out;
-	}
-	/* alone, with nothing waiting: the damaged requests here go */
-	bad = who == NULL && e2e_pending_handle(kr, ctx, NULL, E2E_CASEMAP_RFC1459, &n) == NULL &&
-	      n == 0 ? damaged_of(kr, ctx) : NULL;
-	if (bad != NULL && bad->len > 0) {
-		for (i = 0; i < bad->len; i++) {
-			E2E_PENDING *p = g_ptr_array_index(bad, i);
-
-			k = g_strconcat(p->handle, "|", ctx, NULL);
-			e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
-			/* and its placeholder session, which holds no key */
-			if (!e2e_session_has_key(e2e_json_get(e2e_json_get(kr, "incoming"), k)))
-				e2e_json_remove(e2e_json_get(kr, "incoming"), k);
-			g_free(k);
+	/* in a query, an address with damaged entries there (another
+	   address's request or acceptance for this query, R-E33/R-E34):
+	   those go */
+	if (who != NULL && strchr(who, '@') != NULL && query_nick(item) != NULL &&
+	    (ctx = window_ctx_quiet(kr, item)) != NULL && e2e_dm_row_foreign(who, ctx))
+		dropped = e2e_drop_damaged_dm(kr, ctx, who, &rotated);
+	if (dropped == 0) {
+		g_free(ctx);
+		ctx = who_ctx(kr, server, item, who, &refused);
+		if (ctx == NULL) {
+			if (!refused)
+				e2e_print_item(item, "%s", NOT_IN_CONTEXT);
+			goto out;
 		}
+		/* alone, with nothing waiting: every damaged entry here */
+		if (who == NULL && e2e_pending_handle(kr, ctx, NULL, E2E_CASEMAP_RFC1459, &n) == NULL &&
+		    n == 0)
+			dropped = e2e_drop_damaged_dm(kr, ctx, NULL, &rotated);
+	}
+	if (dropped > 0) {
 		e2e_save(kr);
-		e2e_print_item(item, "removed %u damaged key request(s) on %s", bad->len, shown(ctx));
-		g_ptr_array_unref(bad);
+		e2e_print_item(item, "removed %u damaged entr%s on %s (another address's request or acceptance for this query)%s",
+		               dropped, dropped == 1 ? "y" : "ies", shown(ctx),
+		               rotated ? " — your key here rotates with your next message" : "");
 		goto out;
 	}
-	if (bad != NULL)
-		g_ptr_array_unref(bad);
 	handle = pick_handle(kr, server, item, ctx, who, "decline", &nick);
 	if (handle == NULL)
 		goto out;

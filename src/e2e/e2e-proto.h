@@ -157,6 +157,17 @@ typedef enum {
 E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *handle,
                              const char *ctx, const char *own_ctx, const char *own_handle,
                              char **rsp, char **reciprocal);
+/* a row "<handle>|<ctx>" of a query context ctx that is not handle's own
+   ("@" + handle): damaged (rpe2e.pl stored another person's request for
+   a query, and /e2e accept then accepted it). Such a row gets nothing:
+   no KEYRSP, no REKEY, it is never "accepted". Channels: FALSE. */
+gboolean e2e_dm_row_foreign(const char *handle, const char *ctx);
+/* the damaged rows of the query context ctx (e2e_dm_row_foreign) of
+   handle (NULL: of anyone) go: requests waiting (pending_inbound),
+   "accepted", "incoming" and "outgoing_recipients". When one of them
+   could have had our key (accepted, a recipient) our key for ctx rotates
+   (*rotated). How many rows went. */
+guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gboolean *rotated);
 /* /e2e unrevoke: the sessions of handle on ctx and own_ctx that hold a key
    are trusted again; how many (0: nothing changed) */
 int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx);
