@@ -72,6 +72,15 @@ def main():
         bob.send("JOIN #test")
         assert alice.wait_file(alice.all_log(), "bob [u@127.0.0.1] has joined #test", WAIT)
 
+    def t_saved_at_once():
+        """The migrated values are in the file without /save or a quit, so
+        /RELOAD and settings_autosave OFF keep them."""
+        text = file_text(st["alice"].home / "config")
+        m = re.search(r'"fe-common/irc"\s*=\s*\{([^}]*)\}', text)
+        assert m is not None and "old.log" in m.group(1) and re.search(r'mentions_log\s*=\s*"yes"', m.group(1)), text
+        m = re.search(r'"perl/core/scripts"\s*=\s*\{([^}]*)\}', text)
+        assert m is None or "mentions_log_file" not in m.group(1), text
+
     def t_message():
         assert wait_log(re.escape(NOTICE)), "no migration notice:\n" + log_text()
         assert "<irssi dir>/scripts/autorun" in log_text()
@@ -151,17 +160,47 @@ def main():
         dave.quit()
         assert dave.sanitizer_reports() == [], dave.sanitizer_reports()
 
+    def t_partly_read_config():
+        """A config with a parse error is read only in part: the migration
+        applies for the run but must not make the file be rewritten (the
+        part after the error would be lost)."""
+        w = work / "partial"
+        w.mkdir()
+        cfg = harness.config(st["port"], "erin")
+        marker = '"perl/core" = { perl_use_lib'
+        cfg = cfg.replace(marker, '"perl/core/scripts" = { mentions_log_file = "OLDVALUE"; };\n  ' + marker)
+        cfg += 'aliases = { SENTINEL = "x"; };\ntruncated = { key = "never closed'
+
+        erin = harness.Erssi(st["inst"], w, "erin", cfg)
+        st["erin"] = erin
+        (erin.home / "scripts" / "autorun").mkdir(parents=True)
+        (erin.home / "scripts" / "autorun" / "mentions.pl").symlink_to(
+            Path(__file__).resolve().parent / "fixtures" / "mentions.pl")
+        erin.start()
+        assert erin.wait_file(erin.all_log(), "has joined #test", 15), "erin never joined #test"
+        before = (erin.home / "config").read_bytes()
+        assert b"SENTINEL" in before
+        erin.type("/set mentions_log_file")
+        assert erin.wait_file(erin.all_log(), "OLDVALUE", WAIT), "the migrated value does not apply for the run"
+        time.sleep(1)
+        erin.quit()
+        after = (erin.home / "config").read_bytes()
+        assert after == before, "the partly read config was rewritten:\n" + after.decode(errors="replace")
+        assert erin.sanitizer_reports() == [], erin.sanitizer_reports()
+
     def t_sanitizers():
         alice = st["alice"]
         alice.quit()
         assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
     try:
-        harness.main([t_install, t_start, t_message, t_unloaded, t_settings_moved, t_no_duplicates, t_stub, t_broken_script,
-                      t_sanitizers])
+        harness.main([t_install, t_start, t_saved_at_once, t_message, t_unloaded, t_settings_moved, t_no_duplicates, t_stub, t_broken_script,
+                      t_partly_read_config, t_sanitizers])
     finally:
         if "bob" in st:
             st["bob"].close()
+        if "erin" in st:
+            st["erin"].kill()
         if "dave" in st:
             st["dave"].kill()
         if "alice" in st:
