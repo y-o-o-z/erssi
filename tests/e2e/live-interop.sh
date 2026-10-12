@@ -362,7 +362,7 @@ wire_plain() {  # wire_plain <wire log>: the text of every other line
     python3 - "$1" <<'PY'
 import re, sys
 WIRE = re.compile(r'^\+RPE2E01 [0-9a-f]+ \d+ \d+/\d+ [A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$')
-KX = re.compile(r'^\x01?RPEE2E [A-Z]+( [a-z]+=\S*)*\x01?$')
+KX = re.compile(r'^\x01?RPEE2E [A-Z]+( (v|c|p|e|wn|w|n|s)=\S*)*\x01?$')
 for l in open(sys.argv[1], encoding="utf-8"):
     parts = l.rstrip("\n").split(" ", 3)
     text = parts[3][1:] if len(parts) == 4 and parts[3].startswith(":") else l
