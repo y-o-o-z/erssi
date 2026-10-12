@@ -9,3 +9,4 @@ endif
 if have_e2e
   subdir('e2e')
 endif
+subdir('live')
