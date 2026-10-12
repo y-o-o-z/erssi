@@ -167,6 +167,14 @@ def main():
     # message: the JSON alone
     for i, msg in enumerate(MESSAGES):
         write("message", "%02d" % i, msg)
+    # a web client's accept of a key request (docs/fe-web-e2e.md), and one
+    # fe-web refuses before the e2e module sees it
+    write("message", "e2e-action",
+          b'{"type":"e2e_action","id":"e1","server":"fuzz","target":"#test",'
+          b'"action":"accept","handle":"bob@127.0.0.1","fingerprint":"0123456789abcdef"}')
+    write("message", "e2e-action-bad",
+          b'{"type":"e2e_action","id":"e2","server":"fuzz","target":"#a,#b",'
+          b'"action":"decline","handle":"bob@@h\\u0000","fingerprint":"0123456789ABCDEF"}')
 
     # crypto: binary frame payloads
     write("crypto", "valid", seal(MESSAGES[0]))
