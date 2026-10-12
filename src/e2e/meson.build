@@ -21,8 +21,9 @@ libe2e_proto_a = static_library('e2e_proto',
   pic : true,
 )
 
-# the module, loaded like otr (autoload_modules has "e2e")
-shared_library('e2e_core',
+# the module, loaded like otr (autoload_modules has "e2e"); the live
+# interop test depends on it
+libe2e_core_sm = shared_library('e2e_core',
   files(
     'e2e-commands.c',
     'e2e-core.c',

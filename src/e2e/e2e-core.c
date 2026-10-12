@@ -716,6 +716,7 @@ static void gate_refuse(SERVER_REC *server, GString *str, const char *item, cons
 	/* irssi already showed the line: say that it was not delivered */
 	e2e_print_item(e2e_notice_item(server, item, item),
 	               "%s — the message shown above was NOT delivered", msg);
+	e2e_wipe(str->str, str->len);
 	g_string_truncate(str, 0);
 	signal_stop();
 }
@@ -739,6 +740,7 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 	e2e_net_clear(&net);
 	if (msg != NULL) {
 		e2e_print_item(NULL, "%s", msg);
+		e2e_wipe(str->str, str->len);
 		g_string_truncate(str, 0);
 		signal_stop();
 		g_free(msg);
@@ -884,11 +886,16 @@ static guint drop_queue(SERVER_REC *server, const char *reason, guint more)
 	if (n + more == 0)
 		return 0;
 	text = g_string_new(NULL);
-	g_string_printf(text, "%u encrypted line(s) to %s not sent: %s", n - plain,
-	                server->tag != NULL ? server->tag : "?", reason);
-	if (plain + more > 0)
-		g_string_append_printf(text, " (and %u message(s) waiting behind them, not encrypted yet)",
-		                       plain + more);
+	if (n > plain) {
+		g_string_printf(text, "%u encrypted line(s) to %s not sent: %s", n - plain,
+		                server->tag != NULL ? server->tag : "?", reason);
+		if (plain + more > 0)
+			g_string_append_printf(text, " (and %u message(s) waiting behind them, not encrypted yet)",
+			                       plain + more);
+	} else {
+		g_string_printf(text, "%u message(s) to %s not sent: %s (not encrypted yet)",
+		                plain + more, server->tag != NULL ? server->tag : "?", reason);
+	}
 	printformat(server, NULL, MSGLEVEL_CLIENTERROR, TXT_E2E_MESSAGE, text->str);
 	g_string_free(text, TRUE);
 	return n;
@@ -1198,9 +1205,56 @@ static void sig_session_save_server(SERVER_REC *server)
 	g_hash_table_remove(outqs, server);
 }
 
+/* would the gate send cmd (a queued buffer, CR LF at its end) as it
+   is - clear text the user may send (PASS, or a bot command)? Decided
+   on the keyring as it is now, dry: nothing saved, no REKEY; a keyring
+   that cannot be read, or is lost, says no */
+static gboolean gate_lets_pass(SERVER_REC *server, const char *cmd)
+{
+	E2E_LOAD_STATUS status;
+	E2E_GATE_RESULT res;
+	E2E_JSON *kr;
+	E2E_NET net;
+	char *error = NULL, *line, *tags = NULL, *target = NULL, *body = NULL, *msg;
+	gboolean pass;
+	gsize len = strlen(cmd);
+
+	while (len > 0 && (cmd[len - 1] == '\n' || cmd[len - 1] == '\r'))
+		len--;
+	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	g_free(error);
+	e2e_server_net(server, &net);
+	if (memchr(cmd, '\r', len) != NULL || memchr(cmd, '\n', len) != NULL) {
+		msg = e2e_gate_multiline(kr, status == E2E_LOAD_OK, &net, cmd, len, resolve_cb, server);
+		pass = msg == NULL;
+		g_free(msg);
+	} else {
+		line = g_strndup(cmd, len);
+		if (!e2e_parse_privmsg_line(line, &tags, &target, &body)) {
+			pass = FALSE;
+		} else {
+			e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, &net, target, body,
+			                resolve_cb, server, &res);
+			pass = res.action == E2E_GATE_PASS || res.action == E2E_GATE_BYPASS;
+			e2e_gate_result_clear(&res);
+		}
+		e2e_wipe(line, strlen(line));
+		g_free(line);
+		if (body != NULL)
+			e2e_wipe(body, strlen(body));
+		g_free(body);
+		g_free(tags);
+		g_free(target);
+	}
+	e2e_net_clear(&net);
+	e2e_json_free(kr);
+	return pass;
+}
+
 /* the PRIVMSGs waiting in irssi's flood queue of irc, dropped and
-   wiped; how many */
-static guint drop_irssi_privmsgs(IRC_SERVER_REC *irc)
+   wiped - with only_gated, those the gate would not let out as they are
+   (they would leave without it once the module is gone); how many */
+static guint drop_irssi_privmsgs(IRC_SERVER_REC *irc, gboolean only_gated)
 {
 	GSList *tmp, *next;
 	guint n = 0;
@@ -1212,6 +1266,8 @@ static guint drop_irssi_privmsgs(IRC_SERVER_REC *irc)
 		next = link->next;
 		/* every line of it: "NICK x\r\nPRIVMSG #secret ..." too */
 		if (!e2e_buffer_has_privmsg(cmd, strlen(cmd)))
+			continue;
+		if (only_gated && gate_lets_pass(SERVER(irc), cmd))
 			continue;
 		if (link->data != NULL)
 			server_redirect_destroy(link->data);
@@ -1242,7 +1298,7 @@ int e2e_drop_queued_privmsgs(void)
 		n += e2e_outq_drop(value, NULL);
 	for (tmp = servers; tmp != NULL; tmp = tmp->next)
 		if (IS_IRC_SERVER(tmp->data))
-			n += drop_irssi_privmsgs(IRC_SERVER(tmp->data));
+			n += drop_irssi_privmsgs(IRC_SERVER(tmp->data), FALSE);
 	return n;
 }
 
@@ -1593,14 +1649,16 @@ void e2e_core_deinit(void)
 {
 	GSList *list, *tmp;
 
-	/* what still waits is not sent: told, and wiped - the PRIVMSGs in
-	   irssi's flood queue too, which would leave without the gate (the
-	   rest of a long line irssi split, typed while E2E was on) */
+	/* what still waits is not sent: told, and wiped - and the PRIVMSGs
+	   in irssi's flood queue that the gate would encrypt or refuse (the
+	   rest of a long line irssi split, typed while E2E was on): they
+	   would leave in clear text without the module. Clear text the gate
+	   lets pass stays queued. */
 	list = g_slist_copy(servers);
 	for (tmp = list; tmp != NULL; tmp = tmp->next)
 		if (g_slist_find(servers, tmp->data) != NULL && IS_IRC_SERVER(tmp->data))
 			drop_queue(tmp->data, "the e2e module is unloaded",
-			           drop_irssi_privmsgs(IRC_SERVER(tmp->data)));
+			           drop_irssi_privmsgs(IRC_SERVER(tmp->data), TRUE));
 	g_slist_free(list);
 
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_depth);

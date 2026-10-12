@@ -181,11 +181,18 @@
     split by irssi at the server's line limit first, and each of those
     lines is encrypted on its own. Later messages to that network wait
     behind the parts and leave in the order typed; each is encrypted when
-    its turn comes. On disconnect, /E2E RESET or /UNLOAD E2E the parts not
-    sent yet are dropped and the number is shown in the status window (the
-    receiver gets an incomplete message); /UPGRADE sends them first. When
-    rpe2e.pl is loaded the script encrypts, and what still waits in the
-    module is dropped the same way.
+    its turn comes, so after /E2E OFF the messages still waiting go out in
+    clear text. Other commands (PART, NICK, QUIT, TOPIC, NOTICEs) do not
+    wait: they leave before the parts still waiting - after /PART the rest
+    of a message to a +n channel is rejected by the server. On disconnect
+    or /E2E RESET the parts not sent yet are dropped and the number is
+    shown in the status window (the receiver gets an incomplete message).
+    /UNLOAD E2E drops them too, and the messages in irssi's own flood
+    queue that the module would encrypt or refuse (they would leave in
+    clear text without it); clear text it would let pass stays queued.
+    /UPGRADE sends everything waiting at once, past the flood limit,
+    before it restarts. When rpe2e.pl is loaded the script encrypts, and
+    what still waits in the module is dropped the same way.
 
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again. One that is not
