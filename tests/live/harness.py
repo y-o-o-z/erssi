@@ -6,6 +6,7 @@ A test script calls main([test, ...]); it prints one line per test and exits
 0 (all ok), 1 (a failure) or 77 (Skip raised: the reason is printed)."""
 import fcntl
 import os
+import re
 import shutil
 import signal
 import socket
@@ -19,6 +20,7 @@ import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|[=>78])")
 
 
 class Skip(Exception):
@@ -43,10 +45,13 @@ def main(tests):
             except Exception as exc:  # AssertionError included
                 if not isinstance(exc, AssertionError):
                     traceback.print_exc()
-                print(f"  FAIL {name}: {exc!r}" if not str(exc) else f"  FAIL {name}: {exc}", flush=True)
+                print(f"  FAIL {name}: {exc or repr(exc)}", flush=True)
                 failed += 1
     except Skip as exc:
         print(f"SKIP: {exc}", flush=True)
+        if failed:  # a failure before the skip must not turn into a SKIP
+            print(f"result: {ok} ok, {failed} failed", flush=True)
+            sys.exit(1)
         sys.exit(77)
     print(f"result: {ok} ok, {failed} failed", flush=True)
     sys.exit(1 if failed else 0)
@@ -79,10 +84,13 @@ def install(build, work):
         raise Skip("meson not found")
     dest = work / "inst"
     if not dest.exists():
-        r = subprocess.run(["meson", "install", "-C", str(build), "--destdir", str(dest),
+        tmp = work / "inst.tmp"  # an interrupted install is never reused
+        shutil.rmtree(tmp, ignore_errors=True)
+        r = subprocess.run(["meson", "install", "-C", str(build), "--destdir", str(tmp),
                             "--no-rebuild", "--quiet"], capture_output=True, text=True)
         if r.returncode != 0:
             raise AssertionError("meson install failed:\n" + r.stdout + r.stderr)
+        tmp.rename(dest)
     return Inst(dest)
 
 
@@ -92,9 +100,11 @@ def free_port():
         return s.getsockname()[1]
 
 
-def wait_port(port, timeout=5):
+def wait_port(port, timeout=5, proc=None):
     end = time.time() + timeout
     while time.time() < end:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
             socket.create_connection(("127.0.0.1", port), 1).close()
             return True
@@ -104,22 +114,37 @@ def wait_port(port, timeout=5):
 
 
 class Ircd:
-    """tests/live/ircd.py as a child process; the wire log is work/wire.log."""
+    """tests/live/ircd.py as a child process; the wire log is work/wire.log,
+    every line in and out (with the time) is in work/ircd-trace.log.
+    Usable as a context manager (stop() on exit)."""
 
     def __init__(self, work, extra_args=()):
         self.work = Path(work)
         self.extra = list(extra_args)
         self.proc = None
         self.wire = self.work / "wire.log"
+        self.trace = self.work / "ircd-trace.log"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.stop()
 
     def start(self):
-        port = free_port()
-        self.proc = subprocess.Popen(
-            [sys.executable, str(HERE / "ircd.py"), "--port", str(port), "--wire", str(self.wire)] + self.extra)
-        if not wait_port(port):
+        """Start the server on a free port (retried: the port can be taken
+        between choosing it and binding it). Returns the port."""
+        for _ in range(4):
+            port = free_port()
+            self.proc = subprocess.Popen(
+                [sys.executable, str(HERE / "ircd.py"), "--port", str(port), "--wire", str(self.wire),
+                 "--trace", str(self.trace)] + self.extra)
+            up = wait_port(port, 5, self.proc)
+            time.sleep(0.2)  # a server that lost the bind race exits now
+            if up and self.proc.poll() is None:
+                return port
             self.stop()
-            raise AssertionError("fake IRC server did not start")
-        return port
+        raise AssertionError("fake IRC server did not start")
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -138,9 +163,19 @@ class Client:
         self.nick = nick
         self.sock = socket.create_connection(("127.0.0.1", port), 5)
         self.buf = b""
-        self.send(f"NICK {nick}")
-        self.send(f"USER {user} 0 * :{nick}")
-        self.expect(" 001 ")
+        try:
+            self.send(f"NICK {nick}")
+            self.send(f"USER {user} 0 * :{nick}")
+            self.expect(" 001 ")
+        except BaseException:
+            self.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def send(self, line):
         self.sock.sendall(line.encode() + b"\r\n")
@@ -177,7 +212,10 @@ class Client:
 def config(port, nick, chatnet="E2E", channels=("#test",), extra="", servers=None):
     """An erssi config for the fake server. "@HOME@" and "@PERLLIB@" are
     replaced by Erssi.start() with the instance's --home and Perl library.
-    servers: list of (chatnet, port); default [(chatnet, port)]."""
+    servers: list of (chatnet, port); default [(chatnet, port)].
+    cmd_queue_speed is 5 ms: with the default 2200 ms the post-connect
+    commands (MODE, JOIN, MODE #chan, WHO) are paced one per 500 ms tick
+    and a join takes ~5 s."""
     servers = servers or [(chatnet, port)]
     srv = ", ".join(f'{{ address = "127.0.0.1"; chatnet = "{c}"; port = "{p}"; autoconnect = "yes"; }}'
                     for c, p in servers)
@@ -191,6 +229,7 @@ logs = {{ "@HOME@/all.log" = {{ auto_open = "yes"; level = "ALL"; }}; }};
 settings = {{
   core = {{ real_name = "live test"; user_name = "{nick}"; nick = "{nick}"; }};
   "fe-common/core" = {{ theme = "default"; autolog = "yes"; autolog_path = "@HOME@/logs/$tag/$0.log"; autolog_level = "ALL"; }};
+  "irc/core" = {{ cmd_queue_speed = "5msec"; }};
   "perl/core" = {{ perl_use_lib = "@PERLLIB@"; }};
 }};
 {extra}
@@ -211,15 +250,23 @@ class Erssi:
         self.home = self.home_dir / ".erssi"
         self.proc = None
         self.master = None
+        for a in self.args:
+            if a in ("-h",) or a.startswith("--home"):
+                raise ValueError("the harness sets --home itself")
         self._buf = bytearray()
         self._lock = threading.Lock()
         self._thread = None
 
     def child_env(self):
-        env = {k: v for k, v in os.environ.items() if k not in ("LC_ALL", "HOME")}
+        """The environment of the child, built from an allowlist: nothing
+        else of the caller's (TMUX, STY, TERM_PROGRAM, IRC*, XDG_*, SSH_*,
+        KITTY_*, ...) reaches erssi. The test's env= overrides come last."""
+        env = {k: os.environ[k] for k in ("PATH", "PERL5LIB", "LD_LIBRARY_PATH", "LLVM_SYMBOLIZER_PATH",
+                                          "ASAN_SYMBOLIZER_PATH") if k in os.environ}
         env.update({
             "HOME": str(self.home_dir),
             "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
             "TERM": "xterm-256color",
             "ASAN_OPTIONS": f"detect_leaks=0:log_path={self.work}/asan-{self.name}",
             "UBSAN_OPTIONS": f"print_stacktrace=1:log_path={self.work}/ubsan-{self.name}",
@@ -227,7 +274,8 @@ class Erssi:
         env.update(self.extra_env)
         # the real HOME must never reach a child
         home = Path(env["HOME"]).resolve()
-        assert home == self.work or self.work in home.parents, f"HOME outside the work dir: {home}"
+        if not (home == self.work or self.work in home.parents):
+            raise AssertionError(f"HOME outside the work dir: {home}")
         return env
 
     def _prepare(self):
@@ -247,6 +295,12 @@ class Erssi:
             text = self.config_text.replace("@HOME@", str(home)).replace("@PERLLIB@", str(self.inst.perllib or ""))
             (home / "config").write_text(text)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.kill()
+
     def start(self, cols=200, rows=50):
         self._prepare()
         env = self.child_env()
@@ -256,10 +310,15 @@ class Erssi:
         def ctty():
             fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
-        self.proc = subprocess.Popen([str(self.inst.erssi), f"--home={self.home}"] + self.args,
-                                     stdin=slave, stdout=slave, stderr=slave, env=env,
-                                     cwd=str(self.home_dir), start_new_session=True, preexec_fn=ctty)
-        os.close(slave)
+        try:
+            self.proc = subprocess.Popen([str(self.inst.erssi), f"--home={self.home}"] + self.args,
+                                         stdin=slave, stdout=slave, stderr=slave, env=env,
+                                         cwd=str(self.home_dir), start_new_session=True, preexec_fn=ctty)
+        except BaseException:
+            os.close(master)
+            raise
+        finally:
+            os.close(slave)
         self.master = master
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
@@ -294,13 +353,23 @@ class Erssi:
         with self._lock:
             return bytes(self._buf[mark:])
 
+    def text(self, since=0):
+        """The output since a mark() as text, ANSI escape sequences removed."""
+        with self._lock:
+            raw = bytes(self._buf[since:])
+        return ANSI.sub("", raw.decode(errors="replace"))
+
+    def _has(self, pattern):
+        with self._lock:
+            return pattern in self._buf
+
     def wait_output(self, pattern, timeout):
         end = time.time() + timeout
         while time.time() < end:
-            if pattern in self.output():
+            if self._has(pattern):
                 return True
             time.sleep(0.1)
-        return pattern in self.output()
+        return self._has(pattern)
 
     def all_log(self):
         return self.home / "all.log"
@@ -335,6 +404,11 @@ class Erssi:
             except OSError:
                 self.proc.kill()
             self.proc.wait()
+        # the slave side is closed now: the reader gets EIO and ends. Join it
+        # before closing the fd it reads (the number could be reused).
+        if self._thread is not None:
+            self._thread.join(2)
+            self._thread = None
         if self.master is not None:
             try:
                 os.close(self.master)
@@ -343,4 +417,4 @@ class Erssi:
             self.master = None
 
     def sanitizer_reports(self):
-        return sorted(p for pat in (f"asan-{self.name}*", f"ubsan-{self.name}*") for p in self.work.glob(pat))
+        return sorted(p for pat in (f"asan-{self.name}.*", f"ubsan-{self.name}.*") for p in self.work.glob(pat))
