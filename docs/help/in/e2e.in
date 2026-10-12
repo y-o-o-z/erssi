@@ -228,6 +228,22 @@
     before it restarts. When rpe2e.pl is loaded the script encrypts, and
     what still waits in the module is dropped the same way.
 
+    Statusbar: the e2e item shows the E2E state of the active channel or
+    query - "e2e off"; "E2E" (on, a key from someone to read); "E2E
+    waiting for keys" (on, no key from anyone yet); "E2E blocked" (not
+    sent: an old entry of unknown network, or the query's nick has E2E
+    on at another address); "E2E keyring error" - followed by "N to
+    accept" while N key requests wait there for /E2E ACCEPT. Nothing in
+    other windows, and nothing while rpe2e.pl is loaded. The shipped
+    config has it in the info bar, after "window". A config with a list
+    of its own for that bar (one changed by /STATUSBAR ADDITEM or
+    REMOVEITEM) keeps its list: /STATUSBAR ADDITEM -after window e2e
+    info adds it there (/STATUSBAR ADDITEM e2e <bar> to any bar). The
+    texts are the formats e2e_sb_off, e2e_sb_on, e2e_sb_waiting,
+    e2e_sb_blocked, e2e_sb_error and e2e_sb_pending (/FORMAT, themes).
+    A keyring changed by another program (rpe2e.pl in another erssi) is
+    shown at the next window switch.
+
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again. One that is not
     valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
@@ -333,5 +349,5 @@
     /E2E RESET
     /E2E OFF bob@old.example.org
 
-%9See also:%9 MSG, QUERY, LOAD
+%9See also:%9 MSG, QUERY, LOAD, STATUSBAR, FORMAT
 

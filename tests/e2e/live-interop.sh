@@ -213,6 +213,41 @@ else
     bad "alice: the native module is not active"
 fi
 
+# the statusbar item e2e, in a root bar of its own right above the prompt
+# (position 50: below the info bar, above the prompt at 100) - its line is
+# the second last of the screen
+for nick in alice bob; do
+    say "$nick" "/statusbar add -type root -placement bottom -position 50 e2etest"
+    say "$nick" "/statusbar additem e2e e2etest"
+done
+sbar() {  # sbar <nick>: the e2etest bar on that screen
+    tmux -L "$SOCK" capture-pane -p -t "$1" | tail -n 2 | head -n 1
+}
+sbar_shows() {  # sbar_shows <nick> <fixed string> <seconds>
+    local n=0
+    while [ $n -lt "$3" ]; do
+        sbar "$1" | grep -qF -- "$2" && return 0
+        sleep 1
+        n=$((n + 1))
+    done
+    return 1
+}
+sbar_check() {  # sbar_check <nick> <text shown> <text not shown, or ""> <what>
+    if sbar_shows "$1" "$2" 10 && { [ -z "$3" ] || ! sbar "$1" | grep -qF -- "$3"; }; then
+        pass "statusbar: $4"
+    else
+        bad "statusbar: $4 (the bar: '$(sbar "$1")')"
+    fi
+}
+sbar_hidden() {  # sbar_hidden <nick> <what>: no e2e item on the bar
+    sleep 2
+    if sbar "$1" | grep -qi -- "e2e"; then
+        bad "statusbar: $2 (the bar: '$(sbar "$1")')"
+    else
+        pass "statusbar: $2"
+    fi
+}
+
 POLISH="zażółć gęślą jaźń"
 LONG_A=$(python3 -c 'print(" ".join("zażółć%d" % i for i in range(1, 41)))')
 LONG_B=$(python3 -c 'print(" ".join("gęślą%d" % i for i in range(1, 41)))')
@@ -276,6 +311,21 @@ check "$WORK/bob/logs/E2E/$CHAN.log" "an ellipsis line"
 check "$WORK/bob/logs/E2E/$CHAN.log" "quoted in lower case"
 check "$WORK/bob/logs/E2E/$CHAN.log" "sent with msg"
 check "$WORK/alice/logs/E2E/$CHAN.log" "cannot resolve handle for 100%done"
+sbar_check alice "E2E" "waiting" "alice in E2E's #test after the exchange: E2E"
+# the shipped config (the test's config has no statusbar of its own): the
+# info bar, the line above e2etest, has the item after the window item
+if tmux -L "$SOCK" capture-pane -p -t alice | tail -n 3 | head -n 1 | grep -qE "$CHAN.*E2E"; then
+    pass "statusbar: the shipped info bar has the e2e item after the window item"
+else
+    bad "statusbar: the shipped info bar has no e2e item (the bar: '$(tmux -L "$SOCK" capture-pane -p -t alice | tail -n 3 | head -n 1)')"
+fi
+# bob has rpe2e.pl loaded: the native module shows nothing (the script's
+# state is not the module's to show)
+sbar_hidden bob "bob's #test while rpe2e.pl is loaded: no e2e item"
+say alice "/window 1"
+sbar_hidden alice "alice's status window: no e2e item"
+# back on E2E (the status window's server may be another network)
+say alice "/join -E2E $CHAN"
 
 # ---- query ----
 say alice "/query bob"
@@ -306,6 +356,7 @@ say bob "$LONG_A"
 sleep 3
 check "$WORK/bob/logs/E2E/alice.log" "private from alice $POLISH"
 check "$WORK/alice/logs/E2E/bob.log" "private from bob $POLISH"
+sbar_check alice "E2E" "waiting" "alice in bob's query after the exchange: E2E"
 
 # the long messages: several encrypted chunks, each shown as a line; put
 # together they are the message
@@ -432,6 +483,7 @@ else
     bad "alice: no pending request from mallory"
 fi
 MALLORY_AT=$(date +%s)
+sbar_check alice "1 to accept" "" "alice's #test with mallory's request waiting: 1 to accept"
 # the prompt names the address and the network:channel, and how to answer
 # (alice holds mallory's key already: she asked him for it)
 if grep -F "Pending key exchange from mallory (mallory@127.0.0.1) for E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" |
@@ -555,6 +607,7 @@ done
 # E2E is on for #test on E2E only: the other network's #test is another
 # channel and gets clear text
 say alice "/join -E2E2 $CHAN"
+sbar_check alice "e2e off" "" "alice in E2E2's #test before /e2e on: e2e off"
 say alice "net2 plain hello"
 sleep 1
 if grep -aqF "alice PRIVMSG $CHAN :net2 plain hello" "$WORK/wire2.log"; then
@@ -570,6 +623,28 @@ else
 fi
 # turned on there: a key of its own
 say alice "/e2e on"
+sbar_check alice "E2E waiting for keys" "" "alice in E2E2's #test after /e2e on, no keys: waiting"
+# another process (rpe2e.pl) changes the keyring: seen at the next switch
+python3 - "$WORK/alice/rpe2e/keyring.json" 0 <<'PY' || bad "the keyring edit for the statusbar check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["E2E2\x1f#test"]["enabled"] = int(sys.argv[2])
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say alice "/window 1"
+say alice "/join -E2E2 $CHAN"
+sbar_check alice "e2e off" "" "a keyring written by another process is shown after a window switch"
+python3 - "$WORK/alice/rpe2e/keyring.json" 1 <<'PY' || bad "the keyring edit for the statusbar check failed"
+import json, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k["channels"]["E2E2\x1f#test"]["enabled"] = int(sys.argv[2])
+json.dump(k, open(p, "w", encoding="utf-8"))
+PY
+say alice "/window 1"
+say alice "/join -E2E2 $CHAN"
+sbar_check alice "E2E waiting for keys" "" "and changed back"
 say alice "net2 secret hello"
 sleep 1
 python3 - "$WORK/alice/rpe2e/keyring.json" <<'EOF' && pass "alice: E2E and E2E2 #test have their own keys" || bad "alice: the networks share a key or a config"
@@ -995,6 +1070,7 @@ if HELD=$(first_wire "$TIMES_MARK" 30); then
     else
         bad "rpe2e.pl loaded while chunks wait: alice is not told"
     fi
+    sbar_hidden alice "alice's #test while rpe2e.pl is loaded: no e2e item"
     # long enough for the rest to leave at the flood queue's pace
     sleep 15
     if wire_groups "$TIMES_MARK" | awk -v m="$HELD" '$1 == m { n = split($2, p, ","); split(p[1], q, "/"); exit !(n < q[2]) }'; then
@@ -1007,6 +1083,7 @@ else
 fi
 say alice "/script unload rpe2e_hold"
 sleep 1
+sbar_check alice "E2E" "" "alice's #test after rpe2e.pl is unloaded: E2E again"
 wire_plain "$WORK/wire.log" > "$WORK/wire-plain.log"
 leak=0
 for word in pacedlong secondlong "short after long" "nested from a rawlog" rotatedlong heldlong; do

@@ -51,15 +51,23 @@ gboolean e2e_legacy_ok(void);
 void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
 /* the 30 s limiter of the KEYREQs we send */
 GHashTable *e2e_keyreq_out_stamps(void);
-/* FALSE (after telling the user once) while rpe2e.pl is loaded */
+/* FALSE (after telling the user once) while rpe2e.pl is loaded; a change
+   of that is an e2e_state_changed() */
 gboolean e2e_native_active(void);
+/* rpe2e.pl is loaded - only looked up: nothing told, nothing remembered */
+gboolean e2e_script_loaded(void);
 
 /* the E2E state of the window of item on item's own server (server is
    not used): the keyring read checked, nothing saved, nothing taken
    over, nothing remembered; FALSE (out cleared) for an item that is no
    channel or query, or without a server */
 gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO *out);
-/* the keyring or a window's state changed: "e2e state changed" is
+/* the same from a keyring read already (kr_ok: e2e_keyring_load_checked()
+   read it; kr is not changed) */
+gboolean e2e_window_info_with(const E2E_JSON *kr, gboolean kr_ok, WI_ITEM_REC *item,
+                              E2E_WIN_INFO *out);
+/* the keyring or a window's state changed (also: rpe2e.pl loaded or
+   unloaded, our own address learned or forgotten): "e2e state changed" is
    emitted once, when the main loop is idle (the statusbar, fe-web) */
 void e2e_state_changed(void);
 /* "Pending key exchange from <nick> (<handle>) for <network>:<ctx>" in
