@@ -12,6 +12,18 @@
    or newer. Returns the number of settings written. */
 int shellter_defaults_migrate(CONFIG_REC *config);
 
+/* erssi/statusbar_version of a config whose info bar got the items added
+   to the shipped one since 2026.10.0 (the e2e item), when it was the
+   shipped one */
+#define SHELLTER_STATUSBAR_VERSION 1
+
+/* Adds the item e2e after window to statusbar.default.info.items when that
+   list is exactly one erssi shipped in irssi.conf (a copy of the default
+   config written into the file); a list the user changed, and every other
+   bar, are left alone. Sets the marker; nothing when the marker is already
+   SHELLTER_STATUSBAR_VERSION or newer. TRUE when the item was added. */
+int shellter_statusbar_migrate(CONFIG_REC *config);
+
 /* what shellter_defaults_init() did with the written values */
 enum {
 	SHELLTER_DEFAULTS_SAVED,	/* saved in the config file */
@@ -19,8 +31,9 @@ enum {
 	SHELLTER_DEFAULTS_UNSAVED	/* no file yet, or the save failed */
 };
 
-/* Migrates mainconfig and saves it at once, unless the config file had
-   errors (the part not read would be lost) or does not exist yet. */
+/* Migrates mainconfig (the settings, then the info bar) and saves it at
+   once, unless the config file had errors (the part not read would be
+   lost) or does not exist yet. */
 void shellter_defaults_init(void);
 
 /* The note printed after the banner (printtext text, a % in the path is
