@@ -156,6 +156,26 @@ def main():
         st["bob"].send("NOTICE alice :after unignore")
         assert wait_ml("[E2E] NOTICE <bob> after unignore"), ml_text()
 
+    def t_ignore_nohilight():
+        # a flag ignore (NOHILIGHT) only takes the hilight away: the line is
+        # still shown, but it is not a mention (as in a channel)
+        alice = st["alice"]
+        carol = st["carol"]
+        off = log_size()
+        alice.type("/ignore carol MSGS NOTICES ACTIONS NOHILIGHT")
+        assert wait_log_since(off, "Ignoring"), log_since(off)
+        carol.send("PRIVMSG alice :nohilight pm")
+        carol.send("NOTICE alice :nohilight notice")
+        carol.send("PRIVMSG alice :\x01ACTION nohilight act\x01")
+        for text in ("nohilight pm", "nohilight notice", "nohilight act"):
+            assert alice.wait_file(alice.all_log(), text, WAIT), f"{text!r} not delivered"
+        absent_ml("nohilight pm", "nohilight notice", "nohilight act")
+        off = log_size()
+        alice.type("/unignore 1")
+        assert wait_log_since(off, "Unignored"), log_since(off)
+        carol.send("PRIVMSG alice :after nohilight")
+        assert wait_ml("[E2E] PM <carol> after nohilight"), ml_text()
+
     def t_mask_targets():
         # a NOTICE or PRIVMSG to a server or host mask, or a NOTICE to
         # another nick, is not written to you
@@ -591,7 +611,7 @@ def main():
     try:
         harness.main([t_install, t_start, t_window_created_not_active, t_private, t_private_action,
                       t_notice_from_person, t_notice_from_server_and_channel_skipped, t_own_and_echo,
-                      t_format_injection, t_ignore, t_mask_targets, t_cnotice_ignore,
+                      t_format_injection, t_ignore, t_ignore_nohilight, t_mask_targets, t_cnotice_ignore,
                       t_excluded_network, t_channel_hilight, t_mid_sentence, t_no_hilight,
                       t_channel_action, t_hilight_rule, t_own_nick_in_own_line, t_own_channel_echo,
                       t_op_public,
