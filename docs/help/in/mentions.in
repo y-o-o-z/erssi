@@ -14,9 +14,9 @@
 %9Description:%9
 
     Goes to the Mentions window, where erssi collects what was written to
-    you: private messages and private /ME actions, private NOTICEs from
-    people (not from servers and not sent to a channel) and DCC CHAT
-    messages. Messages that /IGNORE hides are left out.
+    you: private messages and private /ME actions, NOTICEs from people to
+    your nick (not from servers, not sent to a channel or a server mask)
+    and DCC CHAT messages. Messages that /IGNORE hides are left out.
 
     Entries have the HILIGHT level, so the window gets the hilight colour
     in the window list.
@@ -31,13 +31,15 @@
     with mode 0700. Control characters in the text are written as spaces.
 
     Networks named in mentions_exclude_networks are left out, both from the
-    window and from the log (for example a bot's partyline network).
+    window and from the log (for example a bot's partyline network). This
+    includes DCC CHATs that were offered through such a network.
 
 %9Settings:%9
 
     mentions_window = Mentions
         Name of the Mentions window. Empty: no window; the log and the
-        "mention" signal still work.
+        "mention" signal still work. A name another window already has
+        is refused.
     mentions_log = OFF
         Append every entry to the log file.
     mentions_log_file =
