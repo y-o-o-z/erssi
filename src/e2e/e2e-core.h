@@ -88,10 +88,14 @@ void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, co
 void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 /* a web client's accept (or decline) of the key request that waits in
-   the window of target on server with exactly handle (strcmp) - nothing
-   else is acted on, nothing sent otherwise; refused while rpe2e.pl is
-   loaded or the keyring is lost (e2e-web.c, "e2e action") */
-void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle);
+   the window of target on server with exactly handle (strcmp) - and,
+   with fingerprint (not NULL), whose key's 16 hex digits are exactly
+   that - nothing else is acted on, nothing sent otherwise; refused while
+   rpe2e.pl is loaded or the keyring is lost (e2e-web.c, "e2e action").
+   A refusal is also "e2e action refused" (server, target, handle,
+   reason: "inactive" "lost" "not_connected" "no_request" "mismatch"). */
+void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle,
+                    const char *fingerprint);
 
 /* e2e_rotate_for_damaged() found entries (pairs "<handle>", "<ctx>"):
    told in item's window (NULL: the active one) */

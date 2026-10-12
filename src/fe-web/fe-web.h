@@ -219,7 +219,8 @@ void fe_web_e2e_deinit(void);
  * request", which the e2e module answers at once (nothing without it) */
 void fe_web_e2e_dump(WEB_CLIENT_REC *client, IRC_SERVER_REC *server, const char *target);
 /* an e2e_action message: answered with a command_result; the action goes
- * to the e2e module ("e2e action") only when it is valid */
+ * to the e2e module ("e2e action") only when it is valid - with its
+ * optional fingerprint, 16 lowercase hex digits */
 void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json);
 /* an ident@host an action may name: 3..255 bytes, exactly one '@' and not
  * at either end, no byte <= 0x20, no DEL, ',' or '!' */

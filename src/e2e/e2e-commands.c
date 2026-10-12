@@ -1224,23 +1224,53 @@ out:
 	e2e_json_free(kr);
 }
 
+/* told to whoever asked for the action (fe-web answers its client with
+   it): "e2e action refused" with a reason */
+static void web_refused(SERVER_REC *server, const char *target, const char *handle,
+                        const char *reason)
+{
+	signal_emit("e2e action refused", 4, server, target, handle, reason);
+}
+
+/* the fingerprint (16 hex digits) of the request of handle in ctx, as
+   e2e_state lists it; "" when its key is damaged */
+static char *pending_fp16(const E2E_JSON *kr, const char *ctx, const char *handle)
+{
+	GPtrArray *all = e2e_pending_of(kr, ctx);
+	char *fp = NULL;
+	guint i;
+
+	for (i = 0; i < all->len && fp == NULL; i++) {
+		E2E_PENDING *p = g_ptr_array_index(all, i);
+
+		if (strcmp(p->handle, handle) == 0)
+			fp = g_strdup(p->fp16);
+	}
+	g_ptr_array_unref(all);
+	return fp != NULL ? fp : g_strdup("");
+}
+
 /*
  A web client's accept or decline (e2e-web.c, "e2e action"): only of the
  request that waits in the window of target on server with exactly this
  ident@host - the window's own context, never another one the address
  also has (/e2e accept <ident@host> in a channel window may take a query
  request; this never does), never a session without a request, never a
- damaged one. Looked up again in the keyring the action works on; nothing
- sent or changed otherwise. Not while rpe2e.pl is loaded (the script owns
- the keyring then) or while the keyring is lost.
+ damaged one - and, with fingerprint, only when its key's fingerprint is
+ that one (what the client showed). Looked up again in the keyring the
+ action works on; nothing sent or changed otherwise. Not while rpe2e.pl
+ is loaded (the script owns the keyring then) or while the keyring is
+ lost. A refusal is also told with "e2e action refused".
 */
-void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle)
+void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle,
+                    const char *fingerprint)
 {
 	const char *verb = accept ? "accept" : "decline", *found;
 	WI_ITEM_REC *item;
 	E2E_JSON *kr, *row;
 	E2E_NET net;
-	char *ctx, *dtarget, *picked, *nick, *k;
+	char *ctx, *dtarget, *picked, *nick, *k, *fp;
+	const char *reason = NULL;
 	guint n = 0;
 
 	if (server == NULL || target == NULL || handle == NULL)
@@ -1255,18 +1285,21 @@ void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, con
 		e2e_print_item(item, "web client asked to %s %s on %s, but the native e2e module is inactive while rpe2e.pl is loaded — nothing sent",
 		               verb, shown_text(handle), dtarget);
 		g_free(dtarget);
+		web_refused(server, target, handle, "inactive");
 		return;
 	}
 	if (e2e_keyring_is_lost()) {
 		e2e_print_item(item, "web client asked to %s %s on %s: %s", verb, shown_text(handle),
 		               dtarget, LOST_REFUSAL);
 		g_free(dtarget);
+		web_refused(server, target, handle, "lost");
 		return;
 	}
 	if (!IS_IRC_SERVER(server) || !server->connected) {
 		e2e_print_item(item, "web client asked to %s %s on %s: not connected to the server — nothing sent",
 		               verb, shown_text(handle), dtarget);
 		g_free(dtarget);
+		web_refused(server, target, handle, "not_connected");
 		return;
 	}
 	kr = e2e_load();
@@ -1280,7 +1313,22 @@ void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, con
 	if (found == NULL || n != 1 || strcmp(found, handle) != 0) {
 		e2e_print_item(item, "web client asked to %s %s on %s, but no such request waits — nothing sent",
 		               verb, shown_text(handle), dtarget);
+		reason = "no_request";
 		goto out;
+	}
+	/* the key the client showed: a request that came again with
+	   another key since is not the one the user decided on */
+	if (fingerprint != NULL) {
+		fp = pending_fp16(kr, ctx, found);
+		if (*fp == '\0' || strcmp(fp, fingerprint) != 0) {
+			e2e_print_item(item, "web client asked to %s %s on %s for the key %s, but the request that waits has the key %s — nothing sent",
+			               verb, shown_text(handle), dtarget, shown_text(fingerprint),
+			               *fp != '\0' ? fp : "(damaged)");
+			g_free(fp);
+			reason = "mismatch";
+			goto out;
+		}
+		g_free(fp);
 	}
 	/* found points into kr, into the row accept and decline remove */
 	picked = g_strdup(found);
@@ -1298,7 +1346,10 @@ void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, con
 out:
 	g_free(ctx);
 	g_free(dtarget);
+	/* told once the keyring (secret keys) is let go */
 	e2e_json_free(kr);
+	if (reason != NULL)
+		web_refused(server, target, handle, reason);
 }
 
 /* SYNTAX: E2E REVOKE <nick> */

@@ -15,6 +15,11 @@
  "e2e action" (server, target, action, handle). Without the module nobody
  answers: no e2e_state is ever sent, and an e2e_action is refused.
 
+ The e2e module refuses an action it does not take with "e2e action
+ refused" (server, target, handle, reason) while it handles it; a
+ "mismatch" (the request waits with another key than the client's
+ fingerprint) is answered as e2e_mismatch.
+
  An e2e_action is a message of a logged-in client, handled through
  fe_web_client_handle_message() like every other: the /UNLOAD guard
  counts it, and only a client that passed the login (with its pacing)
@@ -43,6 +48,15 @@
 static WEB_CLIENT_REC *dump_client;
 static IRC_SERVER_REC *dump_server;
 static const char *dump_target;
+
+/* the action being handed to the e2e module, and why it refused it (its
+   "e2e action refused" while the action is emitted) */
+typedef struct {
+	IRC_SERVER_REC *server;
+	const char *target, *handle;
+	char *reason;
+} ACTION_ASKED;
+static ACTION_ASKED *asked;
 
 /* ---- the e2e object: one JSON object, nothing else ---- */
 
@@ -257,6 +271,29 @@ gboolean fe_web_e2e_handle_valid(const char *handle)
 	return at == 1;
 }
 
+/* the start of a key's fingerprint as e2e_state shows it: exactly 16
+   lowercase hex digits */
+static gboolean fingerprint_valid(const char *fp)
+{
+	int i;
+
+	if (fp == NULL)
+		return FALSE;
+	for (i = 0; i < 16; i++)
+		if (!g_ascii_isdigit(fp[i]) && (fp[i] < 'a' || fp[i] > 'f'))
+			return FALSE;
+	return fp[16] == '\0';
+}
+
+static void sig_action_refused(SERVER_REC *server, const char *target, const char *handle,
+                               const char *reason)
+{
+	if (asked != NULL && asked->reason == NULL && reason != NULL &&
+	    IRC_SERVER(server) == asked->server && g_strcmp0(target, asked->target) == 0 &&
+	    g_strcmp0(handle, asked->handle) == 0)
+		asked->reason = g_strdup(reason);
+}
+
 /* a channel or nick: one IRC target, as the server would take it */
 static gboolean target_valid(const char *target)
 {
@@ -304,8 +341,9 @@ static void refuse(WEB_CLIENT_REC *client, const char *id, const char *error_cod
 
 void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
 {
-	char *id, *tag, *target, *action, *handle;
+	char *id, *tag, *target, *action, *handle, *fingerprint;
 	IRC_SERVER_REC *server = NULL;
+	ACTION_ASKED this, *outer;
 	guint64 serial;
 
 	/* only a logged-in client's message: none other is handled at all,
@@ -318,11 +356,15 @@ void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
 	target = fe_web_json_get_string(json, "target");
 	action = fe_web_json_get_string(json, "action");
 	handle = fe_web_json_get_string(json, "handle");
+	/* optional; when there, it must be one (not null, not a number) */
+	fingerprint = fe_web_json_get_string(json, "fingerprint");
 
 	if (action == NULL || (strcmp(action, "accept") != 0 && strcmp(action, "decline") != 0)) {
 		refuse(client, id, "e2e_invalid", "the action is neither accept nor decline");
 	} else if (!fe_web_e2e_handle_valid(handle)) {
 		refuse(client, id, "e2e_invalid", "the handle is not one ident@host");
+	} else if (fe_web_json_has_key(json, "fingerprint") && !fingerprint_valid(fingerprint)) {
+		refuse(client, id, "e2e_invalid", "the fingerprint is not 16 lowercase hex digits");
 	} else if (!target_valid(target)) {
 		refuse(client, id, "e2e_invalid", "the target is not a channel or nick");
 	} else if (tag == NULL || *tag == '\0') {
@@ -337,11 +379,27 @@ void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
 		/* the module decides and tells: in erssi, and as a new
 		   e2e_state when something changed */
 		serial = client->serial;
+		memset(&this, 0, sizeof(this));
+		this.server = server;
+		this.target = target;
+		this.handle = handle;
+		outer = asked;
+		asked = &this;
 		server_ref(SERVER(server));
-		signal_emit("e2e action", 4, server, target, action, handle);
+		signal_emit("e2e action", 5, server, target, action, handle, fingerprint);
 		server_unref(SERVER(server));
-		if (g_slist_find(web_clients, client) != NULL && client->serial == serial)
-			send_result(client, id, TRUE, "handed to the e2e module", NULL);
+		asked = outer;
+		/* answered unless the client was closed meanwhile */
+		if (g_slist_find(web_clients, client) != NULL && client->serial == serial) {
+			if (g_strcmp0(this.reason, "mismatch") == 0)
+				/* the request waits with another key than the
+				   one the client showed: nothing done */
+				send_result(client, id, FALSE, "the request waits with another key",
+				            "e2e_mismatch");
+			else
+				send_result(client, id, TRUE, "handed to the e2e module", NULL);
+		}
+		g_free(this.reason);
 	}
 
 	g_free(id);
@@ -349,16 +407,20 @@ void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
 	g_free(target);
 	g_free(action);
 	g_free(handle);
+	g_free(fingerprint);
 }
 
 void fe_web_e2e_init(void)
 {
 	dump_client = NULL;
+	asked = NULL;
 	signal_add("e2e state", (SIGNAL_FUNC) sig_e2e_state);
+	signal_add("e2e action refused", (SIGNAL_FUNC) sig_action_refused);
 }
 
 void fe_web_e2e_deinit(void)
 {
 	signal_remove("e2e state", (SIGNAL_FUNC) sig_e2e_state);
+	signal_remove("e2e action refused", (SIGNAL_FUNC) sig_action_refused);
 	dump_client = NULL;
 }

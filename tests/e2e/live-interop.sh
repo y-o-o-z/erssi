@@ -30,7 +30,9 @@
 # /upgrade - never in clear text. The signals fe-web uses (a script stands
 # in for it): the state of #test with mallory's request, a web accept of a
 # request that does not wait (refused, nothing sent), a web decline (a new
-# state), and with rpe2e.pl loaded (bob) "off" and a refusal. Last, rpe2e.pl
+# state), an accept bound to a fingerprint (another key's: refused; the
+# shown one: KEYRSP), "off" for every item told on /unload e2e, and with
+# rpe2e.pl loaded (bob) "off" and a refusal. Last, rpe2e.pl
 # loads and saves alice's keyring and keeps what only the module writes.
 #
 # A second fake server plays a second network (chatnet E2E2): alice is on
@@ -1439,8 +1441,12 @@ Irssi::command_bind('e2etest_state', sub {
 });
 Irssi::command_bind('e2etest_action', sub {
     my ($data, $server) = @_;
-    my ($target, $action, $handle) = split ' ', $data;
-    Irssi::signal_emit('e2e action', $server, $target, $action, $handle);
+    my ($target, $action, $handle, $fp) = split ' ', $data;
+    if (defined $fp) {
+        Irssi::signal_emit('e2e action', $server, $target, $action, $handle, $fp);
+    } else {
+        Irssi::signal_emit('e2e action', $server, $target, $action, $handle);
+    }
 });
 PERL
 cp "$WORK/alice/scripts/e2eweb.pl" "$WORK/bob/scripts/e2eweb.pl"
@@ -1695,6 +1701,7 @@ MARK=$(wc -l < "$STATE_LOG")
 say mallory "/window goto $CHAN"
 for try in 1 2; do
     sleep 11
+    MALLORY_REQ_AT=$(date +%s)
     say mallory "/e2e handshake alice"
     wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 20 && break
 done
@@ -1787,12 +1794,66 @@ else
 fi
 say alice "/window close"
 
+# ---- a web client's accept, bound to the key it showed ----
+# #plain (E2E off) is told through a request: it gets "off" on /unload too
+say alice "/join -E2E #plain"
+say alice "/e2etest_state #plain"
+say alice "/join -E2E $CHAN"
+MARK=$(wc -l < "$STATE_LOG")
+say mallory "/window goto $CHAN"
+# mallory's own request of the earlier check waits 120 s on his side:
+# no new one before it expires
+now=$(date +%s)
+[ $((MALLORY_REQ_AT + 125 - now)) -gt 0 ] && sleep $((MALLORY_REQ_AT + 125 - now))
+for try in 1 2; do
+    sleep 11
+    say mallory "/e2e handshake alice"
+    wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 20 && break
+done
+FP=$(state_lines "$MARK" '"handle":"mallory@127.0.0.1"' | tail -n 1 |
+     grep -o '"handle":"mallory@127.0.0.1","fingerprint":"[0-9a-f]*"' | sed 's/.*"fingerprint":"//; s/"$//')
+if [ ${#FP} -eq 16 ]; then
+    pass "web: mallory's request again, with the fingerprint of his key"
+else
+    bad "web: mallory's request did not come again with a fingerprint (the checks below prove nothing)"
+fi
+WRONG=0000000000000000
+[ "$FP" = "$WRONG" ] && WRONG=ffffffffffffffff
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say alice "/e2etest_action $CHAN accept mallory@127.0.0.1 $WRONG"
+sleep 2
+MARK=$(wc -l < "$STATE_LOG")
+say alice "/e2etest_state $CHAN"
+if grep -aqF "web client asked to accept mallory@127.0.0.1 on $CHAN for the key $WRONG, but the request that waits has the key $FP — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory" &&
+   wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 5; then
+    pass "web accept with another key's fingerprint: refused, nothing sent, the request still waits"
+else
+    bad "web accept with another key's fingerprint: not refused, or something sent"
+fi
+# the fingerprint the state showed: accepted, the KEYRSP goes to mallory
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+MARK=$(wc -l < "$STATE_LOG")
+say alice "/e2etest_action $CHAN accept mallory@127.0.0.1 $FP"
+n=0
+until tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" || [ $n -ge 10 ]; do
+    sleep 1; n=$((n + 1))
+done
+if tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" &&
+   grep -aqF "web client: accept mallory@127.0.0.1 on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   wait_state "$MARK" '"state":"on"' 'mallory' 10; then
+    pass "web accept with the shown fingerprint: KEYRSP to mallory, a new state without his request"
+else
+    bad "web accept with the shown fingerprint: no KEYRSP to mallory, or his request still listed"
+fi
+
 # ---- /unload e2e with lines waiting ----
 # a message to an encrypted channel still in irssi's flood queue would
 # leave in clear text without the module: dropped and said, with no
 # "0 encrypted line(s)" when the module's own queue is empty
 say alice "/join -E2E $CHAN"
 sleep 9
+UNLOAD_MARK=$(wc -l < "$STATE_LOG")
 quick alice "unload short one"
 quick alice "unload short two"
 quick alice "/unload e2e"
@@ -1801,6 +1862,14 @@ if wait_for "$WORK/alice/all.log" "message(s) to E2E not sent: the e2e module is
     pass "/unload e2e with a message in irssi's queue: alice is told it is not sent"
 else
     bad "/unload e2e with a message in irssi's queue: alice is not told, or told of 0 encrypted lines"
+fi
+# every item a web client was told about is told "off": #test, and
+# #plain, told through a request only
+if tail -n +$((UNLOAD_MARK + 1)) "$STATE_LOG" | grep -aqF "E2E $CHAN {\"v\":1,\"state\":\"off\"" &&
+   tail -n +$((UNLOAD_MARK + 1)) "$STATE_LOG" | grep -aqF "E2E #plain {\"v\":1,\"state\":\"off\""; then
+    pass "web: /unload e2e tells every item it told about \"off\""
+else
+    bad "web: /unload e2e left an item a web client was told about without \"off\""
 fi
 say alice "/load e2e"
 sleep 2

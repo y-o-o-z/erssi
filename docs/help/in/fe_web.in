@@ -67,7 +67,8 @@
     blocked, keyring error) and the key requests that wait there, and it
     can accept or decline such a request. Accepting hands out your key, so
     only a request that waits in that channel or query, with exactly the
-    ident@host the client names, is acted on; erssi prints what was done
+    ident@host the client names (and the key it showed, when it sends
+    the fingerprint), is acted on; erssi prints what was done
     in that window. While the rpe2e.pl script is loaded, web clients see
     E2E as off and their actions are refused. The protocol (version 1) is
     docs/fe-web-e2e.md in the erssi sources.
