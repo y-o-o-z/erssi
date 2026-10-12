@@ -18,6 +18,19 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    prints the count line, not a table with your own nick
 	  - /set -default and /reset give erssi's built-in value
 
+	+ Mentions
+	  - a built-in Mentions window (/MENTIONS, /HELP MENTIONS) replaces
+	    mentions.pl: private messages and /ME actions, NOTICEs from people,
+	    DCC CHAT messages and channel hilights, in a background window that
+	    is immortal and created again if closed; /IGNORE is respected
+	  - mentions_log (on in the default config) appends every entry to a
+	    0600 log file (mentions_log_file; logs/mentions.log by default);
+	    mentions_exclude_networks leaves networks out of window and log;
+	    mentions_window names the window (empty: no window); /MENTIONS CLEAR
+	  - loading the old mentions.pl unloads it with a notice and moves its
+	    settings to the built-in ones; scripts/mentions.pl is only a stub
+	  - a "mention" signal for scripts
+
 	+ E2E
 	  - keys are kept per network: a keyring entry is "<network>\x1f<name>"
 	    (the chatnet, else the server tag), so #test on two networks has
