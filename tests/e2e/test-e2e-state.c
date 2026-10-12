@@ -436,6 +436,71 @@ static void test_handle_lookup(void)
 	e2e_json_free(kr);
 }
 
+/* a query's request names its sender ("@" + its own address): one stored
+   under another person's query (rpe2e.pl before 2026-10 kept those) is
+   damaged - never shown as waiting, never picked */
+static void test_pending_foreign_dm(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	E2E_WIN_INFO info;
+	GPtrArray *all, *bad;
+	E2E_NET one;
+	guint n = 99;
+
+	e2e_net_init(&one, "E2E", "E2E", "rfc1459", TRUE);
+	set_config(kr, "@x@hx", 1, "normal", "x");
+	set_pending(kr, "y@hy", "@x@hx", "x", 100);
+	set_pending(kr, "z@hz", "E2E\x1f@x@hx", "z", 110);
+	set_pending(kr, "w@hw", "E2E\x1f" "barenick", "w", 120);
+
+	info_of(kr, TRUE, &one, "@x@hx", "@me@m", "x", &info);
+	g_assert_cmpuint(info.pending->len, ==, 0);
+	e2e_window_info_clear(&info);
+	g_assert_null(e2e_pending_handle(kr, "@x@hx", NULL, E2E_CASEMAP_RFC1459, &n));
+	g_assert_cmpuint(n, ==, 0);
+	g_assert_null(e2e_pending_handle(kr, "@x@hx", "x", E2E_CASEMAP_RFC1459, &n));
+	g_assert_cmpuint(n, ==, 0);
+	g_assert_null(e2e_pending_handle(kr, "@x@hx", "y@hy", E2E_CASEMAP_RFC1459, &n));
+	g_assert_null(e2e_pending_handle(kr, "E2E\x1f@x@hx", NULL, E2E_CASEMAP_RFC1459, &n));
+	g_assert_null(e2e_pending_handle(kr, "E2E\x1f" "barenick", NULL, E2E_CASEMAP_RFC1459, &n));
+	all = e2e_pending_all(kr);
+	g_assert_cmpuint(all->len, ==, 0);
+	g_ptr_array_unref(all);
+	/* told as damaged, once each */
+	bad = e2e_pending_damaged(kr);
+	g_assert_cmpuint(bad->len, ==, 3);
+	g_assert_cmpstr(((E2E_PENDING *) g_ptr_array_index(bad, 0))->handle, ==, "y@hy");
+	g_assert_cmpstr(((E2E_PENDING *) g_ptr_array_index(bad, 0))->ctx, ==, "@x@hx");
+	g_ptr_array_unref(bad);
+
+	/* x's own request is one */
+	set_pending(kr, "x@hx", "@x@hx", "x", 130);
+	g_assert_cmpstr(e2e_pending_handle(kr, "@x@hx", NULL, E2E_CASEMAP_RFC1459, &n), ==, "x@hx");
+	g_assert_cmpuint(n, ==, 1);
+	all = e2e_pending_all(kr);
+	g_assert_cmpuint(all->len, ==, 1);
+	g_ptr_array_unref(all);
+
+	e2e_net_clear(&one);
+	e2e_json_free(kr);
+}
+
+/* an empty who is no argument */
+static void test_pending_empty_who(void)
+{
+	E2E_JSON *kr = e2e_keyring_new();
+	guint n = 99;
+
+	set_pending(kr, "bob@127.0.0.1", "E2E\x1f#test", "bob", 100);
+	g_assert_cmpstr(e2e_pending_handle(kr, "E2E\x1f#test", "", E2E_CASEMAP_RFC1459, &n), ==,
+	                "bob@127.0.0.1");
+	g_assert_cmpuint(n, ==, 1);
+	set_pending(kr, "carol@h", "E2E\x1f#test", "", 200);
+	g_assert_null(e2e_pending_handle(kr, "E2E\x1f#test", "", E2E_CASEMAP_RFC1459, &n));
+	g_assert_cmpuint(n, ==, 2);
+	e2e_json_free(kr);
+}
+
 static void test_notice_limit(void)
 {
 	GHashTable *stamps = e2e_stamps_new();
@@ -541,6 +606,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/state/notice-limit", test_notice_limit);
 	g_test_add_func("/e2e/state/age-and-names", test_age_and_names);
 	g_test_add_func("/e2e/pending/handle-lookup", test_handle_lookup);
+	g_test_add_func("/e2e/pending/foreign-dm", test_pending_foreign_dm);
+	g_test_add_func("/e2e/pending/empty-who", test_pending_empty_who);
 
 	return g_test_run();
 }

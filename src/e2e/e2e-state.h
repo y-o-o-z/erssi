@@ -12,7 +12,9 @@
  members "handle" and "channel" (e2e_handle_keyreq and rpe2e.pl write
  both). A row counts only when its key is exactly "<handle>|<channel>":
  that is the row /e2e accept <handle> acts on in the window of
- <channel>; any other row is not shown and never picked.
+ <channel>; any other row is not shown and never picked. A request for
+ a query counts only when its context is "@<handle>" - the sender's own
+ query; one for another person's query is damaged (e2e_pending_damaged).
 */
 
 #include <glib.h>
@@ -74,14 +76,21 @@ void e2e_window_info_clear(E2E_WIN_INFO *info);
 void e2e_pending_free(E2E_PENDING *p);
 /* every waiting request (all networks), oldest first: E2E_PENDING * */
 GPtrArray *e2e_pending_all(const E2E_JSON *kr);
+/* the damaged waiting requests, oldest first: a query's request whose
+   context is not "@" + its own address (rpe2e.pl before 2026-10 stored
+   such rows). Never shown as waiting, never picked; listed to be told. */
+GPtrArray *e2e_pending_damaged(const E2E_JSON *kr);
 /* the waiting requests of the storage context ctx, oldest first */
 GPtrArray *e2e_pending_of(const E2E_JSON *kr, const char *ctx);
 /*
  The handle of the only waiting request of ctx that matches who: its
  handle is who, or - who holding no '@' - its sender_nick and who are the
- same under map (e2e_casefold); who NULL matches every one. *count (if
- not NULL): how many match. NULL unless exactly one does - a nick that
- names requests of two addresses picks neither. Points into kr.
+ same under map (e2e_casefold); who NULL or "" matches every one.
+ *count (if not NULL): how many match. NULL unless exactly one does - a
+ nick that names requests of two addresses picks neither. A damaged
+ request (e2e_pending_damaged) is never one.
+ WARNING: the handle points into kr - into the row that e2e_accept()
+ and /e2e decline remove: copy it (g_strdup) before changing kr.
 */
 const char *e2e_pending_handle(const E2E_JSON *kr, const char *ctx, const char *who,
                                E2E_CASEMAP map, guint *count);

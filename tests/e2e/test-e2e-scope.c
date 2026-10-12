@@ -830,6 +830,23 @@ static void test_contexts(void)
 	g_assert_cmpstr(t, ==, "ża?");
 	g_free(t);
 	g_assert_null(e2e_text_display(NULL));
+	/* C1 controls, decoded (U+0085) or as raw bytes, and the bidi and
+	   format controls that reorder or hide text */
+	t = e2e_text_display("a\xc2\x85" "b\x85" "c\x9b" "d\xc2\x9f" "e");
+	g_assert_cmpstr(t, ==, "a?b?c?d?e");
+	g_free(t);
+	t = e2e_text_display("1\xe2\x80\xaa" "2\xe2\x80\xae" "3\xe2\x81\xa6" "4\xe2\x81\xa9"
+	                     "5\xe2\x80\x8e" "6\xe2\x80\x8f" "7\xd8\x9c" "8");
+	g_assert_cmpstr(t, ==, "1?2?3?4?5?6?7?8");
+	g_free(t);
+	/* their neighbours stay: NBSP, U+202F, U+2065, U+200D, ż, a stray
+	   byte that is no C1 control */
+	t = e2e_text_display("\xc2\xa0\xe2\x80\xaf\xe2\x81\xa5\xe2\x80\x8d\xc5\xbc\xff\xa0");
+	g_assert_cmpstr(t, ==, "\xc2\xa0\xe2\x80\xaf\xe2\x81\xa5\xe2\x80\x8d\xc5\xbc\xff\xa0");
+	g_free(t);
+	t = e2e_ctx_display("IRCnet\x1f#a\xe2\x80\xae" "b\xc2\x9b");
+	g_assert_cmpstr(t, ==, "IRCnet:#a?b?");
+	g_free(t);
 
 	/* a wire context holding the separator cannot be scoped */
 	g_assert_null(e2e_ctx_scoped(&net, "#a\x1f" "b"));

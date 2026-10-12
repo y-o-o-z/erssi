@@ -621,8 +621,8 @@ gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO
 	char *error = NULL, *wire = NULL, *own_wire = NULL, *handle;
 
 	memset(out, 0, sizeof(*out));
-	if (item != NULL && item->server != NULL)
-		server = item->server;
+	/* the item's own network, never another server's */
+	server = item != NULL ? item->server : NULL;
 	if (item == NULL || server == NULL || keyring_file == NULL || item->name == NULL)
 		return FALSE;
 	name = item->name;
@@ -658,11 +658,25 @@ void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, co
 	WI_ITEM_REC *item = e2e_notice_item(server, ctx, nick);
 	char *dnick = e2e_text_display(nick != NULL ? nick : "");
 	char *dhandle = e2e_text_display(handle != NULL ? handle : "");
-	char *dctx = e2e_ctx_display(ctx != NULL ? ctx : "");
+	char *dctx, *label;
+	const char *theirs = have_theirs ? " - you can read them already; they get your key only when you accept" : "";
 
-	printformat(server, item != NULL ? item->visible_name : NULL,
-	            MSGLEVEL_CLIENTNOTICE | MSGLEVEL_HILIGHT, TXT_E2E_PENDING, dnick, dhandle, dctx,
-	            have_theirs ? " - you can read them already; they get your key only when you accept" : "");
+	if (ctx != NULL && !e2e_is_channel(e2e_ctx_wire(ctx))) {
+		/* a query: /e2e accept <ident@host> in any window of the
+		   network (in a channel window: when that channel has no
+		   request of the address) */
+		label = e2e_ctx_network(ctx);
+		dctx = e2e_text_display(label != NULL ? label : server != NULL && server->tag != NULL ? server->tag : "?");
+		g_free(label);
+		printformat(server, item != NULL ? item->visible_name : NULL,
+		            MSGLEVEL_CLIENTNOTICE | MSGLEVEL_HILIGHT, TXT_E2E_PENDING_QUERY, dnick, dhandle,
+		            dctx, theirs);
+	} else {
+		dctx = e2e_ctx_display(ctx != NULL ? ctx : "");
+		printformat(server, item != NULL ? item->visible_name : NULL,
+		            MSGLEVEL_CLIENTNOTICE | MSGLEVEL_HILIGHT, TXT_E2E_PENDING, dnick, dhandle, dctx,
+		            theirs);
+	}
 	g_free(dnick);
 	g_free(dhandle);
 	g_free(dctx);

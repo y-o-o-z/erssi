@@ -1458,13 +1458,39 @@ else
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies in the gate for"
 
-# ---- /e2e decline by address ----
+# ---- /e2e decline and accept by address ----
+# mallory asks for alice's key of their query too: the prompt says to
+# answer from any window of the network
+say alice "/query mallory"
+say alice "/e2e on"
+say alice "/window close"
+say mallory "/query alice"
+say mallory "/e2e on"
+say mallory "/e2e handshake alice"
+if wait_for "$WORK/alice/all.log" "Pending key exchange from mallory (mallory@127.0.0.1) for a query" 20 &&
+   grep -aF "Pending key exchange from mallory (mallory@127.0.0.1) for a query" "$WORK/alice/all.log" |
+   grep -qF "Run /e2e accept mallory@127.0.0.1 or /e2e decline mallory@127.0.0.1 in any window of E2E"; then
+    pass "alice: mallory's query request, answered from any window of E2E"
+else
+    bad "alice: no prompt, or not the query prompt, for mallory's query request"
+fi
 say alice "/join -E2E $CHAN"
+# in #test the address names #test's request first
 say alice "/e2e decline mallory@127.0.0.1"
 if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" 5; then
     pass "/e2e decline mallory@127.0.0.1 declines mallory's request"
 else
     bad "/e2e decline mallory@127.0.0.1 did not decline"
+fi
+# then, with none for #test, the request of the query with that address -
+# never #test's session of mallory
+say alice "/e2e accept mallory@127.0.0.1"
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "accepted mallory (mallory@127.0.0.1) on E2E:@mallory@127.0.0.1 — KEYRSP sent" 5 &&
+   ! grep -qF "accepted mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log"; then
+    pass "/e2e accept mallory@127.0.0.1 in #test answers mallory's query request, not #test"
+else
+    bad "/e2e accept mallory@127.0.0.1 in #test did not take the query request"
+    grep -aF "accepted mallory" "$WORK/alice/logs/E2E/$CHAN.log" | sed 's/^/    /'
 fi
 say alice "/e2e pending"
 if wait_for "$WORK/alice/all.log" "No key requests wait for /e2e accept." 5; then
