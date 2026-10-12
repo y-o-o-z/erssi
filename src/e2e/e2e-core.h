@@ -54,10 +54,10 @@ GHashTable *e2e_keyreq_out_stamps(void);
 /* FALSE (after telling the user once) while rpe2e.pl is loaded */
 gboolean e2e_native_active(void);
 
-/* the E2E state of the window of item (server: of an item without one):
-   the keyring read checked, nothing saved, nothing taken over, nothing
-   remembered; FALSE (out cleared) for an item that is no channel or
-   query, or without a server */
+/* the E2E state of the window of item on item's own server (server is
+   not used): the keyring read checked, nothing saved, nothing taken
+   over, nothing remembered; FALSE (out cleared) for an item that is no
+   channel or query, or without a server */
 gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO *out);
 /* the keyring or a window's state changed: "e2e state changed" is
    emitted once, when the main loop is idle (the statusbar, fe-web) */
@@ -68,8 +68,11 @@ void e2e_state_changed(void);
 void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, const char *handle,
                        gboolean have_theirs);
 /* /e2e accept and /e2e decline [<nick>|<ident@host>] in the window of
-   item: without who the only request waiting there; a nick that names
-   several is refused (they are listed) */
+   item (on item's server; server only for no item, the status window):
+   without who (NULL or "") the only request waiting there; a nick that
+   names several is refused (they are listed); an ident@host names the
+   request of that address - the channel's of a channel window, else its
+   query's on this server */
 void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 

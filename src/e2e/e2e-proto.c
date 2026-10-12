@@ -1547,9 +1547,15 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 	E2E_JSON *pending, *rows[2];
 	unsigned char pub[32], eph[32];
 	char *k, *fp_hex;
+	const char *wire = e2e_ctx_wire(ctx);
 	int i, keyed = 0;
 
 	*rsp = *reciprocal = NULL;
+	/* a query's key goes to that query's peer only: a request (or a
+	   session) of another address under it - rpe2e.pl stored such
+	   requests - would get them our key for someone else */
+	if (!e2e_is_channel(wire) && (*wire != '@' || strcmp(wire + 1, handle) != 0))
+		return E2E_ACCEPT_NOT_PEER;
 	k = pipe_key(handle, ctx);
 	pending = e2e_json_get(e2e_json_get(kr, "pending_inbound"), k);
 	if (pending != NULL) {

@@ -52,13 +52,20 @@
                  the request waiting here from that nick (compared as the
                  server compares nicks); when the nick names requests of
                  two addresses, none is accepted - they are listed, name
-                 one by its ident@host. With an ident@host: the request of
-                 that address here (in a query: the request of that
-                 address for a query). Only requests of this window's
-                 channel or query on its network are ever taken. Without
-                 a pending request, a nick or ident@host marks their
-                 session as trusted and accepts them - only when a real
-                 key from them is stored.
+                 one by its ident@host. With an ident@host: in a channel
+                 window the channel's request of that address, if one
+                 waits there; otherwise - from any window of the
+                 network - the request of that address for a query with
+                 it. Only requests of this window's channel or query, or
+                 of that address's query, on this network are ever taken.
+                 Without a pending request, a nick marks their session
+                 here (an ident@host: their query's session) as trusted
+                 and accepts them - only when a real key from them is
+                 stored. A query's key goes only to that query's own
+                 address: a request from anyone else for it is damaged
+                 (rpe2e.pl kept such requests before) - listed by
+                 /E2E PENDING and /E2E ACCEPT, never accepted, removed by
+                 /E2E DECLINE alone in that query.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
                  existing session gets the revoked status and the person
                  is no longer accepted.
@@ -160,12 +167,13 @@
     encryption is on here; their answer lets you read them. Your own key
     goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
     auto-accept mode. Having their key is not enough - so in normal mode
-    each of you accepts the other once. A request is announced in its
-    window as "Pending key exchange from <nick> (<ident@host>) for
-    <network>:<name>" - reply there with /E2E ACCEPT or /E2E DECLINE
-    (alone, or with the ident@host shown); asked again, it is announced
-    at most every 5 minutes, and /E2E PENDING lists every request that
-    waits. Later requests from an accepted person are answered at once. Requests for a channel or
+    each of you accepts the other once. A request for a channel is
+    announced in its window as "Pending key exchange from <nick>
+    (<ident@host>) for <network>:<name>" - reply there with /E2E ACCEPT
+    or /E2E DECLINE (alone, or with the ident@host shown); one for a query
+    as "... for a query", answered with /E2E ACCEPT <ident@host> from any
+    window of that network. Asked again, a request is announced at most
+    every 5 minutes, and /E2E PENDING lists every request that waits. Later requests from an accepted person are answered at once. Requests for a channel or
     query where encryption is off are ignored, a request for a query must
     come from the person it names, and each kind of request (KEYREQ,
     KEYRSP, REKEY) from one person for one context is handled at most

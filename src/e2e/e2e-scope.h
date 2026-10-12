@@ -170,11 +170,13 @@ char *e2e_ctx_network(const char *ctx);
 /* TRUE when ctx is scoped to net's label, or unscoped (a legacy row); a
    scoped ctx is on no net without a label, and a NULL ctx on none */
 gboolean e2e_ctx_on_net(const char *ctx, const E2E_NET *net);
-/* "IRCnet:#chan" for a scoped ctx, a bare one as it is; every other C0
-   control byte (a further 0x1F, formatting codes) and DEL as '?'; NULL
-   for NULL */
+/* "IRCnet:#chan" for a scoped ctx, a bare one as it is; the rest as
+   e2e_text_display() shows it (a further 0x1F as '?'); NULL for NULL */
 char *e2e_ctx_display(const char *ctx);
-/* text with every C0 control byte and DEL as '?'; NULL for NULL */
+/* text with each control character as one '?': C0 (formatting codes),
+   DEL, C1 (U+0080-U+009F, and a byte 0x80-0x9F that is not part of
+   UTF-8), the bidi and format controls U+061C, U+200E, U+200F,
+   U+202A-U+202E, U+2066-U+2069; anything else as it is. NULL for NULL */
 char *e2e_text_display(const char *text);
 
 /* ---- the keyring: legacy (unscoped) rows ---- */

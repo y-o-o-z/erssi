@@ -21,6 +21,7 @@
 #include <irssi/src/e2e/e2e-proto.h>
 #include <irssi/src/e2e/e2e-wire.h>
 
+#include <irssi/src/e2e/e2e-state.h>
 #include "e2e-legacy-fixture.h"
 #include "rpe2e-vectors.h"
 
@@ -5251,6 +5252,94 @@ static void test_gate_dry(void)
 	peer_free(&a);
 }
 
+/* the reviewer's PoC (R-E33): y's KEYREQ for x's query, stored as
+   rpe2e.pl stored it, must never get y our key for x */
+static void test_accept_foreign_dm(void)
+{
+	PEER me, y, x;
+	E2E_JSON *row;
+	E2E_HANDSHAKE *req;
+	unsigned char key[32];
+	gboolean rot, gen;
+	char *req_ctcp, *body, *b, *rsp = NULL, *recip = NULL, *error = NULL, *before, *after;
+	guint n = 99;
+
+	peer_init(&me, "me", "me@m", -1);
+	peer_init(&y, "y", "y@hy", -1);
+	peer_init(&x, "x", "x@hx", -1);
+	enable(&me, "@x@hx", "normal");
+	g_assert_true(e2e_outgoing_key(me.kr, "@x@hx", key, &rot, &gen));
+	enable(&y, "@x@hx", "normal");
+	req_ctcp = e2e_build_keyreq(y.kr, &y.id, "@x@hx", "me@m", &error);
+	g_assert_nonnull(req_ctcp);
+	body = unframe(req_ctcp);
+
+	/* the native module never stores it */
+	deliver_keyreq_on(&me, &y, &net_one, req_ctcp, "me@m", &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_null(path_get(me.kr, "pending_inbound", "y@hy|@x@hx", NULL));
+
+	/* stored the way rpe2e.pl did */
+	req = e2e_handshake_parse(body, E2E_HS_KEYREQ);
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(row, "handle", "y@hy");
+	e2e_json_set_string(row, "channel", "@x@hx");
+	e2e_json_set_string(row, "sender_handle", "y@hy");
+	e2e_json_set_string(row, "sender_nick", "x");
+	b = e2e_b64_encode(req->pub, 32);
+	e2e_json_set_string(row, "pubkey", b);
+	g_free(b);
+	b = e2e_b64_encode(req->eph, 32);
+	e2e_json_set_string(row, "eph_x25519", b);
+	g_free(b);
+	e2e_json_set_int(row, "received_at", 1);
+	e2e_json_set(e2e_json_object_member(me.kr, "pending_inbound"), "y@hy|@x@hx", row);
+	e2e_handshake_free(req);
+
+	/* never picked, by no argument nor by the nick it came under */
+	g_assert_null(e2e_pending_handle(me.kr, "@x@hx", NULL, E2E_CASEMAP_RFC1459, &n));
+	g_assert_cmpuint(n, ==, 0);
+	g_assert_null(e2e_pending_handle(me.kr, "@x@hx", "X", E2E_CASEMAP_RFC1459, &n));
+	/* and refused when named directly */
+	before = e2e_keyring_snapshot(me.kr);
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "y@hy", "@x@hx", "@me@m", "me@m", &rsp, &recip), ==,
+	                E2E_ACCEPT_NOT_PEER);
+	g_assert_null(rsp);
+	g_assert_null(recip);
+	/* the session path too: y's key under x's query is not trusted */
+	set_trusted_session(me.kr, "y@hy|@x@hx", LEGACY_BOB_SK);
+	g_free(before);
+	before = e2e_keyring_snapshot(me.kr);
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "y@hy", "@x@hx", "@me@m", "me@m", &rsp, &recip), ==,
+	                E2E_ACCEPT_NOT_PEER);
+	/* an old bare-nick context is no address of anybody */
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "y@hy", "E2E\x1fy", NULL, "me@m", &rsp, &recip), ==,
+	                E2E_ACCEPT_NOT_PEER);
+	after = e2e_keyring_snapshot(me.kr);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+	g_free(before);
+
+	/* x's own request is answered (the refusal above can fail) */
+	g_free(req_ctcp);
+	enable(&x, "@x@hx", "normal");
+	req_ctcp = e2e_build_keyreq(x.kr, &x.id, "@x@hx", "me@m", &error);
+	deliver_keyreq_on(&me, &x, &net_one, req_ctcp, "me@m", &rsp, &recip);
+	g_assert_nonnull(path_get(me.kr, "pending_inbound", "x@hx|@x@hx", NULL));
+	g_assert_cmpstr(e2e_pending_handle(me.kr, "@x@hx", NULL, E2E_CASEMAP_RFC1459, &n), ==, "x@hx");
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "x@hx", "@x@hx", "@me@m", "me@m", &rsp, &recip), ==,
+	                E2E_ACCEPT_SENT);
+	g_assert_nonnull(rsp);
+	g_free(rsp);
+	g_free(recip);
+	g_free(req_ctcp);
+	g_free(body);
+	g_free(error);
+	peer_free(&me);
+	peer_free(&y);
+	peer_free(&x);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5263,6 +5352,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
+	g_test_add_func("/e2e/proto/accept-foreign-dm", test_accept_foreign_dm);
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);

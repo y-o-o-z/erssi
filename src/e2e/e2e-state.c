@@ -20,20 +20,35 @@
 
 /* ---- waiting requests ---- */
 
-/* row (pending_inbound[key]) holds together: its "handle" and "channel"
-   members name exactly its key, "<handle>|<channel>" - the row
-   /e2e accept <handle> acts on in the window of <channel> */
-static gboolean pending_row_parts(const char *key, const E2E_JSON *row, const char **handle,
+typedef enum {
+	ROW_BAD,		/* does not hold together: never shown */
+	ROW_WAITING,		/* a request waiting for /e2e accept */
+	ROW_FOREIGN_DM		/* a query's request naming another address */
+} ROW_KIND;
+
+/* row (pending_inbound[key]) holds together when its "handle" and
+   "channel" members name exactly its key, "<handle>|<channel>" - the row
+   /e2e accept <handle> acts on in the window of <channel>. A request
+   for a query asks for the direction to its sender: its context must be
+   "@" + its own address (e2e_handle_keyreq; rpe2e.pl did not check it),
+   else our key for another person's query would go to the sender */
+static ROW_KIND pending_row_parts(const char *key, const E2E_JSON *row, const char **handle,
                                   const char **ctx)
 {
+	const char *wire;
 	size_t hl;
 
 	*handle = e2e_json_get_string(row, "handle");
 	*ctx = e2e_json_get_string(row, "channel");
 	if (*handle == NULL || *ctx == NULL || **handle == '\0' || **ctx == '\0')
-		return FALSE;
+		return ROW_BAD;
 	hl = strlen(*handle);
-	return strncmp(key, *handle, hl) == 0 && key[hl] == '|' && strcmp(key + hl + 1, *ctx) == 0;
+	if (strncmp(key, *handle, hl) != 0 || key[hl] != '|' || strcmp(key + hl + 1, *ctx) != 0)
+		return ROW_BAD;
+	wire = e2e_ctx_wire(*ctx);
+	if (!e2e_is_channel(wire) && (*wire != '@' || strcmp(wire + 1, *handle) != 0))
+		return ROW_FOREIGN_DM;
+	return ROW_WAITING;
 }
 
 void e2e_pending_free(E2E_PENDING *p)
@@ -81,8 +96,8 @@ static gint pending_cmp(gconstpointer a, gconstpointer b)
 	return c != 0 ? c : strcmp(x->ctx, y->ctx);
 }
 
-/* the waiting requests of ctx, of every context for NULL */
-static GPtrArray *pending_collect(const E2E_JSON *kr, const char *ctx)
+/* the rows of kind of ctx, of every context for NULL */
+static GPtrArray *pending_collect(const E2E_JSON *kr, const char *ctx, ROW_KIND kind)
 {
 	GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_pending_free);
 	E2E_JSON *store = e2e_json_get(kr, "pending_inbound");
@@ -93,7 +108,7 @@ static GPtrArray *pending_collect(const E2E_JSON *kr, const char *ctx)
 		const char *key = g_ptr_array_index(keys, i), *handle, *rctx;
 		E2E_JSON *row = e2e_json_get(store, key);
 
-		if (!pending_row_parts(key, row, &handle, &rctx))
+		if (pending_row_parts(key, row, &handle, &rctx) != kind)
 			continue;
 		if (ctx != NULL && strcmp(rctx, ctx) != 0)
 			continue;
@@ -106,14 +121,19 @@ static GPtrArray *pending_collect(const E2E_JSON *kr, const char *ctx)
 
 GPtrArray *e2e_pending_all(const E2E_JSON *kr)
 {
-	return pending_collect(kr, NULL);
+	return pending_collect(kr, NULL, ROW_WAITING);
+}
+
+GPtrArray *e2e_pending_damaged(const E2E_JSON *kr)
+{
+	return pending_collect(kr, NULL, ROW_FOREIGN_DM);
 }
 
 GPtrArray *e2e_pending_of(const E2E_JSON *kr, const char *ctx)
 {
 	if (ctx == NULL)
 		return g_ptr_array_new_with_free_func((GDestroyNotify) e2e_pending_free);
-	return pending_collect(kr, ctx);
+	return pending_collect(kr, ctx, ROW_WAITING);
 }
 
 const char *e2e_pending_handle(const E2E_JSON *kr, const char *ctx, const char *who,
@@ -122,16 +142,21 @@ const char *e2e_pending_handle(const E2E_JSON *kr, const char *ctx, const char *
 	E2E_JSON *store = e2e_json_get(kr, "pending_inbound");
 	GPtrArray *keys = e2e_json_keys(store);
 	const char *found = NULL;
-	/* an ident@host names its own request only (no nick holds '@') */
-	char *fwho = who != NULL && strchr(who, '@') == NULL ? e2e_casefold(who, map) : NULL;
+	char *fwho;
 	guint i, n = 0;
+
+	/* "" is no argument */
+	if (who != NULL && *who == '\0')
+		who = NULL;
+	/* an ident@host names its own request only (no nick holds '@') */
+	fwho = who != NULL && strchr(who, '@') == NULL ? e2e_casefold(who, map) : NULL;
 
 	for (i = 0; ctx != NULL && i < keys->len; i++) {
 		const char *key = g_ptr_array_index(keys, i), *handle, *rctx, *nick;
 		E2E_JSON *row = e2e_json_get(store, key);
 		gboolean match;
 
-		if (!pending_row_parts(key, row, &handle, &rctx) || strcmp(rctx, ctx) != 0)
+		if (pending_row_parts(key, row, &handle, &rctx) != ROW_WAITING || strcmp(rctx, ctx) != 0)
 			continue;
 		match = who == NULL || strcmp(handle, who) == 0;
 		nick = e2e_json_get_string(row, "sender_nick");

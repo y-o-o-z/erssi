@@ -146,7 +146,10 @@ typedef enum {
 	E2E_ACCEPT_NO_KEY,	/* only a session without a real key: nothing changed */
 	E2E_ACCEPT_NOTHING,	/* neither a pending request nor a session */
 	E2E_ACCEPT_DAMAGED,	/* the pending request does not decode */
-	E2E_ACCEPT_FAILED	/* the KEYRSP could not be built */
+	E2E_ACCEPT_FAILED,	/* the KEYRSP could not be built */
+	E2E_ACCEPT_NOT_PEER	/* ctx is a query of another address than handle
+				   (or no address): nothing changed - our key
+				   for that query goes to its own peer only */
 } E2E_ACCEPT_RESULT;
 
 /* /e2e accept: handle and ctx as in pending_inbound; own_ctx is "@<own>"

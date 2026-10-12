@@ -751,11 +751,19 @@ static gboolean nick_context(E2E_JSON *kr, WI_ITEM_REC *item, const char *nick,
 static void cmd_pending(WI_ITEM_REC *item)
 {
 	E2E_JSON *kr = e2e_load();
-	GPtrArray *all = e2e_pending_all(kr);
+	GPtrArray *all = e2e_pending_all(kr), *bad;
 	guint i;
 
+	bad = e2e_pending_damaged(kr);
 	if (all->len == 0)
 		e2e_print_item(item, "No key requests wait for /e2e accept.");
+	for (i = 0; i < bad->len; i++) {
+		E2E_PENDING *p = g_ptr_array_index(bad, i);
+
+		e2e_print_item(item, "  damaged: %s (%s) on %s — asks for the query of another address, never accepted; /e2e decline in that query removes it",
+		               shown_text(p->nick), shown_text(p->handle), shown(p->ctx));
+	}
+	g_ptr_array_unref(bad);
 	for (i = 0; i < all->len; i++) {
 		E2E_PENDING *p = g_ptr_array_index(all, i);
 		char *age = e2e_age_text(e2e_now() - p->received_at);
@@ -768,27 +776,39 @@ static void cmd_pending(WI_ITEM_REC *item)
 	e2e_json_free(kr);
 }
 
-/* the context of /e2e accept|decline [who] in the window of item: the
-   window's; in a query an ident@host names the DM context of that
-   address. NULL when there is none (*refused: said why) */
-static char *who_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *who, gboolean *refused)
+/* the context of /e2e accept|decline [who]: without who, or for a nick,
+   the window's (a nick in a query: that nick's query). An ident@host
+   names a request of that address on this server: in a channel window
+   the channel's when one waits there, else - in any window - the query
+   context of that address; never the channel's sessions. NULL when there
+   is none (*refused: said why) */
+static char *who_ctx(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, const char *who,
+                     gboolean *refused)
 {
 	E2E_NET net;
 	char *wire, *ctx;
+	guint n;
 
 	*refused = FALSE;
 	if (who == NULL || strchr(who, '@') == NULL)
 		return resolve_ctx(kr, item, who, refused);
-	if (query_nick(item) == NULL)
-		return resolve_ctx(kr, item, NULL, refused);
 	wire = g_strconcat("@", who, NULL);
-	if (item->server == NULL) {
+	if (server == NULL) {
 		e2e_print_item(item, "not connected to a server — the network of %s is not known", wire);
 		*refused = TRUE;
 		g_free(wire);
 		return NULL;
 	}
-	e2e_server_net(item->server, &net);
+	e2e_server_net(server, &net);
+	if (item != NULL && e2e_is_channel(item_name(item))) {
+		ctx = e2e_ctx_find(kr, &net, item_name(item));
+		if (ctx != NULL && e2e_pending_handle(kr, ctx, who, net.casemap, &n) != NULL) {
+			e2e_net_clear(&net);
+			g_free(wire);
+			return ctx;
+		}
+		g_free(ctx);
+	}
 	ctx = e2e_ctx_find(kr, &net, wire);
 	if (ctx == NULL) {
 		print_blocked(item, &net, wire);
@@ -797,6 +817,21 @@ static char *who_ctx(E2E_JSON *kr, WI_ITEM_REC *item, const char *who, gboolean 
 	e2e_net_clear(&net);
 	g_free(wire);
 	return ctx;
+}
+
+/* the damaged requests of ctx (a query's request from another address) */
+static GPtrArray *damaged_of(const E2E_JSON *kr, const char *ctx)
+{
+	GPtrArray *all = e2e_pending_damaged(kr);
+	guint i;
+
+	for (i = 0; i < all->len;) {
+		if (strcmp(((E2E_PENDING *) g_ptr_array_index(all, i))->ctx, ctx) != 0)
+			g_ptr_array_remove_index(all, i);
+		else
+			i++;
+	}
+	return all;
 }
 
 /* the requests of ctx that who names (every one for NULL), listed */
@@ -847,8 +882,8 @@ static gboolean nick_sendable(const char *nick)
     that address waits here, which then came under another nick
  *nick: the nick a KEYRSP goes to (who's, else the request's), or NULL.
 */
-static char *pick_handle(const E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *who,
-                         const char *cmd, char **nick)
+static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item,
+                         const char *ctx, const char *who, const char *cmd, char **nick)
 {
 	E2E_NET net;
 	E2E_JSON *row;
@@ -857,7 +892,7 @@ static char *pick_handle(const E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx,
 	guint n;
 
 	*nick = NULL;
-	e2e_server_net(item->server, &net);
+	e2e_server_net(server, &net);
 	found = e2e_pending_handle(kr, ctx, who, net.casemap, &n);
 	if (n > 1) {
 		e2e_print_item(item, "%u key requests wait on %s%s%s:", n, shown(ctx),
@@ -878,6 +913,17 @@ static char *pick_handle(const E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx,
 		return g_strdup(found);
 	}
 	if (who == NULL) {
+		GPtrArray *bad = damaged_of(kr, ctx);
+		guint i;
+
+		/* told here, never picked: /e2e decline (alone) removes them */
+		for (i = 0; i < bad->len; i++) {
+			E2E_PENDING *p = g_ptr_array_index(bad, i);
+
+			e2e_print_item(item, "a damaged key request from %s (%s) on %s is ignored: it asks for the query of another address — /e2e decline here removes it",
+			               shown_text(p->nick), shown_text(p->handle), shown(ctx));
+		}
+		g_ptr_array_unref(bad);
 		e2e_print_item(item, "no key request waits on %s (/e2e pending lists all of them)", shown(ctx));
 		e2e_print_item(item, "usage: /e2e %s [<nick>|<ident@host>]", cmd);
 		return NULL;
@@ -916,20 +962,24 @@ void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 	char *handle = NULL, *ctx, *nick = NULL, *own = NULL, *rsp = NULL, *recip = NULL;
 	const char *name;
 
-	if (item != NULL && item->server != NULL)
+	/* the window's server; the active one only for a window without an
+	   item (the status window) */
+	if (item != NULL)
 		server = item->server;
+	if (who != NULL && *who == '\0')
+		who = NULL;
 	if (!IS_IRC_SERVER(server) || !server->connected) {
 		e2e_print_item(item, "not connected to a server");
 		return;
 	}
 	kr = e2e_load();
-	ctx = who_ctx(kr, item, who, &refused);
+	ctx = who_ctx(kr, server, item, who, &refused);
 	if (ctx == NULL) {
 		if (!refused)
 			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 		goto out;
 	}
-	handle = pick_handle(kr, item, ctx, who, "accept", &nick);
+	handle = pick_handle(kr, server, item, ctx, who, "accept", &nick);
 	if (handle == NULL)
 		goto out;
 	name = shown_text(nick != NULL ? nick : handle);
@@ -974,6 +1024,10 @@ void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 	case E2E_ACCEPT_NOTHING:
 		e2e_print_item(item, "no pending exchange or session for %s on %s", name, shown(ctx));
 		break;
+	case E2E_ACCEPT_NOT_PEER:
+		e2e_print_item(item, "cannot accept %s (%s) on %s: the key of a query goes to its own address only — nothing sent",
+		               name, shown_text(handle), shown(ctx));
+		break;
 	}
 	e2e_identity_wipe(&id);
 out:
@@ -990,17 +1044,48 @@ out:
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 {
 	E2E_JSON *kr, *row;
+	GPtrArray *bad;
 	gboolean refused;
 	char *handle = NULL, *ctx, *nick = NULL, *k;
+	guint i, n;
 
+	if (item != NULL)
+		server = item->server;
+	if (who != NULL && *who == '\0')
+		who = NULL;
+	if (server == NULL) {
+		e2e_print_item(item, "not connected to a server — the network is not known");
+		return;
+	}
 	kr = e2e_load();
-	ctx = who_ctx(kr, item, who, &refused);
+	ctx = who_ctx(kr, server, item, who, &refused);
 	if (ctx == NULL) {
 		if (!refused)
 			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
 		goto out;
 	}
-	handle = pick_handle(kr, item, ctx, who, "decline", &nick);
+	/* alone, with nothing waiting: the damaged requests here go */
+	bad = who == NULL && e2e_pending_handle(kr, ctx, NULL, E2E_CASEMAP_RFC1459, &n) == NULL &&
+	      n == 0 ? damaged_of(kr, ctx) : NULL;
+	if (bad != NULL && bad->len > 0) {
+		for (i = 0; i < bad->len; i++) {
+			E2E_PENDING *p = g_ptr_array_index(bad, i);
+
+			k = g_strconcat(p->handle, "|", ctx, NULL);
+			e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
+			/* and its placeholder session, which holds no key */
+			if (!e2e_session_has_key(e2e_json_get(e2e_json_get(kr, "incoming"), k)))
+				e2e_json_remove(e2e_json_get(kr, "incoming"), k);
+			g_free(k);
+		}
+		e2e_save(kr);
+		e2e_print_item(item, "removed %u damaged key request(s) on %s", bad->len, shown(ctx));
+		g_ptr_array_unref(bad);
+		goto out;
+	}
+	if (bad != NULL)
+		g_ptr_array_unref(bad);
+	handle = pick_handle(kr, server, item, ctx, who, "decline", &nick);
 	if (handle == NULL)
 		goto out;
 	k = g_strconcat(handle, "|", ctx, NULL);

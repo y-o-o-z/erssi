@@ -31,6 +31,9 @@ FORMAT_REC e2e_formats[] = {
 	{ "e2e_sb_blocked", "%RE2E blocked%n", 0 },
 	{ "e2e_sb_error", "%RE2E keyring error%n", 0 },
 	{ "e2e_sb_pending", " %R$0 to accept%n", 1, { 0 } },
+	/* the same for a query: nick, ident@host, the network, the suffix -
+	   answered from any window of that network */
+	{ "e2e_pending_query", "[E2E] Pending key exchange from {hilight $0} ($1) for a query$3. Run /e2e accept $1 or /e2e decline $1 in any window of $2 (/e2e pending lists all)", 4, { 0, 0, 0, 0 } },
 
 	{ NULL, NULL, 0 }
 };

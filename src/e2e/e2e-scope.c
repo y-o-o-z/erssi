@@ -600,17 +600,43 @@ gboolean e2e_ctx_on_net(const char *ctx, const E2E_NET *net)
 	return strlen(net->label) == len && memcmp(ctx, net->label, len) == 0;
 }
 
+/* a character that must not reach the screen as it is: C0, DEL, C1, and
+   the bidi and format controls that reorder or hide text */
+static gboolean display_control(gunichar c)
+{
+	return c < 0x20 || (c >= 0x7f && c <= 0x9f) || c == 0x061c || c == 0x200e || c == 0x200f ||
+	       (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+}
+
 char *e2e_text_display(const char *text)
 {
-	char *out, *p;
+	const char *p, *end;
+	GString *out;
 
 	if (text == NULL)
 		return NULL;
-	out = g_strdup(text);
-	for (p = out; *p != '\0'; p++)
-		if ((unsigned char) *p < 0x20 || *p == 0x7f)
-			*p = '?';
-	return out;
+	end = text + strlen(text);
+	out = g_string_sized_new(end - text + 1);
+	for (p = text; p < end;) {
+		gunichar c = g_utf8_get_char_validated(p, end - p);
+
+		if (c == (gunichar) -1 || c == (gunichar) -2) {
+			/* not UTF-8: a raw byte, a C1 control as one too */
+			unsigned char b = *p;
+
+			g_string_append_c(out, b >= 0x80 && b <= 0x9f ? '?' : (char) b);
+			p++;
+		} else {
+			const char *next = g_utf8_next_char(p);
+
+			if (display_control(c))
+				g_string_append_c(out, '?');
+			else
+				g_string_append_len(out, p, next - p);
+			p = next;
+		}
+	}
+	return g_string_free(out, FALSE);
 }
 
 char *e2e_ctx_display(const char *ctx)
