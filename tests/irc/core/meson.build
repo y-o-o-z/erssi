@@ -69,3 +69,26 @@ test('test-cmd-queue test', test_test_cmd_queue,
     '--tap',
   ],
   protocol : 'tap')
+
+test_test_sasl_upgrade = executable('test-sasl-upgrade',
+  files(
+    'test-sasl-upgrade.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libirc_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'irc/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+# Leak detection is off only here, as in test-796: irssi core state is not
+# freed on deinit.
+test('test-sasl-upgrade test', test_test_sasl_upgrade,
+  env : environment({'HOME': meson.build_root() / 'test-home', 'ASAN_OPTIONS': 'detect_leaks=0:abort_on_error=1'}),
+  args : ['--tap'],
+  protocol : 'tap')

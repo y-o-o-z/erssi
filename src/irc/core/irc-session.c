@@ -81,6 +81,7 @@ static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
 	config_node_set_int(config, node, "sasl_mechanism", server->connrec->sasl_mechanism);
 	config_node_set_str(config, node, "sasl_username", server->connrec->sasl_username);
 	config_node_set_str(config, node, "sasl_password", server->connrec->sasl_password);
+	config_node_set_bool(config, node, "sasl_success", server->sasl_success);
 
 	config_node_set_int(config, node, "starttls",
 	                    server->connrec->disallow_starttls ? STARTTLS_DISALLOW :
@@ -127,6 +128,8 @@ static void sig_session_restore_server(IRC_SERVER_REC *server,
 	server->connrec->sasl_username = g_strdup(config_node_get_str(node, "sasl_username", NULL));
 	g_free(server->connrec->sasl_password);
 	server->connrec->sasl_password = g_strdup(config_node_get_str(node, "sasl_password", NULL));
+	/* not in a session file from an older version: unknown, left FALSE */
+	server->sasl_success = config_node_get_bool(node, "sasl_success", FALSE);
 
 	server->connrec->channels = g_strdup(config_node_get_str(node, "rejoin_channels", NULL));
 
