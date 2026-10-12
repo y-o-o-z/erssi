@@ -260,8 +260,9 @@ static void cmd_help(const char *data)
 
 	cmd = g_ascii_strdown(data, -1);
 	g_strchomp(cmd);
-	show_help(cmd);
-        g_free(cmd);
+	/* /HELP $nickmode: the help of an expando; no command starts with $ */
+	show_help(cmd[0] == '$' ? cmd + 1 : cmd);
+	g_free(cmd);
 }
 
 void fe_help_init(void)
