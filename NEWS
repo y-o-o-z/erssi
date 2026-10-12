@@ -18,6 +18,59 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    prints the count line, not a table with your own nick
 	  - /set -default and /reset give erssi's built-in value
 
+	+ E2E
+	  - keys are kept per network: a keyring entry is "<network>\x1f<name>"
+	    (the chatnet, else the server tag), so #test on two networks has
+	    two keys; the wire format is unchanged. With one network in use an
+	    old entry (rpe2e.pl's, or of an older erssi) is used where it is and
+	    taken over by your own first encrypted line there, never by what
+	    someone else sends; with several networks an old entry is blocked
+	    (nothing sent, nothing decrypted with it) until /e2e adopt binds it
+	    to one network or /e2e off turns it off there
+	  - /e2e adopt binds old entries of the window's channel or query to its
+	    network; /e2e status, list, pending and autotrust show
+	    <network>:<name>; /e2e autotrust add takes a rule for the window's
+	    network; export and import keep the per-network entries
+	  - with rpe2e.pl loaded on a keyring that has per-network entries
+	    (which the script cannot see), a warning says so once; messages to
+	    those channels and queries are refused, never sent in clear
+	  - channel names and nicks are compared by the server's CASEMAPPING:
+	    ascii, rfc1459 (also when none is named) and strict-rfc1459 exactly;
+	    rfc7613, rfc8265, utf8 and unknown values by a wider fold (Unicode
+	    normalisation and case folding), so a name the server takes for an
+	    E2E channel is never sent in clear; while E2E is on for a channel
+	    of a Unicode server, a name that is not valid UTF-8 is refused
+	    there. The rpe2e.pl guard compares the script's entries the same
+	    way
+	  - long messages: every chunk of an encrypted message goes through
+	    irssi's flood queue, in order and before any later line; chunks
+	    still waiting are dropped and counted when rpe2e.pl is loaded, on
+	    /unload e2e, on disconnect and on /e2e reset - never sent in clear
+	  - /e2e pending lists the key requests that wait for /e2e accept; a
+	    request that comes is told in its window (at most every 5 minutes),
+	    with the sender's address and how to answer; /e2e accept and
+	    /e2e decline take no argument (the only request there), a nick or
+	    an ident@host; /e2e list shows the waiting requests. A query entry
+	    that names another address than its own (rpe2e.pl stored such
+	    entries) gets no key, is listed as damaged and makes the key rotate
+	  - the statusbar item e2e shows the E2E state of the active channel or
+	    query ("e2e off", "E2E", "E2E waiting for keys", "E2E blocked",
+	    "E2E keyring error") and how many key requests wait there for
+	    /e2e accept; nothing while rpe2e.pl is loaded. The shipped config
+	    has it in the info bar after window, and a config file holding the
+	    info bar as erssi shipped it gets it once (erssi/statusbar_version);
+	    configs with bar lists of their own keep them:
+	    /statusbar additem -after window e2e <bar>. Texts: /format e2e_sb_*
+	  - fe-web: web clients get the E2E state of every channel and query
+	    (e2e_state) and can accept or decline a waiting key request
+	    (e2e_action, bound to the key's fingerprint the client showed);
+	    every refusal is answered success:false with error_code
+	    e2e_mismatch or e2e_refused and a reason; when the e2e module is
+	    unloaded every channel and query told a state is told "off".
+	    Protocol version 1: docs/fe-web-e2e.md; the same as signals for
+	    scripts ("e2e state", "e2e state request", "e2e action",
+	    "e2e action refused")
+
 	+ Fixes
 	  - fe-web paces logins per peer (uid on the Unix socket, address on TCP,
 	    the peer's uid on TCP loopback on Linux); your own uid is never paced;
@@ -57,6 +110,17 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    directory looked like yours)
 	  - tests and fuzz harnesses that start the core use their own temporary
 	    home
+	  - a command no longer overtakes one waiting in the flood queue (a long
+	    line typed later could leave first)
+	  - /upgrade keeps a SASL connection (it was dropped and reconnected at
+	    the next line) and is no way around SASL: a connection still
+	    logging in connects again and negotiates SASL as a new one
+	  - /upgrade keeps the CAP state (message-tags, extended-join,
+	    cap_* in Perl, no "The server did not offer SASL" on each MOTD) and
+	    closes inherited sockets it cannot use; a damaged session file no
+	    longer crashes the restore; at most 256 capabilities per server
+	  - /CAT of a file that cannot be opened no longer leaks; under
+	    Capsicum it closes its file
 
 shellter-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 1.3.10
@@ -133,14 +197,6 @@ shellter-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    trusted; growth of pending requests and unaccepted peers is
 	    capped. The wire format is unchanged; /help e2e lists every
 	    difference. Peers from an rpe2e.pl keyring need one /e2e accept
-	  - the statusbar item e2e shows the E2E state of the active channel or
-	    query ("e2e off", "E2E", "E2E waiting for keys", "E2E blocked",
-	    "E2E keyring error") and how many key requests wait there for
-	    /e2e accept; nothing while rpe2e.pl is loaded. The shipped config
-	    has it in the info bar after window, and a config file holding the
-	    info bar as erssi shipped it gets it once (erssi/statusbar_version);
-	    configs with bar lists of their own keep them:
-	    /statusbar additem -after window e2e <bar>. Texts: /format e2e_sb_*
 	  - contrib/rpe2e keeps only rpe2e-from-repartee (moves a repartee
 	    identity into the keyring) and the MIT licence of the script the
 	    module is ported from; the script itself is no longer shipped
