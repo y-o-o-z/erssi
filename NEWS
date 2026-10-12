@@ -133,6 +133,13 @@ shellter-v1.3.10 2026-10-08  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    trusted; growth of pending requests and unaccepted peers is
 	    capped. The wire format is unchanged; /help e2e lists every
 	    difference. Peers from an rpe2e.pl keyring need one /e2e accept
+	  - the statusbar item e2e shows the E2E state of the active channel or
+	    query ("e2e off", "E2E", "E2E waiting for keys", "E2E blocked",
+	    "E2E keyring error") and how many key requests wait there for
+	    /e2e accept; nothing while rpe2e.pl is loaded. The shipped config
+	    has it in the info bar after window - a config whose info bar has
+	    its own item list keeps it: /statusbar additem -after window e2e
+	    info. Texts: /format e2e_sb_*
 	  - contrib/rpe2e keeps only rpe2e-from-repartee (moves a repartee
 	    identity into the keyring) and the MIT licence of the script the
 	    module is ported from; the script itself is no longer shipped

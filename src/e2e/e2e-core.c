@@ -62,6 +62,7 @@
 #include "e2e-formats.h"
 #include "e2e-keyring.h"
 #include "e2e-outq.h"
+#include "e2e-statusbar.h"
 #include "e2e-wire.h"
 
 #include <irssi/src/core/channels.h>
@@ -251,10 +252,18 @@ static void warn_scoped_for_script(void)
 	e2e_json_free(kr);
 }
 
+gboolean e2e_script_loaded(void)
+{
+	return script_loaded();
+}
+
 gboolean e2e_native_active(void)
 {
 	gboolean script = script_loaded();
 
+	/* the statusbar shows nothing while the script is loaded */
+	if (script != script_seen)
+		e2e_state_changed();
 	if (script && !script_seen) {
 		script_seen = TRUE;
 		e2e_print_item(NULL, "the rpe2e.pl script is loaded: the native e2e module leaves encryption to it and stays inactive - it only stops messages to conversations that its own per-network entries encrypt, which the script does not know. Unload the script (/script unload rpe2e, and remove it from scripts/autorun) to use the native module - it uses the same keyring, no new keys are needed.");
@@ -533,8 +542,11 @@ static void set_own_handle(SERVER_REC *server, const char *handle)
 {
 	if (server == NULL || server->tag == NULL || handle == NULL || *handle == '\0')
 		return;
-	if (g_strcmp0(g_hash_table_lookup(own_handles, server->tag), handle) != 0)
+	if (g_strcmp0(g_hash_table_lookup(own_handles, server->tag), handle) != 0) {
 		g_hash_table_replace(own_handles, g_strdup(server->tag), g_strdup(handle));
+		/* a query's sessions are counted under "@<own>" */
+		e2e_state_changed();
+	}
 }
 
 const char *e2e_own_handle(SERVER_REC *server)
@@ -612,30 +624,51 @@ static const char *own_handle_peek(SERVER_REC *server)
 	return NULL;
 }
 
+/* an item e2e_window_info_with() describes: a channel or a query, with a
+   server */
+static gboolean info_item(WI_ITEM_REC *item)
+{
+	return item != NULL && item->server != NULL && item->name != NULL &&
+	       (e2e_is_channel(item->name) || IS_QUERY(item));
+}
+
 gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO *out)
 {
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
-	E2E_NET net;
-	const char *name, *own, *nick = NULL;
-	char *error = NULL, *wire = NULL, *own_wire = NULL, *handle;
+	gboolean ret;
+	char *error = NULL;
 
 	memset(out, 0, sizeof(*out));
-	/* the item's own network, never another server's */
-	server = item != NULL ? item->server : NULL;
-	if (item == NULL || server == NULL || keyring_file == NULL || item->name == NULL)
-		return FALSE;
-	name = item->name;
-	if (!e2e_is_channel(name) && !IS_QUERY(item))
+	/* the item's own network, never another server's (server unused) */
+	if (!info_item(item) || keyring_file == NULL)
 		return FALSE;
 	/* rpe2e.pl's _load_keyring_checked: a damaged file is left alone */
 	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
 	g_free(error);
+	ret = e2e_window_info_with(kr, status == E2E_LOAD_OK, item, out);
+	e2e_json_free(kr);
+	return ret;
+}
+
+gboolean e2e_window_info_with(const E2E_JSON *kr, gboolean kr_ok, WI_ITEM_REC *item,
+                              E2E_WIN_INFO *out)
+{
+	SERVER_REC *server;
+	E2E_NET net;
+	const char *name, *own, *nick = NULL;
+	char *wire = NULL, *own_wire = NULL, *handle;
+
+	memset(out, 0, sizeof(*out));
+	if (!info_item(item))
+		return FALSE;
+	server = item->server;
+	name = item->name;
 	if (e2e_is_channel(name)) {
 		wire = g_strdup(name);
 	} else {
 		nick = name;
-		handle = e2e_resolve_dm_handle(server, status == E2E_LOAD_OK ? kr : NULL, nick);
+		handle = e2e_resolve_dm_handle(server, kr_ok ? kr : NULL, nick);
 		if (handle != NULL)
 			wire = g_strconcat("@", handle, NULL);
 		g_free(handle);
@@ -644,11 +677,10 @@ gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO
 	if (own != NULL && *own != '\0')
 		own_wire = g_strconcat("@", own, NULL);
 	e2e_server_net(server, &net);
-	e2e_window_info(kr, status == E2E_LOAD_OK, &net, wire, own_wire, nick, out);
+	e2e_window_info(kr, kr_ok, &net, wire, own_wire, nick, out);
 	e2e_net_clear(&net);
 	g_free(own_wire);
 	g_free(wire);
-	e2e_json_free(kr);
 	return TRUE;
 }
 
@@ -726,8 +758,8 @@ static void sig_event_001(SERVER_REC *server)
 {
 	if (!IS_IRC_SERVER(server))
 		return;
-	if (server->tag != NULL)
-		g_hash_table_remove(own_handles, server->tag);
+	if (server->tag != NULL && g_hash_table_remove(own_handles, server->tag))
+		e2e_state_changed();
 	send_self_whois(server);
 }
 
@@ -1758,6 +1790,7 @@ void e2e_core_init(void)
 	signal_add("script destroyed", (SIGNAL_FUNC) sig_script_destroyed);
 
 	e2e_commands_init();
+	e2e_statusbar_init();
 
 	if (e2e_native_active()) {
 		E2E_IDENTITY id;
@@ -1829,6 +1862,7 @@ void e2e_core_deinit(void)
 	in_pump = pump_armed = FALSE;
 	pump_emission = 0;
 
+	e2e_statusbar_deinit();
 	e2e_commands_deinit();
 	theme_unregister();
 
