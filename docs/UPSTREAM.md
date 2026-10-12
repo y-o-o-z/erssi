@@ -31,7 +31,7 @@ repository's commitlint rules.
 | [#8](https://github.com/erssi-org/erssi/pull/8) | sidepanels and fe-ansi: network windows, clipping, scroll arrows, themed lines, key input batches, memcpy from NULL | 17 |
 | [#9](https://github.com/erssi-org/erssi/pull/9) | fe-web: login, frames, TLS, output queue, Unix socket, use after free and leaks, fuzz targets with corpora | 26 |
 | [#10](https://github.com/erssi-org/erssi/pull/10) | build and tests: fe-fuzz paths, tests keep out of HOME, install.sh options | 3 |
-| [#3](https://github.com/erssi-org/erssi/pull/3) | an older proposal: a native Mentions window | 3 |
+| [#3](https://github.com/erssi-org/erssi/pull/3) | a native Mentions window (`fe-mentions.c`, `mentions-log.c`): private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, migration from `mentions.pl`, unit tests and a live test | 3 |
 
 Merge order does not matter. The only overlap: #7 and #9 both add one
 line to `docs/help/meson.build` at the same place; keep both.
@@ -115,7 +115,8 @@ Not meant for erssi main. 99 commits.
   Shellter files) and `utils/default-file-hashes.sh`. Upstream could
   want the mechanism, but behind a setting and with the hash list made
   at build time, not committed.
-- Bundled scripts (12): `scripts/mentions.pl`, `scripts/trackbar.pl`,
+- Bundled scripts (12): `scripts/mentions.pl` (now only a stub that
+  unloads itself in favour of the built-in window), `scripts/trackbar.pl`,
   `scripts/webjournal.pl` with their help files in `scripts/help/`.
   They are separate scripts. Upstream may or may not want them.
   The author's own scripts were removed (`56f5f294`). Commits: `e98c9986

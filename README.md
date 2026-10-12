@@ -152,6 +152,11 @@ and used when present. For a system-wide install use
   rxvt-unicode, 8/16-colour terminals). `/set term_truecolor auto|on|off`
   overrides it.
 
+- **Mentions window** — private messages, notices, DCC CHAT and channel
+  hilights collected in one background window (`/mentions`), mirrored to a
+  log file only you can read (`mentions_log`, on by default). Built in: no
+  script to load. `/help mentions`.
+
 ### Help for every command
 
 `/help` covers every command, including the erssi commands that had no help
@@ -168,7 +173,6 @@ loaded on demand (`/script load <name>`, or a symlink in
 
 | Script | What it does |
 |---|---|
-| `mentions.pl` | One *Mentions* window for highlights, private messages, notices and DCC, mirrored to a log file (0600). `/mentions`. |
 | `trackbar.pl` | The read marker of trackbar 2.9, drawn as `├────` from the theme's separator column when the theme has one. `/mark`, `/trackbar`. |
 | `webjournal.pl` | Journals every window (one JSON line per message, files only you can read) so a web client that reads the journal shows the same windows and history as the terminal. |
 

@@ -553,6 +553,23 @@ def main():
         # the built-in help, not the one of mentions.pl
         assert wait_log_since(off, "mentions_exclude_networks"), "/help mentions:\n" + log_since(off)
 
+    def t_fresh_defaults():
+        # no config file at all: the built-in default config is used (an
+        # existing config is not merged with it)
+        fresh = harness.Erssi(st["inst"], work, "fresh", None, args=("--noconnect",))
+        try:
+            fresh.start()
+            time.sleep(3)
+            m = fresh.mark()
+            fresh.type("/set mentions_log")
+            end = time.time() + WAIT
+            while time.time() < end and not re.search(r"mentions_log\s+(= )?(ON|OFF)", fresh.text(m)):
+                time.sleep(0.1)
+            out = fresh.text(m)
+            assert re.search(r"mentions_log\s+(= )?ON", out), "mentions_log is not ON by default:\n" + out
+        finally:
+            fresh.kill()
+
     def t_sanitizers():
         alice = st["alice"]
         alice.quit()
@@ -569,7 +586,7 @@ def main():
                       t_utf8_bytes, t_log_modes,
                       t_log_error_once, t_dcc, t_dcc_excluded_network, t_command, t_immortal_and_recreated,
                       t_rename, t_name_taken, t_window_off,
-                      t_help, t_sanitizers])
+                      t_help, t_fresh_defaults, t_sanitizers])
     finally:
         for name in ("bob", "carol"):
             if name in st:
