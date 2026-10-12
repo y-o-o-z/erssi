@@ -12,13 +12,15 @@
  E2E itself: the e2e module tells the state of a channel or query with the
  signal "e2e state" (server, target, JSON) - on every change, and at once
  when asked with "e2e state request" (server, target) - and acts on
- "e2e action" (server, target, action, handle). Without the module nobody
- answers: no e2e_state is ever sent, and an e2e_action is refused.
+ "e2e action" (server, target, action, handle, fingerprint; fingerprint
+ may be NULL). Without the module nobody answers: no e2e_state is ever
+ sent, and an e2e_action is refused.
 
  The e2e module refuses an action it does not take with "e2e action
- refused" (server, target, handle, reason) while it handles it; a
- "mismatch" (the request waits with another key than the client's
- fingerprint) is answered as e2e_mismatch.
+ refused" (server, target, handle, reason) while it handles it. The
+ client is answered success:false with that reason: a "mismatch" (the
+ request waits with another key than the client's fingerprint) as
+ e2e_mismatch, every other reason as e2e_refused.
 
  An e2e_action is a message of a logged-in client, handled through
  fe_web_client_handle_message() like every other: the /UNLOAD guard
@@ -43,18 +45,21 @@
 #define E2E_NAME_MAX 255
 /* how deep the e2e object may nest (e2e_window_info_json: 3) */
 #define E2E_JSON_DEPTH 8
+/* the longest reason passed on to a client */
+#define E2E_REASON_MAX 24
 
 /* the dump in progress: the answer to its request is for that client */
 static WEB_CLIENT_REC *dump_client;
 static IRC_SERVER_REC *dump_server;
 static const char *dump_target;
 
-/* the action being handed to the e2e module, and why it refused it (its
-   "e2e action refused" while the action is emitted) */
+/* the action being handed to the e2e module, and whether and why it
+   refused it (its "e2e action refused" while the action is emitted) */
 typedef struct {
 	IRC_SERVER_REC *server;
 	const char *target, *handle;
-	char *reason;
+	gboolean refused;
+	char *reason;		/* NULL when none was given */
 } ACTION_ASKED;
 static ACTION_ASKED *asked;
 
@@ -288,10 +293,41 @@ static gboolean fingerprint_valid(const char *fp)
 static void sig_action_refused(SERVER_REC *server, const char *target, const char *handle,
                                const char *reason)
 {
-	if (asked != NULL && asked->reason == NULL && reason != NULL &&
-	    IRC_SERVER(server) == asked->server && g_strcmp0(target, asked->target) == 0 &&
-	    g_strcmp0(handle, asked->handle) == 0)
+	/* the first refusal of this action counts, with or without a reason */
+	if (asked != NULL && !asked->refused && IRC_SERVER(server) == asked->server &&
+	    g_strcmp0(target, asked->target) == 0 && g_strcmp0(handle, asked->handle) == 0) {
+		asked->refused = TRUE;
 		asked->reason = g_strdup(reason);
+	}
+}
+
+/* the reason a client is told: the module's word ([a-z_], at most
+   E2E_REASON_MAX characters) - a script may emit the signal with anything,
+   and that never goes further - else "unknown" */
+static const char *reason_word(const char *reason)
+{
+	const char *p;
+
+	if (reason == NULL || *reason == '\0' || strlen(reason) > E2E_REASON_MAX)
+		return "unknown";
+	for (p = reason; *p != '\0'; p++)
+		if ((*p < 'a' || *p > 'z') && *p != '_')
+			return "unknown";
+	return reason;
+}
+
+/* what the answer says for a reason of the module */
+static const char *reason_text(const char *word)
+{
+	if (strcmp(word, "no_request") == 0)
+		return "the e2e module refused the action: no such request waits";
+	if (strcmp(word, "inactive") == 0)
+		return "the e2e module refused the action: it is inactive while rpe2e.pl is loaded";
+	if (strcmp(word, "lost") == 0)
+		return "the e2e module refused the action: the keyring is lost";
+	if (strcmp(word, "not_connected") == 0)
+		return "the e2e module refused the action: not connected to the server";
+	return "the e2e module refused the action: see erssi";
 }
 
 /* a channel or nick: one IRC target, as the server would take it */
@@ -311,13 +347,19 @@ static gboolean target_valid(const char *target)
 	return TRUE;
 }
 
+/* reason: a word of [a-z_] (reason_word()), or NULL for none */
 static void send_result(WEB_CLIENT_REC *client, const char *id, gboolean success,
-                        const char *message, const char *error_code)
+                        const char *message, const char *error_code, const char *reason)
 {
 	WEB_MESSAGE_REC *msg;
 	GString *json;
 
 	json = fe_web_build_command_result_json(success, message, error_code);
+	if (reason != NULL) {
+		/* {...,"error_code":..} -> {...,"error_code":..,"reason":".."} */
+		g_string_truncate(json, json->len - 1);
+		g_string_append_printf(json, ",\"reason\":\"%s\"}", reason);
+	}
 	msg = fe_web_message_new(WEB_MSG_COMMAND_RESULT);
 	msg->id = fe_web_generate_message_id();
 	msg->response_to = g_strdup(id);
@@ -336,7 +378,7 @@ static void refuse(WEB_CLIENT_REC *client, const char *id, const char *error_cod
 
 	printtext_string(NULL, NULL, MSGLEVEL_CLIENTERROR, text);
 	g_free(text);
-	send_result(client, id, FALSE, why, error_code);
+	send_result(client, id, FALSE, why, error_code, NULL);
 }
 
 void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
@@ -391,13 +433,19 @@ void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json)
 		asked = outer;
 		/* answered unless the client was closed meanwhile */
 		if (g_slist_find(web_clients, client) != NULL && client->serial == serial) {
-			if (g_strcmp0(this.reason, "mismatch") == 0)
+			const char *word = reason_word(this.reason);
+
+			if (!this.refused)
+				send_result(client, id, TRUE, "handed to the e2e module", NULL, NULL);
+			else if (strcmp(word, "mismatch") == 0)
 				/* the request waits with another key than the
 				   one the client showed: nothing done */
 				send_result(client, id, FALSE, "the request waits with another key",
-				            "e2e_mismatch");
+				            "e2e_mismatch", word);
 			else
-				send_result(client, id, TRUE, "handed to the e2e module", NULL);
+				/* nothing done: why is printed in erssi too */
+				send_result(client, id, FALSE, reason_text(word), "e2e_refused",
+				            word);
 		}
 		g_free(this.reason);
 	}

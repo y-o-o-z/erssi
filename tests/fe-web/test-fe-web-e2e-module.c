@@ -213,7 +213,8 @@ static void test_unload_nothing_told(void)
 }
 
 /* an action from the web reaches e2e_web_action() with its fingerprint,
- * and the module's mismatch comes back as e2e_mismatch */
+ * the module's mismatch comes back as e2e_mismatch, any other refusal as
+ * e2e_refused with its reason */
 static void test_action_both_ways(void)
 {
 	static const char with_fp[] =
@@ -244,11 +245,20 @@ static void test_action_both_ways(void)
 	g_assert_cmpint(heard_count("\"error_code\":\"e2e_mismatch\""), ==, 1);
 	fe_web_fuzz_client_free(c);
 
+	c = client_new(server);
+	stub_refuse = "no_request";
+	client_says(c, with_fp);
+	stub_refuse = NULL;
+	g_assert_cmpint(acted, ==, 3);
+	g_assert_cmpint(heard_count("\"response_to\":\"a1\",\"success\":false"), ==, 1);
+	g_assert_cmpint(heard_count("\"error_code\":\"e2e_refused\",\"reason\":\"no_request\""), ==, 1);
+	fe_web_fuzz_client_free(c);
+
 	/* decline, no fingerprint */
 	c = client_new(server);
 	client_says(c, "{\"type\":\"e2e_action\",\"id\":\"a3\",\"server\":\"fuzz\",\"target\":"
 	               "\"#test\",\"action\":\"decline\",\"handle\":\"bob@127.0.0.1\"}");
-	g_assert_cmpint(acted, ==, 3);
+	g_assert_cmpint(acted, ==, 4);
 	g_assert_false(acted_accept);
 	g_assert_null(acted_fingerprint);
 	fe_web_fuzz_client_free(c);
@@ -265,8 +275,10 @@ int main(int argc, char **argv)
 	fe_web_e2e_init();
 	/* the module is there: fe-web asks it, and hands it actions */
 	module_register("e2e", "core");
-	/* a keyring file that is not there: an empty keyring */
-	stub_keyring = g_build_filename(g_get_home_dir(), "no-such-keyring.json", NULL);
+	/* a keyring file that is not there: an empty keyring, in the
+	   harness's own temporary home */
+	g_assert_nonnull(fe_web_fuzz_home());
+	stub_keyring = g_build_filename(fe_web_fuzz_home(), "no-such-keyring.json", NULL);
 
 	g_test_add_func("/fe-web/e2e-module/unload-after-request", test_unload_after_request);
 	g_test_add_func("/fe-web/e2e-module/unload-after-refresh", test_unload_after_refresh);

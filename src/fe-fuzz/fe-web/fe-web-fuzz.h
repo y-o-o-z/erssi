@@ -28,6 +28,10 @@
  * irssi's home is a fresh temporary directory. */
 void fe_web_fuzz_init(gboolean with_irc_signals);
 
+/* The temporary directory fe_web_fuzz_init() made irssi's home (and
+ * HOME); NULL before */
+const char *fe_web_fuzz_home(void);
+
 /* New web client on a socketpair; logged in already if 'logged_in' */
 WEB_CLIENT_REC *fe_web_fuzz_client_new(gboolean logged_in);
 

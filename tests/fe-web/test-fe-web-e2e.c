@@ -58,6 +58,8 @@ static void seen_free(ACTION_SEEN *s)
  * action's) */
 static const char *refuse_reason;
 static const char *refuse_handle;
+/* refuse with a NULL reason */
+static gboolean refuse_without_reason;
 
 static void sig_action(SERVER_REC *server, const char *target, const char *action,
                        const char *handle, const char *fingerprint)
@@ -71,7 +73,7 @@ static void sig_action(SERVER_REC *server, const char *target, const char *actio
 	s->fingerprint = g_strdup(fingerprint);
 	g_ptr_array_add(actions, s);
 	/* answered synchronously, as the e2e module does */
-	if (refuse_reason != NULL)
+	if (refuse_reason != NULL || refuse_without_reason)
 		signal_emit("e2e action refused", 4, server, target,
 		            refuse_handle != NULL ? refuse_handle : handle, refuse_reason);
 }
@@ -349,8 +351,8 @@ static void test_action_signal(void)
 }
 
 /* the e2e module refuses because the request's key is not the one the
- * client showed: e2e_mismatch; any other refusal of the module, or one
- * for another action, leaves the answer success (told in erssi) */
+ * client showed: e2e_mismatch; every other refusal of the module:
+ * e2e_refused with its reason; one for another action, or none: success */
 static void test_action_mismatch(void)
 {
 	static const char json[] =
@@ -369,16 +371,8 @@ static void test_action_mismatch(void)
 	client_says(c, json);
 	g_assert_cmpuint(actions->len, ==, 1);
 	g_assert_cmpint(heard_at("\"response_to\":\"m1\",\"success\":false"), >=, 0);
-	g_assert_cmpint(heard_at("\"error_code\":\"e2e_mismatch\""), >=, 0);
-	fe_web_fuzz_client_free(c);
-
-	/* another reason: still "handed to the e2e module" */
-	c = client_new();
-	reset_seen();
-	refuse_reason = "no_request";
-	client_says(c, json);
-	g_assert_cmpint(heard_at("\"success\":true"), >=, 0);
-	g_assert_cmpint(heard_at("e2e_mismatch"), <, 0);
+	g_assert_cmpint(heard_at("\"error_code\":\"e2e_mismatch\",\"reason\":\"mismatch\""), >=, 0);
+	g_assert_cmpint(heard_at("e2e_refused"), <, 0);
 	fe_web_fuzz_client_free(c);
 
 	/* a mismatch of another handle is not this action's */
@@ -389,6 +383,7 @@ static void test_action_mismatch(void)
 	client_says(c, json);
 	g_assert_cmpint(heard_at("\"success\":true"), >=, 0);
 	g_assert_cmpint(heard_at("e2e_mismatch"), <, 0);
+	g_assert_cmpint(heard_at("\"reason\""), <, 0);
 	refuse_reason = refuse_handle = NULL;
 	fe_web_fuzz_client_free(c);
 
@@ -396,6 +391,80 @@ static void test_action_mismatch(void)
 	c = client_new();
 	signal_emit("e2e action refused", 4, server, "#test", "bob@127.0.0.1", "mismatch");
 	g_assert_cmpint(heard_at("command_result"), <, 0);
+	fe_web_fuzz_client_free(c);
+
+	fe_web_fuzz_server_free(server);
+	e2e_module_remove();
+}
+
+/* every other refusal of the module: success false, e2e_refused, and the
+ * module's reason (a word of [a-z_], else "unknown") */
+static void test_action_refused(void)
+{
+	static const char json[] =
+	    "{\"type\":\"e2e_action\",\"id\":\"q1\",\"server\":\"fuzz\",\"target\":"
+	    "\"#test\",\"action\":\"decline\",\"handle\":\"bob@127.0.0.1\"}";
+	static const char *const reasons[][2] = {
+		{ "no_request", "no_request" },
+		{ "inactive", "inactive" },
+		{ "lost", "lost" },
+		{ "not_connected", "not_connected" },
+		/* one the module may tell later: as it is */
+		{ "busy", "busy" },
+		/* from a script: never more than a word goes to the client */
+		{ "x\",\"success\":true", "unknown" },
+		{ "", "unknown" },
+		{ "NO_REQUEST", "unknown" },
+		{ "a_reason_far_too_long_to_be_one_word", "unknown" },
+	};
+	IRC_SERVER_REC *server;
+	WEB_CLIENT_REC *c;
+	gsize i;
+
+	e2e_module_add();
+	server = fe_web_fuzz_server_new("fuzz");
+
+	for (i = 0; i < G_N_ELEMENTS(reasons); i++) {
+		char *expect = g_strdup_printf(
+		    "\"response_to\":\"q1\",\"success\":false,\"message\":\"%s",
+		    "the e2e module refused the action: ");
+		char *code = g_strdup_printf("\"error_code\":\"e2e_refused\",\"reason\":\"%s\",",
+		                             reasons[i][1]);
+
+		c = client_new();
+		reset_seen();
+		refuse_reason = reasons[i][0];
+		client_says(c, json);
+		refuse_reason = NULL;
+		g_assert_cmpuint(actions->len, ==, 1);
+		if (heard_at(expect) < 0 || heard_at(code) < 0) {
+			char *all = client_heard();
+
+			g_error("reason \"%s\": no %s / %s in %s", reasons[i][0], expect, code, all);
+		}
+		g_assert_cmpint(heard_at("\"success\":true"), <, 0);
+		g_assert_cmpint(heard_at("e2e_mismatch"), <, 0);
+		fe_web_fuzz_client_free(c);
+		g_free(expect);
+		g_free(code);
+	}
+
+	/* a refusal without a reason is one all the same */
+	c = client_new();
+	reset_seen();
+	refuse_without_reason = TRUE;
+	client_says(c, json);
+	refuse_without_reason = FALSE;
+	g_assert_cmpint(heard_at("\"error_code\":\"e2e_refused\",\"reason\":\"unknown\","), >=, 0);
+	g_assert_cmpint(heard_at("\"success\":true"), <, 0);
+	fe_web_fuzz_client_free(c);
+
+	/* no refusal: handed over */
+	c = client_new();
+	reset_seen();
+	client_says(c, json);
+	g_assert_cmpint(heard_at("\"success\":true"), >=, 0);
+	g_assert_cmpint(heard_at("\"reason\""), <, 0);
 	fe_web_fuzz_client_free(c);
 
 	fe_web_fuzz_server_free(server);
@@ -728,6 +797,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/e2e/action-signal", test_action_signal);
 	g_test_add_func("/fe-web/e2e/action-rejects", test_action_rejects);
 	g_test_add_func("/fe-web/e2e/action-mismatch", test_action_mismatch);
+	g_test_add_func("/fe-web/e2e/action-refused", test_action_refused);
 	g_test_add_func("/fe-web/e2e/action-needs-login", test_action_needs_login);
 	g_test_add_func("/fe-web/e2e/action-unload-guard", test_action_unload_guard);
 	g_test_add_func("/fe-web/e2e/handle-valid", test_handle_valid);

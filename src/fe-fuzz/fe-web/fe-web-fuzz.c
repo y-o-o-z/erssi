@@ -253,6 +253,11 @@ static void remove_fuzz_home(void)
 	free_tls_retry();
 }
 
+const char *fe_web_fuzz_home(void)
+{
+	return fuzz_home;
+}
+
 void fe_web_fuzz_init(gboolean with_irc_signals)
 {
 	char *argv[3];

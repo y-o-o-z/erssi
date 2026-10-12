@@ -115,10 +115,10 @@ The answer is a `command_result` with `response_to` set to the `id`:
 {"id":"1760000001-0007","type":"command_result","response_to":"r1","success":true,"message":"handed to the e2e module","error_code":null,"timestamp":1760000001}
 ```
 
-- `success: true` - the action was handed to the e2e module. The effect
-  comes as a new `e2e_state` (the request gone from `pending`); what the
-  module did, or why it did nothing, is printed in erssi in that window.
-- `success: false` with `error_code`:
+- `success: true` - the e2e module took the action. The effect comes as
+  a new `e2e_state` (the request gone from `pending`); what the module
+  did is printed in erssi in that window.
+- `success: false` with `error_code` - nothing was done, nothing sent:
   - `"e2e_invalid"` - the action is not `accept` or `decline`, the handle
     is not one `ident@host` (3 to 255 bytes, exactly one `@` and not at
     either end, no space, control character, `,` or `!`), the
@@ -126,13 +126,33 @@ The answer is a `command_result` with `response_to` set to the `id`:
     not one channel or nick, or no server is named;
   - `"e2e_no_server"` - no IRC server with that tag;
   - `"e2e_unavailable"` - the e2e module is not loaded;
-  - `"e2e_mismatch"` - the request of that handle waits with another key
-    than `fingerprint` (it came again since, or the client's state is
-    old): nothing is done; the current one is in the latest `e2e_state`.
+  - `"e2e_mismatch"` (with `"reason":"mismatch"`) - the request of that
+    handle waits with another key than `fingerprint` (it came again
+    since, or the client's state is old); the current one is in the
+    latest `e2e_state`;
+  - `"e2e_refused"` - the e2e module refused the action, for the
+    `reason` the answer names:
+    - `"no_request"` - no request of exactly that handle waits in that
+      channel or query (it was answered or expired meanwhile, or never
+      came);
+    - `"inactive"` - the rpe2e.pl script is loaded, the module is
+      inactive;
+    - `"lost"` - the keyring is lost (erssi says how to get it back);
+    - `"not_connected"` - erssi is not connected to that server;
+    - `"no_key"`, `"damaged"`, `"failed"`, `"bad_nick"`, `"not_peer"`,
+      `"no_identity"` - the request was there, but it cannot be answered:
+      no key of the sender is stored, its key material is damaged, the
+      sender's nick is no target, a query's key would go to another
+      address, or there is no identity of yours to answer with.
 
-Other reasons the module does not act (no such request waits, rpe2e.pl
-is loaded, the keyring is lost) are printed in erssi; the answer is then
-still `success: true`, and no new `e2e_state` follows.
+    A client treats any other `reason` (a later module may have more) as
+    a refusal all the same. A `reason` is always one word of `a`-`z` and
+    `_`, at most 24 characters; `"unknown"` when the module gave none.
+    erssi also prints why in that window.
+
+```json
+{"id":"1760000001-0008","type":"command_result","response_to":"r2","success":false,"message":"the e2e module refused the action: no such request waits","error_code":"e2e_refused","reason":"no_request","timestamp":1760000001}
+```
 
 ## Security
 
@@ -168,4 +188,6 @@ fe-web uses:
 - `"e2e action refused"` (server, target, handle, reason) - emitted by the
   module while it handles an action it does not take; reason is
   `"mismatch"`, `"no_request"`, `"inactive"` (rpe2e.pl loaded), `"lost"`
-  (the keyring is lost) or `"not_connected"`.
+  (the keyring is lost), `"not_connected"` (not connected to the
+  server), or one of the accept failures above. fe-web answers the client's `e2e_action` with it
+  (`e2e_mismatch` or `e2e_refused`, above).
