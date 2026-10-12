@@ -631,6 +631,17 @@ static guint print_damaged(WI_ITEM_REC *item, const E2E_JSON *kr, const char *ct
 	return n;
 }
 
+/* damaged entries that may hold our key (ctx; NULL: all) make it rotate:
+   saved, told once (R-E34) */
+static void rotate_damaged(WI_ITEM_REC *item, E2E_JSON *kr, const char *ctx)
+{
+	GPtrArray *found = e2e_rotate_for_damaged(kr, ctx);
+
+	if (found->len > 0 && e2e_save(kr))
+		e2e_tell_damaged(item, found);
+	g_ptr_array_unref(found);
+}
+
 /* SYNTAX: E2E LIST [-all] */
 static void cmd_list(WI_ITEM_REC *item, char **args)
 {
@@ -685,6 +696,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		g_ptr_array_unref(keys);
 		if (print_damaged(item, kr, NULL) > 0)
 			any = TRUE;
+		rotate_damaged(item, kr, NULL);
 		if (!any)
 			e2e_print_item(item, "(no remembered E2E state)");
 		e2e_json_free(kr);
@@ -729,6 +741,7 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 	g_ptr_array_unref(keys);
 	if (print_damaged(item, kr, ctx) > 0)
 		any = TRUE;
+	rotate_damaged(item, kr, ctx);
 	/* the requests waiting here for /e2e accept */
 	pending = e2e_pending_of(kr, ctx);
 	for (i = 0; i < pending->len; i++) {

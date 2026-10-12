@@ -682,6 +682,21 @@ void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, co
 	g_free(dctx);
 }
 
+void e2e_tell_damaged(void *item, const GPtrArray *found)
+{
+	guint i;
+
+	for (i = 0; found != NULL && i + 1 < found->len; i += 2) {
+		char *who = e2e_text_display(g_ptr_array_index(found, i));
+		char *where = e2e_ctx_display(g_ptr_array_index(found, i + 1));
+
+		e2e_print_item(item, "a damaged entry: %s was accepted for the query %s of another address (a request rpe2e.pl kept) and may hold your key - it rotates with your next message there, the new one reaches only that query's peer; /e2e decline %s in that query removes the entry",
+		               who, where, who);
+		g_free(who);
+		g_free(where);
+	}
+}
+
 /* a one-shot WHOIS of ourselves: its 311 has the displayed host, exactly
    what peers see. Redirected, so its reply is not printed. */
 static void send_self_whois(SERVER_REC *server)
@@ -1754,6 +1769,14 @@ void e2e_core_init(void)
 		   before /e2e reset */
 		if (!lost && e2e_ensure_identity(kr, &id))
 			e2e_identity_wipe(&id);
+		/* entries a bug of before wrote may hold a key: rotated (R-E34) */
+		if (!lost) {
+			GPtrArray *found = e2e_rotate_for_damaged(kr, NULL);
+
+			if (found->len > 0 && e2e_save(kr))
+				e2e_tell_damaged(NULL, found);
+			g_ptr_array_unref(found);
+		}
 		e2e_json_free(kr);
 	}
 	/* loaded mid-session: 001 will not come for servers already up */

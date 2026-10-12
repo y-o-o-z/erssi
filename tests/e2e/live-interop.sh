@@ -1517,32 +1517,33 @@ k["outgoing_recipients"][c + "|mallory@127.0.0.1"] = {"channel": c, "handle": "m
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
 say alice "/query bob"
-say alice "/e2e list"
-if wait_for "$WORK/alice/logs/E2E/bob.log" "damaged: mallory@127.0.0.1 on E2E:@bob@127.0.0.1" 5; then
-    pass "/e2e list in bob's query shows mallory's entry as damaged"
-else
-    bad "/e2e list in bob's query does not show the damaged entry"
-fi
+# no /e2e rotate, no /e2e decline: mallory may hold the current key of
+# bob's query, so the next message rotates it - the REKEY reaches bob only
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
-say alice "/e2e rotate"
 say alice "dm after a damaged entry"
-# the flood queue may still hold earlier lines: wait for the REKEY
+# the flood queue may still hold earlier lines: wait for the message
 n=0
 until tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice PRIVMSG bob :+RPE2E01 " || [ $n -ge 60 ]; do
     sleep 1; n=$((n + 1))
 done
 sleep 2
 if ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE bob :.RPEE2E REKEY "; then
-    bad "damaged entry: no REKEY to bob after /e2e rotate (the check proves nothing)"
+    bad "damaged entry: the key of bob's query did not rotate by itself"
 elif tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E REKEY "; then
     bad "damaged entry: mallory got the REKEY of bob's query"
 else
-    pass "damaged entry: the REKEY of bob's query reaches bob only"
+    pass "damaged entry: the key of bob's query rotates by itself, the REKEY reaches bob only"
 fi
-if grep -qF "rekey to mallory@127.0.0.1 skipped: a damaged entry" "$WORK/alice/logs/E2E/bob.log"; then
+if grep -qF "a damaged entry: mallory@127.0.0.1 was accepted for the query E2E:@bob@127.0.0.1" "$WORK/alice/logs/E2E/bob.log"; then
     pass "damaged entry: alice is told"
 else
     bad "damaged entry: alice is not told"
+fi
+say alice "/e2e list"
+if wait_for "$WORK/alice/logs/E2E/bob.log" "damaged: mallory@127.0.0.1 on E2E:@bob@127.0.0.1" 5; then
+    pass "/e2e list in bob's query shows mallory's entry as damaged"
+else
+    bad "/e2e list in bob's query does not show the damaged entry"
 fi
 say alice "/e2e decline mallory@127.0.0.1"
 if wait_for "$WORK/alice/logs/E2E/bob.log" "removed 1 damaged entry on E2E:@bob@127.0.0.1" 5 &&

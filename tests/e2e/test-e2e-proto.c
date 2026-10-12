@@ -5468,6 +5468,89 @@ static void test_damaged_dm_rows(void)
 #undef DCTX
 }
 
+/* R-E34: y may hold our CURRENT key for x already - the next message to
+   x rotates it without /e2e decline, the new key reaches x only; told
+   once */
+static void test_damaged_dm_auto_rotation(void)
+{
+#define DCTX "E2E\x1f@x@hx"
+	PEER me, x, y;
+	E2E_GATE_RESULT g;
+	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
+	unsigned char key[32];
+	gboolean rot, gen, told = FALSE;
+	char *fpx, *fpy, *sk0;
+	GPtrArray *found;
+	guint i;
+
+	peer_init(&me, "me", "me@m", -1);
+	peer_init(&x, "x", "x@hx", -1);
+	peer_init(&y, "y", "y@hy", -1);
+	g_hash_table_insert(nicks, (char *) "x", (char *) "x@hx");
+	enable(&me, DCTX, "normal");
+	g_assert_true(e2e_outgoing_key(me.kr, DCTX, key, &rot, &gen));
+	sk0 = g_strdup(path_str(me.kr, "outgoing", DCTX, "sk"));
+	fpx = put_peer(me.kr, &x);
+	fpy = put_peer(me.kr, &y);
+	put_accepted_recipient(me.kr, "x@hx", DCTX, fpx);
+	put_accepted_recipient(me.kr, "y@hy", DCTX, fpy);
+
+	/* no /e2e decline, no rotation due: the next message rotates */
+	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "hello", table_resolve, nicks, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_true(g.save_needed);
+	g_assert_cmpstr(path_str(me.kr, "outgoing", DCTX, "sk"), !=, sk0);
+	g_assert_nonnull(g.notices);
+	g_assert_cmpuint(g.notices->len, ==, 2);
+	g_assert_cmpstr(g_ptr_array_index(g.notices, 0), ==, "x");
+	for (i = 0; g.warnings != NULL && i < g.warnings->len; i++)
+		if (strstr(g_ptr_array_index(g.warnings, i), "y@hy") != NULL &&
+		    strstr(g_ptr_array_index(g.warnings, i), "rotates") != NULL)
+			told = TRUE;
+	g_assert_true(told);
+	e2e_gate_result_clear(&g);
+	g_assert_nonnull(path_get(me.kr, "accepted", "y@hy|" DCTX, E2E_DAMAGED_MEMBER, NULL));
+	g_assert_null(path_get(me.kr, "outgoing_recipients", DCTX "|y@hy", NULL));
+
+	/* once: the next message neither rotates nor tells again */
+	g_free(sk0);
+	sk0 = g_strdup(path_str(me.kr, "outgoing", DCTX, "sk"));
+	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "again", table_resolve, nicks, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_null(g.notices);
+	g_assert_null(g.warnings);
+	g_assert_cmpstr(path_str(me.kr, "outgoing", DCTX, "sk"), ==, sk0);
+	e2e_gate_result_clear(&g);
+	found = e2e_rotate_for_damaged(me.kr, NULL);
+	g_assert_cmpuint(found->len, ==, 0);
+	g_ptr_array_unref(found);
+
+	/* a trusted session of another address under a query with a config
+	   (not one under "@<own>", which has none) is found too, by the
+	   scan of every context */
+	set_trusted_session(me.kr, "z@hz|" DCTX, LEGACY_BOB_SK);
+	set_trusted_session(me.kr, "x@hx|E2E\x1f@me@m", LEGACY_BOB_SK);
+	found = e2e_rotate_for_damaged(me.kr, NULL);
+	g_assert_cmpuint(found->len, ==, 2);
+	g_assert_cmpstr(g_ptr_array_index(found, 0), ==, "z@hz");
+	g_assert_cmpstr(g_ptr_array_index(found, 1), ==, DCTX);
+	g_ptr_array_unref(found);
+	g_assert_true(e2e_json_truthy(path_get(me.kr, "outgoing", DCTX, "pending_rotation", NULL)));
+	/* a channel's rows are no query's */
+	found = e2e_rotate_for_damaged(me.kr, "E2E\x1f#test");
+	g_assert_cmpuint(found->len, ==, 0);
+	g_ptr_array_unref(found);
+
+	g_hash_table_destroy(nicks);
+	g_free(sk0);
+	g_free(fpx);
+	g_free(fpy);
+	peer_free(&me);
+	peer_free(&x);
+	peer_free(&y);
+#undef DCTX
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5482,6 +5565,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
 	g_test_add_func("/e2e/proto/accept-foreign-dm", test_accept_foreign_dm);
 	g_test_add_func("/e2e/proto/damaged-dm-rows", test_damaged_dm_rows);
+	g_test_add_func("/e2e/proto/damaged-dm-auto-rotation", test_damaged_dm_auto_rotation);
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);
