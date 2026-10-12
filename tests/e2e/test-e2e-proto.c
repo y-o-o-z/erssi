@@ -5196,6 +5196,61 @@ static void test_casemap_script_cache_tie(void)
 	}
 }
 
+/* the dry gate decides without touching the keyring: no key is made, no
+   rotation done, no old row taken over (the /unload e2e check of queued
+   lines) */
+static void test_gate_dry(void)
+{
+	E2E_GATE_RESULT g;
+	PEER a;
+	char *before, *after;
+
+	peer_init(&a, "alice", ALICE, -1);
+	/* an old context on the only network, no key of ours yet */
+	enable(&a, "#old", "normal");
+	/* a context of this network whose key is due to rotate */
+	enable(&a, "E2E\x1f#new", "normal");
+	e2e_json_set(e2e_json_object_member(a.kr, "outgoing"), "E2E\x1f#new", e2e_json_new(E2E_JSON_OBJECT));
+	e2e_json_set_string(path_get(a.kr, "outgoing", "E2E\x1f#new", NULL), "sk", LEGACY_BOB_SK);
+	e2e_json_set_int(path_get(a.kr, "outgoing", "E2E\x1f#new", NULL), "created_at", 1);
+	e2e_json_set_int(path_get(a.kr, "outgoing", "E2E\x1f#new", NULL), "pending_rotation", 1);
+	before = e2e_keyring_snapshot(a.kr);
+
+	e2e_gate_decide_dry(a.kr, TRUE, &net_one, "#old", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_cmpstr(g.ctx, ==, "E2E\x1f#old");
+	g_assert_null(g.wires);
+	g_assert_false(g.save_needed);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, TRUE, &net_one, "#new", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_null(g.wires);
+	g_assert_null(g.notices);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, TRUE, &net_one, "#new", "!seen x", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_BYPASS);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, TRUE, &net_one, "#plain", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, FALSE, &net_one, "#plain", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	after = e2e_keyring_snapshot(a.kr);
+	g_assert_cmpstr(before, ==, after);
+	g_free(after);
+
+	/* the real gate would have changed it (the check above can fail) */
+	e2e_gate_decide(a.kr, TRUE, NULL, &net_one, "#old", "hello", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	after = e2e_keyring_snapshot(a.kr);
+	g_assert_cmpstr(before, !=, after);
+	g_free(after);
+	g_free(before);
+	peer_free(&a);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5207,6 +5262,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/trust-changes", test_trust_changes);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
+	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);
