@@ -46,7 +46,8 @@ typedef enum {
 	WEB_MSG_NETWORK_REMOVE,        /* Request: remove network */
 	WEB_MSG_SERVER_ADD,            /* Request: add/modify server */
 	WEB_MSG_SERVER_REMOVE,         /* Request: remove server */
-	WEB_MSG_COMMAND_RESULT         /* Response: operation result */
+	WEB_MSG_COMMAND_RESULT,        /* Response: operation result */
+	WEB_MSG_E2E_STATE              /* E2E state of a channel or query (docs/fe-web-e2e.md) */
 } WEB_MESSAGE_TYPE;
 
 /* WebSocket client connection record */
@@ -209,6 +210,24 @@ void fe_web_handle_server_remove(WEB_CLIENT_REC *client, const char *json);
 
 /* State dump */
 void fe_web_dump_state(WEB_CLIENT_REC *client);
+
+/* E2E state and key-request actions (fe-web-e2e.c, docs/fe-web-e2e.md).
+ * fe_web_signals_init() and fe_web_signals_deinit() call init/deinit. */
+void fe_web_e2e_init(void);
+void fe_web_e2e_deinit(void);
+/* the state of target on server, for this client only: "e2e state
+ * request", which the e2e module answers at once (nothing without it) */
+void fe_web_e2e_dump(WEB_CLIENT_REC *client, IRC_SERVER_REC *server, const char *target);
+/* an e2e_action message: answered with a command_result; the action goes
+ * to the e2e module ("e2e action") only when it is valid */
+void fe_web_handle_e2e_action(WEB_CLIENT_REC *client, const char *json);
+/* an ident@host an action may name: 3..255 bytes, exactly one '@' and not
+ * at either end, no byte <= 0x20, no DEL, ',' or '!' */
+gboolean fe_web_e2e_handle_valid(const char *handle);
+/* the e2e object of an e2e_state message: one JSON object, valid UTF-8,
+ * that starts with {"v": and has nothing after it - anything else is
+ * never embedded in a message */
+gboolean fe_web_e2e_json_valid(const char *json);
 
 /* WebSocket protocol (RFC 6455) */
 char *fe_web_websocket_compute_accept(const char *client_key);

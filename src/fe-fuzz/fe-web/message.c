@@ -74,7 +74,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
 
 static const char *const keys[] = {
 	"type", "id", "server", "command", "target", "nick", "channel", "name",
-	"address", "port", "chatnet", "password", "network", "",
+	"address", "port", "chatnet", "password", "network", "action", "handle", "",
 };
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)

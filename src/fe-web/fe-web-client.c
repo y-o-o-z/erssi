@@ -322,6 +322,8 @@ static void handle_message(WEB_CLIENT_REC *client, const char *json)
 		fe_web_handle_server_add(client, json);
 	} else if (g_strcmp0(type, "server_remove") == 0) {
 		fe_web_handle_server_remove(client, json);
+	} else if (g_strcmp0(type, "e2e_action") == 0) {
+		fe_web_handle_e2e_action(client, json);
 	}
 
 	g_free(type);

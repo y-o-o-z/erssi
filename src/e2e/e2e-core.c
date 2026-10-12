@@ -63,6 +63,7 @@
 #include "e2e-keyring.h"
 #include "e2e-outq.h"
 #include "e2e-statusbar.h"
+#include "e2e-web.h"
 #include "e2e-wire.h"
 
 #include <irssi/src/core/channels.h>
@@ -1814,6 +1815,7 @@ void e2e_core_init(void)
 
 	e2e_commands_init();
 	e2e_statusbar_init();
+	e2e_web_init();
 
 	if (e2e_native_active()) {
 		E2E_IDENTITY id;
@@ -1885,6 +1887,7 @@ void e2e_core_deinit(void)
 	in_pump = pump_armed = FALSE;
 	pump_emission = 0;
 
+	e2e_web_deinit();
 	e2e_statusbar_deinit();
 	e2e_commands_deinit();
 	theme_unregister();

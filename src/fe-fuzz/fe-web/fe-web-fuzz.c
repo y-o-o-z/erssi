@@ -99,6 +99,8 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
 #include <irssi/src/core/args.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/chatnets.h>
+#include <irssi/src/core/chat-protocols.h>
+#include <irssi/src/core/rawlog.h>
 #include <irssi/src/core/servers-setup.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
 #include <irssi/src/fe-common/core/formats.h>
@@ -552,6 +554,53 @@ void fe_web_fuzz_reset_setup(void)
 		server_setup_remove(setupservers->data);
 	while (chatnets != NULL)
 		chatnet_remove(chatnets->data);
+}
+
+/* irc-session.c */
+void irc_session_init(void);
+void irc_session_deinit(void);
+
+/* follows src/fe-fuzz/server.c */
+IRC_SERVER_REC *fe_web_fuzz_server_new(const char *tag)
+{
+	CHAT_PROTOCOL_REC *proto;
+	SERVER_CONNECT_REC *conn;
+	SERVER_REC *server;
+	GIOChannel *handle;
+	IRC_SERVER_REC *irc;
+
+	handle = g_io_channel_unix_new(open("/dev/null", O_RDWR));
+	g_io_channel_set_encoding(handle, NULL, NULL);
+	g_io_channel_set_close_on_unref(handle, TRUE);
+
+	proto = chat_protocol_find("IRC");
+	conn = server_create_conn(proto->id, "localhost", 0, "", "", "user");
+	server = proto->server_init_connect(conn);
+	server->session_reconnect = TRUE;
+	g_free(server->tag);
+	server->tag = g_strdup(tag);
+	server->handle = net_sendbuffer_create(handle, 0);
+
+	/* skip the initialisations that would send data */
+	irc_session_deinit();
+	irc_irc_deinit();
+	server_connect_finished(server);
+	irc = IRC_SERVER(server);
+	if (irc->rawlog == NULL)
+		irc->rawlog = rawlog_create();
+	g_hash_table_insert(irc->isupport, g_strdup("CHANMODES"), g_strdup("beI,k,l,imnpst"));
+	g_hash_table_insert(irc->isupport, g_strdup("PREFIX"), g_strdup("(ohv)@%+"));
+	irc_irc_init();
+	irc_session_init();
+
+	server_connect_unref(conn);
+	return irc;
+}
+
+void fe_web_fuzz_server_free(IRC_SERVER_REC *server)
+{
+	if (server != NULL)
+		server_disconnect(SERVER(server));
 }
 
 int fe_web_fuzz_verify_password(const char *request)
