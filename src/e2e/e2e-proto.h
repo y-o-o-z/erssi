@@ -168,6 +168,14 @@ gboolean e2e_dm_row_foreign(const char *handle, const char *ctx);
    could have had our key (accepted, a recipient) our key for ctx rotates
    (*rotated). How many rows went. */
 guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gboolean *rotated);
+/* A damaged entry that may hold our key for its query - accepted, a
+   recipient, or a trusted session of another address under a query with
+   a config of its own - makes that key rotate (pending_rotation), once:
+   the entry is marked (E2E_DAMAGED_MEMBER), a recipient row dropped. Of
+   ctx, or of every context for NULL. The entries newly found: "<handle>",
+   "<ctx>" pairs (an empty array when none; the caller saves when not). */
+GPtrArray *e2e_rotate_for_damaged(E2E_JSON *kr, const char *ctx);
+#define E2E_DAMAGED_MEMBER "damaged_rotated"
 /* /e2e unrevoke: the sessions of handle on ctx and own_ctx that hold a key
    are trusted again; how many (0: nothing changed) */
 int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx);

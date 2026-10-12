@@ -76,6 +76,10 @@ void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, co
 void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 
+/* e2e_rotate_for_damaged() found entries (pairs "<handle>", "<ctx>"):
+   told in item's window (NULL: the active one) */
+void e2e_tell_damaged(void *item, const GPtrArray *found);
+
 void e2e_commands_init(void);
 void e2e_commands_deinit(void);
 

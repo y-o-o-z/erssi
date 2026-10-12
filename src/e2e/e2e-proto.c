@@ -307,6 +307,90 @@ guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gbo
 	return n;
 }
 
+/* a key "<handle>|<c>" of store: handle and c (a handle holds no '|') */
+static gboolean split_pipe(const char *key, char **handle, char **c)
+{
+	const char *bar = strchr(key, '|');
+
+	if (bar == NULL || bar == key || bar[1] == '\0')
+		return FALSE;
+	*handle = g_strndup(key, bar - key);
+	*c = g_strdup(bar + 1);
+	return TRUE;
+}
+
+static void due_rotation(E2E_JSON *kr, const char *ctx)
+{
+	E2E_JSON *out = e2e_json_get(e2e_json_get(kr, "outgoing"), ctx);
+
+	if (out != NULL)
+		e2e_json_set_int(out, "pending_rotation", 1);
+}
+
+GPtrArray *e2e_rotate_for_damaged(E2E_JSON *kr, const char *ctx)
+{
+	static const char *const stores[] = { "accepted", "incoming", NULL };
+	GPtrArray *found = g_ptr_array_new_with_free_func(g_free), *keys, *doomed;
+	E2E_JSON *channels = e2e_json_get(kr, "channels"), *recipients;
+	guint i, j;
+
+	for (i = 0; stores[i] != NULL; i++) {
+		E2E_JSON *store = e2e_json_get(kr, stores[i]);
+
+		keys = e2e_json_keys(store);
+		for (j = 0; j < keys->len; j++) {
+			E2E_JSON *row = e2e_json_get(store, g_ptr_array_index(keys, j));
+			char *h, *c;
+
+			if (!split_pipe(g_ptr_array_index(keys, j), &h, &c))
+				continue;
+			/* a session: only a trusted one under a peer's query (one
+			   under "@<own>" has no config) */
+			if ((ctx == NULL || strcmp(c, ctx) == 0) && e2e_dm_row_foreign(h, c) &&
+			    e2e_json_get(row, E2E_DAMAGED_MEMBER) == NULL &&
+			    (strcmp(stores[i], "accepted") == 0 ||
+			     (is_trusted(row) && e2e_json_get(channels, c) != NULL))) {
+				e2e_json_set_int(row, E2E_DAMAGED_MEMBER, e2e_now());
+				due_rotation(kr, c);
+				g_ptr_array_add(found, h);
+				g_ptr_array_add(found, c);
+			} else {
+				g_free(h);
+				g_free(c);
+			}
+		}
+		g_ptr_array_unref(keys);
+	}
+	/* a recipient of our key there: no recipient any more */
+	recipients = e2e_json_get(kr, "outgoing_recipients");
+	keys = e2e_json_keys(recipients);
+	doomed = g_ptr_array_new_with_free_func(g_free);
+	for (j = 0; j < keys->len; j++) {
+		E2E_JSON *row = e2e_json_get(recipients, g_ptr_array_index(keys, j));
+		const char *h = e2e_json_get_string(row, "handle"), *c = e2e_json_get_string(row, "channel");
+
+		if (h != NULL && c != NULL && (ctx == NULL || strcmp(c, ctx) == 0) &&
+		    e2e_dm_row_foreign(h, c)) {
+			gboolean told = FALSE;
+
+			for (i = 0; i + 1 < found->len && !told; i += 2)
+				told = strcmp(g_ptr_array_index(found, i), h) == 0 &&
+				       strcmp(g_ptr_array_index(found, i + 1), c) == 0;
+			if (!told) {
+				g_ptr_array_add(found, g_strdup(h));
+				g_ptr_array_add(found, g_strdup(c));
+			}
+			due_rotation(kr, c);
+			g_ptr_array_add(doomed, g_strdup(g_ptr_array_index(keys, j)));
+		}
+	}
+	for (j = 0; j < doomed->len; j++)
+		e2e_json_remove(recipients, g_ptr_array_index(doomed, j));
+	g_ptr_array_unref(doomed);
+	g_ptr_array_unref(keys);
+	return found;
+}
+
 gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                            const char *fp_hex)
 {
@@ -2264,7 +2348,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 {
 	char **readings, **ctxs = NULL;
 	E2E_CTX_KIND *kinds = NULL, kind = E2E_CTX_NEW;
-	GPtrArray *on = NULL;
+	GPtrArray *on = NULL, *damaged = NULL;
 	const char *error = NULL, *blocked = NULL, *wire = NULL;
 	gboolean is_channel, is_action, rotated, generated, adopted = FALSE;
 	unsigned char key[32];
@@ -2439,6 +2523,18 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	}
 	res->ctx = g_strdup(ctx);
 	res->save_needed = adopted;
+	/* another address accepted for this query may hold our key (R-E34):
+	   it rotates now, the new one reaches only the query's peer */
+	damaged = e2e_rotate_for_damaged(kr, ctx);
+	for (i = 0; i + 1 < damaged->len; i += 2) {
+		char *who = e2e_text_display(g_ptr_array_index(damaged, i));
+		char *where = e2e_ctx_display(g_ptr_array_index(damaged, i + 1));
+
+		add_warning(res, g_strdup_printf("a damaged entry: %s was accepted for the query %s of another address (a request rpe2e.pl kept) and may hold your key - it rotates now, the new one reaches only that query's peer; /e2e decline %s in this query removes the entry",
+		                                 who, where, who));
+		g_free(who);
+		g_free(where);
+	}
 	if (!e2e_outgoing_key(kr, ctx, key, &rotated, &generated)) {
 		res->action = E2E_GATE_REFUSE;
 		res->message = g_strdup(E2E_REFUSE_ENCRYPT);
@@ -2448,7 +2544,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 		distribute_rekey(kr, id, ctx, key, res);
 	/* written only when a key was generated or rotated (or old rows were
 	   taken over), not per message */
-	res->save_needed = generated || adopted;
+	res->save_needed = generated || adopted || damaged->len > 0;
 	/* the AAD is the bare context */
 	res->wires = is_action ? e2e_encrypt_ctcp(key, e2e_ctx_wire(ctx), body, e2e_now(), &error)
 	                       : e2e_encrypt_plain(key, e2e_ctx_wire(ctx), body, e2e_now(), &error);
@@ -2462,6 +2558,8 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 out:
 	if (on != NULL)
 		g_ptr_array_unref(on);
+	if (damaged != NULL)
+		g_ptr_array_unref(damaged);
 	for (i = 0; ctxs != NULL && i < n; i++)
 		g_free(ctxs[i]);
 	g_free(ctxs);

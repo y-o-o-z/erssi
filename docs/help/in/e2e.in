@@ -67,9 +67,11 @@
                  /E2E PENDING and /E2E ACCEPT, never accepted, removed by
                  /E2E DECLINE alone in that query. Such an address that
                  was accepted already (by an erssi before 2026-10) is
-                 damaged too: it gets no new key of the query, /E2E LIST
-                 shows it, and /E2E DECLINE <ident@host> (or alone) in
-                 that query removes it - your key there then rotates.
+                 damaged too: it may hold your key of the query, so that
+                 key rotates by itself with your next message there (you
+                 are told once) and the new one never reaches it; /E2E
+                 LIST shows it, and /E2E DECLINE <ident@host> (or alone)
+                 in that query removes it.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
                  existing session gets the revoked status and the person
                  is no longer accepted.
