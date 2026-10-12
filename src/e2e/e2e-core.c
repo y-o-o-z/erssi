@@ -1233,8 +1233,8 @@ static gboolean gate_lets_pass(SERVER_REC *server, const char *cmd)
 		if (!e2e_parse_privmsg_line(line, &tags, &target, &body)) {
 			pass = FALSE;
 		} else {
-			e2e_gate_decide(kr, status == E2E_LOAD_OK, NULL, &net, target, body,
-			                resolve_cb, server, &res);
+			e2e_gate_decide_dry(kr, status == E2E_LOAD_OK, &net, target, body,
+			                    resolve_cb, server, &res);
 			pass = res.action == E2E_GATE_PASS || res.action == E2E_GATE_BYPASS;
 			e2e_gate_result_clear(&res);
 		}

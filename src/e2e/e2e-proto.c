@@ -2419,6 +2419,14 @@ void e2e_gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	gate_decide(kr, kr_ok, id, net, target, body, resolve, resolve_data, FALSE, res);
 }
 
+void e2e_gate_decide_dry(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                         const char *target, const char *body,
+                         E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res)
+{
+	/* dry: gate_single and gate_decide never write to kr */
+	gate_decide((E2E_JSON *) kr, kr_ok, NULL, net, target, body, resolve, resolve_data, TRUE, res);
+}
+
 void e2e_gate_result_clear(E2E_GATE_RESULT *res)
 {
 	if (res->wires != NULL)

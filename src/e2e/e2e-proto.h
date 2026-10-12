@@ -203,6 +203,13 @@ void e2e_gate_decide(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
                      const E2E_NET *net, const char *target, const char *body,
                      E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res);
 void e2e_gate_result_clear(E2E_GATE_RESULT *res);
+/* e2e_gate_decide, dry: what the gate would do with the line now - kr is
+   never changed (no key is made or rotated, no old row taken over), no
+   REKEY, no wires: CIPHER says only that it would be encrypted, under
+   res->ctx */
+void e2e_gate_decide_dry(const E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
+                         const char *target, const char *body,
+                         E2E_RESOLVE_FUNC resolve, void *resolve_data, E2E_GATE_RESULT *res);
 /* every IRC line of the wires fits max_len bytes (without CR LF) */
 gboolean e2e_gate_lines_fit(const E2E_GATE_RESULT *res, const char *tags, const char *target,
                             gsize max_len);
