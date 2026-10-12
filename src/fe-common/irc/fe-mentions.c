@@ -551,6 +551,9 @@ void fe_mentions_init(void)
 	settings_add_str("mentions", "mentions_log_file", "");
 	settings_add_str("mentions", "mentions_exclude_networks", "");
 
+	/* before the settings are read: the script's values move first */
+	fe_mentions_migrate_init();
+
 	deiniting = FALSE;
 	mwin = NULL;
 	mwin_name = g_strdup(settings_get_str("mentions_window"));
@@ -579,6 +582,7 @@ void fe_mentions_init(void)
 void fe_mentions_deinit(void)
 {
 	deiniting = TRUE;
+	fe_mentions_migrate_deinit();
 
 	if (create_tag != 0) {
 		g_source_remove(create_tag);

@@ -19,4 +19,9 @@ WINDOW_REC *mentions_window(gboolean create);
 void fe_mentions_init(void);
 void fe_mentions_deinit(void);
 
+/* mentions.pl users: the script is unloaded when it is loaded, its settings
+   move to the built-in ones (fe-mentions-migrate.c) */
+void fe_mentions_migrate_init(void);
+void fe_mentions_migrate_deinit(void);
+
 #endif
