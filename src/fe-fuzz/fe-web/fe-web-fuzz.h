@@ -56,6 +56,14 @@ struct _FE_WEB_PACING *fe_web_fuzz_login_pacing(void);
 /* Remove networks and servers that web clients added */
 void fe_web_fuzz_reset_setup(void);
 
+/* An IRC server with this tag on /dev/null (what it sends goes nowhere),
+ * past server_connect_finished(): it is in the servers list, and
+ * "connected" only once a 001 comes in; its lines come in with
+ * signal_emit("server incoming", ...). fe_web_fuzz_server_free()
+ * disconnects it (NULL: nothing). */
+IRC_SERVER_REC *fe_web_fuzz_server_new(const char *tag);
+void fe_web_fuzz_server_free(IRC_SERVER_REC *server);
+
 /* fe_web_verify_password() of fe-web-server.c, on a NUL-terminated
  * request */
 int fe_web_fuzz_verify_password(const char *request);

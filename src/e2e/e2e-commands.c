@@ -19,11 +19,13 @@
 #include "e2e-keyring.h"
 #include "e2e-wire.h"
 
+#include <irssi/src/core/channels.h>
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/queries.h>
 #include <irssi/src/core/window-item-def.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
+#include <irssi/src/fe-common/core/window-items.h>
 
 #include <errno.h>
 
@@ -1053,38 +1055,18 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 	return handle;
 }
 
-/* SYNTAX: E2E ACCEPT [<nick>|<ident@host>] */
-void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
+/* /e2e accept of handle in ctx, picked already: answered (KEYRSP to
+   nick) or trusted, saved, told in item's window */
+static void accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, const char *ctx,
+                          const char *handle, const char *nick)
 {
-	E2E_JSON *kr;
 	E2E_IDENTITY id;
-	gboolean refused;
-	char *handle = NULL, *ctx, *nick = NULL, *own = NULL, *rsp = NULL, *recip = NULL;
+	char *own = NULL, *rsp = NULL, *recip = NULL;
 	const char *name;
 
-	/* the window's server; the active one only for a window without an
-	   item (the status window) */
-	if (item != NULL)
-		server = item->server;
-	if (who != NULL && *who == '\0')
-		who = NULL;
-	if (!IS_IRC_SERVER(server) || !server->connected) {
-		e2e_print_item(item, "not connected to a server");
-		return;
-	}
-	kr = e2e_load();
-	ctx = who_ctx(kr, server, item, who, &refused);
-	if (ctx == NULL) {
-		if (!refused)
-			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
-		goto out;
-	}
-	handle = pick_handle(kr, server, item, ctx, who, "accept", &nick);
-	if (handle == NULL)
-		goto out;
 	name = shown_text(nick != NULL ? nick : handle);
 	if (!e2e_ensure_identity(kr, &id))
-		goto out;
+		return;
 	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, server, ctx) : NULL;
 	switch (e2e_accept(kr, &id, handle, ctx, own, e2e_own_handle(server), &rsp, &recip)) {
 	case E2E_ACCEPT_SENT:
@@ -1130,22 +1112,71 @@ void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 		break;
 	}
 	e2e_identity_wipe(&id);
-out:
 	g_free(own);
 	g_free(rsp);
 	g_free(recip);
+}
+
+/* SYNTAX: E2E ACCEPT [<nick>|<ident@host>] */
+void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
+{
+	E2E_JSON *kr;
+	gboolean refused;
+	char *handle = NULL, *ctx, *nick = NULL;
+
+	/* the window's server; the active one only for a window without an
+	   item (the status window) */
+	if (item != NULL)
+		server = item->server;
+	if (who != NULL && *who == '\0')
+		who = NULL;
+	if (!IS_IRC_SERVER(server) || !server->connected) {
+		e2e_print_item(item, "not connected to a server");
+		return;
+	}
+	kr = e2e_load();
+	ctx = who_ctx(kr, server, item, who, &refused);
+	if (ctx == NULL) {
+		if (!refused)
+			e2e_print_item(item, "%s", NOT_IN_CONTEXT);
+		goto out;
+	}
+	handle = pick_handle(kr, server, item, ctx, who, "accept", &nick);
+	if (handle != NULL)
+		accept_handle(kr, server, item, ctx, handle, nick);
+out:
 	g_free(nick);
 	g_free(handle);
 	g_free(ctx);
 	e2e_json_free(kr);
 }
 
+/* /e2e decline of handle in ctx, picked already: its request goes, its
+   session is revoked and its acceptance forgotten; saved, told */
+static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *handle,
+                           const char *nick)
+{
+	E2E_JSON *row;
+	char *k;
+
+	k = g_strconcat(handle, "|", ctx, NULL);
+	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
+	g_free(k);
+	row = incoming_row(kr, handle, ctx);
+	if (row != NULL)
+		e2e_json_set_string(row, "status", "revoked");
+	e2e_forget_acceptance(kr, handle, ctx);
+	e2e_save(kr);
+	e2e_print_item(item, "declined %s (%s) on %s", shown_text(nick != NULL ? nick : handle),
+	               shown_text(handle), shown(ctx));
+}
+
 /* SYNTAX: E2E DECLINE [<nick>|<ident@host>] */
 void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 {
-	E2E_JSON *kr, *row;
+	E2E_JSON *kr;
 	gboolean refused, rotated = FALSE;
-	char *handle = NULL, *ctx = NULL, *nick = NULL, *k;
+	char *handle = NULL, *ctx = NULL, *nick = NULL;
 	guint n, dropped = 0;
 
 	if (item != NULL)
@@ -1184,22 +1215,89 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 		goto out;
 	}
 	handle = pick_handle(kr, server, item, ctx, who, "decline", &nick);
-	if (handle == NULL)
-		goto out;
-	k = g_strconcat(handle, "|", ctx, NULL);
-	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
-	g_free(k);
-	row = incoming_row(kr, handle, ctx);
-	if (row != NULL)
-		e2e_json_set_string(row, "status", "revoked");
-	e2e_forget_acceptance(kr, handle, ctx);
-	e2e_save(kr);
-	e2e_print_item(item, "declined %s (%s) on %s", shown_text(nick != NULL ? nick : handle),
-	               shown_text(handle), shown(ctx));
+	if (handle != NULL)
+		decline_handle(kr, item, ctx, handle, nick);
 out:
 	g_free(nick);
 	g_free(handle);
 	g_free(ctx);
+	e2e_json_free(kr);
+}
+
+/*
+ A web client's accept or decline (e2e-web.c, "e2e action"): only of the
+ request that waits in the window of target on server with exactly this
+ ident@host - the window's own context, never another one the address
+ also has (/e2e accept <ident@host> in a channel window may take a query
+ request; this never does), never a session without a request, never a
+ damaged one. Looked up again in the keyring the action works on; nothing
+ sent or changed otherwise. Not while rpe2e.pl is loaded (the script owns
+ the keyring then) or while the keyring is lost.
+*/
+void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle)
+{
+	const char *verb = accept ? "accept" : "decline", *found;
+	WI_ITEM_REC *item;
+	E2E_JSON *kr, *row;
+	E2E_NET net;
+	char *ctx, *dtarget, *picked, *nick, *k;
+	guint n = 0;
+
+	if (server == NULL || target == NULL || handle == NULL)
+		return;
+	/* a channel or query of this server (window_item_find() takes any
+	   server for NULL - server is not NULL here) */
+	item = window_item_find(server, target);
+	if (item != NULL && (item->server != server || (!IS_CHANNEL(item) && !IS_QUERY(item))))
+		item = NULL;
+	dtarget = e2e_text_display(target);
+	if (!e2e_native_active()) {
+		e2e_print_item(item, "web client asked to %s %s on %s, but the native e2e module is inactive while rpe2e.pl is loaded — nothing sent",
+		               verb, shown_text(handle), dtarget);
+		g_free(dtarget);
+		return;
+	}
+	if (e2e_keyring_is_lost()) {
+		e2e_print_item(item, "web client asked to %s %s on %s: %s", verb, shown_text(handle),
+		               dtarget, LOST_REFUSAL);
+		g_free(dtarget);
+		return;
+	}
+	if (!IS_IRC_SERVER(server) || !server->connected) {
+		e2e_print_item(item, "web client asked to %s %s on %s: not connected to the server — nothing sent",
+		               verb, shown_text(handle), dtarget);
+		g_free(dtarget);
+		return;
+	}
+	kr = e2e_load();
+	ctx = window_ctx_quiet(kr, item);
+	found = NULL;
+	if (ctx != NULL) {
+		e2e_server_net(server, &net);
+		found = e2e_pending_handle(kr, ctx, handle, net.casemap, &n);
+		e2e_net_clear(&net);
+	}
+	if (found == NULL || n != 1 || strcmp(found, handle) != 0) {
+		e2e_print_item(item, "web client asked to %s %s on %s, but no such request waits — nothing sent",
+		               verb, shown_text(handle), dtarget);
+		goto out;
+	}
+	/* found points into kr, into the row accept and decline remove */
+	picked = g_strdup(found);
+	k = g_strconcat(picked, "|", ctx, NULL);
+	row = e2e_json_get(e2e_json_get(kr, "pending_inbound"), k);
+	g_free(k);
+	nick = g_strdup(e2e_json_get_string(row, "sender_nick"));
+	e2e_print_item(item, "web client: %s %s on %s", verb, shown_text(picked), shown(ctx));
+	if (accept)
+		accept_handle(kr, server, item, ctx, picked, nick);
+	else
+		decline_handle(kr, item, ctx, picked, nick);
+	g_free(nick);
+	g_free(picked);
+out:
+	g_free(ctx);
+	g_free(dtarget);
 	e2e_json_free(kr);
 }
 

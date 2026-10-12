@@ -164,6 +164,8 @@ static const char *fe_web_type_to_string(WEB_MESSAGE_TYPE type)
 		return "server_remove";
 	case WEB_MSG_COMMAND_RESULT:
 		return "command_result";
+	case WEB_MSG_E2E_STATE:
+		return "e2e_state";
 	default:
 		return "unknown";
 	}
@@ -251,8 +253,9 @@ char *fe_web_message_to_json(WEB_MESSAGE_REC *msg)
 		g_free(escaped);
 	}
 
-	/* text (or "task" for nicklist_update, or raw JSON for network_list/server_list) */
-	if (msg->text != NULL) {
+	/* text (or "task" for nicklist_update, or raw JSON for network_list/server_list;
+	 * e2e_state has its object after the timestamp) */
+	if (msg->text != NULL && msg->type != WEB_MSG_E2E_STATE) {
 		if (msg->type == WEB_MSG_NICKLIST_UPDATE) {
 			/* For nicklist_update, serialize text field as "task" */
 			escaped = fe_web_escape_json(msg->text);
@@ -282,6 +285,12 @@ char *fe_web_message_to_json(WEB_MESSAGE_REC *msg)
 
 	/* timestamp */
 	g_string_append_printf(json, ",\"timestamp\":%ld", (long) msg->timestamp);
+
+	/* e2e_state: the e2e module's object, raw - only when it is one
+	 * JSON object starting with {"v": (docs/fe-web-e2e.md); anything
+	 * else is left out, never embedded */
+	if (msg->type == WEB_MSG_E2E_STATE && fe_web_e2e_json_valid(msg->text))
+		g_string_append_printf(json, ",\"e2e\":%s", msg->text);
 
 	/* level (for message types and activity_update) */
 	/* IMPORTANT: For activity_update, level=0 means "read", so we MUST send it! */

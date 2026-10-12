@@ -27,7 +27,10 @@
 # the new key (the server logs the time of every line: --wire-times);
 # chunks still waiting are dropped and reported when rpe2e.pl is loaded,
 # on /unload e2e, on disconnect and on /e2e reset, and sent first on
-# /upgrade - never in clear text. Last, rpe2e.pl
+# /upgrade - never in clear text. The signals fe-web uses (a script stands
+# in for it): the state of #test with mallory's request, a web accept of a
+# request that does not wait (refused, nothing sent), a web decline (a new
+# state), and with rpe2e.pl loaded (bob) "off" and a refusal. Last, rpe2e.pl
 # loads and saves alice's keyring and keeps what only the module writes.
 #
 # A second fake server plays a second network (chatnet E2E2): alice is on
@@ -1410,6 +1413,62 @@ else
     bad "rpe2e.pl loaded: the script's chunks were dropped or plain text went out"
 fi
 
+# ---- the signals of fe-web (e2e-web.c): the state, and a web client's accept/decline ----
+# a script stands in for fe-web: it logs every "e2e state" and emits a
+# request or an action as fe-web does for a web client
+cat > "$WORK/alice/scripts/e2eweb.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'e2eweb');
+Irssi::signal_register({
+    'e2e state' => [qw(Irssi::Server string string)],
+    'e2e state request' => [qw(Irssi::Server string)],
+    'e2e action' => [qw(Irssi::Server string string string)],
+});
+my $log = Irssi::get_irssi_dir() . '/e2e-state.log';
+Irssi::signal_add('e2e state', sub {
+    my ($server, $target, $json) = @_;
+    open(my $fh, '>>', $log) or return;
+    print $fh (($server ? $server->{tag} : '-') . " $target $json\n");
+    close $fh;
+});
+Irssi::command_bind('e2etest_state', sub {
+    my ($data, $server) = @_;
+    my ($target) = split ' ', $data;
+    Irssi::signal_emit('e2e state request', $server, $target);
+});
+Irssi::command_bind('e2etest_action', sub {
+    my ($data, $server) = @_;
+    my ($target, $action, $handle) = split ' ', $data;
+    Irssi::signal_emit('e2e action', $server, $target, $action, $handle);
+});
+PERL
+cp "$WORK/alice/scripts/e2eweb.pl" "$WORK/bob/scripts/e2eweb.pl"
+# bob runs rpe2e.pl: the module is inactive - its state is "off" with no
+# requests (the script's is not the module's to tell), and an action is
+# refused without a look at the keyring
+say bob "/script load e2eweb"
+say bob "/window goto $CHAN"
+say bob "/e2etest_state $CHAN"
+if wait_for "$WORK/bob/e2e-state.log" "E2E $CHAN {\"v\":1,\"state\":\"off\"" 10 &&
+   ! grep -aqF '"pending":[{' "$WORK/bob/e2e-state.log"; then
+    pass "web, rpe2e.pl loaded: the module reports off, no requests"
+else
+    bad "web, rpe2e.pl loaded: the module reports something else (log: $(tail -n 1 "$WORK/bob/e2e-state.log" 2>/dev/null))"
+fi
+BOB_KR=$(md5sum < "$WORK/bob/rpe2e/keyring.json")
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say bob "/e2etest_action $CHAN accept alice@127.0.0.1"
+sleep 2
+if grep -aqF "web client asked to accept alice@127.0.0.1 on $CHAN, but the native e2e module is inactive while rpe2e.pl is loaded — nothing sent" "$WORK/bob/all.log" &&
+   [ "$(md5sum < "$WORK/bob/rpe2e/keyring.json")" = "$BOB_KR" ] &&
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^bob NOTICE alice :.RPEE2E KEYRSP"; then
+    pass "web action, rpe2e.pl loaded: refused, keyring untouched"
+else
+    bad "web action, rpe2e.pl loaded: not refused, or the keyring changed"
+fi
+say bob "/script unload e2eweb"
+
 # ---- one network, an old keyring: nothing to do ----
 # bob unloads rpe2e.pl, his own (unscoped) keyring comes back, and the
 # native module takes it over with the first line he sends (incoming
@@ -1560,9 +1619,98 @@ else
     bad "alice: no prompt, or not the query prompt, for mallory's query request"
 fi
 say alice "/join -E2E $CHAN"
+
+# ---- a web client's accept/decline, through the signals of fe-web ----
+STATE_LOG=$WORK/alice/e2e-state.log
+state_lines() {  # state_lines <mark> <ERE>: lines for E2E's #test after line <mark> matching
+    tail -n +$(($1 + 1)) "$STATE_LOG" 2>/dev/null | grep -aF "E2E $CHAN {" | grep -aE -- "$2"
+}
+wait_state() {  # wait_state <mark> <ERE> <ERE not there, or ""> <seconds>
+    local n=0
+    while [ $n -lt "$4" ]; do
+        if [ -n "$3" ]; then
+            state_lines "$1" "$2" | grep -avqE -- "$3" && return 0
+        else
+            state_lines "$1" "$2" >/dev/null && return 0
+        fi
+        sleep 1; n=$((n + 1))
+    done
+    return 1
+}
+say alice "/script load e2eweb"
+say alice "/e2etest_state $CHAN"
+if wait_state 0 '"v":1,"state":"on"' "" 10 &&
+   state_lines 0 '"state":"on"' | grep -aqF '"handle":"mallory@127.0.0.1"'; then
+    pass "web: the state of #test (on) lists mallory's request"
+else
+    bad "web: no state of #test with mallory's request (log: $(tail -n 2 "$STATE_LOG" 2>/dev/null))"
+fi
+# a request that does not wait is never acted on: nothing to nobody
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say alice "/e2etest_action $CHAN accept nobody@127.0.0.1"
+sleep 2
+if grep -aqF "web client asked to accept nobody@127.0.0.1 on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE nobody"; then
+    pass "web accept of a stale request: refused, nothing sent"
+else
+    bad "web accept of a stale request: not refused, or alice sent nobody a NOTICE"
+fi
+# a nick is no ident@host: the request's own address only (a script can
+# emit the signal with anything; fe-web lets only an ident@host through)
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say alice "/e2etest_action $CHAN accept mallory"
+sleep 2
+if grep -aqF "web client asked to accept mallory on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory"; then
+    pass "web accept by nick: refused, nothing sent (only the exact ident@host)"
+else
+    bad "web accept by nick: not refused, or alice sent mallory something"
+fi
+# decline: #test's request only (the window's), then a new state
+MARK=$(wc -l < "$STATE_LOG")
+DECLINED_BEFORE=$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")
+say alice "/e2etest_action $CHAN decline mallory@127.0.0.1"
+if wait_state "$MARK" '"state":"on"' 'mallory' 10 &&
+   grep -aqF "web client: decline mallory@127.0.0.1 on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   [ "$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")" -gt "$DECLINED_BEFORE" ]; then
+    pass "web decline of mallory in #test: declined, a new state without mallory"
+else
+    bad "web decline of mallory in #test: not declined, or no new state without him"
+fi
+# the web names the window's request only: mallory's query request (an
+# /e2e accept of the address in #test would take it) is not touched
+WIRE_MARK=$(wc -l < "$WORK/wire.log")
+say alice "/e2etest_action $CHAN accept mallory@127.0.0.1"
+sleep 2
+if grep -aqF "web client asked to accept mallory@127.0.0.1 on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory"; then
+    pass "web accept in #test never takes mallory's query request"
+else
+    bad "web accept in #test took another request of mallory, or sent him something"
+fi
+# a request that comes in: a new state, unasked
+# (alice drops a second KEYREQ of one sender and context within 10 s:
+# mallory's client also asks by itself when alice writes)
+MARK=$(wc -l < "$STATE_LOG")
+say mallory "/window goto $CHAN"
+for try in 1 2; do
+    sleep 11
+    say mallory "/e2e handshake alice"
+    wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 20 && break
+done
+if wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 1; then
+    pass "web: mallory's new request comes as a new state"
+else
+    bad "web: mallory's new request did not come as a state"
+fi
 # in #test the address names #test's request first
+DECLINED_BEFORE=$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")
 say alice "/e2e decline mallory@127.0.0.1"
-if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" 5; then
+n=0
+while [ "$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")" -le "$DECLINED_BEFORE" ] && [ $n -lt 5 ]; do
+    sleep 1; n=$((n + 1))
+done
+if [ "$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")" -gt "$DECLINED_BEFORE" ]; then
     pass "/e2e decline mallory@127.0.0.1 declines mallory's request"
 else
     bad "/e2e decline mallory@127.0.0.1 did not decline"

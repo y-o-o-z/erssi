@@ -62,6 +62,16 @@
     replaced; any other file at the path is left alone and the server does
     not start. The socket is removed when the server stops.
 
+    Web clients and E2E: with the e2e module loaded, a web client is told
+    the E2E state of every channel and query (off, on, waiting for keys,
+    blocked, keyring error) and the key requests that wait there, and it
+    can accept or decline such a request. Accepting hands out your key, so
+    only a request that waits in that channel or query, with exactly the
+    ident@host the client names, is acted on; erssi prints what was done
+    in that window. While the rpe2e.pl script is loaded, web clients see
+    E2E as off and their actions are refused. The protocol (version 1) is
+    docs/fe-web-e2e.md in the erssi sources.
+
 %9Examples:%9
 
     /SET fe_web_password a-long-random-secret
@@ -72,5 +82,5 @@
     /FE_WEB
     /FE_WEB STATUS
 
-%9See also:%9 LOAD, SET
+%9See also:%9 E2E, LOAD, SET
 

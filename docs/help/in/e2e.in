@@ -247,6 +247,10 @@
     another erssi) is shown at the next window switch or the next
     message sent.
 
+    Web clients (fe-web, see /HELP FE_WEB) see the same state of every
+    channel and query and can accept or decline a key request that waits
+    there - only that request, by its exact ident@host.
+
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again. One that is not
     valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
@@ -352,5 +356,5 @@
     /E2E RESET
     /E2E OFF bob@old.example.org
 
-%9See also:%9 MSG, QUERY, LOAD, STATUSBAR, FORMAT
+%9See also:%9 MSG, QUERY, LOAD, STATUSBAR, FORMAT, FE_WEB
 

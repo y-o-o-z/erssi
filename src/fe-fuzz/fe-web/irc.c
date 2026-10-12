@@ -6,13 +6,13 @@
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
- The server setup follows src/fe-fuzz/server.c. The input is lines from an
- IRC server ("\r\n" separated; the first byte picks whether they get a
- ":user " prefix). A web client that follows all servers turns them into
- JSON (messages, modes, nicklists, WHOIS, ...). Lines starting with
- "WEB " are a message from that web client instead (sync_server, names,
- mark_read, close_query, ...), so its requests meet real channels, nicks
- and queries.
+ The server is fe_web_fuzz_server_new()'s (as in src/fe-fuzz/server.c).
+ The input is lines from an IRC server ("\r\n" separated; the first byte
+ picks whether they get a ":user " prefix). A web client that follows all
+ servers turns them into JSON (messages, modes, nicklists, WHOIS, ...).
+ Lines starting with "WEB " are a message from that web client instead
+ (sync_server, names, mark_read, close_query, ...), so its requests meet
+ real channels, nicks and queries.
 */
 
 #include <irssi/src/fe-web/module.h>
@@ -20,19 +20,13 @@
 
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/rawlog.h>
-#include <irssi/src/core/net-sendbuffer.h>
 #include <irssi/src/core/servers-setup.h>
 #include <irssi/src/core/misc.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
 
-#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* irc-session.c */
-void irc_session_init(void);
-void irc_session_deinit(void);
 
 static SERVER_REC *server;
 
@@ -57,36 +51,7 @@ static void event_connected(IRC_SERVER_REC *irc, const char *data, const char *f
 
 static void server_new(void)
 {
-	CHAT_PROTOCOL_REC *proto;
-	SERVER_CONNECT_REC *conn;
-	GIOChannel *handle;
-	IRC_SERVER_REC *irc;
-
-	handle = g_io_channel_unix_new(open("/dev/null", O_RDWR));
-	g_io_channel_set_encoding(handle, NULL, NULL);
-	g_io_channel_set_close_on_unref(handle, TRUE);
-
-	proto = chat_protocol_find("IRC");
-	conn = server_create_conn(proto->id, "localhost", 0, "", "", "user");
-	server = proto->server_init_connect(conn);
-	server->session_reconnect = TRUE;
-	g_free(server->tag);
-	server->tag = g_strdup("fuzz");
-	server->handle = net_sendbuffer_create(handle, 0);
-
-	/* skip the initialisations that would send data */
-	irc_session_deinit();
-	irc_irc_deinit();
-	server_connect_finished(server);
-	irc = IRC_SERVER(server);
-	if (irc->rawlog == NULL)
-		irc->rawlog = rawlog_create();
-	g_hash_table_insert(irc->isupport, g_strdup("CHANMODES"), g_strdup("beI,k,l,imnpst"));
-	g_hash_table_insert(irc->isupport, g_strdup("PREFIX"), g_strdup("(ohv)@%+"));
-	irc_irc_init();
-	irc_session_init();
-
-	server_connect_unref(conn);
+	server = SERVER(fe_web_fuzz_server_new("fuzz"));
 }
 
 int LLVMFuzzerInitialize(int *argc, char ***argv)

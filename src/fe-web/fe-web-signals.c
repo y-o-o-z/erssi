@@ -1639,6 +1639,9 @@ void fe_web_signals_init(void)
 	/* Window lifecycle (channel/query closed in irssi) */
 	signal_add("window item remove", (SIGNAL_FUNC) sig_window_item_remove);
 	signal_add("window destroyed", (SIGNAL_FUNC) sig_window_destroyed);
+
+	/* E2E state from the e2e module */
+	fe_web_e2e_init();
 }
 
 /* Deinitialize signal handlers */
@@ -1710,6 +1713,8 @@ void fe_web_signals_deinit(void)
 	/* Window lifecycle (channel/query closed in irssi) */
 	signal_remove("window item remove", (SIGNAL_FUNC) sig_window_item_remove);
 	signal_remove("window destroyed", (SIGNAL_FUNC) sig_window_destroyed);
+
+	fe_web_e2e_deinit();
 
 	/* Cleanup active_whois hash table */
 	if (active_whois != NULL) {
@@ -1812,6 +1817,9 @@ static void fe_web_dump_server_state(WEB_CLIENT_REC *client, IRC_SERVER_REC *ser
 		fe_web_send_message(client, msg);
 		fe_web_message_free(msg);
 
+		/* its E2E state, from the e2e module (nothing without it) */
+		fe_web_e2e_dump(client, server, channel->name);
+
 		/* Send activity status if channel has unread activity */
 		window = window_find_item(SERVER(server), channel->name);
 		if (window != NULL && window->active != NULL) {
@@ -1846,6 +1854,9 @@ static void fe_web_dump_server_state(WEB_CLIENT_REC *client, IRC_SERVER_REC *ser
 		msg->nick = g_strdup(query->name);
 		fe_web_send_message(client, msg);
 		fe_web_message_free(msg);
+
+		/* its E2E state, from the e2e module (nothing without it) */
+		fe_web_e2e_dump(client, server, query->name);
 
 		/* Send activity status if query has unread activity */
 		window = window_find_item(SERVER(server), query->name);
