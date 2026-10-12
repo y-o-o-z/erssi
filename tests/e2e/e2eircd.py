@@ -6,7 +6,9 @@
 WHOIS (311 - rpe2e.pl learns its own ident@host from it), PRIVMSG/NOTICE to a
 channel and to a nick (CTCP too, which carries KEYREQ/KEYRSP). Every
 PRIVMSG/NOTICE line is also written to the --wire file, so the test can check
-what really crossed the server. --network names the network in 005 NETWORK=,
+what really crossed the server; --wire-times writes them once more with the
+time they arrived ("<seconds.ms> <nick> <CMD> <target> :<text>"), so the
+test can check the pace of the flood queue. --network names the network in 005 NETWORK=,
 so two of these can play two networks. --casemapping ascii, rfc1459,
 strict-rfc1459 or utf8 sends CASEMAPPING=<value> in 005 and folds channel
 and nick names that way (utf8: NFKC, then Python's casefold); without it
@@ -15,6 +17,7 @@ no CASEMAPPING is sent and names are folded with str.lower().
 """
 import argparse
 import asyncio
+import time
 import unicodedata
 
 SRV = "e2e.test"
@@ -60,7 +63,7 @@ def members(chan):
     return [clients[n] for n in channels.get(fold(chan), ()) if n in clients]
 
 
-async def handle(reader, writer, wire_path):
+async def handle(reader, writer, wire_path, times_path):
     me = Client(writer)
     try:
         while line := await reader.readline():
@@ -135,6 +138,9 @@ async def handle(reader, writer, wire_path):
                 target = args[0]
                 with open(wire_path, "a", encoding="utf-8") as fh:
                     fh.write(f"{me.nick} {cmd} {target} :{trailing}\n")
+                if times_path:
+                    with open(times_path, "a", encoding="utf-8") as fh:
+                        fh.write(f"{time.time():.3f} {me.nick} {cmd} {target} :{trailing}\n")
                 out = f":{me.prefix} {cmd} {target} :{trailing}"
                 if target.startswith("#"):
                     for c in members(target):
@@ -156,6 +162,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--wire", required=True)
+    parser.add_argument("--wire-times", help="every PRIVMSG/NOTICE again, with the time it arrived")
     parser.add_argument("--network", default="E2ETest")
     parser.add_argument("--casemapping", choices=("ascii", "rfc1459", "strict-rfc1459", "utf8"))
     parser.add_argument("--hide-casemapping", action="store_true",
@@ -165,7 +172,7 @@ async def main():
     NETWORK = args.network
     CASEMAPPING = args.casemapping
     HIDE_CASEMAPPING = args.hide_casemapping
-    server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire), "127.0.0.1", args.port)
+    server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire, args.wire_times), "127.0.0.1", args.port)
     async with server:
         await server.serve_forever()
 

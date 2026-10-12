@@ -1161,7 +1161,7 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 			if (!saved)
 				e2e_print_item(item, "%s", error);
 			else if (e2e_drop_queued_privmsgs() > 0)
-				e2e_print_item(item, "messages typed while the keyring was lost and still waiting to be sent were dropped");
+				e2e_print_item(item, "lines still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped");
 		} else {
 			saved = e2e_save(kr);
 		}
@@ -1353,7 +1353,7 @@ static void cmd_reset(WI_ITEM_REC *item)
 			e2e_print_item(item, "a new keyring is started with a new identity (fingerprint %s). E2E is off everywhere until /e2e on; peers see a new key and need /e2e reverify <your nick>. The corrupt file stays as %s.corrupt-*",
 			               id.fp_hex, e2e_keyring_file());
 			if (dropped > 0)
-				e2e_print_item(item, "%d message(s) typed while the keyring was lost and still waiting to be sent were dropped",
+				e2e_print_item(item, "%d line(s) still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped",
 				               dropped);
 		} else {
 			e2e_print_item(item, "reset failed: %s", error);
