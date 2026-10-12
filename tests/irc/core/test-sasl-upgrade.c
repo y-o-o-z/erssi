@@ -104,7 +104,11 @@ static IRC_SERVER_REC *restore_config(CONFIG_REC *session)
 
 /* restores one SASL PLAIN server from a session file, as the process
    started by /UPGRADE does; `extra' is added to the server's block */
-static IRC_SERVER_REC *restore_at(const char *address, int port, const char *extra)
+/* a session file with one SASL PLAIN server on a new socketpair (`peer'
+   is the server's end); `before' goes ahead of it in the server list,
+   `extra' into its block */
+static CONFIG_REC *session_file(const char *address, int port, const char *before,
+                                const char *extra)
 {
 	CONFIG_REC *session;
 	char *data;
@@ -117,16 +121,26 @@ static IRC_SERVER_REC *restore_at(const char *address, int port, const char *ext
 	peer = sv[1];
 
 	data = g_strdup_printf(
-	    "servers = ( { chat_type = \"IRC\"; address = \"%s\"; "
+	    "servers = ( %s{ chat_type = \"IRC\"; address = \"%s\"; "
 	    "port = \"%d\"; nick = \"user\"; handle = \"%d\"; "
 	    "sasl_mechanism = \"%d\"; sasl_username = \"user\"; "
 	    "sasl_password = \"secret\"; %s } );",
-	    address, port, sv[0], SASL_MECHANISM_PLAIN, extra);
+	    before, address, port, sv[0], SASL_MECHANISM_PLAIN, extra);
 	session = config_open(NULL, -1);
 	g_assert_cmpint(config_parse_data(session, data, "session"), ==, 0);
 	g_free(data);
+	return session;
+}
 
-	return restore_config(session);
+static IRC_SERVER_REC *restore_list(const char *address, int port, const char *before,
+                                    const char *extra)
+{
+	return restore_config(session_file(address, port, before, extra));
+}
+
+static IRC_SERVER_REC *restore_at(const char *address, int port, const char *extra)
+{
+	return restore_list(address, port, "", extra);
 }
 
 static IRC_SERVER_REC *restore(const char *extra)
@@ -169,6 +183,19 @@ static gboolean closed_within(int fd, int ms)
 	return FALSE;
 }
 
+/* closes our end of a connection after reading what is left in it: a
+   close with unread data resets the connection, and erssi's deferred
+   disconnect then warns "Connection reset by peer" in a later test */
+static void drain_close(int fd)
+{
+	char buf[512];
+
+	pump();
+	while (read(fd, buf, sizeof(buf)) > 0)
+		;
+	close(fd);
+}
+
 static void finish_one(SERVER_REC *server)
 {
 	if (!server->disconnected) {
@@ -183,7 +210,7 @@ static void finish(IRC_SERVER_REC *server)
 	finish_one(SERVER(server));
 	server_unref(SERVER(server));
 	restored = NULL;
-	close(peer);
+	drain_close(peer);
 	peer = -1;
 }
 
@@ -324,7 +351,7 @@ static int accept_within(int lfd, int ms)
 }
 
 /* reads what the client sends on `fd' until a line starts with `prefix' */
-static gboolean client_sends(int fd, const char *prefix, int ms)
+static gboolean client_sends_seen(int fd, const char *prefix, int ms, GString *seen)
 {
 	GString *buf = linebuf;
 	gint64 end = g_get_monotonic_time() + ms * 1000;
@@ -336,6 +363,8 @@ static gboolean client_sends(int fd, const char *prefix, int ms)
 			gboolean found = strncmp(buf->str, prefix, strlen(prefix)) == 0;
 
 			g_test_message("client: %.*s", (int) (nl - buf->str), buf->str);
+			if (seen != NULL)
+				g_string_append_len(seen, buf->str, nl - buf->str + 1);
 			g_string_erase(buf, 0, nl - buf->str + 1);
 			if (found)
 				return TRUE;
@@ -351,6 +380,11 @@ static gboolean client_sends(int fd, const char *prefix, int ms)
 	}
 	g_string_truncate(buf, 0);
 	return FALSE;
+}
+
+static gboolean client_sends(int fd, const char *prefix, int ms)
+{
+	return client_sends_seen(fd, prefix, ms, NULL);
 }
 
 /* the record the fresh connection runs on, if any */
@@ -431,7 +465,7 @@ static void upgrade_while_registering(const char *extra, const char *old_lines,
 			/* the socket goes with the last reference */
 			g_assert_true(closed_within(cfd, WAIT_MS));
 		}
-		close(cfd);
+		drain_close(cfd);
 	}
 	close(lfd);
 	finish(server);
@@ -621,7 +655,7 @@ static void test_old_file_channels_mean_registered(void)
 	cfd = accept_within(lfd, 200);
 	g_assert_cmpint(cfd, <, 0);
 	if (cfd >= 0)
-		close(cfd);
+		drain_close(cfd);
 	close(lfd);
 	finish(server);
 }
@@ -661,11 +695,179 @@ static void test_tls_inherited_socket_closed(void)
 	if (tmp != NULL)
 		finish_one(tmp->data);
 	if (cfd >= 0)
-		close(cfd);
+		drain_close(cfd);
 	close(lfd);
 	finish(server);
 	pump();
 	g_log_set_always_fatal(loglev);
+}
+
+/* --- hardening --- */
+
+/* M1: after the resync of an older session file the server rejects
+   CAP LIST (410): the negotiation stays over, no second CAP END, and a
+   later unsolicited ACK ends nothing either */
+static void test_resync_410_ends_nothing(void)
+{
+	IRC_SERVER_REC *server = restore(REGISTERED);
+
+	GString *seen = g_string_new(NULL);
+
+	g_assert_true(client_sends(peer, "CAP LIST", WAIT_MS));
+	server_says(":irc.example.net CAP user LS :sasl message-tags away-notify\r\n"
+	            ":irc.example.net 410 user LIST :Invalid CAP command\r\n"
+	            ":irc.example.net CAP user ACK :away-notify\r\n"
+	            "PING :after\r\n");
+	g_assert_true(client_sends_seen(peer, "PONG", WAIT_MS, seen));
+	g_assert_null(strstr(seen->str, "CAP END"));
+	g_string_free(seen, TRUE);
+	g_assert_true(server->cap_complete);
+	g_assert_cmpint(cap_ends, ==, 0);
+	g_assert_true(has_cap_active(server, "away-notify"));
+	g_assert_false(server->disconnected);
+	finish(server);
+}
+
+/* M2: a session file with a single value where a list or a block belongs
+   restores without a crash; the bad values are left out */
+static void test_corrupt_sections_ignored(void)
+{
+	IRC_SERVER_REC *server;
+
+	server = restore("real_address = \"irc.example.net\"; motd_got = \"yes\"; "
+	                 "connected = \"yes\"; sasl_success = \"yes\"; cap_complete = \"yes\"; "
+	                 "cap_supported = \"sasl\"; cap_active = \"message-tags\"; "
+	                 "isupport = \"CHANTYPES=#\"; channels = \"#test\";");
+	g_assert_true(server->connected);
+	g_assert_null(server->cap_supported);
+	g_assert_null(server->cap_active);
+	g_assert_null(server->channels);
+	finish(server);
+}
+
+/* the same for the list of servers itself */
+static void test_corrupt_servers_ignored(void)
+{
+	CONFIG_REC *session = config_open(NULL, -1);
+	guint before = g_slist_length(servers);
+
+	g_assert_cmpint(config_parse_data(session, "servers = \"junk\";", "session"), ==, 0);
+	restored = NULL;
+	signal_emit("session restore", 1, session);
+	config_close(session);
+	g_assert_null(restored);
+	g_assert_cmpuint(g_slist_length(servers), ==, before);
+}
+
+static void test_corrupt_entries_ignored(void)
+{
+	IRC_SERVER_REC *server;
+
+	server = restore_list("irc.example.net", 6667, "\"junk\", ",
+	                      "real_address = \"irc.example.net\"; motd_got = \"yes\"; "
+	                      "connected = \"yes\"; sasl_success = \"yes\"; cap_complete = \"yes\"; "
+	                      "cap_supported = ( \"sasl\", { x = \"y\"; } ); "
+	                      "cap_active = ( { x = \"y\"; }, \"message-tags\" ); "
+	                      "isupport = { CHANTYPES = \"#\"; BAD = { x = \"y\"; }; }; "
+	                      "channels = ( \"junk\", "
+	                      "{ name = \"#one\"; nicks = \"bob\"; }, "
+	                      "{ name = \"#two\"; nicks = ( \"junk\", { nick = \"bob\"; } ); } );");
+	g_assert_true(server->connected);
+	g_assert_nonnull(server->cap_supported);
+	if (server->cap_supported != NULL) {
+		g_assert_cmpuint(g_hash_table_size(server->cap_supported), ==, 1);
+		g_assert_true(g_hash_table_contains(server->cap_supported, "sasl"));
+	}
+	g_assert_cmpuint(g_slist_length(server->cap_active), ==, 1);
+	g_assert_true(has_cap_active(server, "message-tags"));
+	g_assert_cmpstr(g_hash_table_lookup(server->isupport, "CHANTYPES"), ==, "#");
+	g_assert_false(g_hash_table_contains(server->isupport, "BAD"));
+	g_assert_cmpuint(g_slist_length(server->channels), ==, 2);
+	finish(server);
+}
+
+/* M3: a long cap_active list restores in linear time, in its order */
+static void test_long_cap_active_restores_fast(void)
+{
+	IRC_SERVER_REC *server;
+	CONFIG_REC *session;
+	CONFIG_NODE *node, *list;
+	gint64 start;
+	GSList *tmp;
+	int i, n = 100000;
+
+	session = session_file("irc.example.net", 6667, "",
+	                       REGISTERED "connected = \"yes\"; sasl_success = \"yes\"; "
+	                       "cap_complete = \"yes\";");
+	/* the list is built here, not parsed: the config parser appends to
+	   lists, which is quadratic itself */
+	node = config_node_nth(config_node_find(session->mainnode, "servers"), 0);
+	list = config_node_section(session, node, "cap_active", NODE_TYPE_LIST);
+	for (i = n - 1; i >= 0; i--) {
+		CONFIG_NODE *cap = g_new0(CONFIG_NODE, 1);
+
+		cap->type = NODE_TYPE_VALUE;
+		cap->value = g_strdup_printf("c%d", i);
+		list->value = g_slist_prepend(list->value, cap);
+	}
+
+	start = g_get_monotonic_time();
+	server = restore_config(session);
+	g_test_message("restore took %" G_GINT64_FORMAT " us", g_get_monotonic_time() - start);
+	/* appending one by one took about 25 s here; linear takes some 20 ms */
+	g_assert_cmpint(g_get_monotonic_time() - start, <, 2 * G_USEC_PER_SEC);
+
+	g_assert_cmpuint(g_slist_length(server->cap_active), ==, n);
+	for (i = 0, tmp = server->cap_active; i < 3 && tmp != NULL; i++, tmp = tmp->next) {
+		char *want = g_strdup_printf("c%d", i);
+		g_assert_cmpstr(tmp->data, ==, want);
+		g_free(want);
+	}
+	g_assert_cmpstr(g_slist_last(server->cap_active)->data, ==, "c99999");
+	finish(server);
+}
+
+/* M4: a server cannot grow the CAP lists without end; one warning */
+static void test_cap_lists_capped(void)
+{
+	IRC_SERVER_REC *server = restore(REGISTERED CAPS "connected = \"yes\"; "
+	                                 "sasl_success = \"yes\";");
+	GString *line = g_string_new(NULL);
+	int i, j;
+
+	g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*capabilit*");
+	for (j = 0; j < 4; j++) {
+		g_string_assign(line, ":irc.example.net CAP user NEW :");
+		for (i = 0; i < 80; i++)
+			g_string_append_printf(line, "%sn%d", i == 0 ? "" : " ", j * 80 + i);
+		g_string_append(line, "\r\n");
+		server_says(line->str);
+	}
+	for (j = 0; j < 4; j++) {
+		g_string_assign(line, ":irc.example.net CAP user ACK :");
+		for (i = 0; i < 80; i++)
+			g_string_append_printf(line, "%sa%d", i == 0 ? "" : " ", j * 80 + i);
+		g_string_append(line, "\r\n");
+		server_says(line->str);
+	}
+	g_string_assign(line, ":irc.example.net CAP user LIST :");
+	for (i = 0; i < 80; i++)
+		g_string_append_printf(line, "%sl%d", i == 0 ? "" : " ", i);
+	g_string_append(line, "\r\n");
+	server_says(line->str);
+	g_string_free(line, TRUE);
+	g_test_assert_expected_messages();
+
+	g_assert_cmpuint(g_hash_table_size(server->cap_supported), ==, CAP_MAX_ENTRIES);
+	g_assert_cmpuint(g_slist_length(server->cap_active), ==, CAP_MAX_ENTRIES);
+	/* what was there stays */
+	g_assert_true(g_hash_table_contains(server->cap_supported, "sasl"));
+	g_assert_true(has_cap_active(server, "message-tags"));
+	/* a cap already known is still updated at the limit */
+	server_says(":irc.example.net CAP user NEW :sasl=PLAIN\r\n");
+	g_assert_cmpstr(g_hash_table_lookup(server->cap_supported, "sasl"), ==, "PLAIN");
+	g_assert_false(server->disconnected);
+	finish(server);
 }
 
 int main(int argc, char **argv)
@@ -689,6 +891,13 @@ int main(int argc, char **argv)
 	                test_old_file_channels_mean_registered);
 	g_test_add_func("/upgrade-state/tls-inherited-socket-closed",
 	                test_tls_inherited_socket_closed);
+	g_test_add_func("/hardening/resync-410-ends-nothing", test_resync_410_ends_nothing);
+	g_test_add_func("/hardening/corrupt-sections-ignored", test_corrupt_sections_ignored);
+	g_test_add_func("/hardening/corrupt-entries-ignored", test_corrupt_entries_ignored);
+	g_test_add_func("/hardening/corrupt-servers-ignored", test_corrupt_servers_ignored);
+	g_test_add_func("/hardening/long-cap-active-restores-fast",
+	                test_long_cap_active_restores_fast);
+	g_test_add_func("/hardening/cap-lists-capped", test_cap_lists_capped);
 
 #if GLIB_CHECK_VERSION(2,38,0)
 	g_test_set_nonfatal_assertions();

@@ -195,13 +195,16 @@ static void session_restore_channel_nicks(CHANNEL_REC *channel,
 {
 	GSList *tmp;
 
-	/* restore nicks */
-	node = config_node_section(NULL, node, "nicks", -1);
+	/* restore nicks. config_node_section() is not used to read the
+	   session file: on a value where a list belongs it needs a
+	   CONFIG_REC (and crashed without one) */
+	node = config_node_find(node, "nicks");
 	if (node != NULL && node->type == NODE_TYPE_LIST) {
 		tmp = config_node_first(node->value);
 		for (; tmp != NULL; tmp = config_node_next(tmp)) {
-			signal_emit("session restore nick", 2,
-				    channel, tmp->data);
+			if (is_node_list((CONFIG_NODE *) tmp->data))
+				signal_emit("session restore nick", 2,
+					    channel, tmp->data);
 		}
 	}
 }
@@ -232,11 +235,13 @@ static void session_restore_server_channels(SERVER_REC *server,
 	GSList *tmp;
 
 	/* restore channels */
-	node = config_node_section(NULL, node, "channels", -1);
+	node = config_node_find(node, "channels");
 	if (node != NULL && node->type == NODE_TYPE_LIST) {
 		tmp = config_node_first(node->value);
-		for (; tmp != NULL; tmp = config_node_next(tmp))
-			session_restore_channel(server, tmp->data);
+		for (; tmp != NULL; tmp = config_node_next(tmp)) {
+			if (is_node_list((CONFIG_NODE *) tmp->data))
+				session_restore_channel(server, tmp->data);
+		}
 	}
 }
 
@@ -318,11 +323,13 @@ static void sig_session_restore(CONFIG_REC *config)
         char **pids, **pid;
 
         /* restore servers */
-	node = config_node_traverse(config, "(servers", FALSE);
-	if (node != NULL) {
+	node = config_node_find(config->mainnode, "servers");
+	if (node != NULL && node->type == NODE_TYPE_LIST) {
 		tmp = config_node_first(node->value);
-		for (; tmp != NULL; tmp = config_node_next(tmp))
-			session_restore_server(tmp->data);
+		for (; tmp != NULL; tmp = config_node_next(tmp)) {
+			if (is_node_list((CONFIG_NODE *) tmp->data))
+				session_restore_server(tmp->data);
+		}
 	}
 
 	/* restore pids (so we don't leave zombies) */

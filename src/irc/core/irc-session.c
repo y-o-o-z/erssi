@@ -72,7 +72,8 @@ static void session_restore_caps(IRC_SERVER_REC *server, CONFIG_NODE *node)
 
 	server->cap_complete = config_node_get_bool(node, "cap_complete", FALSE);
 
-	list = config_node_section(NULL, node, "cap_supported", -1);
+	/* config_node_find(), not config_node_section(): see session.c */
+	list = config_node_find(node, "cap_supported");
 	if (list != NULL && list->type == NODE_TYPE_LIST) {
 		server->cap_supported =
 		    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -96,7 +97,7 @@ static void session_restore_caps(IRC_SERVER_REC *server, CONFIG_NODE *node)
 		}
 	}
 
-	list = config_node_section(NULL, node, "cap_active", -1);
+	list = config_node_find(node, "cap_active");
 	if (list != NULL && list->type == NODE_TYPE_LIST) {
 		for (tmp = config_node_first(list->value); tmp != NULL;
 		     tmp = config_node_next(tmp)) {
@@ -105,17 +106,25 @@ static void session_restore_caps(IRC_SERVER_REC *server, CONFIG_NODE *node)
 			if (cap->type == NODE_TYPE_VALUE && cap->value != NULL &&
 			    *(char *) cap->value != '\0')
 				server->cap_active =
-				    g_slist_append(server->cap_active, g_strdup(cap->value));
+				    g_slist_prepend(server->cap_active, g_strdup(cap->value));
 		}
+		server->cap_active = g_slist_reverse(server->cap_active);
 	}
 }
 
 /* a session file from an older version: did it have channels? */
 static int session_has_channels(CONFIG_NODE *node)
 {
-	node = config_node_section(NULL, node, "channels", -1);
-	return node != NULL && node->type == NODE_TYPE_LIST &&
-	       config_node_first(node->value) != NULL;
+	GSList *tmp;
+
+	node = config_node_find(node, "channels");
+	if (node == NULL || node->type != NODE_TYPE_LIST)
+		return FALSE;
+	for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
+		if (is_node_list((CONFIG_NODE *) tmp->data))
+			return TRUE;
+	}
+	return FALSE;
 }
 
 static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
@@ -255,13 +264,15 @@ static void sig_session_restore_server(IRC_SERVER_REC *server,
 		    g_hash_table_new((GHashFunc) i_istr_hash, (GCompareFunc) i_istr_equal);
 	}
 
-	node = config_node_section(NULL, node, "isupport", -1);
-	tmp = node == NULL ? NULL : config_node_first(node->value);
+	node = config_node_find(node, "isupport");
+	tmp = node == NULL || node->type != NODE_TYPE_BLOCK ? NULL : config_node_first(node->value);
 
 	for (; tmp != NULL; tmp = config_node_next(tmp)) {
 		node = tmp->data;
 		if (node == NULL)
 			break;
+		if (node->key == NULL || !has_node_value(node))
+			continue;
 
 		g_hash_table_insert(server->isupport, g_strdup(node->key),
 				    g_strdup(node->value));

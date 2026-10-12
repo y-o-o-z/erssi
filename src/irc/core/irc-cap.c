@@ -74,6 +74,46 @@ void irc_cap_finish_negotiation (IRC_SERVER_REC *server)
 	signal_emit("server cap end", 1, server);
 }
 
+/* TRUE if a list of `count' entries may take one more (CAP_MAX_ENTRIES);
+   the first time it may not, says so once for this server */
+static gboolean cap_room(IRC_SERVER_REC *server, guint count)
+{
+	if (count < CAP_MAX_ENTRIES)
+		return TRUE;
+
+	if (!server->cap_limit_warned) {
+		server->cap_limit_warned = TRUE;
+		g_warning("[%s] The server sent more than %d capabilities, ignoring the rest",
+		          server->tag, CAP_MAX_ENTRIES);
+	}
+	return FALSE;
+}
+
+/* adds or updates a supported cap; takes `key' and `val' (frees them
+   and returns FALSE if the table is full) */
+static gboolean cap_supported_set(IRC_SERVER_REC *server, char *key, char *val)
+{
+	if (!g_hash_table_contains(server->cap_supported, key) &&
+	    !cap_room(server, g_hash_table_size(server->cap_supported))) {
+		g_free(key);
+		g_free(val);
+		return FALSE;
+	}
+	g_hash_table_replace(server->cap_supported, key, val);
+	return TRUE;
+}
+
+/* marks a cap active; FALSE if the list is full */
+static gboolean cap_active_add(IRC_SERVER_REC *server, const char *cap)
+{
+	if (i_slist_find_string(server->cap_active, cap))
+		return TRUE;
+	if (!cap_room(server, g_slist_length(server->cap_active)))
+		return FALSE;
+	server->cap_active = g_slist_prepend(server->cap_active, g_strdup(cap));
+	return TRUE;
+}
+
 static void cap_emit_signal (IRC_SERVER_REC *server, char *cmd, char *args)
 {
 	char *signal_name;
@@ -211,7 +251,7 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 				 * duplicated values, let's just warn the user */
 				g_warning("The server sent the %s capability twice", key);
 			}
-			g_hash_table_replace(server->cap_supported, key, val);
+			cap_supported_set(server, key, val);
 		}
 
 		/* A multiline response is always terminated by a normal one,
@@ -244,8 +284,8 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 			if (disable)
 				server->cap_active =
 				    i_slist_delete_string(server->cap_active, caps[i] + 1, g_free);
-			else if (!i_slist_find_string(server->cap_active, caps[i]))
-				server->cap_active = g_slist_prepend(server->cap_active, g_strdup(caps[i]));
+			else if (!cap_active_add(server, caps[i]))
+				continue;
 
 			if (!strcmp(caps[i], "sasl"))
 				got_sasl = TRUE;
@@ -276,8 +316,8 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 				continue;
 			}
 
-			g_hash_table_replace(server->cap_supported, key, val);
-			cap_emit_signal(server, "new", key);
+			if (cap_supported_set(server, key, val))
+				cap_emit_signal(server, "new", key);
 		}
 	}
 	else if (!g_ascii_strcasecmp(evt, "DEL")) {
@@ -306,9 +346,8 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 		 * without the CAP state this is how they come back. Nothing is
 		 * requested and no ack signal is sent - they are on already. */
 		for (i = 0; i < caps_length; i++) {
-			if (*caps[i] != '\0' && !i_slist_find_string(server->cap_active, caps[i]))
-				server->cap_active =
-				    g_slist_prepend(server->cap_active, g_strdup(caps[i]));
+			if (*caps[i] != '\0')
+				cap_active_add(server, caps[i]);
 		}
 	}
 	else {
@@ -323,8 +362,13 @@ static void event_invalid_cap (IRC_SERVER_REC *server, const char *data, const c
 {
 	/* The server didn't understand one (or more) requested caps, terminate the negotiation.
 	 * This could be handled in a graceful way but since it shouldn't really ever happen this seems a
-	 * good way to deal with 410 errors. */
-	server->cap_complete = FALSE;
+	 * good way to deal with 410 errors.
+	 * Once the negotiation is over (a CAP LIST or REQ the server did not
+	 * take, e.g. the resync after /UPGRADE), there is nothing to end:
+	 * the numeric is only shown. */
+	if (server->cap_complete)
+		return;
+
 	irc_send_cmd_now(server, "CAP END");
 }
 
