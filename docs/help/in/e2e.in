@@ -133,9 +133,17 @@
     RPE2E end-to-end encryption (XChaCha20-Poly1305, a separate key per
     sender and channel or query), compatible with repartee, the rpe2e.pl
     script and the WeeChat rpe2e.py script. Built into erssi (the e2e
-    module, loaded at start through the autoload_modules setting; /LOAD E2E
-    loads it by hand). Keys are stored in ~/.erssi/rpe2e/keyring.json -
-    the file rpe2e.pl uses, so moving from the script needs no new keys.
+    module, loaded at start through the autoload_modules setting; /load e2e
+    loads it by hand - in lower case, as the module's file name is built
+    from the word as typed). Taken out of autoload_modules, it is not
+    loaded again after a restart or /UPGRADE, and messages to channels and
+    queries with E2E on are then sent in clear text; the module says so
+    when it is loaded and at /E2E ON (with the /SET to run), and at
+    /UPGRADE while E2E is on anywhere (printed just before the restart,
+    so it may be gone from the screen afterwards; a log of that window
+    keeps it). /unload e2e warns while E2E is on anywhere or the keyring
+    is lost. Keys are stored in ~/.erssi/rpe2e/keyring.json - the file
+    rpe2e.pl uses, so moving from the script needs no new keys.
 
     If the rpe2e.pl script is loaded too, the module stays inactive and
     says so; unload the script (/SCRIPT UNLOAD rpe2e, and remove it from
@@ -221,7 +229,7 @@
     of a message to a +n channel is rejected by the server. On disconnect
     or /E2E RESET the parts not sent yet are dropped and the number is
     shown in the status window (the receiver gets an incomplete message).
-    /UNLOAD E2E drops them too, and the messages in irssi's own flood
+    /unload e2e drops them too, and the messages in irssi's own flood
     queue that the module would encrypt or refuse (they would leave in
     clear text without it); clear text it would let pass stays queued.
     /UPGRADE sends everything waiting at once, past the flood limit,

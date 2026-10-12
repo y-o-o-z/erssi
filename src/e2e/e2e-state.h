@@ -116,4 +116,12 @@ char *e2e_age_text(gint64 seconds);
    are dropped */
 gboolean e2e_pending_notice_allow(GHashTable *stamps, const char *key);
 
+/* "e2e" is one of the modules of the autoload_modules setting (words
+   split at spaces and commas, as irssi splits it; "e2e:<sub>" counts; the
+   case counts, as in the module file name irssi builds from it):
+   otherwise a restart or /upgrade does not load the module again */
+gboolean e2e_autoload_listed(const char *autoload_modules);
+/* the channels and queries with E2E on (every network, old entries too) */
+guint e2e_enabled_count(const E2E_JSON *kr);
+
 #endif

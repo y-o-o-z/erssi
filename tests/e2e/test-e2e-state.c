@@ -591,6 +591,42 @@ static void test_read_only(void)
 	e2e_json_free(kr);
 }
 
+/* "e2e" among the modules of autoload_modules: words split at spaces and
+   commas, as irssi splits the setting; "e2e:core" is the same module. The
+   case counts: irssi builds the file name from the word as it is, so
+   "E2E" loads nothing */
+static void test_autoload_listed(void)
+{
+	g_assert_true(e2e_autoload_listed("irc dcc flood notifylist perl otr e2e"));
+	g_assert_true(e2e_autoload_listed("e2e"));
+	g_assert_false(e2e_autoload_listed("irc,E2E,otr"));
+	g_assert_false(e2e_autoload_listed("irc E2E"));
+	g_assert_true(e2e_autoload_listed("irc e2e"));
+	g_assert_false(e2e_autoload_listed("irc E2E:core"));
+	g_assert_true(e2e_autoload_listed("  irc   e2e:core "));
+	g_assert_false(e2e_autoload_listed("irc dcc flood notifylist perl otr fe_web anti_floodnet"));
+	g_assert_false(e2e_autoload_listed(""));
+	g_assert_false(e2e_autoload_listed(NULL));
+	g_assert_false(e2e_autoload_listed("e2ee e2e_x xe2e"));
+}
+
+/* channels and queries with E2E on, on any network, old entries too */
+static void test_enabled_count(void)
+{
+	E2E_JSON *kr = e2e_json_new(E2E_JSON_OBJECT);
+
+	g_assert_cmpuint(e2e_enabled_count(NULL), ==, 0);
+	g_assert_cmpuint(e2e_enabled_count(kr), ==, 0);
+	set_config(kr, "#old", 1, "normal", NULL);
+	set_config(kr, "E2E\x1f#test", 1, "normal", NULL);
+	set_config(kr, "E2E\x1f@bob@h", 1, "quiet", "bob");
+	set_config(kr, "E2E2\x1f#test", 0, "normal", NULL);
+	g_assert_cmpuint(e2e_enabled_count(kr), ==, 3);
+	set_config(kr, "#old", 0, "normal", NULL);
+	g_assert_cmpuint(e2e_enabled_count(kr), ==, 2);
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -608,6 +644,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/pending/handle-lookup", test_handle_lookup);
 	g_test_add_func("/e2e/pending/foreign-dm", test_pending_foreign_dm);
 	g_test_add_func("/e2e/pending/empty-who", test_pending_empty_who);
+	g_test_add_func("/e2e/state/autoload-listed", test_autoload_listed);
+	g_test_add_func("/e2e/state/enabled-count", test_enabled_count);
 
 	return g_test_run();
 }
