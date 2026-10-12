@@ -1,0 +1,1 @@
+{"type":"e2e_action","id":"e1","server":"fuzz","target":"#test","action":"accept","handle":"bob@127.0.0.1","fingerprint":"0123456789abcdef"}

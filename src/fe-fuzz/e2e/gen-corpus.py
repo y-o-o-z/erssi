@@ -64,6 +64,8 @@ def wire_seeds():
         "seed-privmsg-bot": "PRIVMSG #test :.op alice",
         "seed-privmsg-multi": "PRIVMSG #a,bob :zażółć gęślą jaźń",
         "seed-utf8-broken": b"za\xc5\xbc\xc3\xb3\xc5\x82\xc4 \xff\xfe g\xc4",
+        # the gate folds the target under the server's CASEMAPPING
+        "seed-privmsg-unicode-case": "PRIVMSG #Żaba :x",
     }
 
 
@@ -94,8 +96,48 @@ def keyring_seeds():
         "channels": [{"channel": "#test", "enabled": True}],
         "autotrust": [], "outgoingRecipients": [],
     }
+    # the module's keyring with the network scope: "<label>\x1f<ctx>"
+    sc = "IRCnet\u001f#test"
+    req = {"handle": "carol@127.0.0.1", "channel": sc, "sender_nick": "carol",
+           "pubkey": b64(fake("carol-pk", 32)), "received_at": 5}
+    scoped = dict(keyring,
+                  outgoing={sc: {"sk": b64(fake("out", 32)), "created_at": 1, "pending_rotation": 0}},
+                  incoming={"bob@127.0.0.1|" + sc: {"fp": fp, "sk": b64(fake("in", 32)),
+                                                     "status": "trusted", "created_at": 1}},
+                  channels={sc: {"enabled": 1, "mode": "normal"},
+                            "IRCnet\u001f@bob@127.0.0.1": {"enabled": 1, "mode": "normal",
+                                                           "nick": "bob"}},
+                  outgoing_recipients={sc + "|bob@127.0.0.1": {
+                      "channel": sc, "handle": "bob@127.0.0.1", "fingerprint": fp,
+                      "first_sent_at": 1}},
+                  pending_inbound={"carol@127.0.0.1|" + sc: req})
+    # old (unscoped) rows next to scoped ones: one name taken over by
+    # IRCnet ("adopted"), one old row of unknown network, one scoped to
+    # another network, and a name holding the separator twice
+    mixed = dict(keyring,
+                 channels={"#test": {"enabled": 1, "mode": "normal"},
+                           sc: {"enabled": 1, "mode": "normal", "adopted": "IRCnet"},
+                           "#old": {"enabled": 1, "mode": "quiet"},
+                           "EFnet\u001f#other": {"enabled": 1, "mode": "normal",
+                                                 "adopted": "EFnet"},
+                           "IRCnet\u001f#a\u001f#b": {"enabled": 1},
+                           "#Å¼aba": {"enabled": 0, "mode": "auto-accept"}},
+                 outgoing={"#test": {"sk": b64(fake("old-out", 32)), "created_at": 1},
+                           sc: {"sk": b64(fake("out", 32)), "created_at": 2, "adopted": "IRCnet"}},
+                 incoming={"bob@127.0.0.1|#test": {"fp": fp, "sk": b64(fake("in", 32)),
+                                                   "status": "trusted", "created_at": 1},
+                           "bob@127.0.0.1|" + sc: {"fp": fp, "sk": b64(fake("in2", 32)),
+                                                    "status": "trusted", "created_at": 2},
+                           "dave@127.0.0.1|#old": {"fp": fp, "sk": b64(fake("in3", 32)),
+                                                   "status": "revoked", "created_at": 1}},
+                 pending_inbound={"carol@127.0.0.1|#old": dict(req, channel="#old"),
+                                  "carol@127.0.0.1|" + sc: req,
+                                  "eve@127.0.0.1|@bob@127.0.0.1": dict(
+                                      req, handle="eve@127.0.0.1", channel="@bob@127.0.0.1")})
     return {
         "seed-keyring": json.dumps(keyring, separators=(",", ":"), ensure_ascii=False),
+        "seed-keyring-scoped": json.dumps(scoped, indent=3, sort_keys=True),
+        "seed-keyring-mixed-legacy": json.dumps(mixed, separators=(",", ":"), sort_keys=True),
         "seed-keyring-ascii": json.dumps(keyring, indent=3, sort_keys=True),
         "seed-export": json.dumps(export, indent=3),
         "seed-export-bad-list": '{"version":1,"peers":{"x":1},"channels":[1,"a",null]}',

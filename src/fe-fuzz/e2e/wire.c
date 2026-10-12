@@ -11,12 +11,16 @@
  outgoing line the gate looks at (PRIVMSG <target> :<text>). Besides not
  crashing, every parser must be consistent with its encoder: whatever
  parses encodes to something that parses to the same thing, and the
- strict base64 decoder only accepts canonical text.
+ strict base64 decoder only accepts canonical text. The input, and the
+ target of a PRIVMSG line, is also folded under every CASEMAPPING map: a
+ fold folds to itself (the exact maps always, the Unicode ones for valid
+ UTF-8 - e2e-scope.h), and the Unicode fold of valid UTF-8 is valid UTF-8.
 */
 
 #include <irssi/src/fe-fuzz/e2e/e2e-fuzz.h>
 
 #include <irssi/src/e2e/e2e-crypto.h>
+#include <irssi/src/e2e/e2e-scope.h>
 #include <irssi/src/e2e/e2e-wire.h>
 
 #include <stdio.h>
@@ -123,6 +127,54 @@ static void check_handshake(const char *text)
 	}
 }
 
+static const E2E_CASEMAP casemaps[] = {
+	E2E_CASEMAP_RFC1459, E2E_CASEMAP_STRICT_RFC1459, E2E_CASEMAP_ASCII,
+	E2E_CASEMAP_UNICODE, E2E_CASEMAP_UNKNOWN,
+};
+
+/* the CASEMAPPING folds of a name (e2e-scope.h) */
+static void check_casefold(const char *name)
+{
+	gboolean valid = g_utf8_validate(name, -1, NULL);
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS(casemaps); i++) {
+		E2E_CASEMAP map = casemaps[i];
+		gboolean unicode = map == E2E_CASEMAP_UNICODE || map == E2E_CASEMAP_UNKNOWN;
+		gboolean exact = FALSE;
+		char *fold, *plain, *again, *narrow;
+
+		fold = e2e_casefold_ex(name, map, &exact);
+		plain = e2e_casefold(name, map);
+		if (fold == NULL || plain == NULL || strcmp(fold, plain) != 0)
+			abort();
+		/* the exact maps decide every name */
+		if (!unicode && !exact)
+			abort();
+		/* idempotent, except for invalid UTF-8 under the Unicode maps,
+		   which the Latin-1 byte fold can make valid */
+		if (!unicode || valid) {
+			again = e2e_casefold(fold, map);
+			if (strcmp(again, fold) != 0) {
+				fprintf(stderr, "fold %d is not idempotent: \"%s\" -> \"%s\" -> \"%s\"\n",
+				        (int) map, name, fold, again);
+				abort();
+			}
+			g_free(again);
+		}
+		if (unicode && valid && !g_utf8_validate(fold, -1, NULL))
+			abort();
+		/* no narrow fold of invalid UTF-8 under UNICODE; the other
+		   maps always have one */
+		narrow = e2e_casefold_narrow(name, map);
+		if (map == E2E_CASEMAP_UNICODE ? !valid && narrow != NULL : narrow == NULL)
+			abort();
+		g_free(narrow);
+		g_free(plain);
+		g_free(fold);
+	}
+}
+
 static void check_line(const char *text)
 {
 	char *tags, *target, *body, **readings;
@@ -134,6 +186,7 @@ static void check_line(const char *text)
 	for (i = 0; readings[i] != NULL; i++)
 		if (!e2e_is_channel(readings[i]))
 			abort();
+	check_casefold(target);
 	e2e_is_bot_command(body);
 	e2e_is_ctcp(body);
 	e2e_is_action(body);
@@ -179,6 +232,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	check_handshake(text);
 	check_line(text);
 	check_base64(text);
+	check_casefold(text);
 
 	/* what decrypted text goes through before it is shown */
 	clean = e2e_utf8_clean((const char *) data, size);
