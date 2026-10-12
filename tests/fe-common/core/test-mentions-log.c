@@ -4,8 +4,10 @@
 #include <irssi/src/common.h>
 #include <irssi/src/fe-common/core/mentions-log.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 #include <glib/gstdio.h>
 
 static time_t make_t0(void)
@@ -103,6 +105,20 @@ static void test_line_controls_all(void)
 	g_free(line);
 }
 
+static void test_line_bare_c1(void)
+{
+	/* bytes 0x80-0x9f outside a UTF-8 sequence (8-bit C1 controls) become
+	   a space; the same bytes as continuation bytes of a character stay:
+	   s with acute is C5 9B, A with macron is C4 80 */
+	char *line = mentions_log_line(make_t0(), "T", "W", "N",
+	                               "a\x9b" "2Jb\x80" "c\xc5\x9b\xc4\x80"
+	                               "d\xe2\x80\x9c" "e\xc5");
+
+	g_assert_true(g_str_has_suffix(line, "<N> a 2Jb c\xc5\x9b\xc4\x80"
+	                                     "d\xe2\x80\x9c" "e\xc5\n"));
+	g_free(line);
+}
+
 static void test_append_creates(void)
 {
 	GError *error = NULL;
@@ -175,6 +191,41 @@ static void test_append_to_directory_fails(void)
 	g_free(tmp);
 }
 
+static void test_append_to_fifo_fails(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *path;
+	int rd;
+
+	g_assert_no_error(error);
+	path = g_build_filename(tmp, "fifo", NULL);
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+
+	/* no reader: must fail at once instead of blocking */
+	g_assert_false(mentions_log_append(path, "x\n", &error));
+	g_assert_nonnull(error);
+	g_clear_error(&error);
+
+	/* with a reader: still not a regular file, nothing is written */
+	rd = open(path, O_RDONLY | O_NONBLOCK);
+	g_assert_cmpint(rd, >=, 0);
+	g_assert_false(mentions_log_append(path, "x\n", &error));
+	g_assert_nonnull(error);
+	g_clear_error(&error);
+	{
+		char buf[4];
+
+		g_assert_cmpint(read(rd, buf, sizeof(buf)), <=, 0);
+	}
+	close(rd);
+
+	g_remove(path);
+	g_rmdir(tmp);
+	g_free(path);
+	g_free(tmp);
+}
+
 static void test_path(void)
 {
 	char *p, *expected;
@@ -228,9 +279,11 @@ int main(int argc, char **argv)
 	g_test_add_func("/mentions_log/line_newlines", test_line_newlines);
 	g_test_add_func("/mentions_log/line_controls", test_line_controls);
 	g_test_add_func("/mentions_log/line_controls_all", test_line_controls_all);
+	g_test_add_func("/mentions_log/line_bare_c1", test_line_bare_c1);
 	g_test_add_func("/mentions_log/append_creates_0700_0600", test_append_creates);
 	g_test_add_func("/mentions_log/append_tightens_mode", test_append_tightens_mode);
 	g_test_add_func("/mentions_log/append_to_directory_fails", test_append_to_directory_fails);
+	g_test_add_func("/mentions_log/append_to_fifo_fails", test_append_to_fifo_fails);
 	g_test_add_func("/mentions_log/path", test_path);
 	g_test_add_func("/mentions_log/network_excluded", test_network_excluded);
 	g_test_add_func("/mentions_log/server_nick", test_server_nick);

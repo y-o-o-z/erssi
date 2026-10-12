@@ -27,25 +27,43 @@
 #define O_CLOEXEC 0
 #endif
 
-/* Every C0 control (CR, LF, TAB and ESC included), DEL and every UTF-8 encoded
-   C1 control (U+0080-U+009F) becomes one space, so a log line is one line and
-   cannot drive a terminal that shows it. */
+/* Every C0 control (CR, LF, TAB and ESC included), DEL, every UTF-8 encoded
+   C1 control (U+0080-U+009F) and every byte 0x80-0x9F that is not part of
+   a valid UTF-8 character (an 8-bit C1 control) becomes one space, so a log
+   line is one line and cannot drive a terminal that shows it. Valid UTF-8
+   and other bytes are kept as they are. */
 static char *sanitize_field(const char *s, const char *fallback)
 {
-	const unsigned char *in;
+	const unsigned char *in, *end;
 	char *out, *o;
+	gunichar c;
+	int len;
 
 	in = (const unsigned char *) (s != NULL ? s : fallback);
-	out = o = g_malloc(strlen((const char *) in) + 1);
-	while (*in != '\0') {
+	end = in + strlen((const char *) in);
+	out = o = g_malloc(end - in + 1);
+	while (in < end) {
 		if (*in < 0x20 || *in == 0x7f) {
 			*o++ = ' ';
 			in++;
-		} else if (in[0] == 0xc2 && in[1] >= 0x80 && in[1] <= 0x9f) {
-			*o++ = ' ';
-			in += 2;
-		} else {
+		} else if (*in < 0x80) {
 			*o++ = (char) *in++;
+		} else {
+			c = g_utf8_get_char_validated((const char *) in, end - in);
+			if (c == (gunichar) -1 || c == (gunichar) -2) {
+				/* not UTF-8: only the 8-bit C1 range is changed */
+				*o++ = *in >= 0x80 && *in <= 0x9f ? ' ' : (char) *in;
+				in++;
+				continue;
+			}
+			len = g_unichar_to_utf8(c, NULL);
+			if (c >= 0x80 && c <= 0x9f) {
+				*o++ = ' ';
+			} else {
+				memcpy(o, in, len);
+				o += len;
+			}
+			in += len;
 		}
 	}
 	*o = '\0';
@@ -80,7 +98,7 @@ char *mentions_log_line(time_t when, const char *tag, const char *where, const c
 gboolean mentions_log_append(const char *path, const char *line, GError **error)
 {
 	char *dir;
-	int fd, err;
+	int fd, err, flags;
 	struct stat st;
 	const char *p;
 	size_t left;
@@ -95,10 +113,13 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 #endif
 	g_free(dir);
 
+	/* O_NONBLOCK: a FIFO without a reader must not block the client; a
+	   non-regular file is refused below before anything is written */
 #ifdef HAVE_CAPSICUM
-	fd = capsicum_open_wrapper(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+	fd = capsicum_open_wrapper(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NONBLOCK,
+	                           0600);
 #else
-	fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+	fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NONBLOCK, 0600);
 #endif
 	if (fd == -1) {
 		err = errno;
@@ -119,6 +140,9 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 		close(fd);
 		return FALSE;
 	}
+	flags = fcntl(fd, F_GETFL);
+	if (flags != -1)
+		(void) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 	if (st.st_uid == getuid() && (st.st_mode & 07777) != 0600)
 		(void) fchmod(fd, 0600);
 
