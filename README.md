@@ -154,7 +154,7 @@ and used when present. For a system-wide install use
 
 - **Mentions window** — private messages, notices, DCC CHAT and channel
   hilights collected in one background window (`/mentions`), mirrored to a
-  log file only you can read (`mentions_log`, on by default). Built in: no
+  log file only you can read (`mentions_log`, on by default in a new home). Built in: no
   script to load. `/help mentions`.
 
 ### Help for every command

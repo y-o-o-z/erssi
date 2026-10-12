@@ -52,6 +52,7 @@
         "mention" signal still work. A name another window already has
         is refused.
     mentions_log = OFF
+        (the Shellter default configuration sets ON)
         Append every entry to the log file.
     mentions_log_file =
         The log file. Empty means logs/mentions.log in the irssi
