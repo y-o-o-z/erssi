@@ -191,10 +191,11 @@ Open at `4833f418`. Each item was checked in the code.
     not cover Teredo `2001::/32` or the documentation ranges. Terminal
     detection matches loose substrings ("rio", "foot") in
     `image-preview-chafa.c:98`, `:100`.
-11. Missing /help text for `term_truecolor`, `colors_ansi_24bit`,
-    `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`,
-    `show_names_on_join_limit` and the `sidepanel_scroll_arrow` format.
-    They are described only in README and NEWS.
+11. Missing /help text for the `sidepanel_scroll_arrow` format. It is
+    described only in README and NEWS. (The settings `term_truecolor`,
+    `colors_ansi_24bit`, `print_whois_rpl_in_server_window`,
+    `nick_mode_color_*`, `show_names_on_join_limit` and `$nickmode` have
+    /help texts since Etap 3.)
 12. Tested since 2026.10.0: the fe-web output queue (partial and refused
     writes, TLS WANT_READ, 32 MB cap), Unix-socket path checks, login
     pacing and eviction, frames, the `/UNLOAD` guard,

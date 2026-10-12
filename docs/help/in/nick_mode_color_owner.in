@@ -1,0 +1,15 @@
+%9Setting:%9
+
+    nick_mode_color_owner (string; default: empty; the Shellter default
+    configuration sets %%ZFF7B72%%_)
+
+%9Description:%9
+
+    Sets the colour of the owner prefix (~ or &) that $nickmode prints.
+
+    The value is a format code, for example %%ZF59E0B%%_. An empty value
+    leaves the prefix uncoloured.
+
+%9See also:%9
+
+    NICK_MODE_COLOR, NICKMODE

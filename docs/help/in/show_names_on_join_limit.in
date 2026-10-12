@@ -1,0 +1,27 @@
+%9Setting:%9
+
+    show_names_on_join_limit (integer; default: 18, the Shellter default
+    configuration sets 1)
+
+%9Description:%9
+
+    Limits the nick list that is printed when you join a channel.
+
+    If the channel has more nicks than this, joining prints only the count
+    line ("Total of N nicks ...") and not the table of nicks. 0 means no
+    limit. The table is also left out when you are alone on the channel and
+    show_names_on_join_alone is OFF (default: ON, the Shellter default
+    configuration sets OFF); then only the count line is printed.
+
+    Nothing is printed when show_names_on_join is OFF. The list can always
+    be printed with /NAMES.
+
+%9Examples:%9
+
+    /SET show_names_on_join_limit 30
+    /SET show_names_on_join_limit 0
+    /SET show_names_on_join_alone on
+
+%9See also:%9
+
+    SET, NAMES, SHOW_NAMES_ON_JOIN, SHOW_NAMES_ON_JOIN_ALONE

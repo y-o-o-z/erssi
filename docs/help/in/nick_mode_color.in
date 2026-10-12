@@ -1,0 +1,38 @@
+%9Setting:%9
+
+    nick_mode_color_owner, nick_mode_color_op, nick_mode_color_halfop,
+    nick_mode_color_voice, nick_mode_color_normal (strings)
+
+%9Description:%9
+
+    Colours the mode prefix that $nickmode puts before a nick.
+
+    Operators and voiced users stand out. There is one setting for each rank:
+
+        nick_mode_color_owner     owner, ~ or &
+        nick_mode_color_op        op, @
+        nick_mode_color_halfop    halfop, %%
+        nick_mode_color_voice     voice, +
+        nick_mode_color_normal    no mode (the blank that $nickmode prints)
+
+    Each value is a format code, for example %%Y%%_ or %%ZF59E0B%%_ (24-bit
+    colour F59E0B, bold). An empty value leaves the prefix uncoloured, which
+    is the default of all five. The Shellter default configuration sets:
+
+        nick_mode_color_owner     %%ZFF7B72%%_
+        nick_mode_color_op        %%ZF59E0B%%_
+        nick_mode_color_halfop    %%Z3FB950%%_
+        nick_mode_color_voice     %%Z79C0FF%%_
+
+    nick_mode_color_normal stays empty there.
+
+%9Examples:%9
+
+    /SET nick_mode_color_op %%ZF59E0B%%_
+    /SET nick_mode_color_voice %%C
+    /SET -clear nick_mode_color_op
+
+%9See also:%9
+
+    SET, NICKMODE, NICK_MODE_COLOR_OWNER, NICK_MODE_COLOR_OP,
+    NICK_MODE_COLOR_HALFOP, NICK_MODE_COLOR_VOICE, NICK_MODE_COLOR_NORMAL
