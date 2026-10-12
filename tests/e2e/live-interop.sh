@@ -32,7 +32,8 @@
 # request that does not wait (refused, nothing sent), a web decline (a new
 # state), an accept bound to a fingerprint (another key's: refused; the
 # shown one: KEYRSP), "off" for every item told on /unload e2e, and with
-# rpe2e.pl loaded (bob) "off" and a refusal. Last, rpe2e.pl
+# rpe2e.pl loaded (bob) "off" and a refusal - each refusal told with
+# its reason ("e2e action refused"), none for what was done. Last, rpe2e.pl
 # loads and saves alice's keyring and keeps what only the module writes.
 #
 # A second fake server plays a second network (chatnet E2E2): alice is on
@@ -1416,7 +1417,8 @@ else
 fi
 
 # ---- the signals of fe-web (e2e-web.c): the state, and a web client's accept/decline ----
-# a script stands in for fe-web: it logs every "e2e state" and emits a
+# a script stands in for fe-web: it logs every "e2e state" and every
+# "e2e action refused" (what fe-web answers the client with), and emits a
 # request or an action as fe-web does for a web client
 cat > "$WORK/alice/scripts/e2eweb.pl" <<'PERL'
 use strict;
@@ -1425,9 +1427,18 @@ our %IRSSI = (name => 'e2eweb');
 Irssi::signal_register({
     'e2e state' => [qw(Irssi::Server string string)],
     'e2e state request' => [qw(Irssi::Server string)],
-    'e2e action' => [qw(Irssi::Server string string string)],
+    'e2e action' => [qw(Irssi::Server string string string string)],
+    'e2e action refused' => [qw(Irssi::Server string string string)],
 });
 my $log = Irssi::get_irssi_dir() . '/e2e-state.log';
+my $refused_log = Irssi::get_irssi_dir() . '/e2e-refused.log';
+Irssi::signal_add('e2e action refused', sub {
+    my ($server, $target, $handle, $reason) = @_;
+    open(my $fh, '>>', $refused_log) or return;
+    print $fh (($server ? $server->{tag} : '-') . " $target $handle " .
+               (defined $reason ? $reason : '(none)') . "\n");
+    close $fh;
+});
 Irssi::signal_add('e2e state', sub {
     my ($server, $target, $json) = @_;
     open(my $fh, '>>', $log) or return;
@@ -1468,8 +1479,9 @@ say bob "/e2etest_action $CHAN accept alice@127.0.0.1"
 sleep 2
 if grep -aqF "web client asked to accept alice@127.0.0.1 on $CHAN, but the native e2e module is inactive while rpe2e.pl is loaded — nothing sent" "$WORK/bob/all.log" &&
    [ "$(md5sum < "$WORK/bob/rpe2e/keyring.json")" = "$BOB_KR" ] &&
-   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^bob NOTICE alice :.RPEE2E KEYRSP"; then
-    pass "web action, rpe2e.pl loaded: refused, keyring untouched"
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^bob NOTICE alice :.RPEE2E KEYRSP" &&
+   grep -aqxF "E2E $CHAN alice@127.0.0.1 inactive" "$WORK/bob/e2e-refused.log"; then
+    pass "web action, rpe2e.pl loaded: refused (inactive), keyring untouched"
 else
     bad "web action, rpe2e.pl loaded: not refused, or the keyring changed"
 fi
@@ -1645,6 +1657,15 @@ wait_state() {  # wait_state <mark> <ERE> <ERE not there, or ""> <seconds>
 }
 say alice "/script load e2eweb"
 say alice "/e2etest_state $CHAN"
+# what the module refused since line $1 of the refusal log (none: empty)
+REFUSED_LOG="$WORK/alice/e2e-refused.log"
+refused_since() {
+    [ -f "$REFUSED_LOG" ] && tail -n +$(($1 + 1)) "$REFUSED_LOG"
+    return 0
+}
+refused_mark() {
+    if [ -f "$REFUSED_LOG" ]; then wc -l < "$REFUSED_LOG"; else echo 0; fi
+}
 if wait_state 0 '"v":1,"state":"on"' "" 10 &&
    state_lines 0 '"state":"on"' | grep -aqF '"handle":"mallory@127.0.0.1"'; then
     pass "web: the state of #test (on) lists mallory's request"
@@ -1656,8 +1677,9 @@ WIRE_MARK=$(wc -l < "$WORK/wire.log")
 say alice "/e2etest_action $CHAN accept nobody@127.0.0.1"
 sleep 2
 if grep -aqF "web client asked to accept nobody@127.0.0.1 on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
-   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE nobody"; then
-    pass "web accept of a stale request: refused, nothing sent"
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE nobody" &&
+   refused_since 0 | grep -aqxF "E2E $CHAN nobody@127.0.0.1 no_request"; then
+    pass "web accept of a stale request: refused (no_request), nothing sent"
 else
     bad "web accept of a stale request: not refused, or alice sent nobody a NOTICE"
 fi
@@ -1667,30 +1689,35 @@ WIRE_MARK=$(wc -l < "$WORK/wire.log")
 say alice "/e2etest_action $CHAN accept mallory"
 sleep 2
 if grep -aqF "web client asked to accept mallory on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
-   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory"; then
-    pass "web accept by nick: refused, nothing sent (only the exact ident@host)"
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory" &&
+   refused_since 0 | grep -aqxF "E2E $CHAN mallory no_request"; then
+    pass "web accept by nick: refused (no_request), nothing sent (only the exact ident@host)"
 else
     bad "web accept by nick: not refused, or alice sent mallory something"
 fi
 # decline: #test's request only (the window's), then a new state
 MARK=$(wc -l < "$STATE_LOG")
 DECLINED_BEFORE=$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")
+REFUSED_MARK=$(refused_mark)
 say alice "/e2etest_action $CHAN decline mallory@127.0.0.1"
 if wait_state "$MARK" '"state":"on"' 'mallory' 10 &&
    grep -aqF "web client: decline mallory@127.0.0.1 on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" &&
-   [ "$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")" -gt "$DECLINED_BEFORE" ]; then
-    pass "web decline of mallory in #test: declined, a new state without mallory"
+   [ "$(grep -acF "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log")" -gt "$DECLINED_BEFORE" ] &&
+   [ -z "$(refused_since "$REFUSED_MARK")" ]; then
+    pass "web decline of mallory in #test: declined (not refused), a new state without mallory"
 else
     bad "web decline of mallory in #test: not declined, or no new state without him"
 fi
 # the web names the window's request only: mallory's query request (an
 # /e2e accept of the address in #test would take it) is not touched
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
+REFUSED_MARK=$(refused_mark)
 say alice "/e2etest_action $CHAN accept mallory@127.0.0.1"
 sleep 2
 if grep -aqF "web client asked to accept mallory@127.0.0.1 on $CHAN, but no such request waits — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
-   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory"; then
-    pass "web accept in #test never takes mallory's query request"
+   ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory" &&
+   refused_since "$REFUSED_MARK" | grep -aqxF "E2E $CHAN mallory@127.0.0.1 no_request"; then
+    pass "web accept in #test never takes mallory's query request (no_request)"
 else
     bad "web accept in #test took another request of mallory, or sent him something"
 fi
@@ -1820,20 +1847,23 @@ fi
 WRONG=0000000000000000
 [ "$FP" = "$WRONG" ] && WRONG=ffffffffffffffff
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
+REFUSED_MARK=$(refused_mark)
 say alice "/e2etest_action $CHAN accept mallory@127.0.0.1 $WRONG"
 sleep 2
 MARK=$(wc -l < "$STATE_LOG")
 say alice "/e2etest_state $CHAN"
 if grep -aqF "web client asked to accept mallory@127.0.0.1 on $CHAN for the key $WRONG, but the request that waits has the key $FP — nothing sent" "$WORK/alice/logs/E2E/$CHAN.log" &&
    ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory" &&
-   wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 5; then
-    pass "web accept with another key's fingerprint: refused, nothing sent, the request still waits"
+   wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 5 &&
+   refused_since "$REFUSED_MARK" | grep -aqxF "E2E $CHAN mallory@127.0.0.1 mismatch"; then
+    pass "web accept with another key's fingerprint: refused (mismatch), nothing sent, the request still waits"
 else
     bad "web accept with another key's fingerprint: not refused, or something sent"
 fi
 # the fingerprint the state showed: accepted, the KEYRSP goes to mallory
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
 MARK=$(wc -l < "$STATE_LOG")
+REFUSED_MARK=$(refused_mark)
 say alice "/e2etest_action $CHAN accept mallory@127.0.0.1 $FP"
 n=0
 until tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" || [ $n -ge 10 ]; do
@@ -1841,8 +1871,9 @@ until tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mal
 done
 if tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" &&
    grep -aqF "web client: accept mallory@127.0.0.1 on E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" &&
-   wait_state "$MARK" '"state":"on"' 'mallory' 10; then
-    pass "web accept with the shown fingerprint: KEYRSP to mallory, a new state without his request"
+   wait_state "$MARK" '"state":"on"' 'mallory' 10 &&
+   [ -z "$(refused_since "$REFUSED_MARK")" ]; then
+    pass "web accept with the shown fingerprint: KEYRSP to mallory (not refused), a new state without his request"
 else
     bad "web accept with the shown fingerprint: no KEYRSP to mallory, or his request still listed"
 fi

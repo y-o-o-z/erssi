@@ -1056,17 +1056,20 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 }
 
 /* /e2e accept of handle in ctx, picked already: answered (KEYRSP to
-   nick) or trusted, saved, told in item's window */
-static void accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, const char *ctx,
-                          const char *handle, const char *nick)
+   nick) or trusted, saved, told in item's window. NULL when done, else
+   why not, for "e2e action refused": "no_identity", "bad_nick" (the
+   request's nick is no target), "no_key", "damaged", "failed",
+   "no_request" (nothing waits any more) or "not_peer" */
+static const char *accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item,
+                                 const char *ctx, const char *handle, const char *nick)
 {
 	E2E_IDENTITY id;
 	char *own = NULL, *rsp = NULL, *recip = NULL;
-	const char *name;
+	const char *name, *refused = NULL;
 
 	name = shown_text(nick != NULL ? nick : handle);
 	if (!e2e_ensure_identity(kr, &id))
-		return;
+		return "no_identity";
 	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, server, ctx) : NULL;
 	switch (e2e_accept(kr, &id, handle, ctx, own, e2e_own_handle(server), &rsp, &recip)) {
 	case E2E_ACCEPT_SENT:
@@ -1074,6 +1077,7 @@ static void accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, c
 			/* not saved: the request still waits */
 			e2e_print_item(item, "cannot answer %s on %s: the nick of the request is not known or not one a message can go to",
 			               shown_text(handle), shown(ctx));
+			refused = "bad_nick";
 			break;
 		}
 		e2e_save(kr);
@@ -1094,27 +1098,33 @@ static void accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, c
 	case E2E_ACCEPT_NO_KEY:
 		e2e_print_item(item, "cannot accept %s on %s: no key from them is stored (only a request that is gone) — wait for their next request, or /e2e handshake %s",
 		               name, shown(ctx), name);
+		refused = "no_key";
 		break;
 	case E2E_ACCEPT_DAMAGED:
 		e2e_print_item(item, "the pending exchange from %s on %s is damaged — /e2e decline %s removes it",
 		               name, shown(ctx), shown_text(handle));
+		refused = "damaged";
 		break;
 	case E2E_ACCEPT_FAILED:
 		e2e_print_item(item, "cannot answer the key exchange from %s on %s (key material damaged?)",
 		               name, shown(ctx));
+		refused = "failed";
 		break;
 	case E2E_ACCEPT_NOTHING:
 		e2e_print_item(item, "no pending exchange or session for %s on %s", name, shown(ctx));
+		refused = "no_request";
 		break;
 	case E2E_ACCEPT_NOT_PEER:
 		e2e_print_item(item, "cannot accept %s (%s) on %s: the key of a query goes to its own address only — nothing sent",
 		               name, shown_text(handle), shown(ctx));
+		refused = "not_peer";
 		break;
 	}
 	e2e_identity_wipe(&id);
 	g_free(own);
 	g_free(rsp);
 	g_free(recip);
+	return refused;
 }
 
 /* SYNTAX: E2E ACCEPT [<nick>|<ident@host>] */
@@ -1338,7 +1348,7 @@ void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, con
 	nick = g_strdup(e2e_json_get_string(row, "sender_nick"));
 	e2e_print_item(item, "web client: %s %s on %s", verb, shown_text(picked), shown(ctx));
 	if (accept)
-		accept_handle(kr, server, item, ctx, picked, nick);
+		reason = accept_handle(kr, server, item, ctx, picked, nick);
 	else
 		decline_handle(kr, item, ctx, picked, nick);
 	g_free(nick);
