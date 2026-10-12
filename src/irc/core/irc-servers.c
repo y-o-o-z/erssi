@@ -488,24 +488,20 @@ void irc_server_connect(SERVER_REC *server)
 	if (server->connrec->connect_handle != NULL) {
 		/* an existing handle from upgrade */
 		IRC_SERVER_CONNECT_REC *conn;
-		int tls_disconnect, unregistered;
+		int tls_disconnect;
 
 		conn = ((IRC_SERVER_REC *) server)->connrec;
 		tls_disconnect = conn->use_tls || conn->starttls;
-		/* irc-session.c clears session_reconnect for a connection that
-		   had not registered yet when /UPGRADE came */
-		unregistered = !server->session_reconnect;
 
-		if (tls_disconnect || unregistered) {
-			/* we cannot use it: it is encrypted, or its login was cut
-			   off. force a reconnect */
-			if (unregistered) {
-				/* nothing was sent to end it: close it, so the server
-				   lets go of the half-registered client */
-				net_disconnect(conn->connect_handle);
-			} else {
-				g_io_channel_unref(conn->connect_handle);
-			}
+		if (tls_disconnect || ((IRC_SERVER_REC *) server)->session_unregistered) {
+			/* we cannot use it: it is encrypted, or it had not
+			   registered yet and its login was cut off by the
+			   upgrade (irc-session.c). force a reconnect.
+			   This channel is the only owner of the inherited
+			   socket and does not close it on unref: close it here,
+			   or it stays open (the server keeps a half-registered
+			   client, or a TLS session nobody can read) */
+			net_disconnect(conn->connect_handle);
 			conn->connect_handle = NULL;
 			server->session_reconnect = FALSE;
 			server_connect_ref((SERVER_CONNECT_REC *) conn);
