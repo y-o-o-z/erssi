@@ -79,7 +79,8 @@ Without the e2e module no `e2e_state` is ever sent. While the rpe2e.pl
 script is loaded the module is inactive (the script encrypts and owns the
 keyring): every channel and query is `"off"` with no requests - the
 script's own state is not reported. When the e2e module is unloaded,
-every channel and query is sent `"off"` once.
+every channel and query it told a state to any client is sent `"off"`
+once.
 
 ## Client to server: `e2e_action`
 
@@ -90,7 +91,8 @@ every channel and query is sent `"off"` once.
   "server": "IRCnet",
   "target": "#test",
   "action": "accept",
-  "handle": "bob@127.0.0.1"
+  "handle": "bob@127.0.0.1",
+  "fingerprint": "0123456789abcdef"
 }
 ```
 
@@ -100,6 +102,12 @@ every channel and query is sent `"off"` once.
 - `handle`: the `handle` of a request in this channel's (or query's)
   `pending` list - exactly as it was sent.
 - `server` and `target`: the `server` and `channel` of that `e2e_state`.
+- `fingerprint` (optional): the `fingerprint` of that request as the
+  client showed it - exactly 16 lowercase hex digits. With it, the action
+  is taken only when the request that waits has that key; without it, for
+  whatever key the request of that handle waits with. **Clients should
+  always send it**: it binds the decision to what the user saw (a request
+  that came again with another key in the meantime is not accepted).
 
 The answer is a `command_result` with `response_to` set to the `id`:
 
@@ -113,17 +121,27 @@ The answer is a `command_result` with `response_to` set to the `id`:
 - `success: false` with `error_code`:
   - `"e2e_invalid"` - the action is not `accept` or `decline`, the handle
     is not one `ident@host` (3 to 255 bytes, exactly one `@` and not at
-    either end, no space, control character, `,` or `!`), the target is
+    either end, no space, control character, `,` or `!`), the
+    fingerprint is there but not 16 lowercase hex digits, the target is
     not one channel or nick, or no server is named;
   - `"e2e_no_server"` - no IRC server with that tag;
-  - `"e2e_unavailable"` - the e2e module is not loaded.
+  - `"e2e_unavailable"` - the e2e module is not loaded;
+  - `"e2e_mismatch"` - the request of that handle waits with another key
+    than `fingerprint` (it came again since, or the client's state is
+    old): nothing is done; the current one is in the latest `e2e_state`.
+
+Other reasons the module does not act (no such request waits, rpe2e.pl
+is loaded, the keyring is lost) are printed in erssi; the answer is then
+still `success: true`, and no new `e2e_state` follows.
 
 ## Security
 
 `accept` hands out your key: whoever you accept can read what you write
 there from then on. The e2e module therefore acts only on a request that
 waits there - in that channel or query, with exactly that `handle` - at
-the moment it gets the action. It never accepts an address that has not
+the moment it gets the action - and, when the action names a
+`fingerprint`, only when that request's key is that one. It never accepts
+an address that has not
 asked (an `/e2e accept` typed in erssi can trust someone in advance; a web
 client cannot), never a request of another channel or query, and never
 one of the damaged entries `/e2e list` shows. Anything else is printed in
@@ -134,7 +152,7 @@ only a client that passed the fe-web login can send one, and an
 authenticated web client can run any erssi command anyway. Its fields are
 checked one by one and passed on as they are; no command line is built
 from them. While the rpe2e.pl script is loaded the module refuses every
-action and does not touch the keyring.
+action and never writes the keyring.
 
 ## For modules and scripts
 
@@ -145,5 +163,9 @@ fe-web uses:
   is the `e2e` object above.
 - `"e2e state request"` (server, target) - answered at once with an
   `"e2e state"` for that channel or query.
-- `"e2e action"` (server, target, action, handle) - accept or decline, as
-  above.
+- `"e2e action"` (server, target, action, handle, fingerprint) - accept
+  or decline, as above; fingerprint may be NULL.
+- `"e2e action refused"` (server, target, handle, reason) - emitted by the
+  module while it handles an action it does not take; reason is
+  `"mismatch"`, `"no_request"`, `"inactive"` (rpe2e.pl loaded), `"lost"`
+  (the keyring is lost) or `"not_connected"`.

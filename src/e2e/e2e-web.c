@@ -23,17 +23,20 @@
      "e2e state" for that channel or query (nothing for anything else);
      what was emitted last for the others is not changed by it, so a
      change not emitted yet still goes to everyone.
-   "e2e action" (server, target, action, handle) - "accept" or "decline"
-     of the key request that waits in the window of target with exactly
-     that ident@host: e2e_web_action() (e2e-commands.c).
+   "e2e action" (server, target, action, handle, fingerprint) - "accept"
+     or "decline" of the key request that waits in the window of target
+     with exactly that ident@host (and, with fingerprint, that key):
+     e2e_web_action() (e2e-commands.c), which tells a refusal with
+     "e2e action refused" (server, target, handle, reason).
 
  While rpe2e.pl is loaded the module is inactive and the keyring is the
  script's: every channel and query is "off" with no requests (the
  script's state is not the module's to tell - as the statusbar item shows
  nothing then), nothing is read for it, and an action is refused with a
  message. A web client then shows no lock and offers nothing to accept.
- When the module is unloaded, every channel and query is told "off": with
- the module gone nothing is encrypted any more.
+ When the module is unloaded, every channel and query it told a state
+ (either way) is told "off": with the module gone nothing is encrypted
+ any more.
 
  The parsed keyring holds secret keys: it is freed (and wiped) before any
  "e2e state" is emitted, never kept.
@@ -62,6 +65,9 @@
 #define WEB_FILE_CHECK 5
 
 static GHashTable *web_cache;	/* "<tag>\x1f<name>" -> json emitted last */
+/* "<tag>\x1f<name>" of every item a state was emitted for, by a refresh
+   or as the answer to a request: each is told "off" on unload */
+static GHashTable *web_told;
 static guint web_idle_id;
 static guint web_check_id;
 /* the keyring file as the last refresh read it (web_have_stat: it was
@@ -150,8 +156,11 @@ static void emit_all(GPtrArray *list)
 	for (i = 0; i < list->len; i++) {
 		WEB_EMIT *e = g_ptr_array_index(list, i);
 
-		if (g_slist_find(servers, e->server) != NULL)
-			signal_emit("e2e state", 3, e->server, e->name, e->json);
+		if (g_slist_find(servers, e->server) == NULL)
+			continue;
+		if (web_told != NULL && e->server->tag != NULL)
+			g_hash_table_add(web_told, g_strconcat(e->server->tag, "\x1f", e->name, NULL));
+		signal_emit("e2e state", 3, e->server, e->name, e->json);
 	}
 	for (i = 0; i < list->len; i++) {
 		WEB_EMIT *e = g_ptr_array_index(list, i);
@@ -180,6 +189,11 @@ static void collect(GPtrArray *list, GHashTable *now, const E2E_JSON *kr, gboole
 			emit_add(list, item, json);
 		g_hash_table_replace(now, key, json);
 	}
+}
+
+static gboolean told_gone(gpointer key, gpointer value, gpointer now)
+{
+	return !g_hash_table_contains(now, key);
 }
 
 void e2e_web_refresh(void)
@@ -220,6 +234,8 @@ void e2e_web_refresh(void)
 	e2e_json_free(kr);
 	g_hash_table_destroy(web_cache);
 	web_cache = now;
+	/* an item that is gone needs no "off" (fe-web said it was closed) */
+	g_hash_table_foreach_remove(web_told, told_gone, now);
 	emit_all(list);
 }
 
@@ -254,14 +270,14 @@ static void sig_state_request(SERVER_REC *server, const char *target)
 }
 
 static void sig_action(SERVER_REC *server, const char *target, const char *action,
-                       const char *handle)
+                       const char *handle, const char *fingerprint)
 {
 	if (server == NULL || target == NULL || action == NULL || handle == NULL)
 		return;
 	if (strcmp(action, "accept") == 0)
-		e2e_web_action(server, target, TRUE, handle);
+		e2e_web_action(server, target, TRUE, handle, fingerprint);
 	else if (strcmp(action, "decline") == 0)
-		e2e_web_action(server, target, FALSE, handle);
+		e2e_web_action(server, target, FALSE, handle, fingerprint);
 }
 
 /* ---- what tells it to look again ---- */
@@ -356,6 +372,7 @@ void e2e_web_init(void)
 	int i;
 
 	web_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	web_told = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 	web_have_stat = FALSE;
 	web_read_at = 0;
 
@@ -396,8 +413,9 @@ void e2e_web_deinit(void)
 		g_source_remove(web_check_id);
 	web_check_id = 0;
 
-	/* without the module nothing is encrypted: whatever was told goes
-	   back to "off" */
+	/* without the module nothing is encrypted: every item that was told
+	   a state (by a refresh or a request answer - which the cache does
+	   not hold) is told "off" */
 	list = g_ptr_array_new();
 	for (tmp = servers; tmp != NULL; tmp = tmp->next) {
 		SERVER_REC *server = tmp->data;
@@ -411,16 +429,18 @@ void e2e_web_deinit(void)
 				if (!web_item(item))
 					continue;
 				key = web_key(item);
-				json = off_json(server);
-				if (g_hash_table_contains(web_cache, key) &&
-				    g_strcmp0(g_hash_table_lookup(web_cache, key), json) != 0)
+				if (g_hash_table_contains(web_told, key)) {
+					json = off_json(server);
 					emit_add(list, item, json);
-				g_free(json);
+					g_free(json);
+				}
 				g_free(key);
 			}
 		}
 	}
 	g_hash_table_destroy(web_cache);
 	web_cache = NULL;
+	g_hash_table_destroy(web_told);
+	web_told = NULL;
 	emit_all(list);
 }

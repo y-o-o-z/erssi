@@ -34,7 +34,7 @@
 
 typedef struct {
 	SERVER_REC *server;
-	char *target, *action, *handle;
+	char *target, *action, *handle, *fingerprint;
 } ACTION_SEEN;
 
 static GPtrArray *actions;	/* ACTION_SEEN * */
@@ -49,11 +49,18 @@ static void seen_free(ACTION_SEEN *s)
 	g_free(s->target);
 	g_free(s->action);
 	g_free(s->handle);
+	g_free(s->fingerprint);
 	g_free(s);
 }
 
+/* what the stand-in e2e module answers an action with: "e2e action
+ * refused" with this reason (NULL: nothing), for this handle (NULL: the
+ * action's) */
+static const char *refuse_reason;
+static const char *refuse_handle;
+
 static void sig_action(SERVER_REC *server, const char *target, const char *action,
-                       const char *handle)
+                       const char *handle, const char *fingerprint)
 {
 	ACTION_SEEN *s = g_new0(ACTION_SEEN, 1);
 
@@ -61,7 +68,12 @@ static void sig_action(SERVER_REC *server, const char *target, const char *actio
 	s->target = g_strdup(target);
 	s->action = g_strdup(action);
 	s->handle = g_strdup(handle);
+	s->fingerprint = g_strdup(fingerprint);
 	g_ptr_array_add(actions, s);
+	/* answered synchronously, as the e2e module does */
+	if (refuse_reason != NULL)
+		signal_emit("e2e action refused", 4, server, target,
+		            refuse_handle != NULL ? refuse_handle : handle, refuse_reason);
 }
 
 static void sig_request(SERVER_REC *server, const char *target)
@@ -292,6 +304,12 @@ static void assert_one_action(SERVER_REC *server, const char *target, const char
 	g_assert_cmpstr(s->handle, ==, handle);
 }
 
+static void assert_fingerprint(const char *fingerprint)
+{
+	g_assert_cmpuint(actions->len, ==, 1);
+	g_assert_cmpstr(((ACTION_SEEN *) g_ptr_array_index(actions, 0))->fingerprint, ==, fingerprint);
+}
+
 static void test_action_signal(void)
 {
 	IRC_SERVER_REC *server;
@@ -313,8 +331,73 @@ static void test_action_signal(void)
 	client_says(c, "{\"type\":\"e2e_action\",\"id\":\"r2\",\"server\":\"fuzz\",\"target\":"
 	               "\"bob\",\"action\":\"decline\",\"handle\":\"bob@\xc5\xbc" "aba.example.org\"}");
 	assert_one_action(SERVER(server), "bob", "decline", "bob@\xc5\xbc" "aba.example.org");
+	/* no fingerprint: none passed on */
+	assert_fingerprint(NULL);
+
+	/* the fingerprint the client showed goes along */
+	reset_seen();
+	client_says(c, "{\"type\":\"e2e_action\",\"id\":\"r3\",\"server\":\"fuzz\",\"target\":"
+	               "\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\","
+	               "\"fingerprint\":\"0123456789abcdef\"}");
+	assert_one_action(SERVER(server), "#test", "accept", "bob@127.0.0.1");
+	assert_fingerprint("0123456789abcdef");
+	g_assert_cmpint(heard_at("\"response_to\":\"r3\",\"success\":true"), >=, 0);
 
 	fe_web_fuzz_client_free(c);
+	fe_web_fuzz_server_free(server);
+	e2e_module_remove();
+}
+
+/* the e2e module refuses because the request's key is not the one the
+ * client showed: e2e_mismatch; any other refusal of the module, or one
+ * for another action, leaves the answer success (told in erssi) */
+static void test_action_mismatch(void)
+{
+	static const char json[] =
+	    "{\"type\":\"e2e_action\",\"id\":\"m1\",\"server\":\"fuzz\",\"target\":"
+	    "\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\","
+	    "\"fingerprint\":\"0123456789abcdef\"}";
+	IRC_SERVER_REC *server;
+	WEB_CLIENT_REC *c;
+
+	e2e_module_add();
+	server = fe_web_fuzz_server_new("fuzz");
+	c = client_new();
+
+	reset_seen();
+	refuse_reason = "mismatch";
+	client_says(c, json);
+	g_assert_cmpuint(actions->len, ==, 1);
+	g_assert_cmpint(heard_at("\"response_to\":\"m1\",\"success\":false"), >=, 0);
+	g_assert_cmpint(heard_at("\"error_code\":\"e2e_mismatch\""), >=, 0);
+	fe_web_fuzz_client_free(c);
+
+	/* another reason: still "handed to the e2e module" */
+	c = client_new();
+	reset_seen();
+	refuse_reason = "no_request";
+	client_says(c, json);
+	g_assert_cmpint(heard_at("\"success\":true"), >=, 0);
+	g_assert_cmpint(heard_at("e2e_mismatch"), <, 0);
+	fe_web_fuzz_client_free(c);
+
+	/* a mismatch of another handle is not this action's */
+	c = client_new();
+	reset_seen();
+	refuse_reason = "mismatch";
+	refuse_handle = "eve@127.0.0.1";
+	client_says(c, json);
+	g_assert_cmpint(heard_at("\"success\":true"), >=, 0);
+	g_assert_cmpint(heard_at("e2e_mismatch"), <, 0);
+	refuse_reason = refuse_handle = NULL;
+	fe_web_fuzz_client_free(c);
+
+	/* told outside an action: nothing */
+	c = client_new();
+	signal_emit("e2e action refused", 4, server, "#test", "bob@127.0.0.1", "mismatch");
+	g_assert_cmpint(heard_at("command_result"), <, 0);
+	fe_web_fuzz_client_free(c);
+
 	fe_web_fuzz_server_free(server);
 	e2e_module_remove();
 }
@@ -369,6 +452,15 @@ static void test_action_rejects(void)
 		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#a b\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\"}",
 		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#a,#b\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\"}",
 		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#a\\n\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\"}",
+		/* the fingerprint: 16 lowercase hex digits when given */
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"0123456789ABCDEF\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"0123456789abcde\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"0123456789abcdef0\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"0123456789abcdeg\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"0123456789abcd f\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":\"\"}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":123}",
+		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"fuzz\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\",\"fingerprint\":null}",
 		/* the server */
 		"{\"type\":\"e2e_action\",\"id\":\"1\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\"}",
 		"{\"type\":\"e2e_action\",\"id\":\"1\",\"server\":\"\",\"target\":\"#test\",\"action\":\"accept\",\"handle\":\"bob@127.0.0.1\"}",
@@ -635,6 +727,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/e2e/state-signal", test_state_signal);
 	g_test_add_func("/fe-web/e2e/action-signal", test_action_signal);
 	g_test_add_func("/fe-web/e2e/action-rejects", test_action_rejects);
+	g_test_add_func("/fe-web/e2e/action-mismatch", test_action_mismatch);
 	g_test_add_func("/fe-web/e2e/action-needs-login", test_action_needs_login);
 	g_test_add_func("/fe-web/e2e/action-unload-guard", test_action_unload_guard);
 	g_test_add_func("/fe-web/e2e/handle-valid", test_handle_valid);
