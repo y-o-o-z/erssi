@@ -300,13 +300,25 @@ static char *notice_context_channel(SERVER_REC *server, const char *msg)
 	return NULL;
 }
 
+/* A flag ignore (/IGNORE nick MSGS NOHILIGHT) does not hide the line, it
+   only takes the hilight away. fe-messages and fe-irc-messages print such a
+   line with MSGLEVEL_NOHILIGHT, and so a channel hilight is not recorded
+   (sig_print_text); the same ignore keeps a PM, action or notice out. */
+static gboolean nohilight_ignored(SERVER_REC *server, const char *nick, const char *address,
+                                  const char *context, const char *msg, int level)
+{
+	return ignore_check_flags(server, nick, address, context, msg, level, MSGLEVEL_NOHILIGHT) !=
+	       0;
+}
+
 static void sig_message_private(SERVER_REC *server, const char *msg, const char *nick,
                                 const char *address, const char *target)
 {
 	if (server == NULL || is_own_nick(server, nick) || is_mask_target(target) ||
 	    is_excluded(server))
 		return;
-	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_MSGS))
+	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_MSGS) ||
+	    nohilight_ignored(server, nick, address, NULL, msg, MSGLEVEL_MSGS))
 		return;
 	mentions_record(server, "private", server->tag, "PM", nick, msg);
 }
@@ -320,7 +332,8 @@ static void sig_message_irc_action(SERVER_REC *server, const char *msg, const ch
 		return;
 	if (is_own_nick(server, nick) || is_excluded(server))
 		return;
-	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_ACTIONS | MSGLEVEL_MSGS))
+	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_ACTIONS | MSGLEVEL_MSGS) ||
+	    nohilight_ignored(server, nick, address, NULL, msg, MSGLEVEL_ACTIONS | MSGLEVEL_MSGS))
 		return;
 	mentions_record(server, "action", server->tag, "PM", nick, msg);
 }
@@ -331,7 +344,7 @@ static void sig_message_irc_notice(SERVER_REC *server, const char *msg, const ch
                                    const char *address, const char *target)
 {
 	char *context;
-	int ignored;
+	int ignored, level;
 
 	if (server == NULL || msg == NULL || mentions_is_server_nick(nick) || address == NULL ||
 	    *address == '\0')
@@ -343,8 +356,9 @@ static void sig_message_irc_notice(SERVER_REC *server, const char *msg, const ch
 
 	/* a cnotice is ignored by the ignores of its channel */
 	context = notice_context_channel(server, msg);
-	ignored = ignore_check(server, nick, address, context, msg,
-	                       context != NULL ? MSGLEVEL_PUBNOTICES : MSGLEVEL_NOTICES);
+	level = context != NULL ? MSGLEVEL_PUBNOTICES : MSGLEVEL_NOTICES;
+	ignored = ignore_check(server, nick, address, context, msg, level) ||
+	          nohilight_ignored(server, nick, address, context, msg, level);
 	g_free(context);
 	if (ignored)
 		return;
