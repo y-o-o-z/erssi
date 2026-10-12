@@ -20,10 +20,28 @@
     nothing then); it is never sent in clear text. A buffer holding
     several IRC lines (CR/LF from a script's raw line) is dropped whole
     when one of its PRIVMSGs would need the gate. Only the exact lines of
-    ciphertext the gate itself sends pass unexamined.
+    ciphertext the gate itself made pass unexamined.
+  - The send queue (e2e-outq.h, one per server): an encrypted message is
+    several lines - a REKEY NOTICE per recipient when the key changed,
+    then the chunks. The first takes the place of the typed line in the
+    emission; the others wait in the queue, ahead of everything in it,
+    and a pump (every 100 ms) sends them one at a time when irssi's own
+    flood rule would send a new command at once (cmds_max_at_once,
+    cmd_queue_speed, the delay after a long line; never past a command
+    waiting in irssi's queue). A PRIVMSG that comes while lines wait is
+    taken out of its emission and queued behind them, not decided yet:
+    the pump sends it again, as a new emission, and the gate decides it
+    then like any other line (its own chunks then go to the front). So
+    the lines of one message leave in order and before anything typed
+    after it, and only the gate's own ciphertext or a line on its way to
+    the gate ever leaves the queue. The gate never touches irssi's queue
+    (irc->cmdqueue). The queue is dropped and wiped, with the count told
+    in the status window, on disconnect, /e2e reset, /unload, and when
+    rpe2e.pl is loaded (the script encrypts then, the queue is not used).
   - "session save server" (first): /upgrade writes the flood queue to the
-    socket directly, past the gate; the module sends those lines through
-    irc_server_send_and_redirect first, so the gate sees each of them.
+    socket directly, past the gate; the module first sends its own queue,
+    then those lines through irc_server_send_and_redirect, so the gate
+    sees each of them, and the chunks of each right after it.
   - "event privmsg" (first): decryption before irssi splits CTCP/ACTION,
     so an encrypted /me renders as an action; the decrypted text is
     passed on with signal_continue, everything after (fe-common, fe-web,
@@ -43,6 +61,7 @@
 #include "e2e-crypto.h"
 #include "e2e-formats.h"
 #include "e2e-keyring.h"
+#include "e2e-outq.h"
 #include "e2e-wire.h"
 
 #include <irssi/src/core/channels.h>
@@ -74,13 +93,9 @@ static GHashTable *keyreq_out;		/* handle -> our last KEYREQ (30 s) */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
 static GHashTable *own_wait_notice;	/* "tag|nick" -> last "held" notice */
 static GHashTable *own_handles;		/* server tag -> own ident@host */
-/* the exact lines of ciphertext the gate is sending -> how many: these
+/* the exact lines of ciphertext the pump is sending -> how many: these
    pass the gate (any other line, a wire too, is gated) */
 static GHashTable *own_lines;
-/* gate calls inside gate calls (a script sending from a signal emitted
-   while we send): bounded */
-static int gate_depth;
-#define E2E_MAX_GATE_DEPTH 4
 
 static gint64 lost_notice_at;
 
@@ -468,16 +483,6 @@ void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body)
 	g_free(cmd);
 }
 
-/* a REKEY goes out right before the first message under the new key
-   (which the gate sends at once): queued, it would arrive after it */
-static void send_notice_now(SERVER_REC *server, const char *nick, const char *body)
-{
-	char *cmd = g_strdup_printf("NOTICE %s :%s", nick, body);
-
-	irc_send_cmd_now(IRC_SERVER(server), cmd);
-	g_free(cmd);
-}
-
 /* ---- handles ---- */
 
 char *e2e_resolve_dm_handle(SERVER_REC *server, const E2E_JSON *kr, const char *nick)
@@ -692,7 +697,7 @@ static void own_line_add(const char *line)
 	g_hash_table_replace(own_lines, g_strdup(line), GINT_TO_POINTER(n + 1));
 }
 
-/* TRUE (and counted off) when line is one the gate is sending */
+/* TRUE (and counted off) when line is one the pump is sending */
 static gboolean own_line_take(const char *line)
 {
 	int n = GPOINTER_TO_INT(g_hash_table_lookup(own_lines, line));
@@ -704,19 +709,6 @@ static gboolean own_line_take(const char *line)
 	else
 		g_hash_table_replace(own_lines, g_strdup(line), GINT_TO_POINTER(n - 1));
 	return TRUE;
-}
-
-static void send_privmsg(SERVER_REC *server, const char *tags, const char *target,
-                         const char *body)
-{
-	/* IRCv3 tags of the original line stay on the chunks */
-	char *cmd = g_strdup_printf("%sPRIVMSG %s :%s", tags, target, body);
-
-	own_line_add(cmd);
-	irc_send_cmd_now(IRC_SERVER(server), cmd);
-	/* not taken when it never reached the socket (connection lost) */
-	own_line_take(cmd);
-	g_free(cmd);
 }
 
 static void gate_refuse(SERVER_REC *server, GString *str, const char *item, const char *msg)
@@ -762,6 +754,22 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
    (signal_continue), so the count also comes down when a handler stops
    the signal. */
 static int outgoing_depth;
+
+/* ---- the send queue (statics; the pump is below the gate) ---- */
+
+static GHashTable *outqs;		/* SERVER_REC * -> E2E_OUTQ * */
+static guint pump_tag;
+/* The pump is sending a line that has not met the gate yet (PLAIN): the
+   emission it causes is the gate's to decide now, not to queue again.
+   That emission is the first one at depth pump_depth after the pump
+   armed it; the depth hook keeps its depth in pump_emission while it
+   runs. Another emission - nested in it (a handler sending), or one
+   after it while irc_send_cmd_now() has not returned (a rawlog hook) -
+   is not the pump's line and is queued like any other. */
+static gboolean in_pump;
+static gboolean pump_armed;
+static int pump_depth;
+static int pump_emission;
 /* per running emission (index outgoing_depth): the line as the module's
    gate decided it - the gate ran while the module was active - or NULL.
    The rpe2e.pl guard leaves a line to that gate only when it is still
@@ -795,6 +803,10 @@ static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf
 	gpointer *slot;
 
 	outgoing_depth++;
+	if (in_pump && pump_armed && outgoing_depth == pump_depth) {
+		pump_armed = FALSE;
+		pump_emission = outgoing_depth;
+	}
 	if (gated_emissions != NULL && gated_emissions->len <= (guint) outgoing_depth)
 		g_ptr_array_set_size(gated_emissions, outgoing_depth + 1);
 	if ((slot = gated_slot()) != NULL) {
@@ -807,6 +819,8 @@ static void sig_server_outgoing_depth(SERVER_REC *server, GString *str, int crlf
 		gated_line_free(*slot);
 		*slot = NULL;
 	}
+	if (pump_emission == outgoing_depth)
+		pump_emission = 0;
 	outgoing_depth--;
 }
 
@@ -831,6 +845,143 @@ static gboolean was_gated(const GString *str)
 	return line != NULL && line->len == str->len && memcmp(line->str, str->str, str->len) == 0;
 }
 
+/* ---- the send queue ---- */
+
+/* the running emission is the one of the line the pump sends */
+static gboolean from_pump(void)
+{
+	return in_pump && pump_emission > 0 && pump_emission == outgoing_depth;
+}
+
+static E2E_OUTQ *queue_of(SERVER_REC *server, gboolean create)
+{
+	E2E_OUTQ *q = g_hash_table_lookup(outqs, server);
+
+	if (q == NULL && create) {
+		q = e2e_outq_new();
+		g_hash_table_insert(outqs, server, q);
+	}
+	return q;
+}
+
+static gboolean queue_waiting(SERVER_REC *server)
+{
+	E2E_OUTQ *q = queue_of(server, FALSE);
+
+	return q != NULL && !e2e_outq_empty(q);
+}
+
+/* empties server's queue, wiping its lines; told in its status window,
+   with more PRIVMSGs not sent (dropped from irssi's queue) */
+static guint drop_queue(SERVER_REC *server, const char *reason, guint more)
+{
+	E2E_OUTQ *q = queue_of(server, FALSE);
+	guint n = 0, plain = 0;
+	GString *text;
+
+	if (q != NULL)
+		n = e2e_outq_drop(q, &plain);
+	if (n + more == 0)
+		return 0;
+	text = g_string_new(NULL);
+	g_string_printf(text, "%u encrypted line(s) to %s not sent: %s", n - plain,
+	                server->tag != NULL ? server->tag : "?", reason);
+	if (plain + more > 0)
+		g_string_append_printf(text, " (and %u message(s) waiting behind them, not encrypted yet)",
+		                       plain + more);
+	printformat(server, NULL, MSGLEVEL_CLIENTERROR, TXT_E2E_MESSAGE, text->str);
+	g_string_free(text, TRUE);
+	return n;
+}
+
+/* irssi's own rule for sending a command at once (irc_send_cmd(), with
+   7aac7eb8: not past a normal command waiting in irssi's queue - so a
+   line of ours never overtakes one irssi queued before it). At least
+   one command at a time: with cmds_max_at_once 0 irssi still sends its
+   queue one by one, the pump must not wait for ever. */
+static gboolean flood_allows(IRC_SERVER_REC *s)
+{
+	return s->connected && !s->connection_lost &&
+	       g_slist_length(s->cmdqueue) / 2 <= (guint) s->cmdlater &&
+	       g_get_real_time() >= s->wait_cmd &&
+	       (s->cmdcount < MAX(s->max_cmds_at_once, 1) || s->cmd_queue_speed <= 0);
+}
+
+/* sends the first lines of the queue of s while the flood rule allows
+   (ignore_flood: all of them) */
+static void pump_server(IRC_SERVER_REC *s, gboolean ignore_flood)
+{
+	SERVER_REC *server = SERVER(s);
+	E2E_OUT_LINE *out;
+	E2E_OUTQ *q;
+
+	/* never inside an emission (a line sent there would leave ahead of
+	   the one being sent), and one line at a time */
+	if (s == NULL || in_pump || outgoing_depth > 0)
+		return;
+	server_ref(server);
+	/* looked up again for every line: a handler may drop or free it */
+	while ((q = queue_of(server, FALSE)) != NULL && !e2e_outq_empty(q) &&
+	       !server->disconnected && !s->connection_lost) {
+		/* rpe2e.pl encrypts now: nothing of the module's queue goes to
+		   the script, or out as it is */
+		if (!e2e_native_active()) {
+			drop_queue(server, "rpe2e.pl is loaded", 0);
+			break;
+		}
+		if (!ignore_flood && !flood_allows(s))
+			break;
+		out = e2e_outq_pop(q);
+		if (out->kind == E2E_OUT_CIPHER) {
+			/* the gate's own ciphertext: passes it as it is */
+			own_line_add(out->line);
+			irc_send_cmd_now(s, out->line);
+			/* not taken when it never reached the gate (connection
+			   lost, or a handler before it stopped the signal) */
+			own_line_take(out->line);
+		} else {
+			/* not gated yet: the gate decides it now, as any line */
+			in_pump = TRUE;
+			pump_armed = TRUE;
+			pump_depth = outgoing_depth + 1;
+			irc_send_cmd_now(s, out->line);
+			in_pump = FALSE;
+			pump_armed = FALSE;
+			pump_emission = 0;
+		}
+		e2e_out_line_free(out);
+	}
+	server_unref(server);
+}
+
+static gboolean pump_all(gpointer data)
+{
+	GHashTableIter iter;
+	gpointer value;
+	GList *keys, *tmp;
+
+	keys = g_hash_table_get_keys(outqs);
+	for (tmp = keys; tmp != NULL; tmp = tmp->next)
+		if (g_hash_table_contains(outqs, tmp->data))
+			pump_server(IRC_SERVER(tmp->data), FALSE);
+	g_list_free(keys);
+	/* empty queues are not kept */
+	g_hash_table_iter_init(&iter, outqs);
+	while (g_hash_table_iter_next(&iter, NULL, &value))
+		if (e2e_outq_empty(value))
+			g_hash_table_iter_remove(&iter);
+	if (g_hash_table_size(outqs) > 0)
+		return TRUE;
+	pump_tag = 0;
+	return FALSE;
+}
+
+static void start_pump(void)
+{
+	if (pump_tag == 0)
+		pump_tag = g_timeout_add(100, pump_all, NULL);
+}
+
 /* the module's gate on the line in str */
 static void native_gate(SERVER_REC *server, GString *str)
 {
@@ -839,6 +990,7 @@ static void native_gate(SERVER_REC *server, GString *str)
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
 	E2E_NET net;
+	GPtrArray *lines;
 	char *line, *tags, *target, *body, *error = NULL;
 	gboolean have_id = FALSE, created;
 	gsize len;
@@ -850,20 +1002,23 @@ static void native_gate(SERVER_REC *server, GString *str)
 	if (gate_multiline(server, str, len))
 		return;
 	line = g_strndup(str->str, len);
-	/* the ciphertext the gate sends right now (below) */
+	/* the ciphertext the pump sends right now */
 	if (own_line_take(line)) {
 		g_free(line);
 		return;
 	}
 	if (!e2e_parse_privmsg_line(line, &tags, &target, &body)) {
+		e2e_wipe(line, strlen(line));
 		g_free(line);
 		return;
 	}
-	g_free(line);
-	/* a PRIVMSG sent from a handler of a signal we caused while sending:
-	   gated like any other, but not without end */
-	if (gate_depth >= E2E_MAX_GATE_DEPTH) {
-		gate_refuse(server, str, target, E2E_REFUSE_ENCRYPT);
+	/* lines wait in the queue: this one goes behind them, and is
+	   decided when the pump sends it */
+	if (!from_pump() && queue_waiting(server)) {
+		e2e_outq_push_back(queue_of(server, FALSE), E2E_OUT_PLAIN, line);
+		e2e_wipe(str->str, str->len);
+		g_string_truncate(str, 0);
+		signal_stop();
 		goto out;
 	}
 
@@ -912,14 +1067,29 @@ static void native_gate(SERVER_REC *server, GString *str)
 		for (i = 0; res.warnings != NULL && i < res.warnings->len; i++)
 			e2e_print_item(e2e_notice_item(server, res.ctx, target), "%s",
 			               (char *) g_ptr_array_index(res.warnings, i));
-		gate_depth++;
+		lines = g_ptr_array_new_with_free_func(g_free);
+		/* a REKEY reaches each recipient before the first chunk under
+		   the new key */
 		for (i = 0; res.notices != NULL && i + 1 < res.notices->len; i += 2)
-			send_notice_now(server, g_ptr_array_index(res.notices, i),
-			                g_ptr_array_index(res.notices, i + 1));
+			g_ptr_array_add(lines, g_strdup_printf("NOTICE %s :%s",
+			                                       (char *) g_ptr_array_index(res.notices, i),
+			                                       (char *) g_ptr_array_index(res.notices, i + 1)));
+		/* IRCv3 tags of the original line stay on the chunks */
 		for (i = 0; i < res.wires->len; i++)
-			send_privmsg(server, tags, target, g_ptr_array_index(res.wires, i));
-		gate_depth--;
+			g_ptr_array_add(lines, g_strdup_printf("%sPRIVMSG %s :%s", tags, target,
+			                                       (char *) g_ptr_array_index(res.wires, i)));
+		/* the first goes out now, in the place of the plain text; the
+		   others wait for the flood limit, ahead of all that waits */
+		e2e_wipe(str->str, str->len);
 		g_string_truncate(str, 0);
+		if (lines->len > 0)
+			g_string_assign(str, g_ptr_array_index(lines, 0));
+		if (lines->len > 1) {
+			g_ptr_array_remove_index(lines, 0);
+			e2e_outq_push_front(queue_of(server, TRUE), E2E_OUT_CIPHER, lines);
+			start_pump();
+		}
+		g_ptr_array_unref(lines);
 		signal_stop();
 		break;
 	}
@@ -928,6 +1098,8 @@ static void native_gate(SERVER_REC *server, GString *str)
 		e2e_identity_wipe(&id);
 	e2e_json_free(kr);
 out:
+	e2e_wipe(line, strlen(line));
+	g_free(line);
 	g_free(tags);
 	g_free(target);
 	if (body != NULL)
@@ -991,9 +1163,11 @@ static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crl
 }
 
 /* /upgrade: irc-session.c writes the flood queue straight to the socket,
-   past "server outgoing modify". Send it the normal way first (in order),
-   so every queued PRIVMSG meets the gate; redirected commands stay for
-   irssi, which does not send those either. */
+   past "server outgoing modify". The module's own queue first (its lines
+   are older than what irssi still holds), then irssi's the normal way
+   (in order), so every queued PRIVMSG meets the gate, each followed by
+   its chunks; redirected commands stay for irssi, which does not send
+   those either. */
 static void sig_session_save_server(SERVER_REC *server)
 {
 	IRC_SERVER_REC *irc = IRC_SERVER(server);
@@ -1001,6 +1175,7 @@ static void sig_session_save_server(SERVER_REC *server)
 
 	if (irc == NULL)
 		return;
+	pump_server(irc, TRUE);
 	for (tmp = irc->cmdqueue; tmp != NULL; tmp = next) {
 		GSList *link = tmp->next;
 		char *cmd = tmp->data;
@@ -1016,41 +1191,68 @@ static void sig_session_save_server(SERVER_REC *server)
 		irc_server_send_and_redirect(irc, str, NULL);
 		g_string_free(str, TRUE);
 		g_free(cmd);
+		pump_server(irc, TRUE);
 	}
+	/* not sent (the connection is lost): not carried over */
+	drop_queue(server, "/upgrade", 0);
+	g_hash_table_remove(outqs, server);
+}
+
+/* the PRIVMSGs waiting in irssi's flood queue of irc, dropped and
+   wiped; how many */
+static guint drop_irssi_privmsgs(IRC_SERVER_REC *irc)
+{
+	GSList *tmp, *next;
+	guint n = 0;
+
+	for (tmp = irc->cmdqueue; tmp != NULL; tmp = next) {
+		GSList *link = tmp->next;
+		char *cmd = tmp->data;
+
+		next = link->next;
+		/* every line of it: "NICK x\r\nPRIVMSG #secret ..." too */
+		if (!e2e_buffer_has_privmsg(cmd, strlen(cmd)))
+			continue;
+		if (link->data != NULL)
+			server_redirect_destroy(link->data);
+		irc->cmdqueue = g_slist_delete_link(irc->cmdqueue, link);
+		irc->cmdqueue = g_slist_delete_link(irc->cmdqueue, tmp);
+		irc->cmdcount--;
+		e2e_wipe(cmd, strlen(cmd));
+		g_free(cmd);
+		n++;
+	}
+	return n;
 }
 
 /* /e2e reset: PRIVMSGs typed while the keyring was lost may still wait
-   in the flood queue - the gate runs when they leave, and after the reset
-   it would let them out in clear text. They are dropped instead. */
+   in the flood queue or in the module's queue - the gate runs when they
+   leave, and after the reset it would let them out in clear text. They
+   are dropped instead (and the chunks waiting with them). */
 int e2e_drop_queued_privmsgs(void)
 {
-	GSList *stmp, *tmp, *next;
+	GHashTableIter iter;
+	gpointer value;
+	GSList *tmp;
 	int n = 0;
 
-	for (stmp = servers; stmp != NULL; stmp = stmp->next) {
-		IRC_SERVER_REC *irc = IRC_SERVER(stmp->data);
-
-		if (irc == NULL)
-			continue;
-		for (tmp = irc->cmdqueue; tmp != NULL; tmp = next) {
-			GSList *link = tmp->next;
-			char *cmd = tmp->data;
-
-			next = link->next;
-			/* every line of it: "NICK x\r\nPRIVMSG #secret ..." too */
-			if (!e2e_buffer_has_privmsg(cmd, strlen(cmd)))
-				continue;
-			if (link->data != NULL)
-				server_redirect_destroy(link->data);
-			irc->cmdqueue = g_slist_delete_link(irc->cmdqueue, link);
-			irc->cmdqueue = g_slist_delete_link(irc->cmdqueue, tmp);
-			irc->cmdcount--;
-			e2e_wipe(cmd, strlen(cmd));
-			g_free(cmd);
-			n++;
-		}
-	}
+	/* the module's queues: lines typed then, and chunks */
+	g_hash_table_iter_init(&iter, outqs);
+	while (g_hash_table_iter_next(&iter, NULL, &value))
+		n += e2e_outq_drop(value, NULL);
+	for (tmp = servers; tmp != NULL; tmp = tmp->next)
+		if (IS_IRC_SERVER(tmp->data))
+			n += drop_irssi_privmsgs(IRC_SERVER(tmp->data));
 	return n;
+}
+
+/* the server is gone (a reconnect is a new record): its queue with it */
+static void sig_server_gone(SERVER_REC *server)
+{
+	if (server == NULL)
+		return;
+	drop_queue(server, "disconnected", 0);
+	g_hash_table_remove(outqs, server);
 }
 
 /* ---- incoming messages ---- */
@@ -1345,12 +1547,17 @@ void e2e_core_init(void)
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	outqs = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
+	                              (GDestroyNotify) e2e_outq_free);
 
 	signal_add_full(MODULE_NAME, SIGNAL_PRIORITY_HIGH - 1, "server outgoing modify",
 	                (SIGNAL_FUNC) sig_server_outgoing_depth, NULL);
 	signal_add_first("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
 	signal_add_last("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_script);
 	signal_add_first("session save server", (SIGNAL_FUNC) sig_session_save_server);
+	signal_add("server disconnected", (SIGNAL_FUNC) sig_server_gone);
+	signal_add("server connect failed", (SIGNAL_FUNC) sig_server_gone);
+	signal_add("server destroyed", (SIGNAL_FUNC) sig_server_gone);
 	signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
 	signal_add_first("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);
 	signal_add("event 001", (SIGNAL_FUNC) sig_event_001);
@@ -1384,10 +1591,25 @@ void e2e_core_init(void)
 
 void e2e_core_deinit(void)
 {
+	GSList *list, *tmp;
+
+	/* what still waits is not sent: told, and wiped - the PRIVMSGs in
+	   irssi's flood queue too, which would leave without the gate (the
+	   rest of a long line irssi split, typed while E2E was on) */
+	list = g_slist_copy(servers);
+	for (tmp = list; tmp != NULL; tmp = tmp->next)
+		if (g_slist_find(servers, tmp->data) != NULL && IS_IRC_SERVER(tmp->data))
+			drop_queue(tmp->data, "the e2e module is unloaded",
+			           drop_irssi_privmsgs(IRC_SERVER(tmp->data)));
+	g_slist_free(list);
+
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_depth);
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing_script);
 	signal_remove("session save server", (SIGNAL_FUNC) sig_session_save_server);
+	signal_remove("server disconnected", (SIGNAL_FUNC) sig_server_gone);
+	signal_remove("server connect failed", (SIGNAL_FUNC) sig_server_gone);
+	signal_remove("server destroyed", (SIGNAL_FUNC) sig_server_gone);
 	signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
 	signal_remove("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);
 	signal_remove("event 001", (SIGNAL_FUNC) sig_event_001);
@@ -1401,6 +1623,13 @@ void e2e_core_deinit(void)
 	if (script_check_id != 0)
 		g_source_remove(script_check_id);
 	script_check_id = 0;
+	if (pump_tag != 0)
+		g_source_remove(pump_tag);
+	pump_tag = 0;
+	g_hash_table_destroy(outqs);
+	outqs = NULL;
+	in_pump = pump_armed = FALSE;
+	pump_emission = 0;
 
 	e2e_commands_deinit();
 	theme_unregister();

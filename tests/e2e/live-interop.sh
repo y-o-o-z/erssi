@@ -22,7 +22,12 @@
 # PRIVMSG sent from a rawlog hook do not leave in clear text, and /upgrade
 # with PRIVMSGs still in the flood queue encrypts them. A query with E2E on
 # whose nick (carol) is no longer reachable is refused, not sent in clear
-# text, until /e2e off in that query. Last, rpe2e.pl
+# text, until /e2e off in that query. Long messages leave through the
+# flood queue, paced and in order, a REKEY before the first chunk under
+# the new key (the server logs the time of every line: --wire-times);
+# chunks still waiting are dropped and reported when rpe2e.pl is loaded,
+# on /unload e2e, on disconnect and on /e2e reset, and sent first on
+# /upgrade - never in clear text. Last, rpe2e.pl
 # loads and saves alice's keyring and keeps what only the module writes.
 #
 # A second fake server plays a second network (chatnet E2E2): alice is on
@@ -86,9 +91,9 @@ PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0));
 PORT2=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 PORT3=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 # E2E compares names in ASCII ([ and { are two channels), E2E2 by Unicode
-python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" --casemapping ascii &
+python3 "$IRCD" --port "$PORT" --wire "$WORK/wire.log" --wire-times "$WORK/wire-times.log" --casemapping ascii &
 IRCD_PID=$!
-python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --network E2E2Test --casemapping utf8 &
+python3 "$IRCD" --port "$PORT2" --wire "$WORK/wire2.log" --wire-times "$WORK/wire2-times.log" --network E2E2Test --casemapping utf8 &
 IRCD_PID="$IRCD_PID $!"
 # E2E3 folds as rfc1459 and names no CASEMAPPING: decided after its MOTD
 python3 "$IRCD" --port "$PORT3" --wire "$WORK/wire3.log" --network E2E3Test --casemapping rfc1459 --hide-casemapping &
@@ -256,7 +261,9 @@ who() {  # who <log under $WORK>: the client it belongs to
     echo "${rel%%/*}"
 }
 check() {  # check <receiver log> <text>
-    if wait_for "$1" "$2" 10; then pass "$(who "$1") sees: $2"
+    # each encrypted line holds the flood queue 4 s and more (irssi's
+    # delay after a long line): what was typed last can take a while
+    if wait_for "$1" "$2" 30; then pass "$(who "$1") sees: $2"
     else bad "$(who "$1") does not see: $2"; fi
 }
 check "$WORK/bob/logs/E2E/$CHAN.log" "secret message from alice"
@@ -301,11 +308,12 @@ check "$WORK/alice/logs/E2E/bob.log" "private from bob $POLISH"
 
 # the long messages: several encrypted chunks, each shown as a line; put
 # together they are the message
-long_check() {  # long_check <receiver log> <sender nick> <text> <what>
-    # irssi sends the second line of a long message after its flood delay
+long_check() {  # long_check <receiver log> <sender nick> <text> <what> [<seconds>]
+    # each line of a long message leaves after the flood delay of the
+    # one before (2 s + 1 s per 100 bytes)
     local n=0
     until long_check_once "$1" "$2" "$3"; do
-        n=$((n + 1)); [ $n -ge 20 ] && { bad "$4"; return; }
+        n=$((n + 1)); [ $n -ge "${5:-20}" ] && { bad "$4"; return; }
         sleep 1
     done
     pass "$4"
@@ -783,10 +791,205 @@ else
     grep -aF "evil" "$WORK/alice/all.log" | sed 's/^/    /'
 fi
 
-# ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
+# ---- long messages through the flood queue, in order ----
+# every encrypted line is longer than 100 bytes, and irssi waits 2 s and
+# 1 s per 100 bytes after such a line (wait_cmd): the chunks of a long
+# message leave one at a time, at the pace of irssi's flood queue, and a
+# message typed after it waits behind them. (The /set values apply to
+# the next connection - here the one after /upgrade.)
+first_wire() {  # first_wire <mark> <seconds> [<wire-times file>]: the msgid of alice's first wire to $CHAN after the mark
+    python3 - "${3:-$WORK/wire-times.log}" "$1" "$2" "$CHAN" <<'PY'
+import sys, time
+path, mark, limit, chan = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
+end = time.time() + limit
+while time.time() < end:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for i, l in enumerate(fh):
+            f = l.rstrip("\n").split(" ", 4)
+            if i >= mark and len(f) == 5 and f[1:4] == ["alice", "PRIVMSG", chan] and f[4].startswith(":+RPE2E01 "):
+                print(f[4][1:].split(" ")[1])
+                sys.exit(0)
+    time.sleep(0.1)
+sys.exit(1)
+PY
+}
+wire_groups() {  # wire_groups <mark> [<wire-times file>]: alice's wires to $CHAN after the mark, a line per message in order of its first line: "<msgid> <parts seen, in order> <first line index> <last line index>"
+    python3 - "${2:-$WORK/wire-times.log}" "$1" "$CHAN" <<'PY'
+import sys
+path, mark, chan = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+groups = {}
+for i, l in enumerate(open(path, encoding="utf-8", errors="replace")):
+    f = l.rstrip("\n").split(" ", 4)
+    if i >= mark and len(f) == 5 and f[1:4] == ["alice", "PRIVMSG", chan] and f[4].startswith(":+RPE2E01 "):
+        w = f[4][1:].split(" ")
+        g = groups.setdefault(w[1], [[], i, i])
+        g[0].append(w[3])
+        g[2] = i
+for mid, (parts, first, last) in groups.items():
+    print(mid, ",".join(parts), first, last)
+PY
+}
+LONG_C=$(python3 -c 'print(" ".join("pacedlong%d" % i for i in range(1, 61)))')
+LONG_C2=$(python3 -c 'print(" ".join("secondlong%d" % i for i in range(1, 25)))')
+LONG_D=$(python3 -c 'print(" ".join("rotatedlong%d" % i for i in range(1, 61)))')
+LONG_G=$(python3 -c 'print(" ".join("heldlong%d" % i for i in range(1, 61)))')
 say alice "/join -E2E $CHAN"
+say alice "/set cmds_max_at_once 2"; say alice "/set cmd_queue_speed 1000"
+# a PRIVMSG sent from a rawlog hook right after the first chunk of a line
+# the pump sent (the second half of LONG_C) is not the pump's line: it
+# waits behind the others, not between two chunks
+cat > "$WORK/alice/scripts/e2epumphook.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'e2epumphook');
+my $done = 0;
+Irssi::signal_add('rawlog', sub {
+    my ($rawlog, $data) = @_;
+    return if $done || $data !~ m{^<< PRIVMSG #test :\+RPE2E01 \S+ \d+ 1/2 };
+    $done = 1;
+    Irssi::server_find_tag('E2E')->send_raw_now('PRIVMSG #test :nested from a rawlog hook');
+});
+PERL
+say alice "/script load e2epumphook"
+sleep 5
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_C"; quick alice "$LONG_C2"; quick alice "short after long"
+if wait_for "$WORK/bob/logs/E2E/$CHAN.log" "short after long" 120; then
+    pass "bob sees: short after long"
+else
+    bad "bob does not see: short after long"
+fi
+# irssi splits a typed line at the server's line limit: LONG_C is two
+# PRIVMSGs, each encrypted to its own chunks (3 and 2), LONG_C2 one (2
+# chunks). In order: the chunks of each together, in order, and the
+# short message last - each PRIVMSG that waited behind chunks is
+# decided when it leaves the module's queue, its own chunks go ahead of
+# what waits behind it. Paced: after the first two lines, one at a time
+python3 - "$WORK/wire-times.log" "$TIMES_MARK" "$CHAN" <<'PY' && pass "flood queue: the chunks leave in order, paced, before the message typed after them" || bad "flood queue: chunks out of order, or not paced"
+import sys
+path, mark, chan = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+rows = []
+for i, l in enumerate(open(path, encoding="utf-8", errors="replace")):
+    f = l.rstrip("\n").split(" ", 4)
+    if i >= mark and len(f) == 5 and f[1:4] == ["alice", "PRIVMSG", chan] and f[4].startswith(":+RPE2E01 "):
+        w = f[4][1:].split(" ")
+        rows.append((float(f[0]), w[1], w[3]))
+seq = [mid for _, mid, _ in rows]
+order = []
+for mid in seq:
+    if mid not in order:
+        order.append(mid)
+# up to the short message (1/1), the first single-line message
+short = next((k for k, mid in enumerate(order) if [p for _, m, p in rows if m == mid] == ["1/1"]), None)
+if short is None or short < 2:
+    print("  (no short message after the long ones: %s)" % order)
+    sys.exit(1)
+msgs = order[:short + 1]
+ok = True
+for k, mid in enumerate(msgs):
+    parts = [p for _, m, p in rows if m == mid]
+    n = int(parts[0].split("/")[1])
+    idx = [j for j, m in enumerate(seq) if m == mid]
+    if parts != ["%d/%d" % (j, n) for j in range(1, n + 1)] or idx != list(range(idx[0], idx[0] + n)):
+        print("  (message %d: parts %s at lines %s)" % (k + 1, parts, idx))
+        ok = False
+lines = [r for r in rows if r[1] in msgs]
+if len(lines) < 6:
+    print("  (%d lines, 6 or more expected)" % len(lines))
+    ok = False
+# irssi waits 2 s and 1 s per 100 bytes after a line this long
+gaps = [b[0] - a[0] for a, b in zip(lines, lines[1:])]
+print("  (%d messages, %d lines; gaps: %s)" % (len(msgs), len(lines), " ".join("%.1f" % g for g in gaps)))
+if any(g < 0.9 for g in gaps[1:]):
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+check "$WORK/bob/logs/E2E/$CHAN.log" "nested from a rawlog hook"
+say alice "/script unload e2epumphook"
+long_check "$WORK/bob/logs/E2E/$CHAN.log" alice "$LONG_C" "bob reads the paced long message" 60
+long_check "$WORK/bob/logs/E2E/$CHAN.log" alice "$LONG_C2" "bob reads the second long message, queued behind the first" 60
+# a REKEY reaches bob before the first chunk under the new key
+say alice "/e2e rotate"
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_D"
+long_check "$WORK/bob/logs/E2E/$CHAN.log" alice "$LONG_D" "bob reads the long message after /e2e rotate" 90
+python3 - "$WORK/wire-times.log" "$TIMES_MARK" "$CHAN" <<'PY' && pass "after /e2e rotate: the REKEY to bob leaves before the first chunk" || bad "after /e2e rotate: no REKEY to bob before the first chunk"
+import sys
+path, mark, chan = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+rekey = wire = None
+for i, l in enumerate(open(path, encoding="utf-8", errors="replace")):
+    f = l.rstrip("\n").split(" ", 4)
+    if i < mark or len(f) < 5:
+        continue
+    if rekey is None and f[1:4] == ["alice", "NOTICE", "bob"] and f[4].startswith(":\x01RPEE2E REKEY "):
+        rekey = i
+    if wire is None and f[1:4] == ["alice", "PRIVMSG", chan] and f[4].startswith(":+RPE2E01 "):
+        wire = i
+sys.exit(0 if rekey is not None and wire is not None and rekey < wire else 1)
+PY
+
+# ---- rpe2e.pl comes while chunks wait in the module's queue ----
+# the script encrypts then (and sends its chunks itself), the module's
+# queue is not used: what still waits in it is dropped and said, never
+# handed to the script or sent later
+cat > "$WORK/alice/scripts/rpe2e_hold.pl" <<'PERL'
+use strict;
+use Irssi;
+our %IRSSI = (name => 'rpe2e_hold');
+Irssi::command_bind('e2e', sub { });
+PERL
+sleep 5
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_G"
+if HELD=$(first_wire "$TIMES_MARK" 30); then
+    tmux -L "$SOCK" send-keys -t alice -l -- "/script load rpe2e_hold"
+    tmux -L "$SOCK" send-keys -t alice Enter
+    if wait_for "$WORK/alice/all.log" "not sent: rpe2e.pl is loaded" 10; then
+        pass "rpe2e.pl loaded while chunks wait: alice is told they are not sent"
+    else
+        bad "rpe2e.pl loaded while chunks wait: alice is not told"
+    fi
+    # long enough for the rest to leave at the flood queue's pace
+    sleep 15
+    if wire_groups "$TIMES_MARK" | awk -v m="$HELD" '$1 == m { n = split($2, p, ","); split(p[1], q, "/"); exit !(n < q[2]) }'; then
+        pass "rpe2e.pl loaded while chunks wait: the rest of them stays unsent"
+    else
+        bad "rpe2e.pl loaded while chunks wait: the module's queue was still sent"
+    fi
+else
+    bad "rpe2e.pl loaded while chunks wait: the long message did not start (the check proves nothing)"
+fi
+say alice "/script unload rpe2e_hold"
+sleep 1
+wire_plain "$WORK/wire.log" > "$WORK/wire-plain.log"
+leak=0
+for word in pacedlong secondlong "short after long" "nested from a rawlog" rotatedlong heldlong; do
+    if grep -qiF -- "$word" "$WORK/wire-plain.log"; then bad "plain text crossed the server: $word"; leak=1; fi
+done
+[ $leak = 0 ] && pass "flood queue: no plain text crossed the server"
+
+# ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
+# and with the chunks of long messages waiting in the module's queue
+# (after /upgrade irssi's flood queue waits for up to 120 s, so both
+# cases go with one /upgrade): on E2E2 with nothing in irssi's flood
+# queue (one PRIVMSG, /quote: irssi does not split it) - its chunks are
+# sent before the session is saved; on E2E irssi's queue holds the
+# second half of a long line (irssi split it; its chunks follow it at
+# once) and three messages behind it
+LONG_H=$(python3 -c 'print(" ".join("upgradeonly%d" % i for i in range(1, 30)))')
+LONG_F=$(python3 -c 'print(" ".join("upgradelong%d" % i for i in range(1, 61)))')
+say alice "/join -E2E2 $CHAN"
 say alice "/set cmds_max_at_once 1"
 say alice "/set cmd_queue_speed 8s"
+sleep 5
+TIMES_MARK2=$(wc -l < "$WORK/wire2-times.log")
+quick alice "/quote PRIVMSG $CHAN :$LONG_H"
+first_wire "$TIMES_MARK2" 30 "$WORK/wire2-times.log" >/dev/null ||
+    bad "/upgrade: the long message on E2E2 did not start (the check proves less)"
+quick alice "/join -E2E $CHAN"
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_F"
+first_wire "$TIMES_MARK" 30 >/dev/null || bad "/upgrade: the long message did not start (the check proves less)"
 quick alice "upgrade queued one"
 quick alice "upgrade queued two"
 quick alice "upgrade queued three"
@@ -799,6 +1002,32 @@ else
     pass "/upgrade sent no queued message in plain text"
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "upgrade queued three"
+long_check "$WORK/bob/logs/E2E/$CHAN.log" alice "$LONG_F" "/upgrade: bob reads the long message whose chunks waited in the queue" 30
+if wire_groups "$TIMES_MARK" | python3 -c '
+import sys
+g = [l.split() for l in sys.stdin]
+parts = g[0][1].split(",") if g else []
+n = int(parts[0].split("/")[1]) if parts else 0
+# the long message whole and first, then the three queued ones
+ok = n >= 3 and parts == ["%d/%d" % (j, n) for j in range(1, n + 1)] and len(g) >= 4
+ok = ok and all(int(g[0][3]) < int(x[2]) for x in g[1:])
+sys.exit(0 if ok else 1)'; then
+    pass "/upgrade: the queued chunks left whole, ahead of the messages typed after them"
+else
+    bad "/upgrade: the queued chunks were lost or overtaken"
+    wire_groups "$TIMES_MARK" | sed 's/^/    /'
+fi
+if wire_groups "$TIMES_MARK2" "$WORK/wire2-times.log" | awk '{ n = split($2, p, ","); split(p[1], q, "/"); exit !(NR == 1 && q[2] >= 2 && n == q[2]) }'; then
+    pass "/upgrade with only the module's queue waiting (E2E2): all its chunks left"
+else
+    bad "/upgrade with only the module's queue waiting (E2E2): chunks lost (or one chunk only: the check proves nothing)"
+    wire_groups "$TIMES_MARK2" "$WORK/wire2-times.log" | sed 's/^/    /'
+fi
+if wire_plain "$WORK/wire.log" | grep -qiF "upgradelong" || wire_plain "$WORK/wire2.log" | grep -qiF "upgradeonly"; then
+    bad "/upgrade sent a queued long message in plain text"
+else
+    pass "/upgrade sent no queued chunk in plain text"
+fi
 # the end of E2E3's MOTD is kept over /upgrade: still rfc1459 there
 say alice "/msg -E2E3 #Żaba rfc1459 plain after upgrade"
 if wait_for "$WORK/wire3.log" "alice PRIVMSG #Żaba :rfc1459 plain after upgrade" 20; then
@@ -1183,6 +1412,104 @@ else
     pass "no plain text when the script dies in its gate"
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies in the gate for"
+
+# ---- /unload e2e with chunks in the module's queue ----
+# dropped and said; the rest of the long line, which irssi split and
+# still holds in its flood queue as typed, is not sent either (without
+# the module it would leave in clear text)
+LONG_U=$(python3 -c 'print(" ".join("unloadlong%d" % i for i in range(1, 61)))')
+say alice "/join -E2E $CHAN"
+sleep 5
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_U"
+if UNLOADED=$(first_wire "$TIMES_MARK" 30); then
+    quick alice "/unload e2e"
+    if wait_for "$WORK/alice/all.log" "not sent: the e2e module is unloaded" 10; then
+        pass "/unload e2e with queued chunks: alice is told they are not sent"
+    else
+        bad "/unload e2e with queued chunks: alice is not told"
+    fi
+    sleep 8
+    if wire_groups "$TIMES_MARK" | awk -v m="$UNLOADED" '$1 == m { n = split($2, p, ","); split(p[1], q, "/"); exit !(n < q[2]) }'; then
+        pass "/unload e2e with queued chunks: the rest of them is not sent"
+    else
+        bad "/unload e2e with queued chunks: all of them were sent (the check proves nothing)"
+    fi
+else
+    bad "/unload e2e with queued chunks: the long message did not start (the check proves nothing)"
+fi
+if wire_plain "$WORK/wire.log" | grep -qiF "unloadlong"; then
+    bad "/unload e2e with queued chunks: plain text crossed the server"
+else
+    pass "/unload e2e with queued chunks: no plain text crossed the server"
+fi
+say alice "/load e2e"
+sleep 2
+
+# ---- disconnect with chunks in the module's queue ----
+# the rest is dropped and said, never sent
+LONG_E=$(python3 -c 'print(" ".join("droppedlong%d" % i for i in range(1, 61)))')
+say alice "/join -E2E $CHAN"
+sleep 5
+TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
+quick alice "$LONG_E"
+if DROPPED=$(first_wire "$TIMES_MARK" 30); then
+    quick alice "/disconnect E2E"
+    if wait_for "$WORK/alice/all.log" "not sent: disconnected" 10; then
+        pass "disconnect with queued chunks: alice is told they are not sent"
+    else
+        bad "disconnect with queued chunks: alice is not told"
+    fi
+    sleep 2
+    if wire_groups "$TIMES_MARK" | awk -v m="$DROPPED" '$1 == m { n = split($2, p, ","); split(p[1], q, "/"); exit !(n < q[2]) }'; then
+        pass "disconnect with queued chunks: the rest of them is not sent"
+    else
+        bad "disconnect with queued chunks: all of them were sent (the check proves nothing)"
+    fi
+else
+    bad "disconnect with queued chunks: the long message did not start (the check proves nothing)"
+fi
+if wire_plain "$WORK/wire.log" | grep -qiF "droppedlong"; then
+    bad "disconnect with queued chunks: plain text crossed the server"
+else
+    pass "disconnect with queued chunks: no plain text crossed the server"
+fi
+
+# ---- /e2e reset with chunks, and a message typed meanwhile, waiting ----
+# (on E2E2, last: alice gets a new identity) the keyring turns out
+# corrupt while the chunks of a long message wait and a message is typed
+# behind them; /e2e reset drops all of it - E2E is off everywhere after
+# the reset, that message would leave in clear text
+LONG_R=$(python3 -c 'print(" ".join("resetlong%d" % i for i in range(1, 61)))')
+say alice "/join -E2E2 $CHAN"
+sleep 5
+TIMES_MARK=$(wc -l < "$WORK/wire2-times.log")
+quick alice "$LONG_R"
+if RESETID=$(first_wire "$TIMES_MARK" 30 "$WORK/wire2-times.log"); then
+    printf 'not json' > "$WORK/alice/rpe2e/keyring.json"
+    quick alice "/e2e status"
+    quick alice "typed while the keyring is lost"
+    quick alice "/e2e reset"
+    if wait_for "$WORK/alice/all.log" "still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped" 10; then
+        pass "/e2e reset with queued chunks: alice is told they are dropped"
+    else
+        bad "/e2e reset with queued chunks: alice is not told"
+    fi
+    # long enough for the rest to leave at the flood queue's pace (8 s)
+    sleep 20
+    if wire_groups "$TIMES_MARK" "$WORK/wire2-times.log" | awk -v m="$RESETID" '$1 == m { n = split($2, p, ","); split(p[1], q, "/"); exit !(n < q[2]) }'; then
+        pass "/e2e reset with queued chunks: the rest of them is not sent"
+    else
+        bad "/e2e reset with queued chunks: all of them were sent (the check proves nothing)"
+    fi
+else
+    bad "/e2e reset with queued chunks: the long message did not start (the check proves nothing)"
+fi
+if wire_plain "$WORK/wire2.log" | grep -qiF -e "resetlong" -e "typed while the keyring is lost"; then
+    bad "/e2e reset with queued chunks: plain text crossed the server"
+else
+    pass "/e2e reset with queued chunks: no plain text crossed the server"
+fi
 
 for f in "$WORK"/asan-* "$WORK"/ubsan-*; do
     [ -e "$f" ] || continue
