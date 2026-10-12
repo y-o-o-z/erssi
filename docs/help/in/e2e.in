@@ -35,17 +35,33 @@
                  pending, revoked, or "key held, not accepted": you can
                  read them, but they do not get your key). -all: the whole
                  keyring - known people and all sessions. Channels and
-                 queries are shown as <network>:<name>.
+                 queries are shown as <network>:<name>. In a window also
+                 the key requests waiting there ("pending: <nick>
+                 (<ident@host>)").
+    PENDING:     Every key request waiting for /E2E ACCEPT, on every
+                 network: nick, ident@host, <network>:<name>, the start of
+                 the fingerprint of the key and how long it has waited.
     HANDSHAKE:   Sends the person a key request (KEYREQ) for the current
                  channel or query; encryption must be on here and their
                  ident@host known (a common channel, a query).
     ACCEPT:      Accepts the person: sends your key back (KEYRSP) to their
                  pending request and requests theirs in return; their
                  later requests here are answered without asking. Without
-                 a pending request, marks their session as trusted and
-                 accepts them - only when a real key from them is stored.
-    DECLINE:     Declines a pending exchange; an existing session gets the
-                 revoked status and the person is no longer accepted.
+                 an argument: the only request waiting in this window
+                 (with several they are listed - name one). With a nick:
+                 the request waiting here from that nick (compared as the
+                 server compares nicks); when the nick names requests of
+                 two addresses, none is accepted - they are listed, name
+                 one by its ident@host. With an ident@host: the request of
+                 that address here (in a query: the request of that
+                 address for a query). Only requests of this window's
+                 channel or query on its network are ever taken. Without
+                 a pending request, a nick or ident@host marks their
+                 session as trusted and accepts them - only when a real
+                 key from them is stored.
+    DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
+                 existing session gets the revoked status and the person
+                 is no longer accepted.
     REVOKE:      Withdraws trust in the current channel or query and
                  schedules a rotation of your key, so that person can no
                  longer read along; they are no longer accepted.
@@ -124,8 +140,9 @@
     ident@host. Encryption in a query requires the other side's ident@host
     to be known (an open query, a common channel or an earlier exchange)
     and your own, which is learned via WHOIS after connecting - until then
-    some commands ask you to retry. Nicks in ACCEPT, DECLINE, REVOKE,
-    VERIFY etc. are resolved using the data stored in the keyring.
+    some commands ask you to retry. A nick in ACCEPT and DECLINE names a
+    request waiting in the window first; nicks in REVOKE, VERIFY etc. are
+    resolved using the data stored in the keyring.
 
     Once enabled, every PRIVMSG to the channel or query (plain text, /ME,
     /MSG, /SAY, /QUOTE PRIVMSG in any case, scripts, the web client) is
@@ -143,9 +160,12 @@
     encryption is on here; their answer lets you read them. Your own key
     goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
     auto-accept mode. Having their key is not enough - so in normal mode
-    each of you accepts the other once ("Pending key exchange from
-    <nick>" - reply with /E2E ACCEPT or /E2E DECLINE); later requests from
-    an accepted person are answered at once. Requests for a channel or
+    each of you accepts the other once. A request is announced in its
+    window as "Pending key exchange from <nick> (<ident@host>) for
+    <network>:<name>" - reply there with /E2E ACCEPT or /E2E DECLINE
+    (alone, or with the ident@host shown); asked again, it is announced
+    at most every 5 minutes, and /E2E PENDING lists every request that
+    waits. Later requests from an accepted person are answered at once. Requests for a channel or
     query where encryption is off are ignored, a request for a query must
     come from the person it names, and each kind of request (KEYREQ,
     KEYRSP, REKEY) from one person for one context is handled at most
@@ -285,7 +305,10 @@
 
     /E2E
     /E2E ON
+    /E2E PENDING
+    /E2E ACCEPT
     /E2E ACCEPT alice
+    /E2E DECLINE mallory@host.example.org
     /E2E VERIFY alice
     /E2E MODE auto-accept
     /E2E LIST -all

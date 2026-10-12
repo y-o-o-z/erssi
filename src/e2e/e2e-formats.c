@@ -21,6 +21,16 @@ FORMAT_REC e2e_formats[] = {
 
 	{ "e2e_message", "[E2E] $0", 1, { FORMAT_STRING } },
 	{ "e2e_debug", "[E2E debug] $0", 1, { FORMAT_STRING } },
+	/* nick, ident@host, <network>:<context>, " - you can read them
+	   already ..." or "" - shown with control bytes as '?' */
+	{ "e2e_pending", "[E2E] Pending key exchange from {hilight $0} ($1) for $2$3. Run /e2e accept $1 or /e2e decline $1 (/e2e pending lists all)", 4, { 0, 0, 0, 0 } },
+	/* the E2E statusbar item of a window: its state, the requests waiting */
+	{ "e2e_sb_off", "e2e off", 0 },
+	{ "e2e_sb_on", "%gE2E%n", 0 },
+	{ "e2e_sb_waiting", "%yE2E waiting for keys%n", 0 },
+	{ "e2e_sb_blocked", "%RE2E blocked%n", 0 },
+	{ "e2e_sb_error", "%RE2E keyring error%n", 0 },
+	{ "e2e_sb_pending", " %R$0 to accept%n", 1, { 0 } },
 
 	{ NULL, NULL, 0 }
 };
