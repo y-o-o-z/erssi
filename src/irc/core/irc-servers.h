@@ -104,6 +104,7 @@ struct _IRC_SERVER_REC {
 	                                        registered: connect again */
 	unsigned int session_cap_resync:1; /* Restored by /UPGRADE without the CAP
 	                                      state: ask the server for it */
+	unsigned int cap_limit_warned:1; /* Warned that CAP_MAX_ENTRIES was reached */
 
 	int max_kicks_in_cmd; /* max. number of people to kick with one /KICK command */
 	int max_modes_in_cmd; /* max. number of mode changes in one /MODE command */
