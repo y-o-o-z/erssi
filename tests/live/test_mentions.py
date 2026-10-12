@@ -230,6 +230,7 @@ def main():
         assert wait_ml("[E2E] #test <bob> waves at alice"), ml_text()
         assert alice.wait_file(alice.all_log(), "#test * bob waves at alice", WAIT), \
             "no action line in the Mentions window"
+        alice.type("/dehilight alice")  # the rule must not leak into later cases
 
     def t_hilight_rule():
         alice = st["alice"]
@@ -238,6 +239,7 @@ def main():
         assert wait_log_since(off, "banana"), log_since(off)
         st["carol"].send("PRIVMSG #test :I like banana")
         assert wait_ml("[E2E] #test <carol> I like banana"), ml_text()
+        alice.type("/dehilight banana")
 
     def t_own_nick_in_own_line():
         alice = st["alice"]
@@ -283,6 +285,10 @@ def main():
             assert alice.wait_file(alice.all_log(), "#test bardzodlugi_nick: alice: long nick", WAIT), \
                 "the Mentions window does not show the whole nick"
         finally:
+            try:
+                long.send("QUIT :bye")  # a clean close: the ircd sees no reset
+            except OSError:
+                pass
             long.close()
             alice.type("/set theme default")
 
@@ -418,7 +424,9 @@ def main():
             lsock.close()
 
     def t_dcc_excluded_network():
-        # a DCC CHAT that came through an excluded network (Botnet) is left out
+        # a DCC CHAT that came through an excluded network (Botnet) is left out.
+        # The offer is from carol: the chat with bob of t_dcc may still be
+        # on its way out, and a second "/dcc chat bob" would race with it.
         alice = st["alice"]
         lsock = socket.socket()
         lsock.bind(("127.0.0.1", 0))
@@ -428,14 +436,14 @@ def main():
         conn = None
         try:
             off = log_size()
-            st["bob"].send(f"PRIVMSG alicebot :\x01DCC CHAT chat 2130706433 {port}\x01")
-            assert wait_log_since(off, "DCC CHAT from bob"), "no DCC CHAT request:\n" + log_since(off)
-            alice.type("/dcc chat bob")
+            st["carol"].send(f"PRIVMSG alicebot :\x01DCC CHAT chat 2130706433 {port}\x01")
+            assert wait_log_since(off, "DCC CHAT from carol"), "no DCC CHAT request:\n" + log_since(off)
+            alice.type("/dcc chat carol")
             conn, _ = lsock.accept()
             conn.sendall(b"excluded dcc\n")
             assert wait_log_since(off, "excluded dcc"), "DCC text not shown:\n" + log_since(off)
             absent_ml("excluded dcc")
-            assert "DCC bob: excluded dcc" not in log_since(off), "printed to the Mentions window"
+            assert "DCC carol: excluded dcc" not in log_since(off), "printed to the Mentions window"
         finally:
             if conn is not None:
                 conn.close()
@@ -526,6 +534,11 @@ def main():
     def t_window_off():
         alice = st["alice"]
         alice.type("/set -clear mentions_window")
+        # the window exists now: the "closes and stays closed" checks below
+        # would pass vacuously if /window goto failed to find it
+        off = log_size()
+        alice.type("/window list")
+        assert wait_log_since(off, "Mentions"), "no Mentions window before the check:\n" + log_since(off)
         off = log_size()
         alice.type("/mentions")
         assert wait_log_since(off, "The Mentions window is off"), log_since(off)
