@@ -80,7 +80,7 @@ trap 'exit 1' INT TERM
 
 # this build, installed under $WORK (modules and Perl libraries in the
 # installed layout); the binary finds the modules through <home>/modules
-meson install -C "$BUILD" --destdir "$WORK/inst" --no-rebuild --quiet >"$WORK/install.log" 2>&1 ||
+meson install -C "$BUILD" --destdir "$WORK/inst" --quiet >"$WORK/install.log" 2>&1 ||
     { cat "$WORK/install.log"; echo "meson install failed"; exit 1; }
 ERSSI=$(find "$WORK/inst" -path '*/bin/erssi' -type f | head -n 1)
 MODDIR=$(dirname "$(find "$WORK/inst" -name libirc_core.so | head -n 1)")
@@ -834,7 +834,7 @@ LONG_C2=$(python3 -c 'print(" ".join("secondlong%d" % i for i in range(1, 25)))'
 LONG_D=$(python3 -c 'print(" ".join("rotatedlong%d" % i for i in range(1, 61)))')
 LONG_G=$(python3 -c 'print(" ".join("heldlong%d" % i for i in range(1, 61)))')
 say alice "/join -E2E $CHAN"
-say alice "/set cmds_max_at_once 2"; say alice "/set cmd_queue_speed 1000"
+say alice "/set cmds_max_at_once 2"; say alice "/set cmd_queue_speed 1000msec"
 # a PRIVMSG sent from a rawlog hook right after the first chunk of a line
 # the pump sent (the second half of LONG_C) is not the pump's line: it
 # waits behind the others, not between two chunks
@@ -970,8 +970,7 @@ done
 
 # ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
 # and with the chunks of long messages waiting in the module's queue
-# (after /upgrade irssi's flood queue waits for up to 120 s, so both
-# cases go with one /upgrade): on E2E2 with nothing in irssi's flood
+# (both cases in one /upgrade, it takes a while): on E2E2 with nothing in irssi's flood
 # queue (one PRIVMSG, /quote: irssi does not split it) - its chunks are
 # sent before the session is saved; on E2E irssi's queue holds the
 # second half of a long line (irssi split it; its chunks follow it at
@@ -1413,18 +1412,38 @@ else
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies in the gate for"
 
-# ---- /unload e2e with chunks in the module's queue ----
-# dropped and said; the rest of the long line, which irssi split and
-# still holds in its flood queue as typed, is not sent either (without
-# the module it would leave in clear text)
+# ---- /unload e2e with lines waiting ----
+# a message to an encrypted channel still in irssi's flood queue would
+# leave in clear text without the module: dropped and said, with no
+# "0 encrypted line(s)" when the module's own queue is empty
+say alice "/join -E2E $CHAN"
+sleep 9
+quick alice "unload short one"
+quick alice "unload short two"
+quick alice "/unload e2e"
+if wait_for "$WORK/alice/all.log" "message(s) to E2E not sent: the e2e module is unloaded (not encrypted yet)" 10 &&
+   ! grep -qF "0 encrypted line(s)" "$WORK/alice/all.log"; then
+    pass "/unload e2e with a message in irssi's queue: alice is told it is not sent"
+else
+    bad "/unload e2e with a message in irssi's queue: alice is not told, or told of 0 encrypted lines"
+fi
+say alice "/load e2e"
+sleep 2
+# the chunks in the module's queue are dropped and said; the rest of
+# the long line, which irssi split and still holds in its flood queue as
+# typed, is not sent either; a message to a channel without E2E behind
+# it is not the module's to stop: it still goes out
 LONG_U=$(python3 -c 'print(" ".join("unloadlong%d" % i for i in range(1, 61)))')
 say alice "/join -E2E $CHAN"
-sleep 5
+sleep 9
 TIMES_MARK=$(wc -l < "$WORK/wire-times.log")
 quick alice "$LONG_U"
 if UNLOADED=$(first_wire "$TIMES_MARK" 30); then
+    quick alice "/msg -E2E #pub kept after unload"
     quick alice "/unload e2e"
-    if wait_for "$WORK/alice/all.log" "not sent: the e2e module is unloaded" 10; then
+    # the module's chunks, and the second half of LONG_U from irssi's
+    # queue - not the message to #pub
+    if wait_for "$WORK/alice/all.log" "encrypted line(s) to E2E not sent: the e2e module is unloaded (and 1 message(s) waiting behind them, not encrypted yet)" 10; then
         pass "/unload e2e with queued chunks: alice is told they are not sent"
     else
         bad "/unload e2e with queued chunks: alice is not told"
@@ -1438,10 +1457,15 @@ if UNLOADED=$(first_wire "$TIMES_MARK" 30); then
 else
     bad "/unload e2e with queued chunks: the long message did not start (the check proves nothing)"
 fi
-if wire_plain "$WORK/wire.log" | grep -qiF "unloadlong"; then
+if wire_plain "$WORK/wire.log" | grep -qiF -e "unloadlong" -e "unload short"; then
     bad "/unload e2e with queued chunks: plain text crossed the server"
 else
     pass "/unload e2e with queued chunks: no plain text crossed the server"
+fi
+if wait_for "$WORK/wire.log" "alice PRIVMSG #pub :kept after unload" 30; then
+    pass "/unload e2e: a message the module lets pass (no E2E there) still goes out"
+else
+    bad "/unload e2e: a message to a channel without E2E was dropped"
 fi
 say alice "/load e2e"
 sleep 2
