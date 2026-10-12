@@ -52,6 +52,7 @@ def main():
         ircd = harness.Ircd(work)
         st["ircd"] = ircd
         port = ircd.start()
+        st["port"] = port
         st["old_log"] = work / "old.log"
         cfg = harness.config(port, "alice")
         marker = '"perl/core" = { perl_use_lib'
@@ -76,7 +77,7 @@ def main():
         assert "<irssi dir>/scripts/autorun" in log_text()
 
     def t_unloaded():
-        assert wait_log(r"Unloaded script|Unloaded"), "the script was not unloaded:\n" + log_text()
+        assert wait_log(r"Unloaded script mentions"), "the script was not unloaded:\n" + log_text()
         alice = st["alice"]
         alice.type("/mentions")
         time.sleep(0.5)
@@ -112,17 +113,57 @@ def main():
         alice.type(f"/script load {st['inst'].scriptdir}/mentions.pl")
         assert wait_log(re.escape(NOTICE), count=2), "the stub was not unloaded:\n" + log_text()
 
+    def t_broken_script():
+        """A mentions.pl that does not compile is destroyed before the idle
+        job runs: no notice, no "not loaded" error. The new value of a
+        setting is kept, the old node goes."""
+        port = st["port"]
+        w = work / "broken"
+        w.mkdir()
+        cfg = harness.config(port, "dave")
+        marker = '"perl/core" = { perl_use_lib'
+        cfg = cfg.replace(marker, '"perl/core/scripts" = { mentions_log_file = "OLDVALUE"; mentions_window = "OldWin"; };\n'
+                          '  "fe-common/irc" = { mentions_log_file = "NEWVALUE"; };\n  ' + marker)
+        dave = harness.Erssi(st["inst"], w, "dave", cfg)
+        st["dave"] = dave
+        autorun = dave.home / "scripts" / "autorun"
+        autorun.mkdir(parents=True)
+        (autorun / "mentions.pl").symlink_to(Path(__file__).resolve().parent / "fixtures" / "broken" / "mentions.pl")
+        dave.start()
+        assert dave.wait_file(dave.all_log(), "has joined #test", 15), "dave never joined #test"
+        ran = dave.home_dir / "broken.ran"
+        end = time.time() + WAIT
+        while not ran.exists() and time.time() < end:
+            time.sleep(0.1)
+        assert ran.exists(), "the broken script did not run"
+        time.sleep(1.5)
+        text = dave.all_log().read_bytes().decode(errors="replace")
+        assert NOTICE not in text, text
+        assert "not loaded" not in text, text
+        dave.type("/save")
+        assert dave.wait_file(dave.home / "config", "mentions_log_file", WAIT)
+        cfgtext = file_text(dave.home / "config")
+        assert "NEWVALUE" in cfgtext and "OLDVALUE" not in cfgtext, cfgtext
+        assert "perl/core/scripts" not in cfgtext or "mentions_log_file" not in \
+            re.search(r'"perl/core/scripts"\s*=\s*\{([^}]*)\}', cfgtext).group(1), cfgtext
+        assert 'mentions_window = "OldWin"' in cfgtext and "OldWin" in re.search(
+            r'"fe-common/irc"\s*=\s*\{([^}]*)\}', cfgtext).group(1), cfgtext
+        dave.quit()
+        assert dave.sanitizer_reports() == [], dave.sanitizer_reports()
+
     def t_sanitizers():
         alice = st["alice"]
         alice.quit()
         assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
     try:
-        harness.main([t_install, t_start, t_message, t_unloaded, t_settings_moved, t_no_duplicates, t_stub,
+        harness.main([t_install, t_start, t_message, t_unloaded, t_settings_moved, t_no_duplicates, t_stub, t_broken_script,
                       t_sanitizers])
     finally:
         if "bob" in st:
             st["bob"].close()
+        if "dave" in st:
+            st["dave"].kill()
         if "alice" in st:
             st["alice"].kill()
         if "ircd" in st:
