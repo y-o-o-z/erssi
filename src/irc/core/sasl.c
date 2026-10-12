@@ -385,6 +385,12 @@ static void sig_sasl_over(IRC_SERVER_REC *server)
 	if (!IS_IRC_SERVER(server))
 		return;
 
+	/* A connection restored by /UPGRADE logged in before the upgrade
+	 * (or was let on without it): the 001 that irc-session.c makes up for
+	 * it, and any later 375, do not end a SASL negotiation. */
+	if (server->session_reconnect)
+		return;
+
 	/* The negotiation has now been terminated, if we didn't manage to
 	 * authenticate successfully with the server just disconnect. */
 	if (!server->sasl_success &&
