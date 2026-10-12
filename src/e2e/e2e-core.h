@@ -19,6 +19,9 @@ void e2e_print_debug(SERVER_REC *server, const char *ctx, const char *nick,
                      const char *fmt, ...) G_GNUC_PRINTF(4, 5);
 /* the window item of a context (a channel) or of a nick (a query) */
 void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick);
+/* "e2e" is not in autoload_modules: a warning (in item, NULL: the active
+   window) that a restart or /upgrade leaves the module unloaded */
+void e2e_warn_session_only(void *item);
 
 const char *e2e_keyring_file(void);
 /* the same file at two looks (stat: device, inode, size, mtime, ctime) */

@@ -133,6 +133,131 @@ void e2e_print_item(void *item, const char *fmt, ...)
 	g_free(text);
 }
 
+/* ---- loaded for this session only ---- */
+
+/* "gui exit" came (/quit, /upgrade): the module is unloaded with the
+   rest of erssi, not on its own */
+static gboolean exiting;
+
+/* a warning (client error level) in a window item, NULL: the active one */
+static void print_warning(void *item, const char *text)
+{
+	WI_ITEM_REC *wi = item;
+
+	printformat(wi != NULL ? wi->server : NULL, wi != NULL ? wi->visible_name : NULL,
+	            MSGLEVEL_CLIENTERROR, TXT_E2E_MESSAGE, text);
+}
+
+static const char *contexts_word(guint n)
+{
+	return n == 1 ? "channel or query" : "channels or queries";
+}
+
+/* the channels and queries with E2E on in the keyring (0 when there is
+   none yet); *lost: the keyring is lost (a corrupt one was moved aside) -
+   the module refuses every message then, and which targets have E2E on
+   is not known */
+static guint enabled_contexts(gboolean *lost)
+{
+	E2E_JSON *kr;
+	guint n;
+
+	*lost = FALSE;
+	if (keyring_file == NULL)
+		return 0;
+	if (e2e_keyring_is_lost()) {
+		*lost = TRUE;
+		return 0;
+	}
+	if (!g_file_test(keyring_file, G_FILE_TEST_EXISTS))
+		return 0;
+	kr = e2e_load_full(lost);
+	n = *lost ? 0 : e2e_enabled_count(kr);
+	e2e_json_free(kr);
+	return n;
+}
+
+void e2e_warn_session_only(void *item)
+{
+	const char *list = settings_get_str("autoload_modules");
+	char *text;
+
+	if (e2e_autoload_listed(list))
+		return;
+	text = g_strdup_printf("the e2e module is loaded for this session only: \"e2e\" is not in "
+	                       "autoload_modules, so after a restart or /UPGRADE it is not loaded, "
+	                       "and messages to channels and queries with E2E on are sent in clear "
+	                       "text. To load it at every start: /SET autoload_modules %s%se2e",
+	                       list != NULL ? list : "", list != NULL && *list != '\0' ? " " : "");
+	print_warning(item, text);
+	g_free(text);
+}
+
+/* /upgrade starts a process that loads autoload_modules only */
+static void sig_command_upgrade(void)
+{
+	const char *list = settings_get_str("autoload_modules");
+	const char *sep = list != NULL && *list != '\0' ? " " : "";
+	gboolean lost;
+	guint n;
+	char *text;
+
+	if (e2e_autoload_listed(list))
+		return;
+	n = enabled_contexts(&lost);
+	if (lost)
+		text = g_strdup_printf("/UPGRADE: the new process will not load the e2e module (\"e2e\" is "
+		                       "not in autoload_modules), and the keyring is lost: the messages "
+		                       "it refuses now will be sent in clear text until /load e2e. To keep "
+		                       "it loaded, run /SET autoload_modules %s%se2e before /UPGRADE",
+		                       list != NULL ? list : "", sep);
+	else if (n > 0)
+		text = g_strdup_printf("/UPGRADE: the new process will not load the e2e module (\"e2e\" is "
+		                       "not in autoload_modules): messages to the %u %s with E2E on will be "
+		                       "sent in clear text until /load e2e. To keep it loaded, run "
+		                       "/SET autoload_modules %s%se2e before /UPGRADE",
+		                       n, contexts_word(n), list != NULL ? list : "", sep);
+	else
+		return;
+	print_warning(NULL, text);
+	g_free(text);
+}
+
+static void sig_gui_exit(void)
+{
+	exiting = TRUE;
+}
+
+/* /unload e2e: the gate goes with the module */
+static void warn_unload(void)
+{
+	gboolean lost;
+	guint n;
+	char *text;
+
+	if (exiting)
+		return;
+	n = enabled_contexts(&lost);
+	if (lost)
+		text = g_strdup("the e2e module is unloaded while the keyring is lost (a corrupt one "
+		                "was moved aside): it refused every message but bot commands, to keep "
+		                "channels and queries with E2E on safe, and every message is now sent in clear text "
+		                "(/load e2e, then /e2e reset or /e2e import)");
+	else if (n == 0)
+		return;
+	else if (e2e_native_active())
+		text = g_strdup_printf("the e2e module is unloaded: E2E is on for %u %s, and messages "
+		                       "there are now sent in clear text (/load e2e encrypts them again)",
+		                       n, contexts_word(n));
+	else
+		text = g_strdup_printf("the e2e module is unloaded: E2E is on for %u %s; rpe2e.pl "
+		                       "encrypts only its own entries, messages to channels and queries "
+		                       "the module set up per network are now sent in clear text",
+		                       n, contexts_word(n));
+	print_warning(NULL, text);
+	g_free(text);
+}
+
 void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick)
 {
 	const char *wire = e2e_ctx_wire(ctx);
@@ -1812,6 +1937,8 @@ void e2e_core_init(void)
 	signal_add("event 396", (SIGNAL_FUNC) sig_event_396);
 	signal_add("commandlist new", (SIGNAL_FUNC) sig_commandlist_new);
 	signal_add("script destroyed", (SIGNAL_FUNC) sig_script_destroyed);
+	signal_add_first("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
+	signal_add("gui exit", (SIGNAL_FUNC) sig_gui_exit);
 
 	e2e_commands_init();
 	e2e_statusbar_init();
@@ -1837,6 +1964,8 @@ void e2e_core_init(void)
 		}
 		e2e_json_free(kr);
 	}
+	/* not in autoload_modules: gone after a restart or /upgrade */
+	e2e_warn_session_only(NULL);
 	/* loaded mid-session: 001 will not come for servers already up */
 	for (tmp = servers; tmp != NULL; tmp = tmp->next)
 		if (IS_IRC_SERVER(tmp->data))
@@ -1847,6 +1976,7 @@ void e2e_core_deinit(void)
 {
 	GSList *list, *tmp;
 
+	warn_unload();
 	/* what still waits is not sent: told, and wiped - and the PRIVMSGs
 	   in irssi's flood queue that the gate would encrypt or refuse (the
 	   rest of a long line irssi split, typed while E2E was on): they
@@ -1876,6 +2006,8 @@ void e2e_core_deinit(void)
 	signal_remove("event 396", (SIGNAL_FUNC) sig_event_396);
 	signal_remove("commandlist new", (SIGNAL_FUNC) sig_commandlist_new);
 	signal_remove("script destroyed", (SIGNAL_FUNC) sig_script_destroyed);
+	signal_remove("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
+	signal_remove("gui exit", (SIGNAL_FUNC) sig_gui_exit);
 	if (script_check_id != 0)
 		g_source_remove(script_check_id);
 	script_check_id = 0;
@@ -1910,6 +2042,7 @@ void e2e_core_deinit(void)
 	scoped_warned = FALSE;
 	scoped_stat_valid = FALSE;
 	seen_stat_valid = FALSE;
+	exiting = FALSE;
 }
 
 void e2e_core_abicheck(int *version)

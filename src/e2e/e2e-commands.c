@@ -358,6 +358,7 @@ static void cmd_on(WI_ITEM_REC *item)
 		set_channel(kr, ctx, 1, "normal", query_nick(item));
 		e2e_save(kr);
 		e2e_print_item(item, "enabled on %s (mode=normal)", shown(ctx));
+		e2e_warn_session_only(item);
 	}
 	g_free(ctx);
 	e2e_json_free(kr);
@@ -486,6 +487,7 @@ static void cmd_mode(WI_ITEM_REC *item, const char *mode)
 		set_channel(kr, ctx, 1, mode, query_nick(item));
 		e2e_save(kr);
 		e2e_print_item(item, "mode=%s on %s", mode, shown(ctx));
+		e2e_warn_session_only(item);
 	}
 	g_free(ctx);
 	e2e_json_free(kr);

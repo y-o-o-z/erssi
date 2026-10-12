@@ -486,3 +486,40 @@ gboolean e2e_pending_notice_allow(GHashTable *stamps, const char *key)
 	g_hash_table_replace(stamps, g_strdup(key), stamp);
 	return TRUE;
 }
+
+gboolean e2e_autoload_listed(const char *autoload_modules)
+{
+	char **words;
+	gboolean found = FALSE;
+	int i;
+
+	if (autoload_modules == NULL)
+		return FALSE;
+	words = g_strsplit_set(autoload_modules, " ,", -1);
+	for (i = 0; words[i] != NULL && !found; i++) {
+		char *colon = strchr(words[i], ':');
+
+		if (colon != NULL)
+			*colon = '\0';
+		/* as it is: irssi loads lib<word>_core, case and all */
+		found = strcmp(words[i], "e2e") == 0;
+	}
+	g_strfreev(words);
+	return found;
+}
+
+guint e2e_enabled_count(const E2E_JSON *kr)
+{
+	E2E_JSON *channels = e2e_json_get(kr, "channels");
+	GPtrArray *keys;
+	guint i, n = 0;
+
+	if (channels == NULL)
+		return 0;
+	keys = e2e_json_keys(channels);
+	for (i = 0; i < keys->len; i++)
+		if (e2e_json_truthy(e2e_json_get(e2e_json_get(channels, keys->pdata[i]), "enabled")))
+			n++;
+	g_ptr_array_unref(keys);
+	return n;
+}

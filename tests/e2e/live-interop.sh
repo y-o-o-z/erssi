@@ -2010,6 +2010,68 @@ else
     pass "/e2e reset with queued chunks: no plain text crossed the server"
 fi
 
+# ---- the module loaded for this session only (last: erin upgrades) ----
+# "e2e" missing from autoload_modules: a restart or /upgrade does not load
+# the module again, and E2E targets would get clear text. Each step says
+# so: /load, /e2e on, /unload with E2E on, /upgrade with E2E on.
+SESSION_ONLY='the e2e module is loaded for this session only'
+if grep -aqF "$SESSION_ONLY" "$WORK/alice/all.log"; then
+    bad "alice (e2e in autoload_modules) is warned that the module is loaded for this session only"
+else
+    pass "alice (e2e in autoload_modules): no session-only warning on /load"
+fi
+say erin "/set autoload_modules irc dcc flood notifylist perl otr fe_web anti_floodnet"
+say erin "/unload e2e"
+if grep -aqF "messages there are now sent in clear text" "$WORK/erin/all.log"; then
+    bad "/unload e2e with E2E off everywhere: erin is warned of clear text"
+else
+    pass "/unload e2e with E2E off everywhere: no clear-text warning"
+fi
+say erin "/load e2e"
+if wait_for "$WORK/erin/all.log" "$SESSION_ONLY" 10 &&
+   grep -aqF "/SET autoload_modules irc dcc flood notifylist perl otr fe_web anti_floodnet e2e" "$WORK/erin/all.log"; then
+    pass "/load e2e without e2e in autoload_modules: erin is told, with the /SET to run"
+else
+    bad "/load e2e without e2e in autoload_modules: erin is not told"
+fi
+say erin "/window goto $CHAN"
+say erin "/e2e on"
+sleep 1
+if [ "$(grep -acF "$SESSION_ONLY" "$WORK/erin/all.log")" -ge 2 ]; then
+    pass "/e2e on without e2e in autoload_modules: erin is told again"
+else
+    bad "/e2e on without e2e in autoload_modules: erin is not told again"
+fi
+say erin "/unload e2e"
+if wait_for "$WORK/erin/all.log" "E2E is on for 1 channel or query, and messages there are now sent in clear text (/load e2e encrypts them again)" 10; then
+    pass "/unload e2e with E2E on: erin is told that messages now go out in clear text"
+else
+    bad "/unload e2e with E2E on: erin is not told about clear text"
+fi
+# the keyring lost (a corrupt one moved aside): the module refused every
+# message, which targets have E2E on is not known - /unload says that
+# everything now goes out in clear text
+cp "$WORK/erin/rpe2e/keyring.json" "$WORK/erin-keyring.json"
+printf 'not json' > "$WORK/erin/rpe2e/keyring.json"
+say erin "/load e2e"
+say erin "/unload e2e"
+if wait_for "$WORK/erin/all.log" "the e2e module is unloaded while the keyring is lost" 10 &&
+   grep -aqF "every message is now sent in clear text (/load e2e, then /e2e reset or /e2e import)" "$WORK/erin/all.log"; then
+    pass "/unload e2e with the keyring lost: erin is told that everything now goes out in clear text"
+else
+    bad "/unload e2e with the keyring lost: erin is not told"
+fi
+rm -f "$WORK/erin/rpe2e/keyring.json".corrupt-*
+cp "$WORK/erin-keyring.json" "$WORK/erin/rpe2e/keyring.json"
+say erin "/load e2e"
+say erin "/upgrade"
+if wait_for "$WORK/erin/all.log" "/UPGRADE: the new process will not load the e2e module" 15 &&
+   grep -aqF "will be sent in clear text until /load e2e" "$WORK/erin/all.log"; then
+    pass "/upgrade with E2E on, e2e not in autoload_modules: erin is warned first"
+else
+    bad "/upgrade with E2E on, e2e not in autoload_modules: no warning"
+fi
+
 for f in "$WORK"/asan-* "$WORK"/ubsan-*; do
     [ -e "$f" ] || continue
     bad "sanitizer report: $(basename "$f")"
