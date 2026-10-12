@@ -12,7 +12,8 @@
 
     The window for the replies is chosen in this order:
 
-        1. this setting: the network's status window,
+        1. this setting: the network's status window; if the network has no
+           such window, the next rule applies,
         2. print_whois_rpl_in_active_window: the active window,
         3. otherwise the usual window: a query with the nick, or the window
            that matches the message level.
