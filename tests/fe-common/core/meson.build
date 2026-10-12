@@ -126,3 +126,23 @@ test('test-cmd-cat test', test_test_cmd_cat,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_mentions_log = executable('test-mentions-log',
+  files(
+    'test-mentions-log.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-mentions-log test', test_test_mentions_log,
+  args : ['--tap'],
+  protocol : 'tap')
