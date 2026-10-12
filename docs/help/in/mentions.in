@@ -17,7 +17,8 @@
     you: private messages and private /ME actions, NOTICEs from people to
     your nick (not from servers, not sent to a channel or a server mask),
     DCC CHAT messages and channel hilights. Messages that /IGNORE hides
-    are left out.
+    are left out, and so are those from a nick with a NOHILIGHT ignore
+    (/IGNORE nick MSGS NOHILIGHT).
 
     A channel hilight is a channel message or /ME action that erssi shows
     as a hilight: your nick in it (hilight_nick_matches, and
@@ -27,7 +28,9 @@
     recorded with the sender's whole nick and the text as it was sent,
     not as the theme shows it. Your own lines are never hilights. A
     hilight that a script prints into a channel is recorded with the
-    nick "?" and the printed line.
+    nick "?" and the printed line, unless it is printed while that
+    channel's message is shown: then it counts as that message and is
+    recorded with its sender.
 
     Entries have the HILIGHT level, so the window gets the hilight colour
     in the window list.
@@ -52,7 +55,8 @@
         "mention" signal still work. A name another window already has
         is refused.
     mentions_log = OFF
-        (the Shellter default configuration sets ON)
+        (the default config of a new home sets ON; an existing config
+        keeps OFF)
         Append every entry to the log file.
     mentions_log_file =
         The log file. Empty means logs/mentions.log in the irssi

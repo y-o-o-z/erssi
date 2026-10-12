@@ -376,7 +376,14 @@ static void sig_dcc_chat_message(CHAT_DCC_REC *dcc, const char *msg)
 
 /* Registered ahead of the printers (fe-messages, fe-irc-messages): runs
    them itself with signal_continue(), so that the record is removed after
-   them whatever they do with the emission. */
+   them whatever they do with the emission.
+
+   The priority is "first" on purpose: it survives a script that stops the
+   emission and re-emits it later, and the stash is then always in place
+   when the printer runs. The price is that the stash holds the arguments as
+   they were BEFORE any default-priority handler rewrote them (a script that
+   changes the text with signal_continue); a hilight is then recorded with
+   the original text. No handler in the fork does that. */
 static void stash_emission(const char *kind, SERVER_REC *server, const char *msg,
                            const char *nick, const char *address, const char *target,
                            void *extra)
@@ -433,7 +440,11 @@ static void sig_server_disconnected(SERVER_REC *server)
 
 /* A hilight in a channel. The one printed for the running message is
    recorded once, with its sender and text; one printed by something else
-   (a script) has no sender: "?" and the printed line. Lines printed while
+   (a script) has no sender: "?" and the printed line. A script hilight that
+   is printed while a channel message is being shown, for the same channel
+   (and the same nick, when the script gives one), is taken for that
+   message and credited to its sender; this is rare and not worth more code.
+   Lines printed while
    a hilight is recorded (the Mentions window, a "mention" handler) are
    not recorded again. */
 static void sig_print_text(TEXT_DEST_REC *dest, const char *text, const char *stripped)
@@ -564,6 +575,12 @@ void fe_mentions_init(void)
 	settings_add_bool("mentions", "mentions_log", FALSE);
 	settings_add_str("mentions", "mentions_log_file", "");
 	settings_add_str("mentions", "mentions_exclude_networks", "");
+
+	/* Note on the order: the "add_last" handlers below are registered after
+	   fe-messages and fe-irc-messages, and a new hook of the same priority
+	   goes in front of the older ones, so for a PM, a private action and a
+	   notice the "mention" signal fires BEFORE the original line is
+	   printed. */
 
 	/* before the settings are read: the script's values move first */
 	fe_mentions_migrate_init();
