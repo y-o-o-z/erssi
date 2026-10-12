@@ -5,7 +5,8 @@
 #include <time.h>
 
 /* One log line: "%Y-%m-%d %H:%M:%S [tag] where <nick> text\n" in local time.
- * CR, LF and TAB in any field become a space; text is trimmed. */
+ * Every C0 control (CR, LF, TAB, ESC, ...), DEL and UTF-8 C1 control (U+0080-U+009F)
+ * in any field becomes one space; text is trimmed. */
 char *mentions_log_line(time_t when, const char *tag, const char *where, const char *nick,
                         const char *text);
 
@@ -13,7 +14,8 @@ char *mentions_log_line(time_t when, const char *tag, const char *where, const c
  * the file with mode 0600; an existing regular file owned by us is tightened to 0600. */
 gboolean mentions_log_append(const char *path, const char *line, GError **error);
 
-/* Empty or NULL SETTING gives <irssi_dir>/logs/mentions.log, otherwise convert_home(). */
+/* Empty or NULL SETTING gives <irssi_dir>/logs/mentions.log (NULL when IRSSI_DIR is
+ * NULL), otherwise convert_home(). */
 char *mentions_log_path(const char *setting, const char *irssi_dir);
 
 /* TRUE if CHATNET is in LIST (separated by spaces and/or commas, case-insensitive). */

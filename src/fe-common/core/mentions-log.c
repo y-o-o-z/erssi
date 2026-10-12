@@ -27,15 +27,28 @@
 #define O_CLOEXEC 0
 #endif
 
+/* Every C0 control (CR, LF, TAB and ESC included), DEL and every UTF-8 encoded
+   C1 control (U+0080-U+009F) becomes one space, so a log line is one line and
+   cannot drive a terminal that shows it. */
 static char *sanitize_field(const char *s, const char *fallback)
 {
-	char *out, *p;
+	const unsigned char *in;
+	char *out, *o;
 
-	out = g_strdup(s != NULL ? s : fallback);
-	for (p = out; *p != '\0'; p++) {
-		if (*p == '\r' || *p == '\n' || *p == '\t')
-			*p = ' ';
+	in = (const unsigned char *) (s != NULL ? s : fallback);
+	out = o = g_malloc(strlen((const char *) in) + 1);
+	while (*in != '\0') {
+		if (*in < 0x20 || *in == 0x7f) {
+			*o++ = ' ';
+			in++;
+		} else if (in[0] == 0xc2 && in[1] >= 0x80 && in[1] <= 0x9f) {
+			*o++ = ' ';
+			in += 2;
+		} else {
+			*o++ = (char) *in++;
+		}
 	}
+	*o = '\0';
 	return out;
 }
 
@@ -114,10 +127,10 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 	while (left > 0) {
 		ssize_t n = write(fd, p, left);
 
-		if (n < 0) {
-			if (errno == EINTR)
+		if (n <= 0) {
+			if (n < 0 && errno == EINTR)
 				continue;
-			err = errno;
+			err = n < 0 ? errno : EIO;
 			g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(err),
 			            "cannot write %s: %s", path, g_strerror(err));
 			close(fd);
@@ -138,8 +151,11 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 
 char *mentions_log_path(const char *setting, const char *irssi_dir)
 {
-	if (setting == NULL || *setting == '\0')
+	if (setting == NULL || *setting == '\0') {
+		if (irssi_dir == NULL)
+			return NULL;
 		return g_build_filename(irssi_dir, "logs", "mentions.log", NULL);
+	}
 	return convert_home(setting);
 }
 
