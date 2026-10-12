@@ -252,6 +252,25 @@ static void test_path(void)
 	g_free(p);
 }
 
+static void test_path_relative(void)
+{
+	char *p;
+
+	/* a relative file is in the irssi dir, not wherever erssi was started */
+	p = mentions_log_path("m.log", "/h/.erssi");
+	g_assert_cmpstr(p, ==, "/h/.erssi/m.log");
+	g_free(p);
+
+	p = mentions_log_path("sub/m.log", "/h/.erssi");
+	g_assert_cmpstr(p, ==, "/h/.erssi/sub/m.log");
+	g_free(p);
+
+	/* without an irssi dir there is nothing to resolve against */
+	p = mentions_log_path("m.log", NULL);
+	g_assert_cmpstr(p, ==, "m.log");
+	g_free(p);
+}
+
 static void test_network_excluded(void)
 {
 	g_assert_true(mentions_network_excluded("Botnet", "IRCnetBot Botnet,PT_botnet"));
@@ -285,6 +304,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/mentions_log/append_to_directory_fails", test_append_to_directory_fails);
 	g_test_add_func("/mentions_log/append_to_fifo_fails", test_append_to_fifo_fails);
 	g_test_add_func("/mentions_log/path", test_path);
+	g_test_add_func("/mentions_log/path_relative", test_path_relative);
 	g_test_add_func("/mentions_log/network_excluded", test_network_excluded);
 	g_test_add_func("/mentions_log/server_nick", test_server_nick);
 
