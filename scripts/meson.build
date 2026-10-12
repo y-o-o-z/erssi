@@ -20,7 +20,6 @@ install_data(
 install_data(
   files(
     'help/mark',
-    'help/mentions',
     'help/trackbar',
     'help/webjournal',
   ),

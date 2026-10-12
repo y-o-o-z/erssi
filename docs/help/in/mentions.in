@@ -1,0 +1,58 @@
+
+%9Syntax:%9
+
+@SYNTAX:mentions@
+
+%9Parameters:%9
+
+    CLEAR:       Removes the entries from the Mentions window (as
+                 /SCROLLBACK CLEAR does); the log file is not touched.
+
+    Without an argument (or with any other one) goes to the Mentions
+    window.
+
+%9Description:%9
+
+    Goes to the Mentions window, where erssi collects what was written to
+    you: private messages and private /ME actions, private NOTICEs from
+    people (not from servers and not sent to a channel) and DCC CHAT
+    messages. Messages that /IGNORE hides are left out.
+
+    Entries have the HILIGHT level, so the window gets the hilight colour
+    in the window list.
+
+    The window is created in the background at startup and has
+    /WINDOW IMMORTAL on. If it is closed anyway (after
+    /WINDOW IMMORTAL OFF), it is created again.
+
+    With mentions_log on, every entry is also appended to a log file in
+    the form "YYYY-MM-DD HH:MM:SS [tag] place <nick> text", so it survives
+    a restart. The file is created with mode 0600 and a missing directory
+    with mode 0700. Control characters in the text are written as spaces.
+
+    Networks named in mentions_exclude_networks are left out, both from the
+    window and from the log (for example a bot's partyline network).
+
+%9Settings:%9
+
+    mentions_window = Mentions
+        Name of the Mentions window. Empty: no window; the log and the
+        "mention" signal still work.
+    mentions_log = OFF
+        Append every entry to the log file.
+    mentions_log_file =
+        The log file. Empty means logs/mentions.log in the irssi
+        directory; '~' is your home directory.
+    mentions_exclude_networks =
+        Networks (chat network names, separated by spaces or commas)
+        whose messages are not mentions.
+
+%9Examples:%9
+
+    /MENTIONS
+    /MENTIONS CLEAR
+    /SET mentions_log ON
+    /SET mentions_exclude_networks Botnet
+
+%9See also:%9 HILIGHT, IGNORE, LASTLOG, SCROLLBACK, WINDOW
+
