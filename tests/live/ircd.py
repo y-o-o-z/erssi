@@ -25,6 +25,7 @@ SRV = "e2e.test"
 NETWORK = "E2ETest"
 CASEMAPPING = None
 HIDE_CASEMAPPING = False
+TRACE = None   # --trace file: every line in and out, with the time
 clients = {}   # nick (folded) -> Client
 channels = {}  # channel (folded) -> set(nick folded)
 
@@ -57,7 +58,14 @@ class Client:
         return f"{self.nick}!{self.user}@127.0.0.1"
 
     def send(self, line):
+        trace("out", self.nick, line)
         self.writer.write((line + "\r\n").encode())
+
+
+def trace(direction, nick, line):
+    if TRACE:
+        with open(TRACE, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.3f} {direction} {nick} {line}\n")
 
 
 def members(chan):
@@ -71,6 +79,7 @@ async def handle(reader, writer, wire_path, times_path):
             text = line.decode(errors="replace").rstrip("\r\n")
             if not text:
                 continue
+            trace("in", me.nick, text)
             parts = text.split(" ")
             cmd, args = parts[0].upper(), parts[1:]
             trailing = text.split(" :", 1)[1] if " :" in text else (args[-1] if args else "")
@@ -102,16 +111,18 @@ async def handle(reader, writer, wire_path, times_path):
             elif cmd == "PING":
                 me.send(f":{SRV} PONG {SRV} :{args[0].lstrip(':') if args else ''}")
             elif cmd == "JOIN":
-                for chan in args[0].split(","):
+                for chan in filter(None, args[0].lstrip(":").split(",")):
                     channels.setdefault(fold(chan), set()).add(fold(me.nick))
                     for other in members(chan):
                         other.send(f":{me.prefix} JOIN {chan}")
                     names = " ".join(c.nick for c in members(chan))
+                    me.send(f":{SRV} 331 {me.nick} {chan} :No topic is set")
                     me.send(f":{SRV} 353 {me.nick} = {chan} :{names}")
                     me.send(f":{SRV} 366 {me.nick} {chan} :End of NAMES")
             elif cmd == "MODE" and args and args[0].startswith("#"):
                 if len(args) == 1:
                     me.send(f":{SRV} 324 {me.nick} {args[0]} +nt")
+                    me.send(f":{SRV} 329 {me.nick} {args[0]} {int(time.time())}")
                 elif len(args) == 2 and args[1].lstrip("+") in ("b", "e", "I"):
                     end = {"b": "368", "e": "349", "I": "347"}[args[1].lstrip("+")]
                     me.send(f":{SRV} {end} {me.nick} {args[0]} :End of list")
@@ -155,6 +166,8 @@ async def handle(reader, writer, wire_path, times_path):
                     target.send(trailing)
             elif cmd == "QUIT":
                 break
+            elif cmd not in ("CAP", "PONG", "USERHOST", "ISON", "AWAY", "MODE", "TOPIC"):
+                me.send(f":{SRV} 421 {me.nick} {cmd} :Unknown command")
             await writer.drain()
     finally:
         clients.pop(fold(me.nick), None)
@@ -168,12 +181,14 @@ async def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--wire", required=True)
     parser.add_argument("--wire-times", help="every PRIVMSG/NOTICE again, with the time it arrived")
+    parser.add_argument("--trace", help="log every line in and out with the time (off by default)")
     parser.add_argument("--network", default="E2ETest")
     parser.add_argument("--casemapping", choices=("ascii", "rfc1459", "strict-rfc1459", "utf8"))
     parser.add_argument("--hide-casemapping", action="store_true",
                         help="fold as --casemapping says, but name no CASEMAPPING in 005")
     args = parser.parse_args()
-    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING
+    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING, TRACE
+    TRACE = args.trace
     NETWORK = args.network
     CASEMAPPING = args.casemapping
     HIDE_CASEMAPPING = args.hide_casemapping
