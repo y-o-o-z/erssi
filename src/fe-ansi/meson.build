@@ -67,8 +67,8 @@ erssi_exe = executable('erssi',
   implicit_include_directories : false,
   export_dynamic : true,
   c_args : fe_ansi_c_args,
-  # whole: modules use fe-common/core functions the binary itself never
-  # calls (mentions-log.c), and those must be exported too
+  # whole: loadable modules may use any fe-common/core function, also one
+  # the binary itself never calls, so all of them must be linked and exported
   link_whole : libfe_common_core_a,
   link_with : fe_ansi_libs,
   install : true,

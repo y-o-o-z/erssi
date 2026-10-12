@@ -152,6 +152,37 @@ def main():
         st["bob"].send("NOTICE alice :after unignore")
         assert wait_ml("[E2E] NOTICE <bob> after unignore"), ml_text()
 
+    def t_mask_targets():
+        # a NOTICE or PRIVMSG to a server or host mask, or a NOTICE to
+        # another nick, is not written to you
+        alice = st["alice"]
+        bob = st["bob"]
+        bob.send("TESTRAW alice ::bob!u@127.0.0.1 NOTICE $*.example.net :mask notice")
+        bob.send("TESTRAW alice ::bob!u@127.0.0.1 PRIVMSG $*.example.net :mask privmsg")
+        bob.send("TESTRAW alice ::bob!u@127.0.0.1 NOTICE dave :notice for dave")
+        for text in ("mask notice", "mask privmsg", "notice for dave"):
+            assert alice.wait_file(alice.all_log(), text, WAIT), f"{text!r} not delivered"
+        bob.send("NOTICE alice :after masks")
+        assert wait_ml("[E2E] NOTICE <bob> after masks"), ml_text()
+        absent_ml("mask notice", "mask privmsg", "notice for dave")
+
+    def t_cnotice_ignore():
+        # a NOTICE with a [#channel] context is checked against the ignores of
+        # that channel, as erssi does when it prints it
+        alice = st["alice"]
+        off = log_size()
+        alice.type("/ignore -channels #test bob PUBNOTICES")
+        assert wait_log_since(off, "Ignoring"), log_since(off)
+        st["bob"].send("NOTICE alice :[#test] cnotice ignored")
+        st["bob"].send("NOTICE alice :control after cnotice")
+        assert wait_ml("[E2E] NOTICE <bob> control after cnotice"), ml_text()
+        absent_ml("cnotice ignored")
+        off = log_size()
+        alice.type("/unignore 1")
+        assert wait_log_since(off, "Unignored"), log_since(off)
+        st["bob"].send("NOTICE alice :[#test] cnotice shown")
+        assert wait_ml("[E2E] NOTICE <bob> [#test] cnotice shown"), ml_text()
+
     def t_excluded_network():
         alice = st["alice"]
         off = log_size()
@@ -194,6 +225,14 @@ def main():
         alice.type("/set -default mentions_log_file")
         st["bob"].send("PRIVMSG alice :log works again")
         assert wait_ml("[E2E] PM <bob> log works again"), ml_text()
+        # a successful write resets it: the same bad path is reported again
+        off = log_size()
+        alice.type(f"/set mentions_log_file {work}")
+        st["bob"].send("PRIVMSG alice :log error three")
+        assert wait_log_since(off, "Mentions: cannot write"), "no error after a good write:\n" + log_since(off)
+        alice.type("/set -default mentions_log_file")
+        st["bob"].send("PRIVMSG alice :log works once more")
+        assert wait_ml("[E2E] PM <bob> log works once more"), ml_text()
 
     def t_dcc():
         alice = st["alice"]
@@ -211,6 +250,30 @@ def main():
             conn.sendall(b"dcc hello\n")
             assert wait_ml("[DCC] DCC <bob> dcc hello"), ml_text()
             assert alice.wait_file(alice.all_log(), "DCC bob: dcc hello", WAIT), "no DCC line in the window"
+        finally:
+            if conn is not None:
+                conn.close()
+            lsock.close()
+
+    def t_dcc_excluded_network():
+        # a DCC CHAT that came through an excluded network (Botnet) is left out
+        alice = st["alice"]
+        lsock = socket.socket()
+        lsock.bind(("127.0.0.1", 0))
+        lsock.listen(1)
+        lsock.settimeout(WAIT)
+        port = lsock.getsockname()[1]
+        conn = None
+        try:
+            off = log_size()
+            st["bob"].send(f"PRIVMSG alicebot :\x01DCC CHAT chat 2130706433 {port}\x01")
+            assert wait_log_since(off, "DCC CHAT from bob"), "no DCC CHAT request:\n" + log_since(off)
+            alice.type("/dcc chat bob")
+            conn, _ = lsock.accept()
+            conn.sendall(b"excluded dcc\n")
+            assert wait_log_since(off, "excluded dcc"), "DCC text not shown:\n" + log_since(off)
+            absent_ml("excluded dcc")
+            assert "DCC bob: excluded dcc" not in log_since(off), "printed to the Mentions window"
         finally:
             if conn is not None:
                 conn.close()
@@ -235,13 +298,17 @@ def main():
 
     def t_immortal_and_recreated():
         alice = st["alice"]
+        refused = "Window is immortal"
         off = log_size()
         alice.type("/window goto Mentions")
         alice.type("/window close")
-        assert wait_log_since(off, "immortal"), "the window is not immortal:\n" + log_since(off)
+        assert wait_log_since(off, refused), "the window is not immortal:\n" + log_since(off)
         alice.type("/window immortal off")
+        assert wait_log_since(off, "Window isn't immortal"), log_since(off)
+        off = log_size()
         alice.type("/window close")
         time.sleep(1)
+        assert refused not in log_since(off), "the close was refused:\n" + log_since(off)
         off = log_size()
         alice.type("/window list")
         time.sleep(1)
@@ -250,6 +317,12 @@ def main():
         st["bob"].send("PRIVMSG alice :after recreate")
         assert alice.wait_file(alice.all_log(), "PM bob: after recreate", WAIT), \
             "the recreated window gets no entries"
+        # only a new window is immortal again after IMMORTAL OFF
+        off = log_size()
+        alice.type("/window goto Mentions")
+        alice.type("/window close")
+        assert wait_log_since(off, refused), "the recreated window is not immortal:\n" + log_since(off)
+        alice.type("/window goto 1")
 
     def t_rename():
         alice = st["alice"]
@@ -266,6 +339,28 @@ def main():
         assert wait_log_re(r"\bMentions\b", off), "not renamed back:\n" + log_since(off)
         assert not re.search(r"\bInbox\b", log_since(off)), "Inbox left over:\n" + log_since(off)
 
+    def t_name_taken():
+        # a name another window has is refused: no two windows of one name
+        alice = st["alice"]
+        alice.type("/window new hidden")
+        alice.type("/window name Other")
+        alice.type("/window goto 1")
+        off = log_size()
+        alice.type("/set mentions_window Other")
+        assert wait_log_since(off, "Mentions: there is a window named Other already"), log_since(off)
+        assert wait_log_re(r"mentions_window\s+(= )?Mentions", off), "the old name was not kept"
+        off = log_size()
+        alice.type("/window list")
+        time.sleep(1)
+        listing = log_since(off)
+        assert len(re.findall(r"\bOther\b", listing)) == 1, listing
+        assert re.search(r"\bMentions\b", listing), listing
+        st["bob"].send("PRIVMSG alice :name kept")
+        assert alice.wait_file(alice.all_log(), "PM bob: name kept", WAIT), "the window stopped working"
+        alice.type("/window goto Other")
+        alice.type("/window close")
+        alice.type("/window goto 1")
+
     def t_window_off():
         alice = st["alice"]
         alice.type("/set -clear mentions_window")
@@ -276,6 +371,16 @@ def main():
         assert wait_ml("[E2E] PM <bob> window is off"), ml_text()
         time.sleep(1)
         assert "PM bob: window is off" not in log_since(off), "printed to a window that is off"
+        # the old window is an ordinary one now: it closes and stays closed
+        off = log_size()
+        alice.type("/window goto Mentions")
+        alice.type("/window close")
+        time.sleep(1)
+        assert "Window is immortal" not in log_since(off), "still immortal:\n" + log_since(off)
+        off = log_size()
+        alice.type("/window list")
+        time.sleep(1)
+        assert not re.search(r"\bMentions\b", log_since(off)), "made again:\n" + log_since(off)
 
     def t_help():
         alice = st["alice"]
@@ -294,8 +399,10 @@ def main():
     try:
         harness.main([t_install, t_start, t_window_created_not_active, t_private, t_private_action,
                       t_notice_from_person, t_notice_from_server_and_channel_skipped, t_own_and_echo,
-                      t_format_injection, t_ignore, t_excluded_network, t_utf8_bytes, t_log_modes,
-                      t_log_error_once, t_dcc, t_command, t_immortal_and_recreated, t_rename, t_window_off,
+                      t_format_injection, t_ignore, t_mask_targets, t_cnotice_ignore,
+                      t_excluded_network, t_utf8_bytes, t_log_modes,
+                      t_log_error_once, t_dcc, t_dcc_excluded_network, t_command, t_immortal_and_recreated,
+                      t_rename, t_name_taken, t_window_off,
                       t_help, t_sanitizers])
     finally:
         for name in ("bob", "carol"):

@@ -25,14 +25,12 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
 
-#include <irssi/src/irc/core/irc-servers.h>
 #include <irssi/src/irc/dcc/dcc-chat.h>
 
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include <irssi/src/fe-common/core/formats.h>
 #include <irssi/src/fe-common/core/mentions-log.h>
 #include <irssi/src/fe-common/core/printtext.h>
-#include <irssi/src/fe-common/irc/fe-irc-channels.h>
 #include <irssi/src/fe-common/irc/fe-mentions.h>
 #include <irssi/src/fe-common/irc/module-formats.h>
 
@@ -255,11 +253,36 @@ static gboolean is_own_nick(SERVER_REC *server, const char *nick)
 	return nick != NULL && server->nick != NULL && g_ascii_strcasecmp(nick, server->nick) == 0;
 }
 
+/* a message to a server or host mask ($*.example.net) is not written to you */
+static gboolean is_mask_target(const char *target)
+{
+	return target != NULL && *target == '$';
+}
+
+/* The channel of a NOTICE that starts with "[#channel]" (a cnotice), as
+   fe-irc-messages finds it when it prints the notice. */
+static char *notice_context_channel(SERVER_REC *server, const char *msg)
+{
+	const char *end;
+	char *channel;
+
+	if (!settings_get_bool("notice_channel_context") || *msg != '[')
+		return NULL;
+	end = strpbrk(msg, " ,]");
+	if (end == NULL || *end != ']')
+		return NULL;
+	channel = g_strndup(msg + 1, end - msg - 1);
+	if (server_ischannel(server, channel))
+		return channel;
+	g_free(channel);
+	return NULL;
+}
+
 static void sig_message_private(SERVER_REC *server, const char *msg, const char *nick,
                                 const char *address, const char *target)
 {
-	(void) target;
-	if (server == NULL || is_own_nick(server, nick) || is_excluded(server))
+	if (server == NULL || is_own_nick(server, nick) || is_mask_target(target) ||
+	    is_excluded(server))
 		return;
 	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_MSGS))
 		return;
@@ -280,18 +303,28 @@ static void sig_message_irc_action(SERVER_REC *server, const char *msg, const ch
 	mentions_record(server, "action", server->tag, "PM", nick, msg);
 }
 
-/* a private NOTICE from a person: not from a server, not to a channel */
+/* a NOTICE from a person to your nick: not from a server, not to a channel
+   or a mask */
 static void sig_message_irc_notice(SERVER_REC *server, const char *msg, const char *nick,
                                    const char *address, const char *target)
 {
-	if (server == NULL || mentions_is_server_nick(nick) || address == NULL || *address == '\0')
+	char *context;
+	int ignored;
+
+	if (server == NULL || msg == NULL || mentions_is_server_nick(nick) || address == NULL ||
+	    *address == '\0')
 		return;
-	if (target != NULL &&
-	    server_ischannel(server, fe_channel_skip_prefix(IRC_SERVER(server), target)))
+	if (target == NULL || server->nick == NULL || g_ascii_strcasecmp(target, server->nick) != 0)
 		return;
 	if (is_own_nick(server, nick) || is_excluded(server))
 		return;
-	if (ignore_check(server, nick, address, NULL, msg, MSGLEVEL_NOTICES))
+
+	/* a cnotice is ignored by the ignores of its channel */
+	context = notice_context_channel(server, msg);
+	ignored = ignore_check(server, nick, address, context, msg,
+	                       context != NULL ? MSGLEVEL_PUBNOTICES : MSGLEVEL_NOTICES);
+	g_free(context);
+	if (ignored)
 		return;
 	mentions_record(server, "notice", server->tag, "NOTICE", nick, msg);
 }
@@ -299,7 +332,7 @@ static void sig_message_irc_notice(SERVER_REC *server, const char *msg, const ch
 /* CTCPs over DCC CHAT are handled (and stopped) earlier */
 static void sig_dcc_chat_message(CHAT_DCC_REC *dcc, const char *msg)
 {
-	if (dcc == NULL)
+	if (dcc == NULL || is_excluded(SERVER(dcc->server)))
 		return;
 	mentions_record(SERVER(dcc->server), "dcc", "DCC", "DCC",
 	                dcc->nick != NULL ? dcc->nick : "DCC", msg);
@@ -328,6 +361,20 @@ static void sig_setup_changed(void)
 	if (g_strcmp0(name, mwin_name) == 0)
 		return;
 
+	/* two windows of one name: refused, as /WINDOW NAME does */
+	if (*name != '\0' && mwin != NULL) {
+		WINDOW_REC *other = window_find_name(name);
+
+		if (other != NULL && other != mwin) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "Mentions: there is a window named %s already - "
+			          "mentions_window stays %s",
+			          name, mwin_name);
+			settings_set_str("mentions_window", mwin_name);
+			return;
+		}
+	}
+
 	g_free(mwin_name);
 	mwin_name = g_strdup(name);
 
@@ -351,6 +398,7 @@ static void cmd_mentions(const char *data, SERVER_REC *server, void *item)
 {
 	WINDOW_REC *window;
 	char *arg, *refnum;
+	void *free_arg;
 
 	(void) server;
 	(void) item;
@@ -363,7 +411,8 @@ static void cmd_mentions(const char *data, SERVER_REC *server, void *item)
 		return;
 	}
 
-	arg = g_strstrip(g_strdup(data != NULL ? data : ""));
+	if (!cmd_get_params(data, &free_arg, 1, &arg))
+		return;
 	if (g_ascii_strcasecmp(arg, "clear") == 0) {
 		/* the entries are removed, not only scrolled away as by /CLEAR */
 		refnum = g_strdup_printf("%d", window->refnum);
@@ -372,7 +421,7 @@ static void cmd_mentions(const char *data, SERVER_REC *server, void *item)
 	} else {
 		window_set_active(window);
 	}
-	g_free(arg);
+	cmd_params_free(free_arg);
 }
 
 void fe_mentions_init(void)
