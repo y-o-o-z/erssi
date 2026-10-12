@@ -567,9 +567,22 @@ gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex)
 	gboolean found = FALSE;
 	guint i;
 
-	for (i = 0; i < keys->len && !found; i++)
-		found = g_strcmp0(e2e_json_get_string(e2e_json_get(accepted, g_ptr_array_index(keys, i)),
-		                                      "fp"), fp_hex) == 0;
+	for (i = 0; i < keys->len && !found; i++) {
+		const char *key = g_ptr_array_index(keys, i);
+		char *h, *c;
+
+		/* a damaged row (accepted for another person's query, R-E34)
+		   is no acceptance of anybody */
+		if (split_pipe(key, &h, &c)) {
+			gboolean foreign = e2e_dm_row_foreign(h, c);
+
+			g_free(h);
+			g_free(c);
+			if (foreign)
+				continue;
+		}
+		found = g_strcmp0(e2e_json_get_string(e2e_json_get(accepted, key), "fp"), fp_hex) == 0;
+	}
 	g_ptr_array_unref(keys);
 	return found;
 }

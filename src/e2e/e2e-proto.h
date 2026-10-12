@@ -135,7 +135,8 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char 
    its network */
 GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
                                  const char *live);
-/* some "accepted" row is for this fingerprint */
+/* some "accepted" row is for this fingerprint - a damaged one
+   (e2e_dm_row_foreign) does not count */
 gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex);
 /* /e2e revoke, decline, forget: handle no longer gets our key for ctx */
 void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);

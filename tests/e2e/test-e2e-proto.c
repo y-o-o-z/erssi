@@ -5410,6 +5410,10 @@ static void test_damaged_dm_rows(void)
 	g_assert_false(e2e_dm_row_foreign("y@hy", "E2E\x1f#test"));
 	g_assert_false(e2e_peer_accepted(me.kr, "y@hy", DCTX, fpy));
 	g_assert_true(e2e_peer_accepted(me.kr, "x@hx", DCTX, fpx));
+	/* /e2e list -all: y's only acceptance is the damaged row - y is not
+	   shown as accepted ([trusted]) for it; x is */
+	g_assert_false(e2e_fingerprint_accepted(me.kr, fpy));
+	g_assert_true(e2e_fingerprint_accepted(me.kr, fpx));
 
 	/* the rotation reaches x only, and says why not y */
 	e2e_gate_decide(me.kr, TRUE, &me.id, &net_a, "x", "hello", table_resolve, nicks, &g);
