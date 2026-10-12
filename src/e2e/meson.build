@@ -11,6 +11,7 @@ e2e_proto_sources = files(
   'e2e-proto.c',
   'e2e-scope.c',
   'e2e-outq.c',
+  'e2e-state.c',
 )
 
 libe2e_proto_a = static_library('e2e_proto',

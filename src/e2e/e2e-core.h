@@ -6,6 +6,7 @@
 #include "module.h"
 #include "e2e-json.h"
 #include "e2e-proto.h"
+#include "e2e-state.h"
 
 #include <irssi/src/core/servers.h>
 
@@ -52,6 +53,25 @@ void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
 GHashTable *e2e_keyreq_out_stamps(void);
 /* FALSE (after telling the user once) while rpe2e.pl is loaded */
 gboolean e2e_native_active(void);
+
+/* the E2E state of the window of item (server: of an item without one):
+   the keyring read checked, nothing saved, nothing taken over, nothing
+   remembered; FALSE (out cleared) for an item that is no channel or
+   query, or without a server */
+gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO *out);
+/* the keyring or a window's state changed: "e2e state changed" is
+   emitted once, when the main loop is idle (the statusbar, fe-web) */
+void e2e_state_changed(void);
+/* "Pending key exchange from <nick> (<handle>) for <network>:<ctx>" in
+   the window of ctx (or of nick); have_theirs: their key is here
+   already */
+void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, const char *handle,
+                       gboolean have_theirs);
+/* /e2e accept and /e2e decline [<nick>|<ident@host>] in the window of
+   item: without who the only request waiting there; a nick that names
+   several is refused (they are listed) */
+void e2e_do_accept(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
+void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 
 void e2e_commands_init(void);
 void e2e_commands_deinit(void);

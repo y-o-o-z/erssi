@@ -92,6 +92,9 @@ static char *keyring_file;
 static GHashTable *keyreq_out;		/* handle -> our last KEYREQ (30 s) */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
 static GHashTable *own_wait_notice;	/* "tag|nick" -> last "held" notice */
+/* "tag|handle|ctx" -> last "Pending key exchange" notice (bounded) */
+static GHashTable *pending_notice;
+static guint state_idle_id;
 static GHashTable *own_handles;		/* server tag -> own ident@host */
 /* the exact lines of ciphertext the pump is sending -> how many: these
    pass the gate (any other line, a wire too, is gated) */
@@ -417,6 +420,9 @@ E2E_JSON *e2e_load_full(gboolean *lost)
 	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
 	if (lost != NULL)
 		*lost = status == E2E_LOAD_LOST;
+	/* moved aside just now: every window's state is an error now */
+	if (status == E2E_LOAD_LOST && !was_lost)
+		e2e_state_changed();
 	/* moved aside just now: always loud; still lost: once a minute */
 	if (notice != NULL && (status != E2E_LOAD_LOST || !was_lost ||
 	                       e2e_now() - lost_notice_at >= 60)) {
@@ -437,8 +443,10 @@ gboolean e2e_save(const E2E_JSON *kr)
 {
 	char *error = NULL;
 
-	if (e2e_keyring_save(keyring_file, kr, &error))
+	if (e2e_keyring_save(keyring_file, kr, &error)) {
+		e2e_state_changed();
 		return TRUE;
+	}
 	e2e_print_item(NULL, "%s", error);
 	g_free(error);
 	return FALSE;
@@ -567,6 +575,97 @@ char *e2e_incoming_ctx_for(SERVER_REC *server, const char *ctx)
 	out = e2e_ctx_rescope(ctx, wire);
 	g_free(wire);
 	return out;
+}
+
+/* ---- the state of a window ---- */
+
+static gboolean state_changed_idle(gpointer data)
+{
+	state_idle_id = 0;
+	signal_emit("e2e state changed", 0);
+	return FALSE;
+}
+
+void e2e_state_changed(void)
+{
+	if (state_idle_id == 0)
+		state_idle_id = g_idle_add(state_changed_idle, NULL);
+}
+
+/* e2e_own_handle() without remembering what it finds */
+static const char *own_handle_peek(SERVER_REC *server)
+{
+	const char *handle;
+	GSList *tmp;
+
+	if (server == NULL || server->tag == NULL)
+		return NULL;
+	handle = g_hash_table_lookup(own_handles, server->tag);
+	if (handle != NULL || server->nick == NULL || *server->nick == '\0')
+		return handle;
+	for (tmp = server->channels; tmp != NULL; tmp = tmp->next) {
+		NICK_REC *rec = nicklist_find(tmp->data, server->nick);
+
+		if (rec != NULL && rec->host != NULL && *rec->host != '\0')
+			return rec->host;
+	}
+	return NULL;
+}
+
+gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO *out)
+{
+	E2E_LOAD_STATUS status;
+	E2E_JSON *kr;
+	E2E_NET net;
+	const char *name, *own, *nick = NULL;
+	char *error = NULL, *wire = NULL, *own_wire = NULL, *handle;
+
+	memset(out, 0, sizeof(*out));
+	if (item != NULL && item->server != NULL)
+		server = item->server;
+	if (item == NULL || server == NULL || keyring_file == NULL || item->name == NULL)
+		return FALSE;
+	name = item->name;
+	if (!e2e_is_channel(name) && !IS_QUERY(item))
+		return FALSE;
+	/* rpe2e.pl's _load_keyring_checked: a damaged file is left alone */
+	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	g_free(error);
+	if (e2e_is_channel(name)) {
+		wire = g_strdup(name);
+	} else {
+		nick = name;
+		handle = e2e_resolve_dm_handle(server, status == E2E_LOAD_OK ? kr : NULL, nick);
+		if (handle != NULL)
+			wire = g_strconcat("@", handle, NULL);
+		g_free(handle);
+	}
+	own = own_handle_peek(server);
+	if (own != NULL && *own != '\0')
+		own_wire = g_strconcat("@", own, NULL);
+	e2e_server_net(server, &net);
+	e2e_window_info(kr, status == E2E_LOAD_OK, &net, wire, own_wire, nick, out);
+	e2e_net_clear(&net);
+	g_free(own_wire);
+	g_free(wire);
+	e2e_json_free(kr);
+	return TRUE;
+}
+
+void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, const char *handle,
+                       gboolean have_theirs)
+{
+	WI_ITEM_REC *item = e2e_notice_item(server, ctx, nick);
+	char *dnick = e2e_text_display(nick != NULL ? nick : "");
+	char *dhandle = e2e_text_display(handle != NULL ? handle : "");
+	char *dctx = e2e_ctx_display(ctx != NULL ? ctx : "");
+
+	printformat(server, item != NULL ? item->visible_name : NULL,
+	            MSGLEVEL_CLIENTNOTICE | MSGLEVEL_HILIGHT, TXT_E2E_PENDING, dnick, dhandle, dctx,
+	            have_theirs ? " - you can read them already; they get your key only when you accept" : "");
+	g_free(dnick);
+	g_free(dhandle);
+	g_free(dctx);
 }
 
 /* a one-shot WHOIS of ourselves: its 311 has the displayed host, exactly
@@ -1541,21 +1640,24 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	if (strcmp(before, after) != 0)
 		e2e_save(kr);
 
-	/* the request waits where e2e_handle_keyreq put it */
+	/* the request waits where e2e_handle_keyreq put it, "<sender>|<ctx>" */
 	if (type == E2E_HS_KEYREQ && parsed != NULL && rsp == NULL &&
 	    (key = e2e_pending_inbound_key(kr, &net, sender, ctx)) != NULL) {
 		if (e2e_json_get(e2e_json_get(kr, "pending_inbound"), key) != NULL) {
 			/* their key may be here already (they answered our request):
 			   ours still goes to them only after /e2e accept */
 			gboolean have_theirs = e2e_session_has_key(e2e_json_get(e2e_json_get(kr, "incoming"), key));
+			const char *stored = key + strlen(sender) + 1;
+			char *stamp = g_strdup_printf("%s|%s|%s", server->tag, sender, stored);
 
-			e2e_print_item(e2e_notice_item(server, ctx, nick),
-			               "Pending key exchange from %s (%s) for %s%s. Run /e2e accept %s or /e2e decline %s.",
-			               nick, sender, ctx,
-			               have_theirs ? " - you can read them already; they get your key only when you accept" : "",
-			               nick, nick);
+			/* asked again and again (their client asks with each
+			   message): told once in E2E_PENDING_NOTICE_INTERVAL,
+			   /e2e pending lists it */
+			if (e2e_pending_notice_allow(pending_notice, stamp))
+				e2e_print_pending(server, stored, nick, sender, have_theirs);
 			e2e_print_debug(server, ctx, nick, "KEYREQ from %s (%s) is pending on %s",
 			                nick, sender, ctx);
+			g_free(stamp);
 		}
 		g_free(key);
 	}
@@ -1600,6 +1702,7 @@ void e2e_core_init(void)
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
 	own_wait_notice = e2e_stamps_new();
+	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -1695,6 +1798,10 @@ void e2e_core_deinit(void)
 	g_hash_table_destroy(keyreq_out);
 	g_hash_table_destroy(keyreq_in);
 	g_hash_table_destroy(own_wait_notice);
+	g_hash_table_destroy(pending_notice);
+	if (state_idle_id != 0)
+		g_source_remove(state_idle_id);
+	state_idle_id = 0;
 	g_hash_table_destroy(own_handles);
 	g_ptr_array_unref(gated_emissions);
 	gated_emissions = NULL;

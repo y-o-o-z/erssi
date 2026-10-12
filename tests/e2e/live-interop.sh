@@ -296,7 +296,8 @@ if wait_for "$WORK/alice/logs/E2E/bob.log" "Pending key exchange from bob" 10; t
 else
     bad "alice did not get bob's reciprocal DM KEYREQ"
 fi
-say alice "/e2e accept bob"
+# the only request waiting in the query: no argument needed
+say alice "/e2e accept"
 sleep 2
 say alice "private from alice $POLISH"
 say bob "private from bob $POLISH"
@@ -429,6 +430,28 @@ if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "Pending key exchange from mallory"
     pass "alice: mallory's request for her key waits for /e2e accept"
 else
     bad "alice: no pending request from mallory"
+fi
+MALLORY_AT=$(date +%s)
+# the prompt names the address and the network:channel, and how to answer
+# (alice holds mallory's key already: she asked him for it)
+if grep -F "Pending key exchange from mallory (mallory@127.0.0.1) for E2E:$CHAN" "$WORK/alice/logs/E2E/$CHAN.log" |
+   grep -qF "Run /e2e accept mallory@127.0.0.1 or /e2e decline mallory@127.0.0.1 (/e2e pending lists all)"; then
+    pass "alice: the prompt names mallory's address, the network and the commands"
+else
+    bad "alice: the pending prompt is not as expected"
+    grep -aF "Pending key exchange from mallory" "$WORK/alice/logs/E2E/$CHAN.log" | sed 's/^/    /'
+fi
+say alice "/e2e pending"
+if wait_for "$WORK/alice/all.log" "mallory (mallory@127.0.0.1) on E2E:$CHAN" 5; then
+    pass "/e2e pending lists mallory's request"
+else
+    bad "/e2e pending does not list mallory's request"
+fi
+say alice "/e2e list"
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "pending: mallory (mallory@127.0.0.1)" 5; then
+    pass "/e2e list in #test shows mallory's request"
+else
+    bad "/e2e list in #test does not show mallory's request"
 fi
 if grep -aq "^alice NOTICE mallory :.RPEE2E KEYRSP" "$WORK/wire.log"; then
     bad "alice sent her key (KEYRSP) to mallory without /e2e accept"
@@ -635,6 +658,29 @@ else
     bad "no CASEMAPPING, MOTD over: #Żaba was refused as if the fold were Unicode"
 fi
 say alice "/join -E2E $CHAN"
+
+# ---- mallory asks again: told once in 5 minutes ----
+# mallory's own request to alice expires after 120 s; then he writes
+# again and asks again: the request waits, the prompt is not repeated
+now=$(date +%s)
+[ $((MALLORY_AT + 125 - now)) -gt 0 ] && sleep $((MALLORY_AT + 125 - now))
+say alice "/join -E2E $CHAN"
+say mallory "/window goto $CHAN"
+say mallory "hello again from mallory"
+say mallory "/e2e handshake alice"
+n=0
+while [ "$(grep -ac "^mallory NOTICE alice :.RPEE2E KEYREQ " "$WORK/wire.log")" -lt 2 ] && [ $n -lt 15 ]; do
+    sleep 1; n=$((n + 1))
+done
+sleep 3
+if [ "$(grep -ac "^mallory NOTICE alice :.RPEE2E KEYREQ " "$WORK/wire.log")" -lt 2 ]; then
+    bad "mallory did not ask alice again (the check proves nothing)"
+elif [ "$(grep -c "Pending key exchange from mallory" "$WORK/alice/logs/E2E/$CHAN.log")" -eq 1 ]; then
+    pass "mallory asks again: alice is told once"
+else
+    bad "mallory asks again: alice is told more than once"
+    grep -aF "Pending key exchange from mallory" "$WORK/alice/logs/E2E/$CHAN.log" | sed 's/^/    /'
+fi
 
 # ---- an old keyring on two networks: refused until /e2e adopt ----
 # alice's E2E entries become old ones of no network (as rpe2e.pl or erssi
@@ -1411,6 +1457,22 @@ else
     pass "no plain text when the script dies in its gate"
 fi
 check "$WORK/bob/logs/E2E/$CHAN.log" "a secret line the script dies in the gate for"
+
+# ---- /e2e decline by address ----
+say alice "/join -E2E $CHAN"
+say alice "/e2e decline mallory@127.0.0.1"
+if wait_for "$WORK/alice/logs/E2E/$CHAN.log" "declined mallory (mallory@127.0.0.1) on E2E:$CHAN" 5; then
+    pass "/e2e decline mallory@127.0.0.1 declines mallory's request"
+else
+    bad "/e2e decline mallory@127.0.0.1 did not decline"
+fi
+say alice "/e2e pending"
+if wait_for "$WORK/alice/all.log" "No key requests wait for /e2e accept." 5; then
+    pass "/e2e pending: no request waits after the decline"
+else
+    bad "/e2e pending: requests still wait after the decline"
+    grep -aF " ago — /e2e accept " "$WORK/alice/all.log" | tail -n 5 | sed 's/^/    /'
+fi
 
 # ---- /unload e2e with lines waiting ----
 # a message to an encrypted channel still in irssi's flood queue would
