@@ -159,7 +159,8 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 
 	/* Multiline responses have an additional parameter and we have to do
 	 * this stupid dance to parse them */
-	if (!g_ascii_strcasecmp(evt, "LS") && !strcmp(star, "*")) {
+	if ((!g_ascii_strcasecmp(evt, "LS") || !g_ascii_strcasecmp(evt, "LIST")) &&
+	    !strcmp(star, "*")) {
 		multiline = TRUE;
 	}
 	/* This branch covers the '*' parameter isn't present, adjust the
@@ -300,7 +301,15 @@ static void event_cap (IRC_SERVER_REC *server, char *args, char *nick, char *add
 		}
 	}
 	else if (!g_ascii_strcasecmp(evt, "LIST")) {
-		/* do nothing, fe-cap will handle it */
+		/* The caps active on this connection (fe-cap prints them). Add
+		 * the ones we did not know of: after /UPGRADE from a session file
+		 * without the CAP state this is how they come back. Nothing is
+		 * requested and no ack signal is sent - they are on already. */
+		for (i = 0; i < caps_length; i++) {
+			if (*caps[i] != '\0' && !i_slist_find_string(server->cap_active, caps[i]))
+				server->cap_active =
+				    g_slist_prepend(server->cap_active, g_strdup(caps[i]));
+		}
 	}
 	else {
 		g_warning("Unhandled CAP subcommand %s", evt);

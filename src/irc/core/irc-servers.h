@@ -100,6 +100,10 @@ struct _IRC_SERVER_REC {
 	unsigned int cap_complete:1; /* We've done the initial CAP negotiation */
 	unsigned int cap_in_multiline:1; /* We're waiting for the multiline response to end */
 	unsigned int sasl_success:1; /* Did we authenticate successfully ? */
+	unsigned int session_unregistered:1; /* Restored by /UPGRADE before it had
+	                                        registered: connect again */
+	unsigned int session_cap_resync:1; /* Restored by /UPGRADE without the CAP
+	                                      state: ask the server for it */
 
 	int max_kicks_in_cmd; /* max. number of people to kick with one /KICK command */
 	int max_modes_in_cmd; /* max. number of mode changes in one /MODE command */

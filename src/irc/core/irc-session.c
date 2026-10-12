@@ -29,6 +29,7 @@
 #include <irssi/src/irc/core/irc-servers-setup.h>
 #include <irssi/src/irc/core/irc-channels.h>
 #include <irssi/src/irc/core/irc-nicklist.h>
+#include <irssi/src/irc/core/irc-cap.h>
 
 #include <irssi/src/irc/core/sasl.h>
 
@@ -37,6 +38,84 @@ struct _isupport_data { CONFIG_REC *config; CONFIG_NODE *node; };
 static void session_isupport_foreach(char *key, char *value, struct _isupport_data *data)
 {
         config_node_set_str(data->config, data->node, key, value);
+}
+
+static void session_save_cap(char *key, char *value, struct _isupport_data *data)
+{
+	char *str = value == NULL ? g_strdup(key) : g_strconcat(key, "=", value, NULL);
+
+	config_node_set_str(data->config, data->node, NULL, str);
+	g_free(str);
+}
+
+static void session_save_caps(IRC_SERVER_REC *server, CONFIG_REC *config, CONFIG_NODE *node)
+{
+	struct _isupport_data data;
+	CONFIG_NODE *list;
+	GSList *tmp;
+
+	config_node_set_bool(config, node, "cap_complete", server->cap_complete);
+	if (server->cap_supported != NULL) {
+		data.config = config;
+		data.node = config_node_section(config, node, "cap_supported", NODE_TYPE_LIST);
+		g_hash_table_foreach(server->cap_supported, (GHFunc) session_save_cap, &data);
+	}
+	list = config_node_section(config, node, "cap_active", NODE_TYPE_LIST);
+	for (tmp = server->cap_active; tmp != NULL; tmp = tmp->next)
+		config_node_set_str(config, list, NULL, tmp->data);
+}
+
+static void session_restore_caps(IRC_SERVER_REC *server, CONFIG_NODE *node)
+{
+	CONFIG_NODE *list;
+	GSList *tmp;
+
+	server->cap_complete = config_node_get_bool(node, "cap_complete", FALSE);
+
+	list = config_node_section(NULL, node, "cap_supported", -1);
+	if (list != NULL && list->type == NODE_TYPE_LIST) {
+		server->cap_supported =
+		    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+		for (tmp = config_node_first(list->value); tmp != NULL;
+		     tmp = config_node_next(tmp)) {
+			CONFIG_NODE *cap = tmp->data;
+			const char *eq;
+
+			if (cap->type != NODE_TYPE_VALUE || cap->value == NULL ||
+			    *(char *) cap->value == '\0')
+				continue;
+			eq = strchr(cap->value, '=');
+			if (eq == NULL) {
+				g_hash_table_replace(server->cap_supported,
+				                     g_strdup(cap->value), NULL);
+			} else {
+				g_hash_table_replace(server->cap_supported,
+				                     g_strndup(cap->value, eq - (char *) cap->value),
+				                     g_strdup(eq + 1));
+			}
+		}
+	}
+
+	list = config_node_section(NULL, node, "cap_active", -1);
+	if (list != NULL && list->type == NODE_TYPE_LIST) {
+		for (tmp = config_node_first(list->value); tmp != NULL;
+		     tmp = config_node_next(tmp)) {
+			CONFIG_NODE *cap = tmp->data;
+
+			if (cap->type == NODE_TYPE_VALUE && cap->value != NULL &&
+			    *(char *) cap->value != '\0')
+				server->cap_active =
+				    g_slist_append(server->cap_active, g_strdup(cap->value));
+		}
+	}
+}
+
+/* a session file from an older version: did it have channels? */
+static int session_has_channels(CONFIG_NODE *node)
+{
+	node = config_node_section(NULL, node, "channels", -1);
+	return node != NULL && node->type == NODE_TYPE_LIST &&
+	       config_node_first(node->value) != NULL;
 }
 
 static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
@@ -83,6 +162,7 @@ static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
 	config_node_set_str(config, node, "sasl_password", server->connrec->sasl_password);
 	config_node_set_bool(config, node, "sasl_success", server->sasl_success);
 	config_node_set_bool(config, node, "connected", server->connected);
+	session_save_caps(server, config, node);
 
 	config_node_set_int(config, node, "starttls",
 	                    server->connrec->disallow_starttls ? STARTTLS_DISALLOW :
@@ -132,20 +212,32 @@ static void sig_session_restore_server(IRC_SERVER_REC *server,
 
 	/* Had it registered (001) before the upgrade? A session file from an
 	 * older version does not say; past the end of the MOTD it had (on a
-	 * broken ircd without 001 the MOTD registers it, see event_motd()).
-	 * Earlier than that the answer is no: one reconnect too many, never
-	 * a login skipped. */
-	registered = config_node_get_bool(node, "connected", server->motd_got);
+	 * broken ircd without 001 the MOTD registers it, see event_motd()),
+	 * and so it had with a channel (a JOIN needs registration).
+	 * Otherwise the answer is no: one reconnect too many, never a login
+	 * skipped. */
+	registered = config_node_get_bool(node, "connected",
+	                                  server->motd_got || session_has_channels(node));
 	/* Not in a session file from an older version either: a registered
 	 * connection with a SASL mechanism had logged in, or that erssi would
 	 * have dropped it (sasl_disconnect_on_failure). */
 	server->sasl_success = config_node_get_bool(node, "sasl_success",
-	        server->motd_got && server->connrec->sasl_mechanism != SASL_MECHANISM_NONE);
+	        registered && server->connrec->sasl_mechanism != SASL_MECHANISM_NONE);
 	if (!registered) {
 		/* Still registering: the CAP and SASL login the upgrade cut off
 		 * cannot be finished on this socket. irc_server_connect() closes
 		 * it and connects again from the start. */
-		server->session_reconnect = FALSE;
+		server->session_unregistered = TRUE;
+	} else if (config_node_find(node, "cap_complete") != NULL) {
+		session_restore_caps(server, node);
+	} else if (!server->connrec->no_cap) {
+		/* An older session file has no CAP state. The negotiation was
+		 * over (it registered); ask the server what it offers and what
+		 * is on (sig_connected()). With cap_complete set, the replies
+		 * cannot end a negotiation again (no CAP END, no "server cap
+		 * end"). */
+		server->cap_complete = TRUE;
+		server->session_cap_resync = TRUE;
 	}
 
 	server->connrec->channels = g_strdup(config_node_get_str(node, "rejoin_channels", NULL));
@@ -251,6 +343,12 @@ static void sig_connected(IRC_SERVER_REC *server)
 
 		if (rec->session_rejoin)
                         session_restore_channel(rec);
+	}
+
+	if (server->session_cap_resync) {
+		server->session_cap_resync = FALSE;
+		irc_send_cmd_now(server, "CAP LS " CAP_LS_VERSION);
+		irc_send_cmd_now(server, "CAP LIST");
 	}
 }
 
