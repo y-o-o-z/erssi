@@ -26,6 +26,14 @@ static gboolean is_str(const char *s, const char *value)
 	return s != NULL && strcmp(s, value) == 0;
 }
 
+/* Characters that change the direction of the text around them, or
+ * start a new line: a nick could be made to look like another one. */
+static gboolean is_layout_control(gunichar c)
+{
+	return c == 0x061c || c == 0x200e || c == 0x200f || (c >= 0x202a && c <= 0x202e) ||
+	       (c >= 0x2066 && c <= 0x2069) || c == 0x2028 || c == 0x2029;
+}
+
 TermNotifyProto term_notify_detect(const TermNotifyEnv *env)
 {
 	/* screen swallows or mangles the sequences */
@@ -77,7 +85,7 @@ char *term_notify_clean(const char *text, gsize max_bytes, gboolean no_semicolon
 		text += len;
 		left -= len;
 
-		if (c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f))
+		if (c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f) || is_layout_control(c))
 			continue;
 		if (c == ';' && no_semicolon)
 			c = ',';

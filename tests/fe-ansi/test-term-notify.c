@@ -98,6 +98,32 @@ static void test_clean_strips_controls(void)
 	g_free(s);
 }
 
+static void test_clean_bidi_and_separators(void)
+{
+	/* U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069 reorder the
+	 * text, U+2028 and U+2029 break it into lines: all are dropped.
+	 * Their neighbours U+200D, U+202F, U+206A and U+061B stay. */
+	char *s = term_notify_clean("a\xd8\x9c" "b\xe2\x80\x8e" "c\xe2\x80\x8f" "d"
+	                            "\xe2\x80\xaa\xe2\x80\xab\xe2\x80\xac\xe2\x80\xad"
+	                            "\xe2\x80\xae" "e"
+	                            "\xe2\x81\xa6\xe2\x81\xa7\xe2\x81\xa8\xe2\x81\xa9" "f"
+	                            "\xe2\x80\xa8" "g\xe2\x80\xa9" "h",
+	                            200, FALSE);
+	g_assert_cmpstr(s, ==, "abcdefgh");
+	g_free(s);
+
+	s = term_notify_clean("\xe2\x80\x8d" "x\xe2\x80\xaf" "y\xe2\x81\xaa" "z\xd8\x9b", 200,
+	                      FALSE);
+	g_assert_cmpstr(s, ==, "\xe2\x80\x8d" "x\xe2\x80\xaf" "y\xe2\x81\xaa" "z\xd8\x9b");
+	g_free(s);
+
+	/* the nick a user sees in the notification is the nick that was sent */
+	s = term_notify_encode(TERM_NOTIFY_OSC777, FALSE, "erssi",
+	                       "PM \xe2\x80\xae" "bob\xe2\x80\xac: hi");
+	g_assert_cmpstr(s, ==, "\033]777;notify;erssi;PM bob: hi\007");
+	g_free(s);
+}
+
 static void test_clean_invalid_utf8(void)
 {
 	char *s = term_notify_clean("a\xff" "b", 200, FALSE);
@@ -254,6 +280,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term_notify/encode_none", test_encode_none);
 	g_test_add_func("/term_notify/encode_hostile", test_encode_hostile);
 	g_test_add_func("/term_notify/clean_strips_controls", test_clean_strips_controls);
+	g_test_add_func("/term_notify/clean_bidi_and_separators", test_clean_bidi_and_separators);
 	g_test_add_func("/term_notify/clean_invalid_utf8", test_clean_invalid_utf8);
 	g_test_add_func("/term_notify/clean_cut", test_clean_cut);
 	g_test_add_func("/term_notify/clean_cut_mixed", test_clean_cut_mixed);

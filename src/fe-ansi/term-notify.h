@@ -30,7 +30,9 @@ void term_notify_env_from_process(TermNotifyEnv *env);
 TermNotifyProto term_notify_detect(const TermNotifyEnv *env);
 
 /* A copy of text that is safe inside an escape sequence: no byte below
- * 0x20, no 0x7f, no U+0080..U+009F, no invalid UTF-8. With no_semicolon
+ * 0x20, no 0x7f, no U+0080..U+009F, no invalid UTF-8, and none of the
+ * bidi controls (U+061C, U+200E, U+200F, U+202A..U+202E, U+2066..U+2069)
+ * or line and paragraph separators (U+2028, U+2029). With no_semicolon
  * ';' becomes ','. Cut at a character boundary to at most max_bytes, and
  * the ellipsis (U+2026, 3 bytes) is appended when something was cut. */
 char *term_notify_clean(const char *text, gsize max_bytes, gboolean no_semicolon);

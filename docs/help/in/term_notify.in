@@ -39,9 +39,10 @@
     The notification shows where the entry came from and the nick, and
     with term_notify_text ON also the text. The notification may be shown
     on the lock screen or stored by the desktop: set term_notify_text OFF
-    to leave the text out. Control characters are removed from everything
-    that is sent, and long texts are cut. When term_charset is not UTF-8,
-    only ASCII is sent and every other character becomes "?".
+    to leave the text out. Control characters, bidi controls and line
+    separators are removed from everything that is sent, and long texts
+    are cut. When term_charset is not UTF-8, only ASCII is sent and every
+    other character becomes "?".
 
 %9Examples:%9
 
