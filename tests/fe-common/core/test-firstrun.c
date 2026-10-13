@@ -943,6 +943,10 @@ static gpointer abort_writer(gpointer data)
 	if (write(w->fd, "ab", 2) != 2)
 		return GINT_TO_POINTER(1);
 	g_usleep(200 * 1000);
+	/* Set from a thread, like a signal handler sets it from the middle of the
+	   read. It is a plain volatile sig_atomic_t, exactly what production
+	   uses, and the write() below orders it before the reader's next byte;
+	   a data race detector would flag it, which is the point of the model. */
 	abort_flag = 1;
 	if (write(w->fd, "c\n", 2) != 2)
 		return GINT_TO_POINTER(1);
