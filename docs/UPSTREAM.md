@@ -32,6 +32,7 @@ repository's commitlint rules.
 | [#9](https://github.com/erssi-org/erssi/pull/9) | fe-web: login, frames, TLS, output queue, Unix socket, use after free and leaks, fuzz targets with corpora | 26 |
 | [#10](https://github.com/erssi-org/erssi/pull/10) | build and tests: fe-fuzz paths, tests keep out of HOME, install.sh options | 3 |
 | [#3](https://github.com/erssi-org/erssi/pull/3) | a native Mentions window (`fe-mentions.c`, `mentions-log.c`): private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, unit tests and a live test (the migration from `mentions.pl` is fork-only) | 4 |
+| [#11](https://github.com/erssi-org/erssi/pull/11) | end-to-end encryption: the `e2e` module (RPE2E v1.0 with OpenSSL only, wire-compatible with repartee and `rpe2e.pl`), unit tests, fuzz targets, a live interop test, and three core fixes it needs (flood queue order, `motd_got` over `/upgrade`, the fe-fuzz build) | 5 |
 
 Merge order does not matter. The only overlap: #7 and #9 both add one
 line to `docs/help/meson.build` at the same place; keep both.
@@ -77,7 +78,7 @@ taken as it is; the commits are on `dev/2026.10`.
 | Commits | Change | Notes |
 |---|---|---|
 | `b7f7802b f55ce730 ee148fda` | `/HELP $name` shows the help of an expando; help texts for `term_truecolor`, `colors_ansi_24bit`, `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`, `show_names_on_join_limit` | The texts of settings that exist only in the fork (`term_truecolor`, `nick_mode_color_*`, `$nickmode`) go with the rows of section 2 that add them |
-| `c1666ab5 2c027e55` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 aff57f18 d62b2913`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
+| `c1666ab5 2c027e55` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 c97952ee 95163304`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
 | `c0e4cd84 ba40df8c 560daae9` | Terminal notifications: OSC 9 / OSC 777 sequences when a mention or private message arrives while the terminal is not focused (focus reports, tmux pass-through, throttle, control characters removed). New setting `term_notify` | `560daae9` is neutral: the default of `term_notify` is `off`. The fork's default is a separate commit (`d4dd0003`, section 4). Follow-ups: `e8aa02c6` (ASCII only on a terminal that is not UTF-8), `71a7ec4c` (bidi and line-separator characters removed), `f5b0faf4` (tests) |
 | `ef4c0adc 8584127c` | Key input: `gui-mouse.c` dropped the final letter of a CSI sequence (`ESC [ I` Page Up, `ESC [ Z` Shift-Tab, `ESC [ G`) and waited for more after a CSI that ends in a lowercase letter or `@` (rxvt shift-arrows, CSI u) | Bug fixes in code of v1.3.1, with a live test (`tests/live/test_keys.py`). Independent of the rest |
 | `e4ad53f9 d6d50441 11708591 3b070dca 943f9001 9c83e708 3dfb804c 28ee82ee dbc2862e 9906974e` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise. The default network offered is "IRCnet" (`firstrun.c`), also a fork preference |
@@ -142,8 +143,8 @@ Not meant for erssi main.
 - End-to-end encryption: the `e2e` module (`src/e2e`, `-Dwith-e2e`) speaks
   RPE2E v1.0 natively with OpenSSL only; it replaced the Perl script that
   was in `contrib/rpe2e` (only the repartee migration tool and the MIT
-  licence stay there). Upstream may or may not want it; it could be
-  proposed as a separate PR. Before that, the contrib history: A patch series for a
+  licence stay there). It is proposed upstream as PR #11
+  (branch `upstream/e2e`, based on erssi-org main). Before that, the contrib history: A patch series for a
   third-party web client was added and later removed (`56f5f294`).
   Commits: `ec8861b9 2739e24e 60bb924f 02900930 ffa2d3cf 3fc9dead
   1dac3524 6526c1d3 ea42643b 581745f6 8bdd53cd f29f28a7 9605def3 0be4b809
