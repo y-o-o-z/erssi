@@ -212,9 +212,9 @@ def main():
         off = log_size()
         alice.type("/set mentions_exclude_networks Bitlbee")
         assert wait_log_re(r"mentions_exclude_networks\s+(= )?Bitlbee", off), "setting not changed"
-        st["carol"].send("PRIVMSG alicebot :partyline text")
-        assert alice.wait_file(alice.all_log(), "partyline text", WAIT), "alicebot did not get it"
-        absent_ml("partyline text")
+        st["carol"].send("PRIVMSG alicebot :relay text")
+        assert alice.wait_file(alice.all_log(), "relay text", WAIT), "alicebot did not get it"
+        absent_ml("relay text")
         st["carol"].send("PRIVMSG alice :normal text")
         assert wait_ml("[E2E] PM <carol> normal text"), ml_text()
 

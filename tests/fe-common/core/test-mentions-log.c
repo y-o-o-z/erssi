@@ -273,9 +273,9 @@ static void test_path_relative(void)
 
 static void test_network_excluded(void)
 {
-	g_assert_true(mentions_network_excluded("Partyline", "Bitlbee Partyline,Relay"));
-	g_assert_true(mentions_network_excluded("partyline", "PARTYLINE"));
-	g_assert_false(mentions_network_excluded("IRCnet", "Partyline"));
+	g_assert_true(mentions_network_excluded("Gateway", "Bitlbee Gateway,Relay"));
+	g_assert_true(mentions_network_excluded("gateway", "GATEWAY"));
+	g_assert_false(mentions_network_excluded("IRCnet", "Gateway"));
 	g_assert_false(mentions_network_excluded(NULL, "x"));
 	g_assert_false(mentions_network_excluded("x", ""));
 }
