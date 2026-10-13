@@ -45,7 +45,7 @@
     with mode 0700. Control characters in the text are written as spaces.
 
     Networks named in mentions_exclude_networks are left out, both from the
-    window and from the log (for example a bot's partyline network). This
+    window and from the log (for example a relay network). This
     includes DCC CHATs that were offered through such a network.
 
 %9Settings:%9
@@ -71,7 +71,7 @@
     /MENTIONS
     /MENTIONS CLEAR
     /SET mentions_log ON
-    /SET mentions_exclude_networks Botnet
+    /SET mentions_exclude_networks Bitlbee
 
 %9See also:%9 HILIGHT, IGNORE, LASTLOG, SCROLLBACK, WINDOW
 
