@@ -52,6 +52,10 @@
 #define SEARCH_MAX_FILES 5000
 /* the child's whole run, in seconds */
 #define SEARCH_TIMEOUT 120
+
+#define SEARCH_WHY_TIME "the time limit of 120 s was reached"
+#define SEARCH_WHY_CHILD "the search process ended without a result"
+#define SEARCH_WHY_DATA "the search process sent data that could not be read"
 /* longest line accepted from the child */
 #define SEARCH_LINE_CAP (8 * 1024)
 #define SEARCH_LABEL_MAX 1024
@@ -66,6 +70,7 @@ typedef struct {
 	int max_hits;
 	GString *buf;     /* an incomplete line */
 	GPtrArray *hits;  /* LOG_SEARCH_HIT * */
+	gint64 started;   /* monotonic time, for telling a timeout from a crash */
 } SEARCH_REC;
 
 static SEARCH_REC *search;
@@ -201,8 +206,9 @@ static void G_GNUC_NORETURN search_child(int fd, const char *glob, Regex *re, in
 	char *base;
 	int hits = 0, i;
 
-	fd = child_detach(fd);
+	/* first, before any GLib call that could block or spin */
 	alarm(SEARCH_TIMEOUT);
+	fd = child_detach(fd);
 
 	memset(&total, 0, sizeof(total));
 	files = log_search_files(glob, SEARCH_MAX_FILES, &truncated);
@@ -349,9 +355,10 @@ static void search_print(SEARCH_REC *rec, LOG_SEARCH_RESULT *res, int hits)
 	g_free(size);
 }
 
-static void search_failed(SEARCH_REC *rec)
+static void search_failed(SEARCH_REC *rec, const char *why)
 {
-	printformat_window(search_window(rec), MSGLEVEL_CLIENTERROR, TXT_SEARCH_FAILED, rec->text);
+	printformat_window(search_window(rec), MSGLEVEL_CLIENTERROR, TXT_SEARCH_FAILED, rec->text,
+	                   why);
 	search_free(rec);
 }
 
@@ -363,7 +370,7 @@ static gboolean search_line(SEARCH_REC *rec, const char *line)
 
 		if ((int)rec->hits->len >= rec->max_hits || !log_search_decode(line, hit)) {
 			g_free(hit);
-			search_failed(rec);
+			search_failed(rec, SEARCH_WHY_DATA);
 			return FALSE;
 		}
 		g_ptr_array_add(rec->hits, hit);
@@ -375,7 +382,7 @@ static gboolean search_line(SEARCH_REC *rec, const char *line)
 
 		memset(&res, 0, sizeof(res));
 		if (!log_search_decode_summary(line, &hits, &res) || hits != (int)rec->hits->len) {
-			search_failed(rec);
+			search_failed(rec, SEARCH_WHY_DATA);
 			return FALSE;
 		}
 		search_print(rec, &res, hits);
@@ -384,7 +391,7 @@ static gboolean search_line(SEARCH_REC *rec, const char *line)
 		search_free(rec);
 		return FALSE;
 	}
-	search_failed(rec);
+	search_failed(rec, SEARCH_WHY_DATA);
 	return FALSE;
 }
 
@@ -398,8 +405,11 @@ static void search_input(SEARCH_REC *rec)
 	if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
 		return;
 	if (n <= 0) {
-		/* the child is gone without its summary */
-		search_failed(rec);
+		/* the child is gone without its summary: its alarm, or something else */
+		search_failed(rec, g_get_monotonic_time() - rec->started >=
+		                           (gint64)SEARCH_TIMEOUT * G_USEC_PER_SEC ?
+		                       SEARCH_WHY_TIME :
+		                       SEARCH_WHY_CHILD);
 		return;
 	}
 	g_string_append_len(rec->buf, buf, n);
@@ -408,7 +418,7 @@ static void search_input(SEARCH_REC *rec)
 		gsize len = nl - rec->buf->str;
 
 		if (len > SEARCH_LINE_CAP || memchr(rec->buf->str, '\0', len) != NULL) {
-			search_failed(rec);
+			search_failed(rec, SEARCH_WHY_DATA);
 			return;
 		}
 		*nl = '\0';
@@ -417,7 +427,7 @@ static void search_input(SEARCH_REC *rec)
 		g_string_erase(rec->buf, 0, len + 1);
 	}
 	if (rec->buf->len > SEARCH_LINE_CAP)
-		search_failed(rec);
+		search_failed(rec, SEARCH_WHY_DATA);
 }
 
 static void search_stop(void)
@@ -519,6 +529,7 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 
 	rec = g_new0(SEARCH_REC, 1);
 	rec->pid = pid;
+	rec->started = g_get_monotonic_time();
 	rec->fd = fds[0];
 	rec->chan = i_io_channel_new(fds[0]);
 	rec->win = active_win;
