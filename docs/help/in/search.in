@@ -8,10 +8,10 @@
     -all:       Searches the logs of every network and target.
     -network:   Searches the logs of every target of this network (its tag).
     -target:    Searches the log of this channel or nick instead of the
-                active window's (on the active network, or on the one
-                -network names).
+                active window's (on the active network, on the one
+                -network names, or with -all on every network).
     -max:       Shows at most this many hits, the newest; 50 by default,
-                at most 1000.
+                at most 1000 (a larger number is taken as 1000).
     -regexp:    The text is a regular expression.
     -case:      Matches case-sensitively.
     -stop:      Stops the search that is running.
@@ -36,8 +36,9 @@
     reads; the results are printed when it is done, in the window it was
     started in. One search runs at a time. Files are read newest first;
     a search reads at most search_max_size bytes in all (of a log that
-    does not fit, its last part) and at most 5000 files, and ends after
-    120 seconds. The summary line says when a limit stopped it. Lines
+    does not fit, its last part) and at most 5000 files. The summary line
+    says when one of these limits stopped it. A search still running
+    after 120 seconds is ended and says it failed, without hits. Lines
     longer than 400 characters are shortened.
 
     /SEARCH is not available in capability mode (/CAPSICUM ENTER).

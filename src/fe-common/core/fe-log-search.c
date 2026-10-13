@@ -41,8 +41,10 @@
 #include <signal.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#if !GLIB_CHECK_VERSION(2, 80, 0) && defined(__linux__)
+#	include <sys/syscall.h>
+#endif
 
 #define SEARCH_LEVEL (MSGLEVEL_CLIENTCRAP | MSGLEVEL_NO_ACT)
 #define SEARCH_DEFAULT_MAX 50
@@ -122,9 +124,36 @@ static void write_all(int fd, const char *data, gsize len)
 	}
 }
 
+static void child_log_noop(const char *domain, GLogLevelFlags level, const char *message,
+                           gpointer data)
+{
+}
+
+/* close every fd from LOWFD on */
+static void close_from(int lowfd)
+{
+#if GLIB_CHECK_VERSION(2, 80, 0)
+	g_closefrom(lowfd);
+#else
+	long n, max;
+
+#	if defined(__linux__) && defined(SYS_close_range)
+	if (syscall(SYS_close_range, (unsigned int)lowfd, ~0U, 0) == 0)
+		return;
+#	endif
+	max = sysconf(_SC_OPEN_MAX);
+	if (max < 0)
+		max = 1024;
+	for (n = lowfd; n < max; n++)
+		close((int)n);
+#endif
+}
+
 /* Leave everything of the parent alone: the default action for the signals it
    handles or ignores, no terminal, only the pipe (as fd 3) open. Closing the
-   copies of the IRC sockets does not touch the connections. */
+   copies of the IRC sockets does not touch the connections. The parent forked
+   with every signal blocked: the handlers are reset first, then the mask is
+   cleared, so a SIGTERM sent right after fork() ends the child. */
 static int child_detach(int fd)
 {
 	static const int sigs[] = { SIGHUP,  SIGINT,  SIGQUIT,  SIGTERM, SIGALRM,
@@ -139,6 +168,9 @@ static int child_detach(int fd)
 	sigemptyset(&none);
 	sigprocmask(SIG_SETMASK, &none, NULL);
 	setsid();
+	/* irssi's handler prints, runs signals and scripts and may write logs:
+	   none of that in here */
+	g_log_set_default_handler(child_log_noop, NULL);
 
 	if (fd != 3) {
 		if (dup2(fd, 3) != 3)
@@ -151,18 +183,7 @@ static int child_detach(int fd)
 		dup2(null, STDOUT_FILENO);
 		dup2(null, STDERR_FILENO);
 	}
-#if GLIB_CHECK_VERSION(2, 80, 0)
-	g_closefrom(4);
-#else
-	{
-		long n, max = sysconf(_SC_OPEN_MAX);
-
-		if (max < 0 || max > 65536)
-			max = 65536;
-		for (n = 4; n < max; n++)
-			close(n);
-	}
-#endif
+	close_from(4);
 	return fd;
 }
 
@@ -358,6 +379,8 @@ static gboolean search_line(SEARCH_REC *rec, const char *line)
 			return FALSE;
 		}
 		search_print(rec, &res, hits);
+		/* the child is done and exits by itself; pidwait reaps it */
+		rec->pid = 0;
 		search_free(rec);
 		return FALSE;
 	}
@@ -403,6 +426,23 @@ static void search_stop(void)
 		search_free(search);
 }
 
+/* A -network tag goes into the glob as it is: no glob characters, no path.
+   A -target is escaped as autolog escapes it ('/', '*', '?' -> '_'), only
+   "." and ".." are left to refuse. */
+static const char *bad_scope_name(GHashTable *optlist)
+{
+	const char *tag = g_hash_table_lookup(optlist, "network");
+	const char *target = g_hash_table_lookup(optlist, "target");
+
+	if (tag != NULL && (*tag == '\0' || strpbrk(tag, "/\\*?[") != NULL ||
+	                    strcmp(tag, ".") == 0 || strcmp(tag, "..") == 0))
+		return tag;
+	if (target != NULL &&
+	    (*target == '\0' || strcmp(target, ".") == 0 || strcmp(target, "..") == 0))
+		return target;
+	return NULL;
+}
+
 /* the scope of the search: the tag and the target for the glob (NULL: any) */
 static gboolean search_scope(GHashTable *optlist, const char **tag, const char **target)
 {
@@ -442,6 +482,7 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 {
 	SEARCH_REC *rec;
 	gint64 max_bytes = settings_get_size("search_max_size");
+	sigset_t all, old;
 	int fds[2], pid;
 
 	if (pipe(fds) == -1) {
@@ -453,7 +494,13 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 	fcntl(fds[0], F_SETFD, FD_CLOEXEC);
 	fcntl(fds[1], F_SETFD, FD_CLOEXEC);
 
+	/* the child starts with the parent's handlers (core's SIGTERM handler only
+	   sets a flag): every signal waits until it has reset them */
+	sigfillset(&all);
+	sigprocmask(SIG_BLOCK, &all, &old);
 	pid = fork();
+	if (pid != 0)
+		sigprocmask(SIG_SETMASK, &old, NULL);
 	if (pid == -1) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR, "SEARCH: fork() failed: %s",
 		          g_strerror(errno));
@@ -530,13 +577,20 @@ static void cmd_search(const char *data)
 
 		if (!g_ascii_string_to_signed(opt, 10, 1, G_MAXINT64, &n, NULL)) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-			          "SEARCH: -max needs a number from 1 to %d", SEARCH_MAX_HITS);
+			          "SEARCH: -max needs a positive number (more than %d is %d)",
+			          SEARCH_MAX_HITS, SEARCH_MAX_HITS);
 			cmd_params_free(free_arg);
 			return;
 		}
 		max_hits = (int)MIN(n, SEARCH_MAX_HITS);
 	}
 
+	if ((opt = bad_scope_name(optlist)) != NULL) {
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "SEARCH: not a network tag or target name: %s", opt);
+		cmd_params_free(free_arg);
+		return;
+	}
 	if (!search_scope(optlist, &tag, &target)) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "SEARCH: no channel or query here - use -target, -network or -all");
@@ -592,18 +646,9 @@ void fe_log_search_init(void)
 
 void fe_log_search_deinit(void)
 {
-	if (search != NULL) {
-		int pid = search->pid, i;
-
-		search_stop();
-		/* /UPGRADE execs a new erssi in this process: reap the child here
-		   rather than leave the new one a zombie it does not know about */
-		if (pid > 0) {
-			pidwait_remove(pid);
-			for (i = 0; i < 50 && waitpid(pid, NULL, WNOHANG) == 0; i++)
-				g_usleep(10 * 1000);
-		}
-	}
+	/* SIGTERM, as fe-exec does; the pid stays in pidwait, so /UPGRADE hands
+	   it to the new erssi with the session */
+	search_stop();
 
 	command_unbind("search", (SIGNAL_FUNC) cmd_search);
 
