@@ -108,6 +108,13 @@ void term_stop(void);
 void term_set_appkey_mode(int enable);
 void term_set_bracketed_paste_mode(int enable);
 
+/* Focus reporting: the terminal reports focus changes, the signal
+ * "terminal focus changed" passes them on. Until the first report the
+ * terminal counts as focused. */
+void term_set_focus_reporting(int enable);
+/* Write data to the terminal as it is, after everything drawn so far */
+void term_write_raw(const char *data);
+
 /* Draw a horizontal separator line at specified y position (for notcurses) */
 void term_draw_statusbar_separator(int y);
 

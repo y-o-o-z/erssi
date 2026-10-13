@@ -113,6 +113,7 @@ install_data(
     'squit',
     'stats',
     'statusbar',
+    'term_notify',
     'term_truecolor',
     'time',
     'toggle',

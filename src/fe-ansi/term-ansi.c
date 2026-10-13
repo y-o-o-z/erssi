@@ -20,6 +20,7 @@
 #include <irssi/src/fe-common/core/fe-windows.h>
 
 #include "term-ansi.h"
+#include "term-notify.h"
 
 #include <signal.h>
 #include <string.h>
@@ -73,6 +74,10 @@
 /* Bracketed paste */
 #define BRACKETED_PASTE_ON  CSI "?2004h"
 #define BRACKETED_PASTE_OFF CSI "?2004l"
+
+/* Focus reporting: the terminal sends ESC [ I and ESC [ O */
+#define FOCUS_REPORT_ON   CSI "?1004h"
+#define FOCUS_REPORT_OFF  CSI "?1004l"
 
 /* Application keypad mode */
 #define APPKEY_ON         CSI "?1h"
@@ -190,6 +195,12 @@ static gboolean sigcont_dispatch(GSource *s, GSourceFunc cb, gpointer data)
 
 static gboolean do_redraw(gpointer unused)
 {
+	/* a stop that did not go through term_stop(): whatever ran in the
+	 * meantime may have switched focus reporting off */
+	if (ansi_term != NULL && ansi_term->focus_reporting) {
+		fputs(FOCUS_REPORT_ON, ansi_term->out);
+		fflush(ansi_term->out);
+	}
 	irssi_redraw();
 	return TRUE;
 }
@@ -763,6 +774,8 @@ void term_deinit(void)
 
 		term_common_deinit();
 
+		term_set_focus_reporting(FALSE);
+
 		/* Disable mouse */
 		ansi_mouse_disable(ansi_term);
 
@@ -1322,6 +1335,8 @@ void term_stop(void)
 {
 	ANSI_TERM *term = ansi_term;
 
+	if (term->focus_reporting)
+		fputs(FOCUS_REPORT_OFF, term->out);
 	ansi_mouse_disable(term);
 	ansi_bracketed_paste(term, FALSE);
 	ansi_set_normal(term);
@@ -1337,8 +1352,45 @@ void term_stop(void)
 	ansi_alt_screen(term, TRUE);
 	ansi_mouse_enable(term);
 	ansi_bracketed_paste(term, TRUE);
+	if (term->focus_reporting) {
+		fputs(FOCUS_REPORT_ON, term->out);
+		/* resumed from this terminal: it has the focus */
+		if (!term->focused) {
+			term->focused = TRUE;
+			signal_emit("terminal focus changed", 1, GINT_TO_POINTER(TRUE));
+		}
+	}
 
 	irssi_redraw();
+}
+
+void term_set_focus_reporting(int enable)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term == NULL || !term->focus_reporting == !enable)
+		return;
+
+	term->focus_reporting = enable ? TRUE : FALSE;
+	/* the terminal reports changes only: until the first one it counts
+	 * as focused */
+	term->focused = TRUE;
+	fputs(enable ? FOCUS_REPORT_ON : FOCUS_REPORT_OFF, term->out);
+	fflush(term->out);
+}
+
+void term_write_raw(const char *data)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term == NULL || data == NULL)
+		return;
+
+	/* everything drawn so far goes out first: data is written between
+	 * complete sequences, and only ever as a whole */
+	fflush(term->out);
+	fputs(data, term->out);
+	fflush(term->out);
 }
 
 void term_set_appkey_mode(int enable)
@@ -1426,6 +1478,16 @@ void term_gets(GArray *buffer, int *line_count)
 
 	if (ret > 0) {
 		inbuf_pos += ret;
+		/* only while reporting is on: otherwise ESC [ I is a key (PgUp) */
+		if (ansi_term->focus_reporting) {
+			int focus = ansi_term->focused;
+
+			inbuf_pos = term_focus_filter(inbuf, inbuf_pos, &focus);
+			if (focus != ansi_term->focused) {
+				ansi_term->focused = focus;
+				signal_emit("terminal focus changed", 1, GINT_TO_POINTER(focus));
+			}
+		}
 		for (i = 0; i < inbuf_pos; ) {
 			unichar key;
 			char_len = input_func(inbuf + i, inbuf_pos - i, &key);

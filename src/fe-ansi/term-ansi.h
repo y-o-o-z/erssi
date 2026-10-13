@@ -63,6 +63,10 @@ typedef struct {
 	/* Refresh freeze counter */
 	int freeze;
 
+	/* Focus reporting (CSI ?1004h) is on; the last focus reported */
+	int focus_reporting;
+	int focused;
+
 	/* Capabilities */
 	TerminalCaps caps;
 } ANSI_TERM;
