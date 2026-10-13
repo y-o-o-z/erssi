@@ -134,6 +134,10 @@ int settings_reread(const char *fname);
 int settings_save(const char *fname, int autosave);
 int irssi_config_is_changed(const char *fname);
 
+/* The value of settings/<module>/<key> in the default config built into erssi
+   (irssi.conf), or NULL. g_free() it. */
+char *settings_get_builtin_str(const char *module, const char *key);
+
 void settings_init(void);
 void settings_deinit(void);
 

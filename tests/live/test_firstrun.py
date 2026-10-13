@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """The first-run setup: asked on a fresh home with a terminal, skipped with
-"n", EOF, --noconnect or no terminal, asked again with --setup; ^C and
-SIGTERM leave without saving; the default-nick hint on a later start.
-No test chooses a network (that would connect to the internet): the network
-and SASL config changes are covered by the unit test /firstrun/apply.
+"n", EOF, --noconnect, TERM=dumb or no terminal on stdin or stdout, asked
+again with --setup (which needs a terminal); ^C (also at the password
+prompt) and SIGTERM leave without saving; the default-nick hint on a later
+start. No test chooses a network of the default config (that would connect
+to the internet): the network and SASL config changes are covered by the
+unit test /firstrun/apply. Only t_ctrl_c_password chooses a network, a
+127.0.0.1 one, with --noconnect, and quits at the password prompt.
 Usage: test_firstrun.py <build dir> [<source dir>]"""
 import os
 import shutil
@@ -103,9 +106,33 @@ def main():
 
     def t_no_tty():
         e = fresh("dave")
-        out = e.run_detached(5)
+        _, out = e.run_detached(5)
         assert ASK not in out, out[-2000:]
         assert e.sanitizer_reports() == [], e.sanitizer_reports()
+
+    def t_stdout_pipe():
+        """stdin a terminal, stdout a pipe: not asked"""
+        e = fresh("dora")
+        _, out = e.run_detached(5, stdin_tty=True)
+        assert ASK not in out, out[-2000:]
+        assert e.sanitizer_reports() == [], e.sanitizer_reports()
+
+    def t_setup_no_tty():
+        """--setup without a terminal: one line on stderr, exit status 1"""
+        e = fresh("dina", args=("--setup",))
+        rc, out = e.run_detached(5)
+        assert rc == 1, (rc, out[-2000:])
+        assert out == b"erssi: --setup needs a terminal\n", out[-2000:]
+        assert not (e.home / "config").exists()
+
+    def t_term_dumb():
+        e = harness.Erssi(st["inst"], Path(tempfile.mkdtemp(prefix="dumb.", dir=work)), "dumb",
+                          env={"TERM": "dumb"})
+        with e:
+            e.start()
+            assert not e.wait_output(ASK, 5), "asked with TERM=dumb"
+            e.kill()
+            assert e.sanitizer_reports() == [], e.sanitizer_reports()
 
     def t_noconnect():
         with fresh("erin", args=("--noconnect",)) as e:
@@ -134,20 +161,28 @@ def main():
             for s in ("Set up now", "Nick [", "Saved to", "first-run setup"):
                 assert s not in log, f"{s!r} in the log"
 
+    def lflag(e):
+        """the local modes of erssi's terminal (the pty master shares them)"""
+        return termios.tcgetattr(e.master)[3]
+
+    def cooked(e):
+        f = lflag(e)
+        return bool(f & termios.ECHO and f & termios.ICANON and f & termios.ISIG)
+
+    def ended(e):
+        try:
+            e.proc.wait(5)
+        except Exception:
+            raise AssertionError("the setup did not end on the signal")
+
     def interrupted(name, send):
         with fresh(name) as e:
             e.start()
             answer(e, ASK, b"\r")
             assert e.wait_output(b"Network [", WAIT), e.text()[-2000:]
             send(e)
-            try:
-                e.proc.wait(5)
-            except Exception:
-                raise AssertionError("the setup did not end on the signal")
-            attrs = termios.tcgetattr(e.master)
-            lflag = attrs[3]
-            assert lflag & termios.ECHO and lflag & termios.ICANON and lflag & termios.ISIG, \
-                "terminal left in raw/no-echo mode"
+            ended(e)
+            assert cooked(e), "terminal left in raw/no-echo mode"
             assert not (e.home / "config").exists(), "an interrupted setup saved the config"
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
             return e.proc.returncode
@@ -159,6 +194,40 @@ def main():
     def t_sigterm():
         rc = interrupted("hank", lambda e: os.kill(e.proc.pid, signal.SIGTERM))
         assert rc == -signal.SIGTERM, rc
+
+    def t_ctrl_c_password():
+        """^C at the SASL password prompt (no echo, ISIG off) quits without
+        saving and gives the terminal back. The network is 127.0.0.1 with
+        verified TLS; --noconnect and the ^C keep erssi from connecting."""
+        port = harness.free_port()
+        cfg = (f'servers = ( {{ address = "127.0.0.1"; chatnet = "Local"; port = "{port}"; '
+               f'use_tls = "yes"; tls_verify = "yes"; }} );\n'
+               'chatnets = { Local = { type = "IRC"; }; };\n'
+               'settings = { core = { nick = "kim"; user_name = "kim"; }; };\n')
+        with fresh("kim", cfg, args=("--setup", "--noconnect")) as e:
+            e.start()
+            path = e.home / "config"
+            assert e.wait_output(ASK, WAIT), e.text()[-2000:]
+            # taken at the first question: the start may migrate the config before
+            before = (path.read_bytes(), path.stat().st_mtime_ns)
+            answer(e, ASK, b"\r")
+            answer(e, b"Network [", b"1\r")
+            answer(e, b"Nick [kim]", b"\r")
+            answer(e, b"SASL account on Local", b"alice\r")
+            assert e.wait_output(b"SASL password: ", WAIT), e.text()[-2000:]
+            # the check below can fail: here the terminal is raw and silent
+            end = time.time() + WAIT
+            while cooked(e) and time.time() < end:
+                time.sleep(0.05)
+            assert not lflag(e) & termios.ECHO, "no echo-off at the password prompt"
+            e.write_raw(b"hun\x03")
+            ended(e)
+            assert e.proc.returncode == -signal.SIGINT, e.proc.returncode
+            assert cooked(e), "terminal left in raw/no-echo mode"
+            assert (path.read_bytes(), path.stat().st_mtime_ns) == before, "config changed"
+            assert b"hun" not in e.output(), "the password was echoed"
+            assert b"Skipped" not in e.output() and b"Saved to" not in e.output()
+            assert e.sanitizer_reports() == [], e.sanitizer_reports()
 
     def t_hint():
         cfg = harness.config(1, "erssi_user")
@@ -177,8 +246,9 @@ def main():
             assert "Your nick is still" not in e.all_log().read_text(errors="replace")
 
     try:
-        harness.main([t_install, t_wizard_none, t_skip_n, t_eof, t_no_tty, t_noconnect,
-                      t_setup_forced, t_ctrl_c, t_sigterm, t_hint])
+        harness.main([t_install, t_wizard_none, t_skip_n, t_eof, t_no_tty, t_stdout_pipe,
+                      t_setup_no_tty, t_term_dumb, t_noconnect, t_setup_forced, t_ctrl_c,
+                      t_sigterm, t_ctrl_c_password, t_hint])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)

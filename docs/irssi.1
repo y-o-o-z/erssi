@@ -65,7 +65,9 @@ and
 .B \-\-nick
 is given. Each answer waits at most 5 minutes; "n", end of input or no
 answer skips the setup, and the configuration is saved as it is; Ctrl-C
-ends erssi without saving, so the next start asks again.
+ends erssi without saving, so the next start asks again. Without a terminal
+.B \-\-setup
+prints an error and exits with status 1.
 .TP
 .BI "\-v, \-\-version"
 display the version of Irssi

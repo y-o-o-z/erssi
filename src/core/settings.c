@@ -828,6 +828,25 @@ int settings_reread(const char *fname)
         return TRUE;
 }
 
+char *settings_get_builtin_str(const char *module, const char *key)
+{
+	CONFIG_REC *config;
+	char *section, *value;
+
+	g_return_val_if_fail(module != NULL, NULL);
+	g_return_val_if_fail(key != NULL, NULL);
+
+	config = config_open(NULL, -1);
+	if (config == NULL)
+		return NULL;
+	config_parse_data(config, default_config, "internal");
+	section = g_strconcat("settings/", module, NULL);
+	value = g_strdup(config_get_str(config, section, key, NULL));
+	g_free(section);
+	config_close(config);
+	return value;
+}
+
 int settings_save(const char *fname, int autosave)
 {
 	char *str;
