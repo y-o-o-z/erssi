@@ -887,6 +887,13 @@ PTY_CASE(test_secret_eof_start, "\004", NULL)
 PTY_CASE(test_secret_eof_mid, "ab\004", "ab")
 PTY_CASE(test_secret_ctrl_ignored, "a\027\033\001\011b\n", "ab")
 PTY_CASE(test_secret_overlong_rejected, OVERLONG, NULL)
+/* arrow keys and other escape sequences are dropped whole, not as "[D" */
+PTY_CASE(test_secret_escape_csi, "a\033[Db\033[1;5Cc\033[200~d\n", "abcd")
+PTY_CASE(test_secret_escape_ss3, "a\033OAb\033OHc\n", "abc")
+PTY_CASE(test_secret_escape_meta, "a\033xb\n", "ab")
+PTY_CASE(test_secret_escape_then_enter, "ab\033\n", "ab")
+PTY_CASE(test_secret_escape_then_erase, "abc\033[\177\n", "ab")
+PTY_CASE(test_secret_escape_utf8_after, "a\033[D\xc5\xbc\n", "a\xc5\xbc")
 
 static void test_secret_closed_pty(void)
 {
@@ -984,6 +991,12 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/secret_eof_mid", test_secret_eof_mid);
 	g_test_add_func("/firstrun/secret_ctrl_ignored", test_secret_ctrl_ignored);
 	g_test_add_func("/firstrun/secret_overlong_rejected", test_secret_overlong_rejected);
+	g_test_add_func("/firstrun/secret_escape_csi", test_secret_escape_csi);
+	g_test_add_func("/firstrun/secret_escape_ss3", test_secret_escape_ss3);
+	g_test_add_func("/firstrun/secret_escape_meta", test_secret_escape_meta);
+	g_test_add_func("/firstrun/secret_escape_then_enter", test_secret_escape_then_enter);
+	g_test_add_func("/firstrun/secret_escape_then_erase", test_secret_escape_then_erase);
+	g_test_add_func("/firstrun/secret_escape_utf8_after", test_secret_escape_utf8_after);
 	g_test_add_func("/firstrun/secret_closed_pty", test_secret_closed_pty);
 	g_test_add_func("/firstrun/read_fd_flood_deadline", test_read_fd_flood_deadline);
 	g_test_add_func("/firstrun/clear_idempotent", test_clear_idempotent);
