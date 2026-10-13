@@ -243,9 +243,11 @@ answers go to `~/.erssi/config` (mode 0600; a SASL password is stored there
 in plain text, as with `/network add -sasl_password`). `n`, Ctrl-D or five
 minutes without an answer skip the questions; Ctrl-C quits without saving.
 `erssi --setup` asks again, also with an existing config, and only adds to
-it (without a terminal it says so and exits). Nothing is asked without a terminal or with `--config`, `--connect`,
-`--noconnect` or `--nick`. While the nick is still `erssi_user`, every start
-reminds you after the banner.
+it (without a terminal it says so and exits). Nothing is asked without a
+terminal or with `--config`, `--connect`, `--noconnect` or `--nick`. While
+the nick is still `erssi_user`, every start reminds you after the banner.
+Ctrl-Z at the password prompt suspends erssi; after `fg` the prompt is shown
+again.
 
 ```
 /set theme shellter                       # the default
