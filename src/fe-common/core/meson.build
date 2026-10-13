@@ -20,6 +20,7 @@ fe_common_core_sources = [
     'fe-help.c',
     'fe-ignore-messages.c',
     'fe-ignore.c',
+    'fe-log-search.c',
     'fe-log.c',
     'fe-messages.c',
     'fe-modules.c',

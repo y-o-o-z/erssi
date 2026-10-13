@@ -82,6 +82,9 @@ void fe_ignore_messages_deinit(void);
 void fe_log_init(void);
 void fe_log_deinit(void);
 
+void fe_log_search_init(void);
+void fe_log_search_deinit(void);
+
 void fe_messages_init(void);
 void fe_messages_deinit(void);
 
@@ -191,6 +194,7 @@ void fe_common_core_init(void)
 	fe_help_init();
 	fe_ignore_init();
 	fe_log_init();
+	fe_log_search_init();
 	fe_modules_init();
 	fe_server_init();
 	fe_settings_init();
@@ -236,6 +240,7 @@ void fe_common_core_deinit(void)
         fe_expandos_deinit();
 	fe_help_deinit();
 	fe_ignore_deinit();
+	fe_log_search_deinit();
 	fe_log_deinit();
 	fe_modules_deinit();
 	fe_server_deinit();
