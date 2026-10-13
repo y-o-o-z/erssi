@@ -211,6 +211,13 @@ def main():
         time.sleep(2)
         out = alice.output_since(m)
         assert OSC777 not in out and OSC9 not in out, seqs(out)
+        # ESC [ O was a key sequence (meta2 waiting for its key): Enter ends
+        # it, and the typed line arrives whole. On again for t_sanitizers.
+        alice.write_raw(b"\r")
+        time.sleep(0.5)
+        m = alice.mark()
+        alice.type("/set term_notify auto")
+        assert wait_since(alice, m, FOCUS_ON), "focus reporting was not switched on again"
 
     def t_tmux_iterm():
         e = start("alicet", {"TMUX": "/tmp/x,1,0", "TERM_PROGRAM": "tmux", "LC_TERMINAL": "iTerm2"})
@@ -225,11 +232,15 @@ def main():
         e = start("aliceu", {"TERM": "xterm-256color"})
         time.sleep(5)
         assert FOCUS_ON not in e.output(), "focus reporting switched on for an unknown terminal"
-        # ESC [ I goes to the key handling as before, not as a focus report
+        # ESC [ I goes to the key handling as before: it is PgUp, not a
+        # focus report (t_wezterm has the opposite with reporting on)
+        bind_pgup(e)
+        off = log_size(e)
         e.write_raw(FOCUS_IN)
         time.sleep(0.5)
         e.type("/echo after pgup")
         assert e.wait_file(e.all_log(), "after pgup", WAIT), "/echo after ESC [ I not shown"
+        assert "pgup key pressed" in log_since(e, off), "ESC [ I is not PgUp:\n" + log_since(e, off)
         assert e.proc.poll() is None, "erssi is gone"
         focus(e, FOCUS_OUT)
         m = e.mark()
@@ -259,10 +270,20 @@ def main():
         assert FOCUS_ON in raw, "no focus reporting with the default config"
 
     def t_sanitizers():
+        # /quit switches focus reporting off: the shell must not get the
+        # reports afterwards
         reports = []
+        left_on = []
         for e in st["instances"]:
+            if e.proc is None or e.proc.poll() is not None:
+                reports += e.sanitizer_reports()
+                continue
             e.quit()
+            modes = [x for x in seqs(e.output()) if x in (FOCUS_ON, FOCUS_OFF)]
+            if modes and modes[-1] != FOCUS_OFF:
+                left_on.append(e.name)
             reports += e.sanitizer_reports()
+        assert left_on == [], "?1004h left on after /quit: " + ", ".join(left_on)
         assert reports == [], reports
 
     try:
