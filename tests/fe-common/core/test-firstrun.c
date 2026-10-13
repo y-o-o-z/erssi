@@ -4,7 +4,6 @@
  */
 #define _XOPEN_SOURCE 600
 #define _DEFAULT_SOURCE
-#include <stdlib.h>
 #include <irssi/src/common.h>
 #include <glib/gstdio.h>
 #include <irssi/src/lib-config/iconfig.h>
@@ -13,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -23,13 +23,16 @@ static const char SAMPLE[] =
     "  liberachat = { type = \"IRC\"; };\n"
     "  SILC = { type = \"SILC\"; };\n"
     "  Empty = { type = \"IRC\"; };\n"
+    "  zunverified = { type = \"IRC\"; };\n"
     "};\n"
     "servers = (\n"
     "  { address = \"irc.atw-inter.net\"; chatnet = \"IRCnet\"; port = \"6667\"; },\n"
     "  { address = \"irc.example.net\"; chatnet = \"IRCnet\"; port = \"6668\"; },\n"
     "  { address = \"irc.libera.chat\"; chatnet = \"liberachat\"; port = \"6697\";"
     " use_tls = \"yes\"; },\n"
-    "  { address = \"silc.example.org\"; chatnet = \"SILC\"; port = \"706\"; }\n"
+    "  { address = \"silc.example.org\"; chatnet = \"SILC\"; port = \"706\"; },\n"
+    "  { address = \"irc.example.org\"; chatnet = \"zunverified\"; port = \"9999\";"
+    " use_tls = \"yes\"; tls_verify = \"no\"; }\n"
     ");\n";
 
 static CONFIG_REC *sample_config(void)
@@ -107,7 +110,7 @@ static void test_networks(void)
 	GPtrArray *nets = firstrun_networks(config);
 	FIRSTRUN_NETWORK *n;
 
-	g_assert_cmpuint(nets->len, ==, 2);
+	g_assert_cmpuint(nets->len, ==, 3);
 	n = g_ptr_array_index(nets, 0);
 	g_assert_cmpstr(n->chatnet, ==, "IRCnet");
 	g_assert_cmpstr(n->address, ==, "irc.atw-inter.net");
@@ -118,6 +121,11 @@ static void test_networks(void)
 	g_assert_cmpstr(n->address, ==, "irc.libera.chat");
 	g_assert_cmpint(n->port, ==, 6697);
 	g_assert_true(n->tls);
+	g_assert_true(n->tls_verify);
+	n = g_ptr_array_index(nets, 2);
+	g_assert_cmpstr(n->chatnet, ==, "zunverified");
+	g_assert_true(n->tls);
+	g_assert_false(n->tls_verify);
 	g_ptr_array_free(nets, TRUE);
 	config_close(config);
 }
@@ -165,6 +173,50 @@ static void test_ask_defaults_plaintext(void)
 	g_assert_null(a.sasl_user);
 	g_assert_null(a.sasl_pass);
 	g_assert_null(strstr(out, "SASL account"));
+	g_free(out);
+	firstrun_answers_clear(&a);
+}
+
+static void test_ask_unverified_tls_no_sasl(void)
+{
+	const char *const lines[] = { "", "3", "nick1", "", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_cmpstr(a.chatnet, ==, "zunverified");
+	g_assert_null(a.sasl_user);
+	g_assert_null(strstr(out, "SASL account"));
+	g_free(out);
+	firstrun_answers_clear(&a);
+}
+
+static void test_ask_stored_password_wiped_on_eof(void)
+{
+	const char *const lines[] = { "", "2", "wizuser", "acct", "s3cret", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_SKIPPED);
+	g_assert_null(a.sasl_pass);
+	g_assert_null(a.sasl_user);
+	g_assert_null(a.nick);
+	g_free(out);
+}
+
+static void test_ask_account_control_bytes(void)
+{
+	const char *const lines[] = { "", "2", "wizuser", "ac\x01" "ct", "acct", "pw", "1", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_cmpstr(a.sasl_user, ==, "acct");
+	g_assert_cmpstr(a.sasl_pass, ==, "pw");
+	g_assert_nonnull(strstr(out, "not a valid account"));
 	g_free(out);
 	firstrun_answers_clear(&a);
 }
@@ -292,7 +344,7 @@ static void test_apply(void)
 {
 	CONFIG_REC *config = sample_config();
 	FIRSTRUN_ANSWERS a = { g_strdup("liberachat"), g_strdup("n"), g_strdup("acct"),
-		                   g_strdup("s3cret"), NULL };
+	                       g_strdup("s3cret"), NULL };
 	GSList *tmp;
 	CONFIG_NODE *servers;
 	int seen = 0;
@@ -374,6 +426,52 @@ static void test_apply_none(void)
 	g_assert_cmpstr(before, ==, after);
 	g_free(before);
 	g_free(after);
+	firstrun_answers_clear(&a);
+	config_close(config);
+}
+
+static void test_apply_unknown_chatnet(void)
+{
+	CONFIG_REC *config = sample_config();
+	FIRSTRUN_ANSWERS a = { g_strdup("Nope"), g_strdup("n"), g_strdup("acct"),
+	                       g_strdup("pw"), NULL };
+	char *before = write_config(config);
+	char *after;
+
+	firstrun_apply_config(config, &a);
+	after = write_config(config);
+	g_assert_cmpstr(before, ==, after);
+	g_free(before);
+	g_free(after);
+	firstrun_answers_clear(&a);
+	config_close(config);
+}
+
+static void test_apply_only_expected_keys(void)
+{
+	CONFIG_REC *config = sample_config();
+	FIRSTRUN_ANSWERS a = { g_strdup("liberachat"), g_strdup("n"), g_strdup("acct"),
+	                       g_strdup("pw"), NULL };
+	CONFIG_NODE *net, *servers;
+	GSList *l;
+
+	firstrun_apply_config(config, &a);
+	net = config_node_traverse(config, "chatnets/liberachat", FALSE);
+	g_assert_nonnull(net);
+	/* type + the three SASL keys, nothing else */
+	g_assert_cmpuint(g_slist_length(net->value), ==, 4);
+	g_assert_cmpstr(config_node_get_str(net, "type", NULL), ==, "IRC");
+	net = config_node_traverse(config, "chatnets/IRCnet", FALSE);
+	g_assert_cmpuint(g_slist_length(net->value), ==, 1);
+	servers = config_node_traverse(config, "servers", FALSE);
+	for (l = servers->value; l != NULL; l = l->next) {
+		CONFIG_NODE *node = l->data;
+		const char *addr = config_node_get_str(node, "address", "");
+
+		/* the libera node gains exactly autoconnect (4 keys before) */
+		if (strcmp(addr, "irc.libera.chat") == 0)
+			g_assert_cmpuint(g_slist_length(node->value), ==, 5);
+	}
 	firstrun_answers_clear(&a);
 	config_close(config);
 }
@@ -497,10 +595,52 @@ static void test_read_fd_overlong(void)
 	close(p[1]);
 }
 
+static void test_read_fd_zero_timeout_polls(void)
+{
+	int p[2];
+	char *s;
+
+	g_assert_cmpint(pipe(p), ==, 0);
+	g_assert_null(firstrun_read_fd(p[0], 0, FALSE));
+	g_assert_cmpint(write(p[1], "x\n", 2), ==, 2);
+	s = firstrun_read_fd(p[0], 0, FALSE);
+	g_assert_cmpstr(s, ==, "x");
+	g_free(s);
+	close(p[0]);
+	close(p[1]);
+}
+
+static void noop_handler(int sig)
+{
+	(void) sig;
+}
+
+/* a handled signal (SIGTERM/SIGHUP in core) aborts the read instead of being swallowed */
+static void test_read_fd_eintr_aborts(void)
+{
+	struct sigaction sa, old;
+	int p[2];
+	gint64 t0;
+
+	g_assert_cmpint(pipe(p), ==, 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = noop_handler; /* no SA_RESTART */
+	sigemptyset(&sa.sa_mask);
+	g_assert_cmpint(sigaction(SIGALRM, &sa, &old), ==, 0);
+	t0 = g_get_monotonic_time();
+	alarm(1);
+	g_assert_null(firstrun_read_fd(p[0], 10000, FALSE));
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 5000000);
+	alarm(0);
+	sigaction(SIGALRM, &old, NULL);
+	close(p[0]);
+	close(p[1]);
+}
+
 static void test_clear_idempotent(void)
 {
 	FIRSTRUN_ANSWERS a = { g_strdup("c"), g_strdup("n"), g_strdup("u"), g_strdup("p"),
-		                   g_strdup("t") };
+	                       g_strdup("t") };
 
 	firstrun_answers_clear(&a);
 	g_assert_null(a.chatnet);
@@ -596,6 +736,112 @@ static void test_read_fd_secret_pty(void)
 	close(master);
 }
 
+static void pty_late_write(int master, const char *text, GThread **th, LATE_WRITE *w)
+{
+	w->fd = master;
+	w->text = text;
+	*th = g_thread_new("late-writer", late_writer, w);
+}
+
+static void assert_cooked(int slave)
+{
+	struct termios t;
+
+	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
+	g_assert_true(t.c_lflag & ECHO);
+	g_assert_true(t.c_lflag & ISIG);
+	g_assert_true(t.c_lflag & ICANON);
+}
+
+static void test_read_fd_secret_interrupt(void)
+{
+	const char *const inputs[] = { "ab\003", "ab\032", "ab\034" };
+	int master, slave, i;
+	struct termios t;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
+	t.c_lflag |= ECHO | ISIG | ICANON;
+	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
+
+	for (i = 0; i < 3; i++) {
+		LATE_WRITE w;
+		GThread *th;
+		gint64 t0 = g_get_monotonic_time();
+
+		pty_late_write(master, inputs[i], &th, &w);
+		g_assert_null(firstrun_read_fd(slave, 5000, TRUE));
+		g_thread_join(th);
+		/* aborted at the control byte, not by the timeout */
+		g_assert_cmpint(g_get_monotonic_time() - t0, <, 4000000);
+		assert_cooked(slave);
+	}
+	close(slave);
+	close(master);
+}
+
+static void test_read_fd_secret_erase(void)
+{
+	LATE_WRITE w;
+	GThread *th;
+	int master, slave;
+	char *s;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	pty_late_write(master, "ab\177c\n", &th, &w);
+	s = firstrun_read_fd(slave, 3000, TRUE);
+	g_thread_join(th);
+	g_assert_cmpstr(s, ==, "ac");
+	g_free(s);
+	assert_cooked(slave);
+	close(slave);
+	close(master);
+}
+
+/* a half-typed password is not left in the input queue after a timeout */
+static void test_read_fd_secret_flush(void)
+{
+	struct termios t;
+	int master, slave, fl;
+	char c;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	g_assert_cmpint(write(master, "zz", 2), ==, 2);
+	g_assert_null(firstrun_read_fd(slave, 50, TRUE));
+	/* typed after the flush on entry: make it arrive during the read */
+	{
+		LATE_WRITE w;
+		GThread *th;
+
+		pty_late_write(master, "yy", &th, &w);
+		g_assert_null(firstrun_read_fd(slave, 600, TRUE));
+		g_thread_join(th);
+	}
+	assert_cooked(slave);
+	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
+	t.c_lflag &= ~(tcflag_t) ICANON;
+	t.c_cc[VMIN] = 0;
+	t.c_cc[VTIME] = 0;
+	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
+	fl = fcntl(slave, F_GETFL);
+	fcntl(slave, F_SETFL, fl | O_NONBLOCK);
+	g_assert_cmpint(read(slave, &c, 1), <=, 0);
+	close(slave);
+	close(master);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -605,6 +851,17 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/ask_full", test_ask_full);
 	g_test_add_func("/firstrun/ask_defaults_plaintext", test_ask_defaults_plaintext);
 	g_test_add_func("/firstrun/ask_none", test_ask_none);
+	g_test_add_func("/firstrun/ask_unverified_tls_no_sasl", test_ask_unverified_tls_no_sasl);
+	g_test_add_func("/firstrun/ask_stored_password_wiped_on_eof",
+	                test_ask_stored_password_wiped_on_eof);
+	g_test_add_func("/firstrun/ask_account_control_bytes", test_ask_account_control_bytes);
+	g_test_add_func("/firstrun/apply_unknown_chatnet", test_apply_unknown_chatnet);
+	g_test_add_func("/firstrun/apply_only_expected_keys", test_apply_only_expected_keys);
+	g_test_add_func("/firstrun/read_fd_zero_timeout_polls", test_read_fd_zero_timeout_polls);
+	g_test_add_func("/firstrun/read_fd_eintr_aborts", test_read_fd_eintr_aborts);
+	g_test_add_func("/firstrun/read_fd_secret_interrupt", test_read_fd_secret_interrupt);
+	g_test_add_func("/firstrun/read_fd_secret_erase", test_read_fd_secret_erase);
+	g_test_add_func("/firstrun/read_fd_secret_flush", test_read_fd_secret_flush);
 	g_test_add_func("/firstrun/ask_no", test_ask_no);
 	g_test_add_func("/firstrun/ask_eof_skips", test_ask_eof_skips);
 	g_test_add_func("/firstrun/ask_eof_at_password_wipes", test_ask_eof_at_password_wipes);

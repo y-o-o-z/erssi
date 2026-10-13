@@ -113,6 +113,10 @@ GPtrArray *firstrun_networks(CONFIG_REC *config)
 		n->port = config_node_get_int(server, "port", 6667);
 		n->tls = config_node_get_bool(server, "use_tls", FALSE) ||
 		         config_node_get_bool(server, "use_ssl", FALSE);
+		/* the precedence of servers-setup.c */
+		n->tls_verify = config_node_find(server, "tls_verify") != NULL ?
+		                    config_node_get_bool(server, "tls_verify", TRUE) :
+		                    config_node_get_bool(server, "ssl_verify", TRUE);
 		g_ptr_array_add(list, n);
 	}
 	g_ptr_array_sort(list, network_cmp);
@@ -177,6 +181,14 @@ static gboolean parse_choice(const char *text, int max, int *value)
 	return TRUE;
 }
 
+static gboolean account_valid(const char *s)
+{
+	for (; *s != '\0'; s++)
+		if ((unsigned char) *s < 0x20 || *s == 0x7f)
+			return FALSE;
+	return TRUE;
+}
+
 #define PROMPT(out, ...)                                                                           \
 	do {                                                                                       \
 		fprintf((out), __VA_ARGS__);                                                       \
@@ -218,7 +230,7 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 			if (g_ascii_strcasecmp(n->chatnet, "IRCnet") == 0 && def_net == 1)
 				def_net = i + 1;
 			PROMPT(out, "  %u) %-12s %s:%d%s\n", i + 1, n->chatnet, n->address, n->port,
-			       n->tls ? " TLS" : "");
+			       n->tls ? (n->tls_verify ? " TLS" : " TLS (unverified)") : "");
 		}
 		PROMPT(out, "  0) none - connect later with /CONNECT\n");
 		choice = def_net;
@@ -269,17 +281,27 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 		PROMPT(out, "  not a valid nick (letters, digits, - _ [ ] \\ ` ^ { | }, up to 30)\n");
 	}
 
-	/* SASL: only over TLS, so the password never travels in clear text */
-	if (chosen != NULL && chosen->tls) {
-		PROMPT(out, "SASL account on %s (empty = none): ", chosen->chatnet);
-		line = read(ctx, FALSE);
-		if (line == NULL)
-			goto skipped;
-		trim(line);
-		if (*line == '\0') {
-			g_free(line);
-		} else {
+	/* SASL: only over verified TLS, so the password never travels where a MITM can read it */
+	if (chosen != NULL && chosen->tls && chosen->tls_verify) {
+		for (tries = 0; tries < FIRSTRUN_MAX_TRIES; tries++) {
+			PROMPT(out, "SASL account on %s (empty = none): ", chosen->chatnet);
+			line = read(ctx, FALSE);
+			if (line == NULL)
+				goto skipped;
+			trim(line);
+			if (*line == '\0') {
+				g_free(line);
+				break;
+			}
+			if (!account_valid(line)) {
+				g_free(line);
+				PROMPT(out, "  not a valid account (no control characters)\n");
+				continue;
+			}
 			answers->sasl_user = line;
+			break;
+		}
+		if (answers->sasl_user != NULL) {
 			PROMPT(out, "SASL password: ");
 			line = read(ctx, TRUE);
 			if (line == NULL)
@@ -358,47 +380,69 @@ void firstrun_apply_config(CONFIG_REC *config, const FIRSTRUN_ANSWERS *answers)
 	config_node_set_str(config, net, "sasl_password", answers->sasl_pass);
 }
 
+/* sets up a no-echo, no-signal, byte-at-a-time terminal; FALSE = could not, fail closed */
+static gboolean secret_tty_begin(int fd, struct termios *saved)
+{
+	struct termios quiet, check;
+
+	if (tcgetattr(fd, saved) != 0)
+		return FALSE;
+	quiet = *saved;
+	quiet.c_lflag &= ~(tcflag_t) (ECHO | ECHONL | ISIG | ICANON);
+	quiet.c_cc[VMIN] = 1;
+	quiet.c_cc[VTIME] = 0;
+	/* TCSAFLUSH also drops anything typed ahead of the prompt */
+	if (tcsetattr(fd, TCSAFLUSH, &quiet) != 0)
+		return FALSE;
+	/* tcsetattr reports success if only part of the change was applied */
+	if (tcgetattr(fd, &check) != 0 || (check.c_lflag & (ECHO | ISIG | ICANON)) != 0) {
+		tcsetattr(fd, TCSAFLUSH, saved);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static gboolean is_cc(const struct termios *t, int idx, unsigned char c)
+{
+	return t->c_cc[idx] != _POSIX_VDISABLE && t->c_cc[idx] == c;
+}
+
 char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 {
 	char buf[FIRSTRUN_LINE_MAX + 1];
 	size_t len = 0;
 	char *result = NULL;
-	struct termios saved, quiet;
-	gboolean restore = FALSE;
+	struct termios saved;
+	gboolean raw = FALSE, overflow = FALSE;
+	unsigned char c = 0;
 	gint64 deadline = timeout_ms >= 0 ? g_get_monotonic_time() + (gint64) timeout_ms * 1000 : 0;
 
-	if (secret && isatty(fd) && tcgetattr(fd, &saved) == 0) {
-		quiet = saved;
-		quiet.c_lflag &= ~(tcflag_t) ECHO;
-		restore = tcsetattr(fd, TCSANOW, &quiet) == 0;
+	if (secret && isatty(fd)) {
+		if (!secret_tty_begin(fd, &saved))
+			return NULL;
+		raw = TRUE;
 	}
 
 	for (;;) {
 		struct pollfd pfd = { fd, POLLIN, 0 };
 		int wait = -1, r;
-		unsigned char c;
 		ssize_t n;
 		gboolean eof = FALSE;
 
 		if (timeout_ms >= 0) {
 			gint64 left = deadline - g_get_monotonic_time();
 
-			if (left <= 0)
-				break; /* timeout */
-			wait = (int) ((left + 999) / 1000);
+			wait = left <= 0 ? 0 : (int) ((left + 999) / 1000);
 		}
 		r = poll(&pfd, 1, wait);
-		if (r < 0) {
-			if (errno == EINTR)
-				continue;
-			break;
-		}
+		if (r < 0)
+			break; /* EINTR aborts, see the header */
 		if (r == 0)
 			break; /* timeout */
 
 		n = read(fd, &c, 1);
 		if (n < 0) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (errno == EAGAIN)
 				continue;
 			if (errno != EIO) /* EIO: the other end of a pty went away */
 				break;
@@ -411,22 +455,44 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 				result = g_strndup(buf, len);
 			break;
 		}
+		if (raw) {
+			if (is_cc(&saved, VINTR, c) || is_cc(&saved, VQUIT, c) ||
+			    is_cc(&saved, VSUSP, c))
+				break; /* abort */
+			if (is_cc(&saved, VEOF, c)) {
+				if (len > 0)
+					result = g_strndup(buf, len);
+				break;
+			}
+			if (is_cc(&saved, VERASE, c) || c == 0x7f || c == '\b') {
+				if (len > 0 && !overflow)
+					len--;
+				continue;
+			}
+			if (is_cc(&saved, VKILL, c)) {
+				if (!overflow)
+					len = 0;
+				continue;
+			}
+		}
 		if (c == '\n') {
 			result = g_strndup(buf, len);
 			break;
 		}
 		if (len < FIRSTRUN_LINE_MAX)
 			buf[len++] = c;
-		/* else: an overlong line, the rest is discarded up to the newline */
+		else
+			overflow = TRUE; /* the rest of an overlong line is discarded */
 	}
 
-	if (restore) {
-		tcsetattr(fd, TCSANOW, &saved);
+	if (raw) {
+		tcsetattr(fd, TCSAFLUSH, &saved);
 		if (write(fd, "\n", 1) < 0 && write(STDOUT_FILENO, "\n", 1) < 0) {
 			/* nothing more to try */
 		}
 	}
 	secure_zero(buf, sizeof(buf));
+	secure_zero(&c, sizeof(c));
 
 	if (result != NULL) {
 		size_t l = strlen(result);

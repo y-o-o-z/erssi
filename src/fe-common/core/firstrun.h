@@ -10,6 +10,7 @@ typedef struct {
 	char *chatnet, *address;
 	int port;
 	gboolean tls;
+	gboolean tls_verify; /* same rule as core: tls_verify, else ssl_verify, default yes */
 } FIRSTRUN_NETWORK;
 
 /* What the user answered. chatnet NULL = no network (connect later). sasl_user and
@@ -41,8 +42,9 @@ GPtrArray *firstrun_networks(CONFIG_REC *config);
  * list (NULL or empty = no theme question). Invalid input is asked again, up to 3 times
  * per question, then the default is used. "n" at "Set up now?" or NULL from READ at any
  * point gives FIRSTRUN_SKIPPED with ANSWERS wiped. The SASL questions are only asked
- * when the chosen network's server has TLS (never a password over plaintext); an empty
- * account, or an empty password, means no SASL. ANSWERS is initialised here. */
+ * when the chosen network's server has TLS with certificate verification (never a
+ * password over plaintext or unverified TLS); an empty account, an empty password or
+ * a control byte in the account (asked again) means no SASL. ANSWERS is initialised here. */
 FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtrArray *networks,
                              char **themes, const char *default_nick,
                              const char *default_theme, FIRSTRUN_ANSWERS *answers);
@@ -55,13 +57,20 @@ void firstrun_apply_config(CONFIG_REC *config, const FIRSTRUN_ANSWERS *answers);
 /* 1-30 bytes; first char [A-Za-z[]\`_^{|}], the rest also [0-9-]. */
 gboolean firstrun_nick_valid(const char *nick);
 
-/* Reads one line from FD, waiting at most TIMEOUT_MS in total (negative = no limit).
- * Reads byte by byte, so nothing past the line is consumed. At most 511 bytes are
- * returned; the rest of a longer line is discarded. Trailing \r\n is stripped.
+/* Reads one line from FD, waiting at most TIMEOUT_MS in total (negative = no limit,
+ * 0 = poll once). Reads byte by byte, so nothing past the line is consumed. At most 511
+ * bytes are returned; the rest of a longer line is discarded. Trailing \r\n is stripped.
  * Returns NULL on timeout and on EOF with nothing read. Rule for a partial line (no
  * newline yet): EOF returns the text read so far, timeout returns NULL.
- * If SECRET and FD is a terminal, ECHO is off during the read and restored on every
- * exit path (a newline is printed afterwards). Internal buffers are wiped. */
+ * A signal that interrupts the wait (EINTR; core handles SIGTERM/SIGHUP this way) aborts
+ * the read: NULL, so the caller treats it as "skipped" and then honours core's flag.
+ * If SECRET and FD is a terminal, echo, ISIG and ICANON are off during the read (like
+ * getpass, with erase/kill/EOF handled here) and the terminal is restored with
+ * TCSAFLUSH on every exit path, so no half-typed password stays queued; a newline is
+ * printed afterwards. The interrupt, quit and suspend characters abort the read (NULL).
+ * If the terminal cannot be switched, a secret is not read at all (NULL).
+ * Internal buffers are wiped. Only erssi's own copies are wiped: lib-config and the
+ * saved config hold the password in plaintext by design. */
 char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret);
 
 /* Frees everything and zeroes the struct; the password is wiped before it is freed. */
