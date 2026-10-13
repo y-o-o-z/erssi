@@ -18,6 +18,17 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    prints the count line, not a table with your own nick
 	  - /set -default and /reset give erssi's built-in value
 
+	+ First start
+	  - a new home on a terminal asks for a network (or none), the nick, a
+	    SASL account (only for a network with verified TLS; the password is
+	    not echoed) and the theme before the screen opens; the config is
+	    saved with mode 0600. "n", EOF or 5 minutes without an answer skip
+	    it, ^C quits without saving. Not asked without a terminal, with
+	    TERM=dumb or with --config, --connect, --noconnect or --nick
+	  - erssi --setup asks again on an existing config; it only adds
+	    (autoconnect and SASL keys saved earlier stay)
+	  - a start whose nick is still erssi_user says how to change it
+
 	+ Mentions
 	  - a built-in Mentions window (/MENTIONS, /HELP MENTIONS) replaces
 	    mentions.pl: private messages and /ME actions, NOTICEs from people,

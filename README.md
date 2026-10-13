@@ -235,6 +235,18 @@ sanitizers.
 
 ## Configuration
 
+The first start in a new home, on a terminal, asks a few questions before
+the screen opens: a network (or none; the chosen one connects at every
+start), your nick, a SASL account when that network has TLS with a verified
+certificate, and the theme. Enter keeps the default shown in brackets. The
+answers go to `~/.erssi/config` (mode 0600; a SASL password is stored there
+in plain text, as with `/network add -sasl_password`). `n`, Ctrl-D or five
+minutes without an answer skip the questions; Ctrl-C quits without saving.
+`erssi --setup` asks again, also with an existing config, and only adds to
+it. Nothing is asked without a terminal or with `--config`, `--connect`,
+`--noconnect` or `--nick`. While the nick is still `erssi_user`, every start
+reminds you after the banner.
+
 ```
 /set theme shellter                       # the default
 /set nick_mode_color_voice %Z79C0FF%_     # rank colours: _owner, _op, _halfop, _voice, _normal
