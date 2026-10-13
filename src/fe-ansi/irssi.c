@@ -431,7 +431,8 @@ static void copy_default_files(void)
 
 /* SIGINT, SIGQUIT, SIGTERM and SIGHUP during the setup end erssi without
  * saving anything. The handler only records the signal: the read that is
- * waiting returns (EINTR) and restores the terminal first. */
+ * waiting returns (EINTR), or sees the flag (firstrun_set_abort_flag) before
+ * it starts, between bytes and after a resume, and restores the terminal. */
 static const int firstrun_signals[] = { SIGINT, SIGQUIT, SIGTERM, SIGHUP };
 static volatile sig_atomic_t firstrun_signal;
 static gboolean firstrun_last_secret; /* a secret read ends with its own newline */
@@ -443,8 +444,6 @@ static void sig_firstrun(int signo)
 
 static char *firstrun_read_stdin(void *ctx, gboolean secret)
 {
-	if (firstrun_signal != 0)
-		return NULL;
 	firstrun_last_secret = secret;
 	return firstrun_read_fd(STDIN_FILENO, FIRSTRUN_ANSWER_TIMEOUT_MS, secret);
 }
@@ -522,8 +521,10 @@ static void firstrun_run_tty(void)
 	}
 
 	firstrun_ran = TRUE;
+	firstrun_set_abort_flag(&firstrun_signal);
 	result = firstrun_ask(stdout, firstrun_read_stdin, NULL, networks, themes,
 	                      settings_get_str("nick"), current_theme, &a);
+	firstrun_set_abort_flag(NULL);
 
 	for (i = 0; i < G_N_ELEMENTS(firstrun_signals); i++)
 		sigaction(firstrun_signals[i], &old[i], NULL);

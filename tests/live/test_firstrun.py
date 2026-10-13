@@ -220,12 +220,22 @@ def main():
             while cooked(e) and time.time() < end:
                 time.sleep(0.05)
             assert not lflag(e) & termios.ECHO, "no echo-off at the password prompt"
+            # ^Z: erssi's process group is orphaned here (its own session), so the
+            # stop is discarded and the read starts again at once, with the prompt
+            e.write_raw(b"x\x1a")
+            end = time.time() + WAIT
+            while e.output().count(b"SASL password: ") < 2 and time.time() < end:
+                time.sleep(0.05)
+            assert e.output().count(b"SASL password: ") == 2, e.text()[-2000:]
+            while cooked(e) and time.time() < end:
+                time.sleep(0.05)
             e.write_raw(b"hun\x03")
             ended(e)
             assert e.proc.returncode == -signal.SIGINT, e.proc.returncode
             assert cooked(e), "terminal left in raw/no-echo mode"
             assert (path.read_bytes(), path.stat().st_mtime_ns) == before, "config changed"
-            assert b"hun" not in e.output(), "the password was echoed"
+            typed = e.output().split(b"SASL password: ", 1)[1]
+            assert b"hun" not in typed and b"x" not in typed, "the password was echoed"
             assert b"Skipped" not in e.output() and b"Saved to" not in e.output()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
 
