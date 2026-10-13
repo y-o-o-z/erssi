@@ -297,8 +297,10 @@ gboolean gui_mouse_try_parse_key(gunichar key)
 		
 		/* Check for SGR mouse format: ESC[<btn;x;yM or ESC[<btn;x;ym */
 		if (*s != '<') {
-			/* Not SGR format - might be other escape sequence */
-			if (key == 'M' || key == 'm' || key == '~' || (key >= 'A' && key <= 'Z')) {
+			/* Not SGR format - another CSI sequence. It ends at any
+			 * final byte 0x40-0x7e (ECMA-48), except a '[' right
+			 * after ESC [ (the Linux console's ESC [ [ A F-keys) */
+			if (key >= 0x40 && key <= 0x7e && !(key == '[' && mouse_len == 1)) {
 				/* Complete escape sequence - re-emit all of it, the
 				 * final byte included */
 				int len = mouse_len;
