@@ -344,6 +344,11 @@
     cannot be kept per network: nothing is encrypted for it, and a
     message to it is not sent while an old entry may have encryption on.
 
+    Decrypted private messages and hilights are plain text again in the
+    client: they go to the Mentions window and the mentions log, and with
+    term_notify_text ON into terminal notifications. Use /SET
+    term_notify_text OFF (and /SET mentions_log OFF) if that is not wanted.
+
     EXPORT and IMPORT do not expand '~' - give a full path.
 
 %9Examples:%9

@@ -444,9 +444,8 @@ static void sig_server_disconnected(SERVER_REC *server)
    is printed while a channel message is being shown, for the same channel
    (and the same nick, when the script gives one), is taken for that
    message and credited to its sender; this is rare and not worth more code.
-   Lines printed while
-   a hilight is recorded (the Mentions window, a "mention" handler) are
-   not recorded again. */
+   Lines printed while a hilight is recorded (the Mentions window, a
+   "mention" handler) are not recorded again. */
 static void sig_print_text(TEXT_DEST_REC *dest, const char *text, const char *stripped)
 {
 	STASH_REC *rec;
