@@ -166,3 +166,23 @@ test_test_firstrun = executable('test-firstrun',
 test('test-firstrun test', test_test_firstrun,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_log_search = executable('test-log-search',
+  files(
+    'test-log-search.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-log-search test', test_test_log_search,
+  args : ['--tap'],
+  protocol : 'tap')
