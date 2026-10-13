@@ -492,6 +492,7 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 {
 	SEARCH_REC *rec;
 	gint64 max_bytes = settings_get_size("search_max_size");
+	gint64 started;
 	sigset_t all, old;
 	int fds[2], pid;
 
@@ -508,6 +509,7 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 	   sets a flag): every signal waits until it has reset them */
 	sigfillset(&all);
 	sigprocmask(SIG_BLOCK, &all, &old);
+	started = g_get_monotonic_time(); /* before the child's alarm starts */
 	pid = fork();
 	if (pid != 0)
 		sigprocmask(SIG_SETMASK, &old, NULL);
@@ -529,7 +531,7 @@ static void search_start(const char *glob, Regex *re, const char *text, int max_
 
 	rec = g_new0(SEARCH_REC, 1);
 	rec->pid = pid;
-	rec->started = g_get_monotonic_time();
+	rec->started = started;
 	rec->fd = fds[0];
 	rec->chan = i_io_channel_new(fds[0]);
 	rec->win = active_win;
