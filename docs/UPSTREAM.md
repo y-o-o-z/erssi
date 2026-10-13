@@ -66,6 +66,21 @@ installed). `ca68b1df` touches `src/fe-common/core/fe-channels.h` and
 the setting. To see one feature, `git show 6c8c3adb -- <file>` (section 6),
 for example `git show 6c8c3adb -- src/fe-common/core/themes.c`.
 
+### Ready to take, not yet in a pull request: features of 2026.10.0
+
+These are new features with their own tests. None changes a default of
+erssi main (each is off, or only runs when the user asks). Each row can be
+taken as it is; the commits are on `dev/2026.10`.
+
+| Commits | Change | Notes |
+|---|---|---|
+| `b7f7802b f55ce730 ee148fda` | `/HELP $name` shows the help of an expando; help texts for `term_truecolor`, `colors_ansi_24bit`, `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`, `show_names_on_join_limit` | The texts of settings that exist only in the fork (`term_truecolor`, `nick_mode_color_*`, `$nickmode`) go with the rows of section 2 that add them |
+| `c1666ab5 2c027e55` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 aff57f18 d62b2913`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
+| `c0e4cd84 ba40df8c 560daae9` | Terminal notifications: OSC 9 / OSC 777 sequences when a mention or private message arrives while the terminal is not focused (focus reports, tmux pass-through, throttle, control characters removed). New setting `term_notify` | `560daae9` is neutral: the default of `term_notify` is `off`. The fork's default is a separate commit (`d4dd0003`, section 4). Follow-ups: `e8aa02c6` (ASCII only on a terminal that is not UTF-8), `71a7ec4c` (bidi and line-separator characters removed), `f5b0faf4` (tests) |
+| `ef4c0adc 8584127c` | Key input: `gui-mouse.c` dropped the final letter of a CSI sequence (`ESC [ I` Page Up, `ESC [ Z` Shift-Tab, `ESC [ G`) and waited for more after a CSI that ends in a lowercase letter or `@` (rxvt shift-arrows, CSI u) | Bug fixes in code of v1.3.1, with a live test (`tests/live/test_keys.py`). Independent of the rest |
+| `e4ad53f9 d6d50441 11708591 3b070dca 943f9001 9c83e708 3dfb804c 28ee82ee dbc2862e 9906974e` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise |
+| `228daa9b 52a95cbd 48610063 5f53bedf e88f27c0` | `/SEARCH` in the autolog files: a search in a child process with a hit, size and file limit and a 120 s time limit; new setting `search_max_size` | The search is not available in Capsicum mode. Live test: `tests/live/test_search.py` |
+
 ## 3. Behind a setting
 
 These change what users see. Upstream may want them only as an opt-in.
@@ -135,6 +150,20 @@ Not meant for erssi main. 99 commits.
   workflows; `7fb91b78` changes example names in fe-web comments.
   If you take `6ceb578a`, `7fb91b78` gives its comment a neutral
   example name.
+
+- Mentions window, shipped defaults and migration: `scripts/mentions.pl`
+  became a stub, and the first start of a config that used the script moves
+  its settings and log to the built-in window (`8ecd1e4d 86ca3820
+  81cb044f`). `irssi.conf` for a new `~/.erssi` turns `mentions_log` on
+  (`2819802c 22e2b960`). A queue test for the Mentions window before
+  "irssi init finished" stays here too (`540061a6`).
+- Shellter values in `irssi.conf` for the new features: `term_notify auto`
+  (`d4dd0003 64ca7700`), `mentions_log` on, and the nick `erssi_user`
+  and theme `shellter` that the first-run setup starts from. A new home gets
+  them; a home that exists keeps what it has. Everything in `irssi.conf` is the fork's choice.
+- Test and hook housekeeping: `utils/pre-push` runs the tests with a
+  throwaway HOME (`90554a30`); `6b841760` (a warning when the E2E module is
+  loaded for one session only).
 
 ## 5. Known gaps
 

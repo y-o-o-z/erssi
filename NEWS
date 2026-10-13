@@ -64,6 +64,11 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    or /WINDOW LOG files, compressed logs or symbolic links; not in
 	    capability mode. /HELP SEARCH
 
+	+ Help
+	  - /HELP $name shows the help of an expando ($nickmode, ...); texts for
+	    term_truecolor, colors_ansi_24bit, print_whois_rpl_in_server_window,
+	    nick_mode_color_*, show_names_on_join_limit and $nickmode
+
 	+ E2E
 	  - keys are kept per network: a keyring entry is "<network>\x1f<name>"
 	    (the chatnet, else the server tag), so #test on two networks has
@@ -118,6 +123,11 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    "e2e action refused")
 
 	+ Fixes
+	  - keys: a CSI sequence that ends in a letter reached the key bindings
+	    without its last letter (ESC [ I Page Up, ESC [ Z Shift-Tab,
+	    ESC [ G), and one that ends in a lowercase letter or @ (rxvt
+	    shift-arrows, CSI u) kept the parser waiting and swallowed the next
+	    keys
 	  - fe-web paces logins per peer (uid on the Unix socket, address on TCP,
 	    the peer's uid on TCP loopback on Linux); your own uid is never paced;
 	    a ceiling holds suspect peers together; addresses that logged in before

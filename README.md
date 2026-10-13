@@ -172,6 +172,7 @@ and used when present. For a system-wide install use
 `/help` covers every command, including the erssi commands that had no help
 (`credential`, `fe_web`, `floodnet`, `foreach`, `image`, `nickhash`, …) and
 the commands of the bundled scripts.
+`/help $nickmode` shows the help of an expando.
 Help files in `~/.erssi/help/` are read first — drop in a file named after a
 command to document your own scripts.
 
