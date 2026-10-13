@@ -500,6 +500,15 @@ static void firstrun_run_tty(void)
 	char *current_theme;
 	guint i;
 
+	if (config_last_error(mainconfig) != NULL) {
+		/* the file was read only in part: saving would write the
+		   mis-parsed tree over it */
+		printf("erssi: %s has errors - fix it first, the setup did not change it.\n",
+		       mainconfig->fname);
+		fflush(stdout);
+		return;
+	}
+
 	networks = firstrun_networks(mainconfig);
 	theme_list = g_ptr_array_new();
 	firstrun_add_themes(theme_list, get_irssi_dir());

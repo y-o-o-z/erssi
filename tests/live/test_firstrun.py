@@ -161,6 +161,23 @@ def main():
             for s in ("Set up now", "Nick [", "Saved to", "first-run setup"):
                 assert s not in log, f"{s!r} in the log"
 
+    def t_setup_broken_config():
+        """--setup on a config that was read only in part: nothing is asked
+        and the file is not touched (a save would write the mis-parsed tree)"""
+        cfg = harness.config(1, "gina")
+        cfg += 'aliases = { SENTINEL = "x"; };\ntruncated = { key = "never closed'
+        with fresh("gina", cfg, args=("--setup", "--noconnect")) as e:
+            e._prepare()
+            before = (e.home / "config").read_bytes()
+            e.start()
+            assert e.wait_output(b"fix it first", WAIT), e.text()[-2000:]
+            assert ASK not in e.output(), "the setup asked on a broken config"
+            e.write_raw(b"n\r")
+            time.sleep(1)
+            finish(e)
+            after = (e.home / "config").read_bytes()
+            assert after == before, "the broken config was rewritten:\n" + after.decode(errors="replace")
+
     def lflag(e):
         """the local modes of erssi's terminal (the pty master shares them)"""
         return termios.tcgetattr(e.master)[3]
@@ -257,7 +274,7 @@ def main():
 
     try:
         harness.main([t_install, t_wizard_none, t_skip_n, t_eof, t_no_tty, t_stdout_pipe,
-                      t_setup_no_tty, t_term_dumb, t_noconnect, t_setup_forced, t_ctrl_c,
+                      t_setup_no_tty, t_term_dumb, t_noconnect, t_setup_forced, t_setup_broken_config, t_ctrl_c,
                       t_sigterm, t_ctrl_c_password, t_hint])
     finally:
         if not harness.keep_work():
