@@ -26,7 +26,8 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    it, ^C quits without saving. Not asked without a terminal, with
 	    TERM=dumb or with --config, --connect, --noconnect or --nick
 	  - erssi --setup asks again on an existing config; it only adds
-	    (autoconnect and SASL keys saved earlier stay)
+	    (autoconnect and SASL keys saved earlier stay); without a terminal
+	    it prints an error and exits with status 1
 	  - a start whose nick is still erssi_user says how to change it
 
 	+ Mentions
