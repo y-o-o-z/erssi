@@ -29,6 +29,19 @@ static gboolean in_tmux;
 static int focused = TRUE;
 static gint64 last_ms;
 
+/* A copy of the cleaned (valid UTF-8) text with every non-ASCII
+ * character as '?'. For a terminal that is not UTF-8: it would read the
+ * bytes 0x80-0x9f of UTF-8 as C1 controls (C3 9B is "A~" and CSI). */
+static char *ascii_only(const char *text)
+{
+	GString *out = g_string_new(NULL);
+	const char *p;
+
+	for (p = text; *p != '\0'; p = g_utf8_next_char(p))
+		g_string_append_c(out, (guchar) *p < 0x80 ? *p : '?');
+	return g_string_free(out, FALSE);
+}
+
 static void sig_mention(void *server, const char *kind, const char *where, const char *nick,
                         const char *text)
 {
@@ -49,6 +62,12 @@ static void sig_mention(void *server, const char *kind, const char *where, const
 		g_free(t);
 	} else {
 		body = g_strdup_printf("%s %s", w, n);
+	}
+	if (term_type != TERM_TYPE_UTF8) {
+		char *ascii = ascii_only(body);
+
+		g_free(body);
+		body = ascii;
 	}
 
 	seq = term_notify_encode(proto, in_tmux, NOTIFY_TITLE, body);

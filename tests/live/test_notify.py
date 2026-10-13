@@ -250,6 +250,28 @@ def main():
         assert OSC9 not in out and OSC777 not in out, seqs(out)
         assert e.proc.poll() is None, "erssi is gone"
 
+    def t_ascii_terminal():
+        # a forced protocol on a terminal that is not UTF-8 (C locale):
+        # only ASCII is sent, as UTF-8 continuation bytes would be C1
+        # controls there (C3 9B is "A~" + CSI)
+        e = start("alicea", {"LANG": "C", "LC_ALL": "C"})
+        time.sleep(2)
+        assert FOCUS_ON not in e.output(), "focus reporting switched on for an unknown terminal"
+        # recode off: the remote UTF-8 bytes are kept as they came, so
+        # they would reach the terminal unchanged
+        e.type("/set recode off")
+        m = e.mark()
+        e.type("/set term_notify osc777")
+        assert wait_since(e, m, FOCUS_ON), "focus reporting was not switched on"
+        focus(e, FOCUS_OUT)
+        m = e.mark()
+        st["bob"].send(f"PRIVMSG {e.name} :za\u017c\u00f3\u0142\u0107 \u00db2J ok")
+        want = b"\x1b]777;notify;erssi;PM bob: za???? ?2J ok\x07"
+        assert wait_since(e, m, want), seqs(e.output_since(m))
+        out = e.output_since(m)
+        assert out.count(OSC777) == 1, seqs(out)
+        assert max(out.split(OSC777, 1)[1].split(b"\x07", 1)[0]) < 0x80, seqs(out)
+
     def t_fresh_default():
         # without a config file the built-in default config (irssi.conf,
         # term_notify auto) is used
@@ -288,7 +310,7 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_wezterm, t_throttle, t_injection, t_text_off, t_suspend, t_off,
-                      t_tmux_iterm, t_unknown_terminal, t_fresh_default, t_sanitizers])
+                      t_tmux_iterm, t_unknown_terminal, t_ascii_terminal, t_fresh_default, t_sanitizers])
     finally:
         if "bob" in st:
             st["bob"].close()
