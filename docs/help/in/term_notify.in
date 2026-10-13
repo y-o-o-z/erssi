@@ -1,0 +1,52 @@
+%9Setting:%9
+
+    term_notify (choice: off, auto, osc9, osc777; default: off)
+    term_notify_text (boolean; default: ON)
+
+%9Description:%9
+
+    Shows a desktop notification through the terminal for every mention
+    (see /HELP MENTIONS: a private message or action, a NOTICE to you, a
+    DCC CHAT message or a channel hilight), but only while the terminal
+    reports it is not focused. At most one notification is sent in three
+    seconds.
+
+    OFF sends nothing. AUTO sends notifications when the terminal is known
+    to show them:
+
+        - iTerm2 and kitty get OSC 9,
+        - WezTerm, Ghostty and foot get OSC 777.
+
+    For any other terminal AUTO sends nothing. OSC9 and OSC777 send that
+    sequence whatever the terminal is.
+
+    Whether the terminal is focused is learnt from the focus reports
+    (ESC [ I and ESC [ O) that erssi asks the terminal for while
+    notifications are on; until the first report the terminal counts as
+    focused. When term_notify sends nothing, focus reports are not asked
+    for at all.
+
+    Inside tmux the sequence is passed through to the outer terminal. tmux
+    needs "set -g focus-events on" (for the focus reports) and
+    "set -g allow-passthrough on" (for the notification) in tmux.conf. The
+    outer terminal is recognised from LC_TERMINAL, KITTY_WINDOW_ID,
+    GHOSTTY_RESOURCES_DIR or WEZTERM_PANE.
+
+    Inside GNU Screen (STY is set) AUTO never sends notifications; OSC9
+    and OSC777 send the sequence as it is.
+
+    The notification shows where the entry came from and the nick, and
+    with term_notify_text ON also the text. The notification may be shown
+    on the lock screen or stored by the desktop: set term_notify_text OFF
+    to leave the text out. Control characters are removed from everything
+    that is sent, and long texts are cut.
+
+%9Examples:%9
+
+    /SET term_notify auto
+    /SET term_notify osc9
+    /SET term_notify_text off
+
+%9See also:%9
+
+    SET, MENTIONS

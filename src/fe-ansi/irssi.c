@@ -80,6 +80,9 @@ void mainwindows_layout_deinit(void);
 void sidepanels_init(void);
 void sidepanels_deinit(void);
 
+void gui_notify_init(void);
+void gui_notify_deinit(void);
+
 static int dirty, full_redraw;
 
 static GMainLoop *main_loop;
@@ -235,6 +238,7 @@ static void textui_finish_init(void)
 	gui_mouse_init();
 	gui_gestures_init();
 	sidepanels_init();
+	gui_notify_init();
 #ifdef HAVE_IMAGE_PREVIEW
 	image_preview_init();
 #endif
@@ -333,6 +337,7 @@ static void textui_deinit(void)
 #ifdef HAVE_IMAGE_PREVIEW
 	image_preview_deinit();
 #endif
+	gui_notify_deinit();
 	sidepanels_deinit();
 	gui_gestures_deinit();
 	gui_mouse_deinit();

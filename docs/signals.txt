@@ -371,6 +371,11 @@ textbuffer-view.c
 textbuffer-formats.c
  "gui render line text", TEXT_DEST_REC, GString *str, LINE_INFO_META_REC
 
+term-ansi.c:
+ "terminal focus changed", int focused
+   (only while focus reporting is on, see /HELP term_notify; focused is
+   1 or 0)
+
 Perl
 ----
 
