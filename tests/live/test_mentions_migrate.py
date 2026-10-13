@@ -176,10 +176,14 @@ def main():
         (erin.home / "scripts" / "autorun").mkdir(parents=True)
         (erin.home / "scripts" / "autorun" / "mentions.pl").symlink_to(
             Path(__file__).resolve().parent / "fixtures" / "mentions.pl")
+        # the bytes as the harness wrote them, before erssi is started
+        # (start() writes the same text again): a file rewritten during init
+        # would differ from these
+        erin._prepare()
+        before = (erin.home / "config").read_bytes()
+        assert before.endswith(b'truncated = { key = "never closed'), before
         erin.start()
         assert erin.wait_file(erin.all_log(), "has joined #test", 15), "erin never joined #test"
-        before = (erin.home / "config").read_bytes()
-        assert b"SENTINEL" in before
         erin.type("/set mentions_log_file")
         assert erin.wait_file(erin.all_log(), "OLDVALUE", WAIT), "the migrated value does not apply for the run"
         time.sleep(1)
