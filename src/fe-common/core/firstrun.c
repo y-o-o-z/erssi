@@ -321,7 +321,7 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 			break;
 		}
 		if (answers->sasl_user != NULL) {
-			PROMPT(out, "SASL password: ");
+			PROMPT(out, "%s", FIRSTRUN_SECRET_PROMPT);
 			line = read(ctx, TRUE);
 			if (line == NULL)
 				goto skipped;
@@ -426,6 +426,28 @@ static gboolean is_cc(const struct termios *t, int idx, unsigned char c)
 	return t->c_cc[idx] != _POSIX_VDISABLE && t->c_cc[idx] == c;
 }
 
+static volatile sig_atomic_t *abort_flag;
+
+void firstrun_set_abort_flag(volatile sig_atomic_t *flag)
+{
+	abort_flag = flag;
+}
+
+static gboolean aborted(void)
+{
+	return abort_flag != NULL && *abort_flag != 0;
+}
+
+/* to the terminal being read, else stdout */
+static void write_tty(int fd, const char *text)
+{
+	size_t len = strlen(text);
+
+	if (write(fd, text, len) < 0 && write(STDOUT_FILENO, text, len) < 0) {
+		/* nothing more to try */
+	}
+}
+
 char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 {
 	char buf[FIRSTRUN_LINE_MAX + 1];
@@ -437,15 +459,22 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 	unsigned char c = 0;
 	enum { ESC_NONE, ESC_START, ESC_CSI, ESC_SS3 } esc;
 	int raise_sig;
+	gboolean resumed = FALSE;
 	gint64 deadline = timeout_ms >= 0 ? g_get_monotonic_time() + (gint64) timeout_ms * 1000 : 0;
 
 restart:
 	esc = ESC_NONE;
 	raise_sig = 0;
+	/* before the terminal is touched: a stopped job that was killed (SIGTERM, then
+	 * SIGCONT) would stop again on tcsetattr from the background */
+	if (aborted())
+		return NULL;
 	if (secret && isatty(fd)) {
 		if (!secret_tty_begin(fd, &saved))
 			return NULL;
 		raw = TRUE;
+		if (resumed)
+			write_tty(fd, FIRSTRUN_SECRET_PROMPT);
 	}
 
 	for (;;) {
@@ -453,6 +482,9 @@ restart:
 		int wait = -1, r;
 		ssize_t n;
 		gboolean eof = FALSE;
+
+		if (aborted())
+			break;
 
 		if (timeout_ms >= 0) {
 			gint64 left = deadline - g_get_monotonic_time();
@@ -561,23 +593,22 @@ restart:
 		} while (rc != 0 && errno == EINTR);
 		if (rc != 0)
 			tcsetattr(fd, TCSANOW, &saved);
-		if (write(fd, "\n", 1) < 0 && write(STDOUT_FILENO, "\n", 1) < 0) {
-			/* nothing more to try */
-		}
+		write_tty(fd, "\n");
 		raw = FALSE;
 	}
+	/* wiped before any signal: a core dump (SIGQUIT) holds nothing of it */
+	secure_zero(buf, sizeof(buf));
+	secure_zero(&c, sizeof(c));
 	if (raise_sig == SIGTSTP) {
-		/* suspended like at a cooked prompt: on resume the secret is read
-		 * again from the start, within the same deadline */
-		secure_zero(buf, sizeof(buf));
+		/* suspended like at a cooked prompt: on resume the prompt is shown
+		 * again and the secret read from the start, within the same deadline */
 		len = 0;
+		resumed = TRUE;
 		raise(SIGTSTP);
 		goto restart;
 	}
 	if (raise_sig != 0)
 		raise(raise_sig);
-	secure_zero(buf, sizeof(buf));
-	secure_zero(&c, sizeof(c));
 
 	if (result != NULL) {
 		size_t l = strlen(result);

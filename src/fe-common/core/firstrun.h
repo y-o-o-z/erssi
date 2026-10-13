@@ -2,6 +2,7 @@
 #define IRSSI_FE_COMMON_CORE_FIRSTRUN_H
 
 #include <glib.h>
+#include <signal.h>
 #include <stdio.h>
 #include <irssi/src/lib-config/iconfig.h>
 
@@ -64,6 +65,18 @@ gboolean firstrun_printable(const char *s);
 /* 1-30 bytes; first char [A-Za-z[]\`_^{|}], the rest also [0-9-]. */
 gboolean firstrun_nick_valid(const char *nick);
 
+/* The password prompt; firstrun_read_fd writes it again when a secret read resumes
+ * after a suspend (^Z). */
+#define FIRSTRUN_SECRET_PROMPT "SASL password: "
+
+/* FLAG (NULL = none) is checked by firstrun_read_fd before it starts, after a resume
+ * from ^Z and before each byte: nonzero ends the read at once (NULL), before the
+ * terminal is touched again. Meant for a flag that a signal handler sets: a signal
+ * that interrupts the wait ends the read anyway (EINTR); this catches one that came
+ * while the reader was not waiting (stopped, or between bytes). Without ppoll a
+ * signal that lands just before the wait is noticed at the next byte or the deadline. */
+void firstrun_set_abort_flag(volatile sig_atomic_t *flag);
+
 /* Reads one line from FD, waiting at most TIMEOUT_MS in total (negative = no limit,
  * 0 = poll once). Reads byte by byte, so nothing past the line is consumed. At most 511
  * bytes are returned; the rest of a longer line is discarded. Trailing \r\n is stripped.
@@ -81,8 +94,9 @@ gboolean firstrun_nick_valid(const char *nick);
  * few KiB already queued are taken). In a secret read the interrupt and quit characters
  * abort the read (NULL) and then raise SIGINT or SIGQUIT, as the terminal would have
  * done; the suspend character restores the terminal, raises SIGTSTP and, once resumed,
- * reads the secret again from the start (typed-ahead input is dropped), within the same
- * deadline.
+ * writes FIRSTRUN_SECRET_PROMPT again and reads the secret from the start (input typed
+ * meanwhile is dropped), within the same deadline. The typed part is wiped before any
+ * signal is raised.
  * If the terminal cannot be switched, a secret is not read at all (NULL).
  * Internal buffers are wiped. Only erssi's own copies are wiped: lib-config and the
  * saved config hold the password in plaintext by design. */
