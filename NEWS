@@ -52,6 +52,18 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    out. The default config sets auto for a new home; an existing config
 	    keeps it off: /set term_notify auto. /HELP term_notify
 
+	+ Search
+	  - /SEARCH looks through the autolog files (the files autolog_path
+	    names) of the window's channel or query, of -target <name>, of a
+	    network (-network <tag>) or of all (-all); -regexp, -case, -max
+	    (50 hits, at most 1000; the newest). The hits are printed oldest
+	    first with their log and date, then a summary line. The search
+	    runs in a child process while erssi goes on, one at a time
+	    (/SEARCH -stop ends it); it reads at most search_max_size (512M)
+	    bytes, 5000 files and 120 s. Not the scrollback (/LASTLOG), /LOG
+	    or /WINDOW LOG files, compressed logs or symbolic links; not in
+	    capability mode. /HELP SEARCH
+
 	+ E2E
 	  - keys are kept per network: a keyring entry is "<network>\x1f<name>"
 	    (the chatnet, else the server tag), so #test on two networks has

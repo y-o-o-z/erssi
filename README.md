@@ -161,6 +161,11 @@ and used when present. For a system-wide install use
   Ghostty, foot; also inside tmux). `term_notify` is `auto` in a new home
   only: an existing config does not get it, there `/set term_notify auto`.
   `/set term_notify_text off` leaves the message text out. `/help term_notify`.
+- **Search the logs** — `/search needle` looks through the autolog files
+  of the channel or query you are in; `-target`, `-network` and `-all`
+  widen it, `-regexp` and `-case` change the match. It runs in a separate
+  process, so erssi goes on meanwhile, and stops at `search_max_size`
+  (512 MB) read. `/help search`.
 
 ### Help for every command
 
