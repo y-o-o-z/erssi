@@ -34,6 +34,7 @@
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
+#include <irssi/src/fe-common/core/firstrun.h>
 #include <irssi/src/fe-common/core/fe-settings.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <irssi/src/fe-common/core/themes.h>
@@ -58,6 +59,7 @@
 
 #include <signal.h>
 #include <locale.h>
+#include <sys/stat.h>
 
 void gui_expandos_init(void);
 void gui_expandos_deinit(void);
@@ -91,6 +93,8 @@ int quitting;
 static int display_firsttimer = FALSE;
 static GSList *default_notes;	/* about ~/.erssi files, printed after the banner */
 static unsigned int user_settings_changed = 0;
+static gboolean config_existed;	/* the config file was there when erssi started */
+static gboolean firstrun_ran;	/* the first-run setup was asked this start */
 
 static void sig_exit(void)
 {
@@ -315,6 +319,12 @@ static void textui_finish_init(void)
 		            TXT_FIRSTRUN_HOWTO);
 	}
 
+	/* a later start that kept the shipped nick */
+	if (!firstrun_ran && config_existed &&
+	    g_strcmp0(settings_get_str("nick"), "erssi_user") == 0)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT, "%s",
+		          "Your nick is still erssi_user: /SET nick <nick>, or run erssi --setup.");
+
 	term_environment_check();
 }
 
@@ -410,6 +420,143 @@ static void copy_default_files(void)
 		themes_reload();
 }
 
+/* each answer waits at most 5 minutes; no answer = skipped */
+#define FIRSTRUN_ANSWER_TIMEOUT_MS 300000
+
+/* SIGINT, SIGQUIT, SIGTERM and SIGHUP during the setup end erssi without
+ * saving anything. The handler only records the signal: the read that is
+ * waiting returns (EINTR) and restores the terminal first. */
+static const int firstrun_signals[] = { SIGINT, SIGQUIT, SIGTERM, SIGHUP };
+static volatile sig_atomic_t firstrun_signal;
+
+static void sig_firstrun(int signo)
+{
+	firstrun_signal = signo;
+}
+
+static char *firstrun_read_stdin(void *ctx, gboolean secret)
+{
+	if (firstrun_signal != 0)
+		return NULL;
+	return firstrun_read_fd(STDIN_FILENO, FIRSTRUN_ANSWER_TIMEOUT_MS, secret);
+}
+
+static gint firstrun_theme_cmp(gconstpointer a, gconstpointer b)
+{
+	return strcmp(*(const char *const *) a, *(const char *const *) b);
+}
+
+/* adds the names of the *.theme files in DIR that LIST does not have yet */
+static void firstrun_add_themes(GPtrArray *list, const char *dir)
+{
+	const char *fname;
+	GDir *d;
+	guint i;
+
+	if (dir == NULL || (d = g_dir_open(dir, 0, NULL)) == NULL)
+		return;
+	while ((fname = g_dir_read_name(d)) != NULL) {
+		size_t len = strlen(fname);
+		gboolean dup = FALSE;
+		const char *p;
+		char *name;
+
+		if (len <= 6 || !g_str_has_suffix(fname, ".theme"))
+			continue;
+		/* the name is printed to the terminal: printable ASCII only */
+		for (p = fname; *p != '\0'; p++)
+			if (!g_ascii_isprint(*p))
+				break;
+		if (*p != '\0')
+			continue;
+		name = g_strndup(fname, len - 6);
+		for (i = 0; i < list->len && !dup; i++)
+			dup = strcmp(g_ptr_array_index(list, i), name) == 0;
+		if (dup)
+			g_free(name);
+		else
+			g_ptr_array_add(list, name);
+	}
+	g_dir_close(d);
+}
+
+/* The first-run questions on the terminal, before the screen is set up
+ * (stdio, cooked tty). Nothing here goes through printtext, so nothing
+ * reaches the logs. */
+static void firstrun_run_tty(void)
+{
+	struct sigaction act, old[G_N_ELEMENTS(firstrun_signals)];
+	FIRSTRUN_ANSWERS a;
+	FIRSTRUN_RESULT result;
+	GPtrArray *networks, *theme_list;
+	char **themes;
+	char *current_theme;
+	guint i;
+
+	networks = firstrun_networks(mainconfig);
+	theme_list = g_ptr_array_new();
+	firstrun_add_themes(theme_list, get_irssi_dir());
+	firstrun_add_themes(theme_list, THEMESDIR);
+	g_ptr_array_sort(theme_list, firstrun_theme_cmp);
+	g_ptr_array_add(theme_list, NULL);
+	themes = (char **) g_ptr_array_free(theme_list, FALSE);
+	current_theme = g_strdup(settings_get_str("theme"));
+
+	/* no SA_RESTART: the signal interrupts the read */
+	sigemptyset(&act.sa_mask);
+	act.sa_flags = 0;
+	act.sa_handler = sig_firstrun;
+	firstrun_signal = 0;
+	for (i = 0; i < G_N_ELEMENTS(firstrun_signals); i++) {
+		sigaction(firstrun_signals[i], NULL, &old[i]);
+		if (old[i].sa_handler != SIG_IGN)
+			sigaction(firstrun_signals[i], &act, NULL);
+	}
+
+	firstrun_ran = TRUE;
+	result = firstrun_ask(stdout, firstrun_read_stdin, NULL, networks, themes,
+	                      settings_get_str("nick"), current_theme, &a);
+
+	for (i = 0; i < G_N_ELEMENTS(firstrun_signals); i++)
+		sigaction(firstrun_signals[i], &old[i], NULL);
+
+	if (firstrun_signal != 0) {
+		int signo = firstrun_signal;
+
+		/* interrupted: nothing is saved, the next start asks again */
+		firstrun_answers_clear(&a);
+		fputs("\n", stdout);
+		fflush(stdout);
+		signal(signo, SIG_DFL);
+		raise(signo);
+		_exit(128 + signo);
+	}
+
+	if (result == FIRSTRUN_DONE) {
+		firstrun_apply_config(mainconfig, &a);
+		if (a.nick != NULL)
+			settings_set_str("nick", a.nick);
+		if (a.theme != NULL && g_strcmp0(a.theme, current_theme) != 0) {
+			settings_set_str("theme", a.theme);
+			themes_reload();
+		}
+	}
+	firstrun_answers_clear(&a);
+
+	if (!settings_save(NULL, FALSE))
+		printf("Could not save %s: erssi --setup asks again.\n", mainconfig->fname);
+	else if (result == FIRSTRUN_DONE)
+		printf("Saved to %s. Later: /NETWORK, /SET nick, /SET theme, or erssi --setup.\n",
+		       mainconfig->fname);
+	else
+		printf("Skipped. erssi --setup asks again.\n");
+	fflush(stdout);
+
+	g_free(current_theme);
+	g_strfreev(themes);
+	g_ptr_array_free(networks, TRUE);
+}
+
 static void check_files(void)
 {
 	struct stat statbuf;
@@ -422,16 +569,20 @@ static void check_files(void)
 
 int main(int argc, char **argv)
 {
-	static int version = 0, update = 0, check_update = 0;
+	static int version = 0, update = 0, check_update = 0, setup = 0;
 	static GOptionEntry options[] = {
 		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display Irssi version", NULL },
 		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
 		  "Update erssi to the newest signed release", NULL },
 		{ "check-update", 0, 0, G_OPTION_ARG_NONE, &check_update,
 		  "Show whether a newer signed release is available", NULL },
+		{ "setup", 0, 0, G_OPTION_ARG_NONE, &setup, "Ask the first-run setup questions",
+		  NULL },
 		{ NULL }
 	};
-	char *note;
+	struct stat statbuf;
+	char *note, *home_config;
+	gboolean tty, scripted;
 	int loglev;
 
 	core_register_options();
@@ -466,6 +617,7 @@ int main(int argc, char **argv)
 
 	quitting = FALSE;
 	core_preinit(argv[0]);
+	config_existed = stat(get_irssi_config(), &statbuf) == 0;
 
 	check_files();
 
@@ -489,6 +641,16 @@ int main(int argc, char **argv)
 	
 	/* Copy default files (themes, startup) for erssi after directories are created */
 	copy_default_files();
+
+	/* the first-run setup, on a terminal, before the screen is set up */
+	tty = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
+	      g_strcmp0(g_getenv("TERM"), "dumb") != 0;
+	home_config = g_strdup_printf("%s/" IRSSI_HOME_CONFIG, get_irssi_dir());
+	scripted = fe_common_core_scripted_start() ||
+	           g_strcmp0(get_irssi_config(), home_config) != 0;
+	g_free(home_config);
+	if (firstrun_wanted(config_existed, tty, setup, scripted))
+		firstrun_run_tty();
 
 	if (!term_init()) {
 		fprintf(stderr, "Can't initialize screen handling.\n");

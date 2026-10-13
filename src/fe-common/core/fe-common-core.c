@@ -148,6 +148,12 @@ void fe_common_core_register_options(void)
 	args_register(options);
 }
 
+gboolean fe_common_core_scripted_start(void)
+{
+	return no_autoconnect || autocon_server != NULL ||
+	       (cmdline_nick != NULL && *cmdline_nick != '\0');
+}
+
 void fe_common_core_init(void)
 {
 	const char *str;
