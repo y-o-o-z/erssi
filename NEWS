@@ -33,6 +33,12 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - loading the old mentions.pl unloads it with a notice and moves its
 	    settings to the built-in ones; scripts/mentions.pl is only a stub
 	  - a "mention" signal for scripts
+	  - term_notify: a desktop notification through the terminal (OSC 9 for
+	    iTerm2 and kitty, OSC 777 for WezTerm, Ghostty and foot; tmux
+	    passthrough) for every mention while the terminal reports it is not
+	    focused, at most one in 3 s; term_notify_text off leaves the text
+	    out. The default config sets auto for a new home; an existing config
+	    keeps it off: /set term_notify auto. /HELP term_notify
 
 	+ E2E
 	  - keys are kept per network: a keyring entry is "<network>\x1f<name>"

@@ -1,6 +1,7 @@
 %9Setting:%9
 
-    term_notify (choice: off, auto, osc9, osc777; default: off)
+    term_notify (choice: off, auto, osc9, osc777; default: off, the
+    Shellter default configuration sets AUTO)
     term_notify_text (boolean; default: ON)
 
 %9Description:%9

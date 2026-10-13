@@ -240,7 +240,8 @@ def main():
         assert e.proc.poll() is None, "erssi is gone"
 
     def t_fresh_default():
-        # without a config file the built-in default config is used
+        # without a config file the built-in default config (irssi.conf,
+        # term_notify auto) is used
         fresh = harness.Erssi(st["inst"], work, "fresh", None, args=("--noconnect",),
                               env={"TERM_PROGRAM": "WezTerm"})
         st["instances"].append(fresh)
@@ -252,8 +253,10 @@ def main():
         while time.time() < end and "term_notify " not in fresh.text(m) and "term_notify =" not in fresh.text(m):
             time.sleep(0.1)
         out = fresh.text(m)
+        raw = fresh.output()
         fresh.kill()
-        assert re.search(r"term_notify\s+(= )?off", out), "term_notify is not off by default:\n" + out
+        assert re.search(r"term_notify\s+(= )?auto", out), "term_notify is not auto by default:\n" + out
+        assert FOCUS_ON in raw, "no focus reporting with the default config"
 
     def t_sanitizers():
         reports = []
