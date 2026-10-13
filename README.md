@@ -158,7 +158,8 @@ and used when present. For a system-wide install use
   script to load. `/help mentions`.
 - **Desktop notifications** — a mention while the terminal is not focused
   pops up a notification through the terminal (iTerm2, kitty, WezTerm,
-  Ghostty, foot; also inside tmux). `term_notify` is `auto` in a new home;
+  Ghostty, foot; also inside tmux). `term_notify` is `auto` in a new home
+  only: an existing config does not get it, there `/set term_notify auto`.
   `/set term_notify_text off` leaves the message text out. `/help term_notify`.
 
 ### Help for every command
@@ -240,12 +241,15 @@ sanitizers.
 /set print_whois_rpl_in_server_window on  # off: WHOIS in the active window
 /set anti_floodnet_notices off            # hide Anti-Floodnet notices
 /set term_truecolor auto                  # on / off to override terminal detection
-/set term_notify auto                     # off / osc9 / osc777; notifications while unfocused
 /set theme shellter-light                 # for terminals with a light background
 /set fe_web_socket ~/.erssi/fe-web.sock   # web frontend on a Unix socket (shared boxes)
 ```
 
 The Shellter values of these settings come from the default config (`irssi.conf`) of a new `~/.erssi`; a config from before 2026.10.0 gets them written once at the first start. `/set -default <name>` (and `/reset`) gives erssi's built-in value.
+
+`term_notify` is not one of them: it is `auto` in a new home only, and an
+existing config keeps it off until `/set term_notify auto` (or `osc9` /
+`osc777` to force a protocol).
 
 In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`, and for
 notifications `set -g focus-events on` and `set -g allow-passthrough on`.
