@@ -138,7 +138,12 @@ rm -f "$known"
 
 if [ -f "$ROOT/Build/build.ninja" ]; then
     ninja -C "$ROOT/Build" >/dev/null 2>&1 || { echo "pre-push: build failed (ninja -C Build)" >&2; exit 1; }
-    meson test -C "$ROOT/Build" >/dev/null 2>&1 || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }
+    # a throwaway HOME: a test that runs core init without its own --home
+    # (upstream's test-796 does) must never write into the real ~/.erssi
+    test_home=$(mktemp -d) || { echo "pre-push: mktemp failed" >&2; exit 1; }
+    HOME="$test_home" meson test -C "$ROOT/Build" >/dev/null 2>&1; rc=$?
+    rm -rf "$test_home"
+    [ "$rc" = 0 ] || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }
     # the build uses the working tree; say so when that is not what is pushed
     head=$(git rev-parse HEAD)
     case " $pushed " in *" $head "*) ;; *) [ -n "$pushed" ] && echo "pre-push: note: tested HEAD, which is not the pushed commit" >&2 ;; esac
