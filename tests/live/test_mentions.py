@@ -283,9 +283,9 @@ def main():
     def t_channel_excluded_network():
         # alicebot is on Bitlbee (excluded): its hilights are left out
         alice = st["alice"]
-        st["carol"].send("PRIVMSG #test :alicebot: botnet hilight")
-        assert alice.wait_file(alice.all_log(), "alicebot: botnet hilight", WAIT), "not delivered"
-        absent_ml("botnet hilight")
+        st["carol"].send("PRIVMSG #test :alicebot: relay hilight")
+        assert alice.wait_file(alice.all_log(), "alicebot: relay hilight", WAIT), "not delivered"
+        absent_ml("relay hilight")
 
     def t_long_nick():
         # the real nick, not the one cut to the nick column of the theme

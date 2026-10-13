@@ -859,16 +859,6 @@ formats = {
     spellcheck_info = "   %Z59636Espellcheck{col}$0";
     spellcheck_error = "   %Z59636Espellcheck{col}%ZCF222E$0%N";
   };
-  "Irssi::Script::botnet" = {
-    botnet_info = "       %Z59636Ebotnet{col}$0";
-    botnet_sb_label = "%Z59636Ebot%n";
-    botnet_sb_up = "%Z1A7F37●%n $0";
-    botnet_sb_unread = "%Z1A7F37●%n $0 %Z9A6700$1%n";
-    botnet_sb_hilight = "%Z1A7F37●%n $0 %ZCF222E%_$1%_%n";
-    botnet_sb_connecting = "%Z9A6700◌%n %Z59636E$0%n";
-    botnet_sb_retry = "%Z9A6700↻%n %Z59636E$0 $1s%n";
-    botnet_sb_stopped = "%ZCF222E✕%n %Z59636E$0%n";
-    botnet_sb_down = "%Z818B98○ $0%n";
   };
   "Irssi::Script::tk" = {
     tk_loaded = "           %Z59636Etk{col}TK v$0 - /tk help";

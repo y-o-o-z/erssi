@@ -64,7 +64,7 @@ static WINDOW_REC *find_server_separator_window(const char *server_tag)
 
 		/* A server separator window: the window itself is named after the
 		 * server tag and is sticky to that server. Its items do not matter -
-		 * a script may keep one there (e.g. a botnet partyline query); judging
+		 * a script may keep a query there; judging
 		 * by the active item's name created a second network window on every
 		 * reconnect. */
 		if (win->servertag != NULL && g_ascii_strcasecmp(win->servertag, server_tag) == 0 &&
