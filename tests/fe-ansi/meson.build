@@ -169,3 +169,21 @@ test('test-default-files test', test_test_default_files,
   env : test_default_files_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_term_notify = executable('test-term-notify',
+  files(
+    '../../src/fe-ansi/term-notify.c',
+    'test-term-notify.c',
+  ),
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-term-notify test', test_test_term_notify,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
