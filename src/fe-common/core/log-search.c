@@ -107,46 +107,13 @@ typedef struct {
 } FOUND_FILE;
 
 typedef struct {
-	GPatternSpec *spec;
+	GPtrArray *segs; /* GPatternSpec *, one per path component below the base */
 	GArray *found;
 	int entries;
+	gboolean truncated;
 } WALK;
 
-static void walk_dir(WALK *w, const char *dir, int depth)
-{
-	GDir *d;
-	const char *name;
-
-	if (depth > LOG_SEARCH_MAX_DEPTH || (d = g_dir_open(dir, 0, NULL)) == NULL)
-		return;
-
-	while ((name = g_dir_read_name(d)) != NULL) {
-		char *path;
-		struct stat st;
-
-		if (++w->entries > LOG_SEARCH_MAX_ENTRIES)
-			break;
-		path = g_build_filename(dir, name, NULL);
-		/* lstat: a symlink (to a file or to a directory) is never followed, so the
-		   walk cannot leave the base through a link planted inside it */
-		if (lstat(path, &st) != 0) {
-			g_free(path);
-			continue;
-		}
-		if (S_ISDIR(st.st_mode)) {
-			walk_dir(w, path, depth + 1);
-			g_free(path);
-		} else if (S_ISREG(st.st_mode) && g_pattern_spec_match_string(w->spec, path) &&
-		           w->found->len < LOG_SEARCH_MAX_MATCHES) {
-			FOUND_FILE ff = {path, st.st_mtime};
-
-			g_array_append_val(w->found, ff);
-		} else {
-			g_free(path);
-		}
-	}
-	g_dir_close(d);
-}
+int log_search_match_cap = LOG_SEARCH_MAX_MATCHES;
 
 static int found_cmp(gconstpointer a, gconstpointer b)
 {
@@ -157,54 +124,130 @@ static int found_cmp(gconstpointer a, gconstpointer b)
 	return strcmp(x->path, y->path);
 }
 
-GPtrArray *log_search_files(const char *glob, int max_files)
+/* sort newest first and drop everything beyond KEEP */
+static void found_trim(WALK *w, guint keep)
+{
+	guint i;
+
+	g_array_sort(w->found, found_cmp);
+	if (w->found->len <= keep)
+		return;
+	for (i = keep; i < w->found->len; i++)
+		g_free(g_array_index(w->found, FOUND_FILE, i).path);
+	g_array_set_size(w->found, keep);
+	w->truncated = TRUE;
+}
+
+static void walk_dir(WALK *w, const char *dir, guint idx)
+{
+	GDir *d;
+	const char *name;
+	gboolean last = idx + 1 == w->segs->len;
+
+	if ((d = g_dir_open(dir, 0, NULL)) == NULL)
+		return;
+
+	while ((name = g_dir_read_name(d)) != NULL) {
+		char *path;
+		struct stat st;
+
+		if (!g_pattern_spec_match_string(w->segs->pdata[idx], name))
+			continue;
+		if (++w->entries > LOG_SEARCH_MAX_ENTRIES) {
+			w->truncated = TRUE;
+			break;
+		}
+		path = g_build_filename(dir, name, NULL);
+		/* lstat: a symlink (to a file or to a directory) is never followed, so the
+		   walk cannot leave the base through a link planted inside it */
+		if (lstat(path, &st) != 0) {
+			g_free(path);
+			continue;
+		}
+		if (!last && S_ISDIR(st.st_mode)) {
+			walk_dir(w, path, idx + 1);
+			g_free(path);
+		} else if (last && S_ISREG(st.st_mode)) {
+			FOUND_FILE ff = {path, st.st_mtime};
+
+			g_array_append_val(w->found, ff);
+			/* keep the newest log_search_match_cap, trimming in batches */
+			if (w->found->len >= 2 * (guint)log_search_match_cap)
+				found_trim(w, log_search_match_cap);
+		} else {
+			g_free(path);
+		}
+	}
+	g_dir_close(d);
+}
+
+GPtrArray *log_search_files(const char *glob, int max_files, gboolean *truncated)
 {
 	GPtrArray *res = g_ptr_array_new_with_free_func(g_free);
 	WALK w;
-	char *base;
-	const char *wild = glob + strcspn(glob, "*?");
-	guint i;
+	GString *base = g_string_new(NULL);
+	char **parts;
+	GPtrArray *comp = g_ptr_array_new(); /* borrowed from PARTS */
+	guint i, first_wild = G_MAXUINT, n;
 
-	if (max_files <= 0 || glob[0] == '\0')
+	if (truncated != NULL)
+		*truncated = FALSE;
+	/* a relative glob would depend on the working directory: refuse it */
+	if (max_files <= 0 || glob[0] != '/') {
+		g_string_free(base, TRUE);
+		g_ptr_array_free(comp, TRUE);
 		return res;
+	}
 
-	w.spec = g_pattern_spec_new(glob);
+	parts = g_strsplit(glob, "/", 0);
+	/* empty components ("//") are dropped */
+	for (i = 0; parts[i] != NULL; i++) {
+		if (parts[i][0] == '\0')
+			continue;
+		if (parts[i][strcspn(parts[i], "*?")] != '\0' && first_wild == G_MAXUINT)
+			first_wild = comp->len;
+		g_ptr_array_add(comp, parts[i]);
+	}
+	n = comp->len;
+
 	w.found = g_array_new(FALSE, FALSE, sizeof(FOUND_FILE));
+	w.segs = g_ptr_array_new_with_free_func((GDestroyNotify)g_pattern_spec_free);
 	w.entries = 0;
+	w.truncated = FALSE;
 
-	if (*wild == '\0') {
+	if (first_wild == G_MAXUINT) {
 		struct stat st;
 
-		if (lstat(glob, &st) == 0 && S_ISREG(st.st_mode)) {
-			FOUND_FILE ff = {g_strdup(glob), st.st_mtime};
+		for (i = 0; i < n; i++)
+			g_string_append_printf(base, "/%s", (char *)comp->pdata[i]);
+		if (n > 0 && lstat(base->str, &st) == 0 && S_ISREG(st.st_mode)) {
+			FOUND_FILE ff = {g_strdup(base->str), st.st_mtime};
 
 			g_array_append_val(w.found, ff);
 		}
-	} else {
-		const char *slash = wild;
-
-		while (slash > glob && slash[-1] != '/')
-			slash--;
-		base = slash > glob ? g_strndup(glob, slash - glob - 1) : g_strdup("/");
-		if (base[0] == '\0') {
-			g_free(base);
-			base = g_strdup("/");
+	} else if (n - first_wild <= LOG_SEARCH_MAX_DEPTH) {
+		g_string_append_c(base, '/');
+		for (i = 0; i < first_wild; i++) {
+			g_string_append(base, comp->pdata[i]);
+			if (i + 1 < first_wild)
+				g_string_append_c(base, '/');
 		}
-		walk_dir(&w, base, 1);
-		g_free(base);
+		for (i = first_wild; i < n; i++)
+			g_ptr_array_add(w.segs, g_pattern_spec_new(comp->pdata[i]));
+		walk_dir(&w, base->str, 0);
 	}
 
-	g_array_sort(w.found, found_cmp);
-	for (i = 0; i < w.found->len; i++) {
-		FOUND_FILE *ff = &g_array_index(w.found, FOUND_FILE, i);
-
-		if (i < (guint)max_files)
-			g_ptr_array_add(res, ff->path);
-		else
-			g_free(ff->path);
-	}
+	found_trim(&w, log_search_match_cap);
+	found_trim(&w, max_files);
+	for (i = 0; i < w.found->len; i++)
+		g_ptr_array_add(res, g_array_index(w.found, FOUND_FILE, i).path);
+	if (truncated != NULL)
+		*truncated = w.truncated;
 	g_array_free(w.found, TRUE);
-	g_pattern_spec_free(w.spec);
+	g_ptr_array_free(w.segs, TRUE);
+	g_string_free(base, TRUE);
+	g_strfreev(parts);
+	g_ptr_array_free(comp, TRUE);
 	return res;
 }
 
@@ -273,43 +316,91 @@ static void ring_flush(RING *r, GPtrArray *out)
 	r->count = r->next = 0;
 }
 
-static void scan_file(FILE *f, const char *label, Regex *re, RING *ring)
+#define LINE_MAX_BYTES (LOG_SEARCH_LINE_BUF - 1)
+
+typedef struct {
+	Regex *re;
+	RING *ring;
+	const char *label;
+	char *date;
+} SCAN;
+
+static void scan_line(SCAN *sc, char *buf, gsize len)
 {
-	char *buf = g_malloc(LOG_SEARCH_LINE_BUF);
-	char *date = g_strdup("");
-	gboolean skipping = FALSE;
+	char *nul;
 
-	while (fgets(buf, LOG_SEARCH_LINE_BUF, f) != NULL) {
-		gsize len = strlen(buf);
-		gboolean complete = len > 0 && buf[len - 1] == '\n';
+	/* the regex API takes a C string: a NUL inside a line becomes a space */
+	while ((nul = memchr(buf, '\0', len)) != NULL)
+		*nul = ' ';
+	while (len > 0 && buf[len - 1] == '\r')
+		len--;
+	buf[len] = '\0';
 
-		if (skipping) {
-			/* the tail of a line longer than the buffer */
-			skipping = !complete;
-			continue;
-		}
-		skipping = !complete && !feof(f);
-		while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
-			buf[--len] = '\0';
+	if (buf[0] == '-' &&
+	    (strncmp(buf, "--- Log opened ", 15) == 0 || strncmp(buf, "--- Day changed ", 16) == 0)) {
+		g_free(sc->date);
+		sc->date = cut_line(buf + 4, len - 4);
+	}
 
-		if (buf[0] == '-' && (strncmp(buf, "--- Log opened ", 15) == 0 ||
-		                      strncmp(buf, "--- Day changed ", 16) == 0)) {
-			g_free(date);
-			date = cut_line(buf + 4, len - 4);
-		}
+	if (i_regex_match(sc->re, buf, 0, NULL)) {
+		LOG_SEARCH_HIT *hit = g_new0(LOG_SEARCH_HIT, 1);
 
-		if (i_regex_match(re, buf, 0, NULL)) {
-			LOG_SEARCH_HIT *hit = g_new0(LOG_SEARCH_HIT, 1);
+		hit->file_label = g_strdup(sc->label);
+		hit->date = g_strdup(sc->date);
+		hit->line = cut_line(buf, len);
+		ring_add(sc->ring, hit);
+	}
+}
 
-			hit->file_label = g_strdup(label);
-			hit->date = g_strdup(date);
-			hit->line = cut_line(buf, len);
-			ring_add(ring, hit);
+/* Read at most LIMIT bytes from F, split on '\n' (NUL-safe); a line is kept up to
+   64 KiB - 1 bytes, the rest of a longer line is skipped. DISCARD_FIRST drops the
+   (partial) first line. */
+static void scan_file(FILE *f, const char *label, Regex *re, RING *ring, gint64 limit,
+                      gboolean discard_first)
+{
+	char *rbuf = g_malloc(LOG_SEARCH_LINE_BUF);
+	char *line = g_malloc(LOG_SEARCH_LINE_BUF);
+	gsize llen = 0;
+	gboolean pending = FALSE, discard = discard_first;
+	SCAN sc = {re, ring, label, g_strdup("")};
+
+	while (limit > 0) {
+		gsize want = limit < LOG_SEARCH_LINE_BUF ? (gsize)limit : LOG_SEARCH_LINE_BUF;
+		gsize n = fread(rbuf, 1, want, f), pos = 0;
+
+		if (n == 0)
+			break;
+		limit -= n;
+		while (pos < n) {
+			char *nl = memchr(rbuf + pos, '\n', n - pos);
+			gsize end = nl != NULL ? (gsize)(nl - rbuf) : n, seg = end - pos;
+
+			if (discard) {
+				if (nl != NULL)
+					discard = FALSE;
+			} else {
+				gsize take = MIN(seg, LINE_MAX_BYTES - llen);
+
+				memcpy(line + llen, rbuf + pos, take);
+				llen += take;
+				pending = TRUE;
+				if (nl != NULL) {
+					scan_line(&sc, line, llen);
+					llen = 0;
+					pending = FALSE;
+				}
+			}
+			pos = nl != NULL ? end + 1 : n;
 		}
 	}
-	g_free(date);
-	g_free(buf);
+	if (pending && !discard)
+		scan_line(&sc, line, llen);
+	g_free(sc.date);
+	g_free(line);
+	g_free(rbuf);
 }
+
+#define LOG_SEARCH_MIN_TAIL (64 * 1024)
 
 void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
                     LOG_SEARCH_RESULT *res)
@@ -329,6 +420,8 @@ void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
 		int fd;
 		char *label;
 		GPtrArray *older;
+		gint64 take, budget = max_bytes - res->bytes;
+		gboolean tail = FALSE, discard = FALSE;
 
 		if ((int)res->hits->len >= max_hits)
 			break;
@@ -343,23 +436,34 @@ void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
 			close(fd);
 			continue;
 		}
-		if (res->bytes + st.st_size > max_bytes) {
+		take = st.st_size;
+		if (take > budget) {
+			/* does not fit: search its last BUDGET bytes, from a line start,
+			   and stop afterwards */
 			res->size_limit = TRUE;
-			fclose(f);
-			break;
+			if (budget < LOG_SEARCH_MIN_TAIL) {
+				fclose(f);
+				break;
+			}
+			if (fseeko(f, st.st_size - budget - 1, SEEK_SET) != 0) {
+				fclose(f);
+				break;
+			}
+			discard = getc(f) != '\n';
+			take = budget;
+			tail = TRUE;
 		}
-		setvbuf(f, NULL, _IOFBF, LOG_SEARCH_LINE_BUF);
 
 		ring.size = max_hits;
 		ring.count = ring.next = 0;
 		ring.slot = g_new0(LOG_SEARCH_HIT *, max_hits);
 		label = g_path_get_basename(path);
-		scan_file(f, label, re, &ring);
+		scan_file(f, label, re, &ring, take, discard);
 		g_free(label);
 		fclose(f);
 
 		res->files++;
-		res->bytes += st.st_size;
+		res->bytes += take;
 
 		/* this file is older than everything collected so far: its hits go
 		   in front, then the oldest overflow is dropped */
@@ -383,7 +487,18 @@ void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
 			}
 		}
 		g_ptr_array_free(older, TRUE);
+		if (tail)
+			break;
 	}
+}
+
+/* strip trailing CR/LF only: trailing spaces and TABs are data */
+static void chomp_eol(char *s)
+{
+	gsize len = strlen(s);
+
+	while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r'))
+		s[--len] = '\0';
 }
 
 static char *clean_field(const char *s)
@@ -417,7 +532,7 @@ gboolean log_search_decode(const char *line, LOG_SEARCH_HIT *hit)
 	if (line == NULL || line[0] != 'H' || line[1] != '\t')
 		return FALSE;
 	copy = g_strdup(line + 2);
-	g_strchomp(copy);
+	chomp_eol(copy);
 	parts = g_strsplit(copy, "\t", 3);
 	ok = g_strv_length(parts) == 3;
 	if (ok) {
@@ -448,7 +563,7 @@ gboolean log_search_decode_summary(const char *line, int *hits, LOG_SEARCH_RESUL
 	if (line == NULL || line[0] != 'S' || line[1] != '\t')
 		return FALSE;
 	copy = g_strdup(line + 2);
-	g_strchomp(copy);
+	chomp_eol(copy);
 	p = g_strsplit(copy, "\t", 0);
 	if (g_strv_length(p) == 5) {
 		ok = TRUE;

@@ -23,15 +23,25 @@ typedef struct {
 char *log_search_glob(const char *autolog_path, const char *home, const char *tag,
                       const char *target);
 
-/* Regular files matching GLOB, found below its longest wildcard-free directory
- * prefix (at most 4 levels deep; symlinks inside the tree, directories or files,
- * are never followed), newest mtime first, at most MAX_FILES. Array of g_malloc()ed
- * paths. */
-GPtrArray *log_search_files(const char *glob, int max_files);
+/* Regular files matching GLOB (absolute; a relative glob gives an empty result),
+ * found below its longest wildcard-free directory prefix. The glob is matched per
+ * path component, so '*' never crosses '/'; at most 4 wildcard components.
+ * Symlinks inside the tree, directories or files, are never followed (the
+ * wildcard-free prefix itself may be a link). Newest mtime first, at most MAX_FILES.
+ * Array of g_malloc()ed paths. *TRUNCATED (if given) is set when matching files
+ * were dropped (MAX_FILES, or an internal cap on matches/directory entries; the
+ * newest are kept for the match cap, but not guaranteed after the entry cap). */
+GPtrArray *log_search_files(const char *glob, int max_files, gboolean *truncated);
+
+/* Cap on matched files kept while walking (newest win); lowered by tests only. */
+extern int log_search_match_cap;
 
 /* Scan FILES (as returned above) in order. Initialises RES. Keeps the newest
  * MAX_HITS hits overall (chronological); stops before the next file once MAX_HITS
- * were collected, or when the file would take the total over MAX_BYTES. */
+ * were collected. A file that does not fit the remaining MAX_BYTES is searched from
+ * its last bytes (starting at a line start, date "" there; only if at least 64 KiB
+ * of budget remain), size_limit is set and the run ends; files is counted for it.
+ * NUL bytes inside a line are read as spaces. */
 void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
                     LOG_SEARCH_RESULT *res);
 
