@@ -35,6 +35,7 @@
 #include <irssi/src/core/capsicum.h>
 #endif
 
+#include <irssi/src/fe-common/core/fe-log.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include <irssi/src/fe-common/core/window-items.h>
 #include <irssi/src/fe-common/core/formats.h>
@@ -409,7 +410,7 @@ static void autologs_close_all(void)
 }
 
 /* '%' -> '%%', badness -> '_' */
-static char *escape_target(const char *target)
+char *fe_log_escape_target(const char *target)
 {
 	char *str, *p;
 
@@ -447,7 +448,7 @@ static void autolog_open(SERVER_REC *server, const char *server_tag, const char 
 	   and/or illegal in Windows filenames.
 
 	   '%' -> '%%' - so strftime() won't mess with them */
-	fixed_target = escape_target(target);
+	fixed_target = fe_log_escape_target(target);
 	if (CHAT_PROTOCOL(server)->case_insensitive)
 		ascii_strdown(fixed_target);
 
