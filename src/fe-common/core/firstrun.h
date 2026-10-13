@@ -67,8 +67,9 @@ gboolean firstrun_nick_valid(const char *nick);
  * If SECRET and FD is a terminal, echo, ISIG and ICANON are off during the read (like
  * getpass, with erase/kill/EOF handled here) and the terminal is restored with
  * TCSAFLUSH on every exit path, so no half-typed password stays queued; a newline is
- * printed afterwards. Erase removes a whole UTF-8 character; other control bytes are
- * ignored and never stored; a secret longer than 511 bytes is rejected (NULL). The
+ * printed afterwards. Erase removes a whole UTF-8 character; an escape sequence (an
+ * arrow key: ESC [ ... final byte, ESC O x; Alt+key) is dropped whole; other control
+ * bytes are ignored and never stored; a secret longer than 511 bytes is rejected (NULL). The
  * overall deadline holds even for a stream with no newline (with TIMEOUT_MS 0 at most a
  * few KiB already queued are taken). The interrupt, quit and suspend characters abort the read (NULL).
  * If the terminal cannot be switched, a secret is not read at all (NULL).

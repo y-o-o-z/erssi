@@ -416,6 +416,7 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 	gboolean raw = FALSE;
 	size_t late = 0;
 	unsigned char c = 0;
+	enum { ESC_NONE, ESC_START, ESC_CSI, ESC_SS3 } esc = ESC_NONE;
 	gint64 deadline = timeout_ms >= 0 ? g_get_monotonic_time() + (gint64) timeout_ms * 1000 : 0;
 
 	if (secret && isatty(fd)) {
@@ -465,6 +466,19 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 			break;
 		}
 		if (raw) {
+			/* an escape sequence (an arrow key: ESC [ D, ESC O A; Alt+key:
+			 * ESC x) is dropped whole; a control byte ends it and counts */
+			if (esc != ESC_NONE && c >= 0x20 && c != 0x7f) {
+				if (esc == ESC_START)
+					esc = c == '[' ? ESC_CSI : c == 'O' ? ESC_SS3 : ESC_NONE;
+				else if (esc == ESC_SS3 || (c >= 0x40 && c <= 0x7e))
+					esc = ESC_NONE; /* the final byte */
+				else if (c >= 0x80)
+					esc = ESC_NONE; /* not a sequence byte: ends it, counts */
+				if (esc != ESC_NONE || c < 0x80)
+					continue;
+			}
+			esc = ESC_NONE;
 			if (is_cc(&saved, VINTR, c) || is_cc(&saved, VQUIT, c) ||
 			    is_cc(&saved, VSUSP, c))
 				break; /* abort */
@@ -489,7 +503,10 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 			}
 			if (c == '\r')
 				c = '\n';
-			else if (c < 0x20 && c != '\n')
+			else if (c == 0x1b) {
+				esc = ESC_START;
+				continue;
+			} else if (c < 0x20 && c != '\n')
 				continue; /* ^W, ESC, TAB, ...: never part of a secret */
 			if (c == '\n') {
 				result = g_strndup(buf, len);
