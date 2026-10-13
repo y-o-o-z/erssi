@@ -181,6 +181,23 @@ static void test_complete_secret_value_not_offered(void)
 	g_list_free_full(list, g_free);
 }
 
+/* settings_get_builtin_str: a value of the built-in default config (irssi.conf), also for
+ * a module whose name has a '/' (the settings block names it literally) */
+static void test_builtin_str(void)
+{
+	char *v;
+
+	v = settings_get_builtin_str("core", "nick");
+	g_assert_cmpstr(v, ==, "erssi_user");
+	g_free(v);
+	v = settings_get_builtin_str("fe-common/core", "theme");
+	g_assert_cmpstr(v, ==, "shellter");
+	g_free(v);
+	g_assert_null(settings_get_builtin_str("core", "no_such_key"));
+	g_assert_null(settings_get_builtin_str("fe-common", "theme"));
+	g_assert_null(settings_get_builtin_str("no/such", "theme"));
+}
+
 typedef void (*TEST_FUNC)(void);
 
 static void run_fixture(gconstpointer data)
@@ -207,6 +224,7 @@ int main(int argc, char **argv)
 	add("/fe-settings/set/pattern-masks", test_set_pattern_masks);
 	add("/fe-settings/set/plain-visible", test_set_plain_visible);
 	add("/fe-settings/complete/secret-value-not-offered", test_complete_secret_value_not_offered);
+	add("/settings/builtin-str", test_builtin_str);
 
 	test_home_setup();
 
