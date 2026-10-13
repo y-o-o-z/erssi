@@ -200,6 +200,34 @@ static void test_focus_filter_at_end(void)
 	g_assert_cmpint(focus, ==, 1);
 }
 
+static void test_focus_filter_partial_heap(void)
+{
+	/* exactly sized heap buffers: reading past the end trips ASan */
+	int focus = -1;
+	unsigned char *buf = g_memdup2("x\033[", 3);
+
+	g_assert_cmpint(term_focus_filter(buf, 3, &focus), ==, 3);
+	g_assert_cmpint(focus, ==, -1);
+	g_free(buf);
+
+	buf = g_memdup2("\033[", 2);
+	g_assert_cmpint(term_focus_filter(buf, 2, &focus), ==, 2);
+	g_assert_cmpint(focus, ==, -1);
+	g_free(buf);
+
+	buf = g_memdup2("\033", 1);
+	g_assert_cmpint(term_focus_filter(buf, 1, &focus), ==, 1);
+	g_free(buf);
+}
+
+static void test_encode_osc777_title_semicolon(void)
+{
+	char *s = term_notify_encode(TERM_NOTIFY_OSC777, FALSE, "a;b", "c");
+
+	g_assert_cmpstr(s, ==, "\033]777;notify;a,b;c\007");
+	g_free(s);
+}
+
 static void test_throttle(void)
 {
 	gint64 last = 0;
@@ -210,6 +238,9 @@ static void test_throttle(void)
 	g_assert_cmpint(last, ==, 1000);
 	g_assert_true(term_notify_throttle(4001, &last, 3000));
 	g_assert_cmpint(last, ==, 4001);
+	/* exactly min_ms later is allowed, one ms earlier is not */
+	g_assert_false(term_notify_throttle(7000, &last, 3000));
+	g_assert_true(term_notify_throttle(7001, &last, 3000));
 }
 
 int main(int argc, char **argv)
@@ -231,6 +262,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/term_focus/filter_partial", test_focus_filter_partial);
 	g_test_add_func("/term_focus/filter_back_to_back", test_focus_filter_back_to_back);
 	g_test_add_func("/term_focus/filter_at_end", test_focus_filter_at_end);
+	g_test_add_func("/term_focus/filter_partial_heap", test_focus_filter_partial_heap);
+	g_test_add_func("/term_notify/encode_osc777_title_semicolon",
+	                test_encode_osc777_title_semicolon);
 	g_test_add_func("/term_notify/throttle", test_throttle);
 	return g_test_run();
 }
