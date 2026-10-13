@@ -413,7 +413,8 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 	size_t len = 0;
 	char *result = NULL;
 	struct termios saved;
-	gboolean raw = FALSE, overflow = FALSE;
+	gboolean raw = FALSE;
+	size_t late = 0;
 	unsigned char c = 0;
 	gint64 deadline = timeout_ms >= 0 ? g_get_monotonic_time() + (gint64) timeout_ms * 1000 : 0;
 
@@ -432,7 +433,15 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 		if (timeout_ms >= 0) {
 			gint64 left = deadline - g_get_monotonic_time();
 
-			wait = left <= 0 ? 0 : (int) ((left + 999) / 1000);
+			if (left <= 0) {
+				/* the deadline holds even for a stream without a newline; only
+				 * "0 = poll once" may still take what is already there */
+				if (timeout_ms > 0 || ++late > FIRSTRUN_LINE_MAX * 4)
+					break;
+				wait = 0;
+			} else {
+				wait = (int) ((left + 999) / 1000);
+			}
 		}
 		r = poll(&pfd, 1, wait);
 		if (r < 0)
@@ -465,15 +474,29 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 				break;
 			}
 			if (is_cc(&saved, VERASE, c) || c == 0x7f || c == '\b') {
-				if (len > 0 && !overflow)
-					len--;
+				/* a whole UTF-8 character: drop continuation bytes and the lead */
+				while (len > 0) {
+					unsigned char b = buf[--len];
+
+					if ((b & 0xC0) != 0x80)
+						break;
+				}
 				continue;
 			}
 			if (is_cc(&saved, VKILL, c)) {
-				if (!overflow)
-					len = 0;
+				len = 0;
 				continue;
 			}
+			if (c == '\r')
+				c = '\n';
+			else if (c < 0x20 && c != '\n')
+				continue; /* ^W, ESC, TAB, ...: never part of a secret */
+			if (c == '\n') {
+				result = g_strndup(buf, len);
+				break;
+			}
+			if (len >= FIRSTRUN_LINE_MAX)
+				break; /* a secret that does not fit is rejected, not truncated */
 		}
 		if (c == '\n') {
 			result = g_strndup(buf, len);
@@ -481,12 +504,17 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 		}
 		if (len < FIRSTRUN_LINE_MAX)
 			buf[len++] = c;
-		else
-			overflow = TRUE; /* the rest of an overlong line is discarded */
+		/* else: the rest of an overlong (non-secret) line is discarded */
 	}
 
 	if (raw) {
-		tcsetattr(fd, TCSAFLUSH, &saved);
+		int rc;
+
+		do {
+			rc = tcsetattr(fd, TCSAFLUSH, &saved);
+		} while (rc != 0 && errno == EINTR);
+		if (rc != 0)
+			tcsetattr(fd, TCSANOW, &saved);
 		if (write(fd, "\n", 1) < 0 && write(STDOUT_FILENO, "\n", 1) < 0) {
 			/* nothing more to try */
 		}

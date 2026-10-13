@@ -842,6 +842,102 @@ static void test_read_fd_secret_flush(void)
 	close(master);
 }
 
+static char *pty_secret(const char *typed, gboolean *aborted_fast)
+{
+	LATE_WRITE w;
+	GThread *th;
+	int master, slave;
+	char *s;
+	gint64 t0 = g_get_monotonic_time();
+
+	slave = open_pty(&master);
+	if (slave < 0)
+		return (char *) -1;
+	pty_late_write(master, typed, &th, &w);
+	s = firstrun_read_fd(slave, 4000, TRUE);
+	g_thread_join(th);
+	*aborted_fast = g_get_monotonic_time() - t0 < 3000000;
+	assert_cooked(slave);
+	close(slave);
+	close(master);
+	return s;
+}
+
+#define PTY_CASE(name, typed, expect)                                                              \
+	static void name(void)                                                                     \
+	{                                                                                          \
+		gboolean fast;                                                                     \
+		char *s = pty_secret(typed, &fast);                                                \
+                                                                                                   \
+		if (s == (char *) -1) {                                                            \
+			g_test_skip("no pty available");                                           \
+			return;                                                                    \
+		}                                                                                  \
+		g_assert_true(fast);                                                               \
+		g_assert_cmpstr(s, ==, expect);                                                    \
+		g_free(s);                                                                         \
+	}
+
+#define X64 "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#define OVERLONG X64 X64 X64 X64 X64 X64 X64 X64 X64 "\n"
+
+PTY_CASE(test_secret_utf8_erase, "za\xc5\xbc\177\n", "za")
+PTY_CASE(test_secret_kill, "abc\025d\n", "d")
+PTY_CASE(test_secret_eof_start, "\004", NULL)
+PTY_CASE(test_secret_eof_mid, "ab\004", "ab")
+PTY_CASE(test_secret_ctrl_ignored, "a\027\033\001\011b\n", "ab")
+PTY_CASE(test_secret_overlong_rejected, OVERLONG, NULL)
+
+static void test_secret_closed_pty(void)
+{
+	int master, slave;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	close(master);
+	g_assert_null(firstrun_read_fd(slave, 2000, TRUE));
+	close(slave);
+}
+
+static gboolean flood_stop;
+
+static gpointer flooder(gpointer data)
+{
+	int fd = GPOINTER_TO_INT(data);
+	char chunk[256];
+
+	memset(chunk, 'x', sizeof(chunk));
+	while (!g_atomic_int_get(&flood_stop))
+		if (write(fd, chunk, sizeof(chunk)) < 0)
+			g_usleep(100);
+	return NULL;
+}
+
+/* a stream that never sends a newline cannot hold the reader past its deadline */
+static void test_read_fd_flood_deadline(void)
+{
+	int p[2];
+	GThread *th;
+	gint64 t0;
+	char *s;
+
+	g_assert_cmpint(pipe(p), ==, 0);
+	g_assert_cmpint(fcntl(p[1], F_SETFL, O_NONBLOCK), ==, 0);
+	g_atomic_int_set(&flood_stop, FALSE);
+	th = g_thread_new("flooder", flooder, GINT_TO_POINTER(p[1]));
+	t0 = g_get_monotonic_time();
+	s = firstrun_read_fd(p[0], 200, FALSE);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 2000000);
+	g_assert_null(s);
+	g_atomic_int_set(&flood_stop, TRUE);
+	g_thread_join(th);
+	close(p[0]);
+	close(p[1]);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -882,6 +978,14 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/read_fd_partial_timeout", test_read_fd_partial_timeout);
 	g_test_add_func("/firstrun/read_fd_overlong", test_read_fd_overlong);
 	g_test_add_func("/firstrun/read_fd_secret_pty", test_read_fd_secret_pty);
+	g_test_add_func("/firstrun/secret_utf8_erase", test_secret_utf8_erase);
+	g_test_add_func("/firstrun/secret_kill", test_secret_kill);
+	g_test_add_func("/firstrun/secret_eof_start", test_secret_eof_start);
+	g_test_add_func("/firstrun/secret_eof_mid", test_secret_eof_mid);
+	g_test_add_func("/firstrun/secret_ctrl_ignored", test_secret_ctrl_ignored);
+	g_test_add_func("/firstrun/secret_overlong_rejected", test_secret_overlong_rejected);
+	g_test_add_func("/firstrun/secret_closed_pty", test_secret_closed_pty);
+	g_test_add_func("/firstrun/read_fd_flood_deadline", test_read_fd_flood_deadline);
 	g_test_add_func("/firstrun/clear_idempotent", test_clear_idempotent);
 
 	return g_test_run();
