@@ -325,6 +325,26 @@ class Erssi:
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
+    def run_detached(self, timeout):
+        """erssi without a terminal: stdin /dev/null, stdout and stderr one
+        pipe, the same environment, HOME and --home as start(). Killed after
+        TIMEOUT seconds if it is still running; returns its output (bytes)."""
+        self._prepare()
+        env = self.child_env()
+        proc = subprocess.Popen([str(self.inst.erssi), f"--home={self.home}"] + self.args,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, env=env, cwd=str(self.home_dir),
+                                start_new_session=True)
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            out, _ = proc.communicate()
+        return out
+
     def _reader(self):
         while True:
             try:

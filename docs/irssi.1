@@ -51,6 +51,22 @@ use
 .I HOSTNAME
 for your irc session
 .TP
+.BI "\-\-setup"
+ask the first-run setup questions (network, nick, SASL account and theme)
+again, on an existing configuration too. The setup only adds to the
+configuration: networks set to autoconnect and SASL accounts saved earlier
+are kept (a new SASL account for the same network replaces its old one).
+Without this option the questions are asked only on a terminal,
+when the configuration file does not exist yet and none of
+.BR \-\-config ,
+.BR \-\-connect ,
+.B \-\-noconnect
+and
+.B \-\-nick
+is given. Each answer waits at most 5 minutes; "n", end of input or no
+answer skips the setup, and the configuration is saved as it is; Ctrl-C
+ends erssi without saving, so the next start asks again.
+.TP
 .BI "\-v, \-\-version"
 display the version of Irssi
 .TP
