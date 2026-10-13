@@ -755,10 +755,15 @@ static void assert_cooked(int slave)
 
 static volatile sig_atomic_t raised, cooked_at_signal;
 static int signal_tty = -1;
+static volatile sig_atomic_t abort_flag;
+static gboolean tstp_aborts; /* SIGTSTP also sets abort_flag (a SIGTERM while stopped) */
 
 static void record_signal(int signo)
 {
 	struct termios t;
+
+	if (signo == SIGTSTP && tstp_aborts)
+		abort_flag = 1;
 
 	/* tcgetattr is async-signal-safe: the state the signal sees */
 	cooked_at_signal = signal_tty >= 0 && tcgetattr(signal_tty, &t) == 0 &&
@@ -843,7 +848,9 @@ static gpointer suspend_writer(gpointer data)
 	g_usleep(200 * 1000);
 	if (write(w->fd, "ab\032", 3) != 3)
 		return GINT_TO_POINTER(1);
-	/* typed while stopped: dropped when the reader takes the terminal again */
+	/* "cd" comes after the restart (the drop of input typed while stopped
+	 * is not tested: a pty delivers input asynchronously, so a byte written
+	 * from the handler can still land after the reader's TCSAFLUSH) */
 	while (!raised)
 		g_usleep(1000);
 	g_usleep(300 * 1000);
@@ -883,6 +890,137 @@ static void test_read_fd_secret_suspend(void)
 	g_assert_cmpstr(s, ==, "cd");
 	g_free(s);
 	assert_cooked(slave);
+	/* after the resume the prompt is shown again */
+	{
+		char out[256];
+		ssize_t n;
+
+		g_assert_cmpint(fcntl(master, F_SETFL, O_NONBLOCK), ==, 0);
+		n = read(master, out, sizeof(out) - 1);
+		g_assert_cmpint(n, >, 0);
+		out[n] = '\0';
+		g_assert_nonnull(strstr(out, FIRSTRUN_SECRET_PROMPT));
+	}
+	close(slave);
+	close(master);
+}
+
+/* a set abort flag: the read does not start, nothing is consumed */
+static void test_read_fd_abort_at_start(void)
+{
+	int master, slave;
+	char *s;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	g_assert_cmpint(write(master, "x\n", 2), ==, 2);
+	abort_flag = 1;
+	firstrun_set_abort_flag(&abort_flag);
+	g_assert_null(firstrun_read_fd(slave, 2000, FALSE));
+	g_assert_null(firstrun_read_fd(slave, 2000, TRUE));
+	abort_flag = 0;
+	s = firstrun_read_fd(slave, 2000, FALSE);
+	firstrun_set_abort_flag(NULL);
+	g_assert_cmpstr(s, ==, "x");
+	g_free(s);
+	close(slave);
+	close(master);
+}
+
+typedef struct {
+	int fd;
+} ABORT_WRITE;
+
+/* "ab", then the flag is set (as a signal handler would), then "c\n" */
+static gpointer abort_writer(gpointer data)
+{
+	ABORT_WRITE *w = data;
+
+	g_usleep(200 * 1000);
+	if (write(w->fd, "ab", 2) != 2)
+		return GINT_TO_POINTER(1);
+	g_usleep(200 * 1000);
+	abort_flag = 1;
+	if (write(w->fd, "c\n", 2) != 2)
+		return GINT_TO_POINTER(1);
+	return NULL;
+}
+
+/* the flag is checked between bytes, so a line that keeps coming is not taken */
+static void test_read_fd_abort_between_bytes(void)
+{
+	gboolean secret;
+
+	for (secret = FALSE; secret <= TRUE; secret++) {
+		ABORT_WRITE w;
+		GThread *th;
+		int master, slave;
+		char *s;
+
+		slave = open_pty(&master);
+		if (slave < 0) {
+			g_test_skip("no pty available");
+			return;
+		}
+		abort_flag = 0;
+		firstrun_set_abort_flag(&abort_flag);
+		w.fd = master;
+		th = g_thread_new("abort-writer", abort_writer, &w);
+		s = firstrun_read_fd(slave, 4000, secret);
+		g_thread_join(th);
+		firstrun_set_abort_flag(NULL);
+		g_assert_null(s);
+		assert_cooked(slave);
+		close(slave);
+		close(master);
+	}
+	abort_flag = 0;
+}
+
+/* a SIGTERM that came while stopped at the password prompt (kill %1 sends SIGTERM and
+ * SIGCONT): after the resume the read ends, without taking the terminal again */
+static void test_read_fd_abort_after_suspend(void)
+{
+	struct sigaction old[3];
+	LATE_WRITE w;
+	GThread *th;
+	int master, slave;
+	gint64 t0;
+	char *s;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	record_signals(old);
+	abort_flag = 0;
+	tstp_aborts = TRUE;
+	firstrun_set_abort_flag(&abort_flag);
+	t0 = g_get_monotonic_time();
+	pty_late_write(master, "ab\032", &th, &w);
+	s = firstrun_read_fd(slave, 4000, TRUE);
+	g_thread_join(th);
+	firstrun_set_abort_flag(NULL);
+	tstp_aborts = FALSE;
+	restore_signals(old);
+	g_assert_cmpint(raised, ==, SIGTSTP);
+	g_assert_null(s);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 3000000);
+	assert_cooked(slave);
+	{
+		char out[256];
+		ssize_t n;
+
+		g_assert_cmpint(fcntl(master, F_SETFL, O_NONBLOCK), ==, 0);
+		n = read(master, out, sizeof(out) - 1);
+		out[n > 0 ? n : 0] = '\0';
+		g_assert_null(strstr(out, FIRSTRUN_SECRET_PROMPT));
+	}
+	abort_flag = 0;
 	close(slave);
 	close(master);
 }
@@ -1120,6 +1258,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/read_fd_eintr_aborts", test_read_fd_eintr_aborts);
 	g_test_add_func("/firstrun/read_fd_secret_interrupt", test_read_fd_secret_interrupt);
 	g_test_add_func("/firstrun/read_fd_secret_suspend", test_read_fd_secret_suspend);
+	g_test_add_func("/firstrun/read_fd_abort_at_start", test_read_fd_abort_at_start);
+	g_test_add_func("/firstrun/read_fd_abort_between_bytes", test_read_fd_abort_between_bytes);
+	g_test_add_func("/firstrun/read_fd_abort_after_suspend", test_read_fd_abort_after_suspend);
 	g_test_add_func("/firstrun/printable", test_printable);
 	g_test_add_func("/firstrun/unprintable_skipped", test_unprintable_skipped);
 	g_test_add_func("/firstrun/read_fd_secret_erase", test_read_fd_secret_erase);
