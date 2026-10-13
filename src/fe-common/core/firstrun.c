@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <poll.h>
+#include <signal.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -106,6 +107,9 @@ GPtrArray *firstrun_networks(CONFIG_REC *config)
 		address = config_node_get_str(server, "address", NULL);
 		if (address == NULL || *address == '\0')
 			continue;
+		/* both are printed to the terminal */
+		if (!firstrun_printable(node->key) || !firstrun_printable(address))
+			continue;
 
 		n = g_new0(FIRSTRUN_NETWORK, 1);
 		n->chatnet = g_strdup(node->key);
@@ -134,6 +138,16 @@ void firstrun_answers_clear(FIRSTRUN_ANSWERS *answers)
 	g_free(answers->sasl_pass);
 	g_free(answers->theme);
 	memset(answers, 0, sizeof(*answers));
+}
+
+gboolean firstrun_printable(const char *s)
+{
+	if (s == NULL)
+		return FALSE;
+	for (; *s != '\0'; s++)
+		if ((unsigned char) *s < 0x20 || (unsigned char) *s > 0x7e)
+			return FALSE;
+	return TRUE;
 }
 
 gboolean firstrun_nick_valid(const char *nick)
@@ -207,6 +221,11 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 	memset(answers, 0, sizeof(*answers));
 	while (themes != NULL && themes[ntheme] != NULL)
 		ntheme++;
+	/* printed in the prompts: a default that is not printable is no default */
+	if (!firstrun_printable(default_nick))
+		default_nick = NULL;
+	if (!firstrun_printable(default_theme))
+		default_theme = NULL;
 
 	PROMPT(out, "erssi first-run setup: network, nick, SASL and theme. Enter keeps the "
 	            "[default].\n");
@@ -416,9 +435,13 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 	gboolean raw = FALSE;
 	size_t late = 0;
 	unsigned char c = 0;
-	enum { ESC_NONE, ESC_START, ESC_CSI, ESC_SS3 } esc = ESC_NONE;
+	enum { ESC_NONE, ESC_START, ESC_CSI, ESC_SS3 } esc;
+	int raise_sig;
 	gint64 deadline = timeout_ms >= 0 ? g_get_monotonic_time() + (gint64) timeout_ms * 1000 : 0;
 
+restart:
+	esc = ESC_NONE;
+	raise_sig = 0;
 	if (secret && isatty(fd)) {
 		if (!secret_tty_begin(fd, &saved))
 			return NULL;
@@ -479,9 +502,15 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 					continue;
 			}
 			esc = ESC_NONE;
+			/* ISIG is off: these keys give the signal the terminal would have
+			 * sent, after the terminal is restored (see the header) */
 			if (is_cc(&saved, VINTR, c) || is_cc(&saved, VQUIT, c) ||
-			    is_cc(&saved, VSUSP, c))
-				break; /* abort */
+			    is_cc(&saved, VSUSP, c)) {
+				raise_sig = is_cc(&saved, VINTR, c)   ? SIGINT :
+				            is_cc(&saved, VQUIT, c)   ? SIGQUIT :
+				                                        SIGTSTP;
+				break;
+			}
 			if (is_cc(&saved, VEOF, c)) {
 				if (len > 0)
 					result = g_strndup(buf, len);
@@ -535,7 +564,18 @@ char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret)
 		if (write(fd, "\n", 1) < 0 && write(STDOUT_FILENO, "\n", 1) < 0) {
 			/* nothing more to try */
 		}
+		raw = FALSE;
 	}
+	if (raise_sig == SIGTSTP) {
+		/* suspended like at a cooked prompt: on resume the secret is read
+		 * again from the start, within the same deadline */
+		secure_zero(buf, sizeof(buf));
+		len = 0;
+		raise(SIGTSTP);
+		goto restart;
+	}
+	if (raise_sig != 0)
+		raise(raise_sig);
 	secure_zero(buf, sizeof(buf));
 	secure_zero(&c, sizeof(c));
 

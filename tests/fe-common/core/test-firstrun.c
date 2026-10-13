@@ -753,9 +753,47 @@ static void assert_cooked(int slave)
 	g_assert_true(t.c_lflag & ICANON);
 }
 
+static volatile sig_atomic_t raised, cooked_at_signal;
+static int signal_tty = -1;
+
+static void record_signal(int signo)
+{
+	struct termios t;
+
+	/* tcgetattr is async-signal-safe: the state the signal sees */
+	cooked_at_signal = signal_tty >= 0 && tcgetattr(signal_tty, &t) == 0 &&
+	                   (t.c_lflag & (ECHO | ICANON | ISIG)) == (ECHO | ICANON | ISIG);
+	raised = signo;
+}
+
+/* SIGINT, SIGQUIT and SIGTSTP record instead of acting; returns the old actions */
+static void record_signals(struct sigaction old[3])
+{
+	static const int sigs[] = { SIGINT, SIGQUIT, SIGTSTP };
+	struct sigaction sa;
+	int i;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = record_signal;
+	sigemptyset(&sa.sa_mask);
+	for (i = 0; i < 3; i++)
+		g_assert_cmpint(sigaction(sigs[i], &sa, &old[i]), ==, 0);
+	raised = 0;
+}
+
+static void restore_signals(const struct sigaction old[3])
+{
+	sigaction(SIGINT, &old[0], NULL);
+	sigaction(SIGQUIT, &old[1], NULL);
+	sigaction(SIGTSTP, &old[2], NULL);
+}
+
+/* ^C and ^\ abort the read and then give the signal the terminal would have sent */
 static void test_read_fd_secret_interrupt(void)
 {
-	const char *const inputs[] = { "ab\003", "ab\032", "ab\034" };
+	const char *const inputs[] = { "ab\003", "ab\034" };
+	const int expect[] = { SIGINT, SIGQUIT };
+	struct sigaction old[3];
 	int master, slave, i;
 	struct termios t;
 
@@ -768,20 +806,138 @@ static void test_read_fd_secret_interrupt(void)
 	t.c_lflag |= ECHO | ISIG | ICANON;
 	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 2; i++) {
 		LATE_WRITE w;
 		GThread *th;
 		gint64 t0 = g_get_monotonic_time();
+		char *s;
 
+		record_signals(old);
+		signal_tty = slave;
 		pty_late_write(master, inputs[i], &th, &w);
-		g_assert_null(firstrun_read_fd(slave, 5000, TRUE));
+		s = firstrun_read_fd(slave, 5000, TRUE);
 		g_thread_join(th);
+		restore_signals(old);
+		signal_tty = -1;
+		g_assert_null(s);
+		g_assert_cmpint(raised, ==, expect[i]);
+		/* raised after the terminal was restored */
+		g_assert_true(cooked_at_signal);
 		/* aborted at the control byte, not by the timeout */
 		g_assert_cmpint(g_get_monotonic_time() - t0, <, 4000000);
 		assert_cooked(slave);
 	}
 	close(slave);
 	close(master);
+}
+
+typedef struct {
+	int fd;
+} SUSPEND_WRITE;
+
+/* "ab", ^Z; then (the reader has raised SIGTSTP and read again) "cd", Enter */
+static gpointer suspend_writer(gpointer data)
+{
+	SUSPEND_WRITE *w = data;
+
+	g_usleep(200 * 1000);
+	if (write(w->fd, "ab\032", 3) != 3)
+		return GINT_TO_POINTER(1);
+	/* typed while stopped: dropped when the reader takes the terminal again */
+	while (!raised)
+		g_usleep(1000);
+	g_usleep(300 * 1000);
+	if (write(w->fd, "cd\n", 3) != 3)
+		return GINT_TO_POINTER(1);
+	return NULL;
+}
+
+/* ^Z restores the terminal, raises SIGTSTP and reads the secret again from the start */
+static void test_read_fd_secret_suspend(void)
+{
+	struct sigaction old[3];
+	struct termios t;
+	SUSPEND_WRITE w;
+	GThread *th;
+	int master, slave;
+	char *s;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
+	t.c_lflag |= ECHO | ISIG | ICANON;
+	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
+	record_signals(old);
+	signal_tty = slave;
+	w.fd = master;
+	th = g_thread_new("suspend-writer", suspend_writer, &w);
+	s = firstrun_read_fd(slave, 5000, TRUE);
+	g_thread_join(th);
+	restore_signals(old);
+	signal_tty = -1;
+	g_assert_cmpint(raised, ==, SIGTSTP);
+	g_assert_true(cooked_at_signal);
+	g_assert_cmpstr(s, ==, "cd");
+	g_free(s);
+	assert_cooked(slave);
+	close(slave);
+	close(master);
+}
+
+static void test_printable(void)
+{
+	g_assert_true(firstrun_printable(""));
+	g_assert_true(firstrun_printable("irc.example.net ~[]"));
+	g_assert_false(firstrun_printable(NULL));
+	g_assert_false(firstrun_printable("a\033[2Jb"));
+	g_assert_false(firstrun_printable("a\tb"));
+	g_assert_false(firstrun_printable("a\177"));
+	g_assert_false(firstrun_printable("za\xc5\xbc"));
+}
+
+/* names and addresses that are printed must be printable; so must the defaults */
+static void test_unprintable_skipped(void)
+{
+	static const char cfg[] =
+	    "chatnets = { ok = { type = \"IRC\"; }; \"b\033[2J\" = { type = \"IRC\"; };"
+	    " c = { type = \"IRC\"; }; };\n"
+	    "servers = ( { address = \"irc.example.net\"; chatnet = \"ok\"; },"
+	    " { address = \"irc.example.org\"; chatnet = \"b\033[2J\"; },"
+	    " { address = \"x\033]0;t\007\"; chatnet = \"c\"; } );\n";
+	const char *const lines[] = { "", "0", "", "", NULL };
+	CONFIG_REC *config = config_open(NULL, -1);
+	FIRSTRUN_ANSWERS a;
+	GPtrArray *nets;
+	FILE *out;
+	SCRIPT sc;
+	char *text;
+
+	g_assert_cmpint(config_parse_data(config, cfg, "unprintable"), ==, 0);
+	nets = firstrun_networks(config);
+	g_assert_cmpuint(nets->len, ==, 1);
+	g_assert_cmpstr(((FIRSTRUN_NETWORK *) g_ptr_array_index(nets, 0))->chatnet, ==, "ok");
+
+	out = tmpfile();
+	g_assert_nonnull(out);
+	memset(&sc, 0, sizeof(sc));
+	sc.lines = lines;
+	g_assert_cmpint(firstrun_ask(out, script_read, &sc, nets, (char **) THEMES, "n\033[2J",
+	                             "t\033[2J", &a),
+	                ==, FIRSTRUN_DONE);
+	text = slurp(out);
+	fclose(out);
+	g_assert_null(strchr(text, '\033'));
+	g_assert_nonnull(strstr(text, "Nick []: "));
+	g_assert_nonnull(strstr(text, "Theme []: "));
+	g_assert_null(a.nick);
+	g_assert_null(a.theme);
+	firstrun_answers_clear(&a);
+	g_free(text);
+	g_ptr_array_free(nets, TRUE);
+	config_close(config);
 }
 
 static void test_read_fd_secret_erase(void)
@@ -963,6 +1119,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/read_fd_zero_timeout_polls", test_read_fd_zero_timeout_polls);
 	g_test_add_func("/firstrun/read_fd_eintr_aborts", test_read_fd_eintr_aborts);
 	g_test_add_func("/firstrun/read_fd_secret_interrupt", test_read_fd_secret_interrupt);
+	g_test_add_func("/firstrun/read_fd_secret_suspend", test_read_fd_secret_suspend);
+	g_test_add_func("/firstrun/printable", test_printable);
+	g_test_add_func("/firstrun/unprintable_skipped", test_unprintable_skipped);
 	g_test_add_func("/firstrun/read_fd_secret_erase", test_read_fd_secret_erase);
 	g_test_add_func("/firstrun/read_fd_secret_flush", test_read_fd_secret_flush);
 	g_test_add_func("/firstrun/ask_no", test_ask_no);

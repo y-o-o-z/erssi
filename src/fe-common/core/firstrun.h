@@ -44,7 +44,9 @@ GPtrArray *firstrun_networks(CONFIG_REC *config);
  * point gives FIRSTRUN_SKIPPED with ANSWERS wiped. The SASL questions are only asked
  * when the chosen network's server has TLS with certificate verification (never a
  * password over plaintext or unverified TLS); an empty account, an empty password or
- * a control byte in the account (asked again) means no SASL. ANSWERS is initialised here. */
+ * a control byte in the account (asked again) means no SASL. A DEFAULT_NICK or
+ * DEFAULT_THEME that is not firstrun_printable() is taken as none (the answer is then NULL
+ * when Enter keeps it). ANSWERS is initialised here. */
 FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtrArray *networks,
                              char **themes, const char *default_nick,
                              const char *default_theme, FIRSTRUN_ANSWERS *answers);
@@ -53,6 +55,11 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
  * sasl_mechanism = PLAIN, sasl_username and sasl_password in chatnets/<chatnet>.
  * Nothing else changes. */
 void firstrun_apply_config(CONFIG_REC *config, const FIRSTRUN_ANSWERS *answers);
+
+/* TRUE if S is not NULL and has only printable ASCII (0x20-0x7e): safe to print on the
+ * terminal. Networks whose chatnet or address fail it are not offered, and a default nick
+ * or theme that fails it is no default. */
+gboolean firstrun_printable(const char *s);
 
 /* 1-30 bytes; first char [A-Za-z[]\`_^{|}], the rest also [0-9-]. */
 gboolean firstrun_nick_valid(const char *nick);
@@ -71,7 +78,11 @@ gboolean firstrun_nick_valid(const char *nick);
  * arrow key: ESC [ ... final byte, ESC O x; Alt+key) is dropped whole; other control
  * bytes are ignored and never stored; a secret longer than 511 bytes is rejected (NULL). The
  * overall deadline holds even for a stream with no newline (with TIMEOUT_MS 0 at most a
- * few KiB already queued are taken). The interrupt, quit and suspend characters abort the read (NULL).
+ * few KiB already queued are taken). In a secret read the interrupt and quit characters
+ * abort the read (NULL) and then raise SIGINT or SIGQUIT, as the terminal would have
+ * done; the suspend character restores the terminal, raises SIGTSTP and, once resumed,
+ * reads the secret again from the start (typed-ahead input is dropped), within the same
+ * deadline.
  * If the terminal cannot be switched, a secret is not read at all (NULL).
  * Internal buffers are wiped. Only erssi's own copies are wiped: lib-config and the
  * saved config hold the password in plaintext by design. */
