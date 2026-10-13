@@ -100,6 +100,7 @@ install_data(
     'rmrejoins',
     'save',
     'sconnect',
+    'search',
     'script',
     'scrollback',
     'server',

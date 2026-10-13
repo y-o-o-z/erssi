@@ -1,0 +1,58 @@
+
+%9Syntax:%9
+
+@SYNTAX:search@
+
+%9Parameters:%9
+
+    -all:       Searches the logs of every network and target.
+    -network:   Searches the logs of every target of this network (its tag).
+    -target:    Searches the log of this channel or nick instead of the
+                active window's (on the active network, or on the one
+                -network names).
+    -max:       Shows at most this many hits, the newest; 50 by default,
+                at most 1000.
+    -regexp:    The text is a regular expression.
+    -case:      Matches case-sensitively.
+    -stop:      Stops the search that is running.
+
+    The text to search for. Without -all, -network or -target the
+    channel or query of the active window is searched.
+
+%9Description:%9
+
+    Searches the autolog files for a text and shows the matching lines,
+    oldest first, each with its log (the target, with the network
+    before it when several are searched) and the date of its day.
+
+    The files are the ones autolog_path names: its $tag and $0 are filled
+    in for the scope, every other variable and every strftime() code
+    matches anything, and '~' is your home directory. Only those files are
+    read: not /LOG files, not /WINDOW LOG files, not the scrollback (see
+    /LASTLOG), and not compressed (.gz) or rotated files under another
+    name. Symbolic links below the log directory are not followed.
+
+    The search runs in a separate process, so erssi goes on while it
+    reads; the results are printed when it is done, in the window it was
+    started in. One search runs at a time. Files are read newest first;
+    a search reads at most search_max_size bytes in all (of a log that
+    does not fit, its last part) and at most 5000 files, and ends after
+    120 seconds. The summary line says when a limit stopped it. Lines
+    longer than 400 characters are shortened.
+
+    /SEARCH is not available in capability mode (/CAPSICUM ENTER).
+
+%9Settings:%9
+
+    search_max_size = 512M
+        The most a search reads, over all its files.
+
+%9Examples:%9
+
+    /SEARCH holiday
+    /SEARCH -max 10 -target bob see you
+    /SEARCH -network IRCnet -regexp holiday|vacation
+    /SEARCH -all -case README
+    /SEARCH -stop
+
+%9See also:%9 LASTLOG, LOG

@@ -317,6 +317,17 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "tls_cert_fingerprint", "Certificate Fingerprint: {hilight $0} ({hilight $1})", 2, { 0, 0 } },
 	{ "tls_protocol_version", "Protocol: {hilight $0} ({hilight $1} bit, {hilight $2})", 3, { 0, 1, 0 } },
 
+	/* ---- */
+	{ NULL, "Search", 0 },
+
+	{ "search_hit", "{hilight $0} %K$1%n $2", 3, { 0, 0, 0 } },
+	{ "search_summary", "Search for {hilight $0}: $1 hits in $2 files, $3 read$4", 5, { 0, 1, 1, 0, 0 } },
+	{ "search_busy", "Search: one is running - /SEARCH -stop first", 0 },
+	{ "search_stopped", "Search stopped", 0 },
+	{ "search_idle", "Search: nothing is running", 0 },
+	{ "search_capsicum", "Search: not available in capability mode", 0 },
+	{ "search_failed", "Search for {hilight $0} failed: the search process ended without a result", 1, { 0 } },
+
 	{ NULL, NULL, 0 }
 	/* clang-format on */
 };
