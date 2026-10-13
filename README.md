@@ -165,7 +165,7 @@ and used when present. For a system-wide install use
   of the channel or query you are in; `-target`, `-network` and `-all`
   widen it, `-regexp` and `-case` change the match. It runs in a separate
   process, so erssi goes on meanwhile, and stops at `search_max_size`
-  (512 MB) read. `/help search`.
+  (512 MiB) read. `/help search`.
 
 ### Help for every command
 
