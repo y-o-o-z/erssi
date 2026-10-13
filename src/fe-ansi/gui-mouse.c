@@ -299,7 +299,10 @@ gboolean gui_mouse_try_parse_key(gunichar key)
 		if (*s != '<') {
 			/* Not SGR format - might be other escape sequence */
 			if (key == 'M' || key == 'm' || key == '~' || (key >= 'A' && key <= 'Z')) {
-				/* Complete escape sequence - re-emit */
+				/* Complete escape sequence - re-emit all of it, the
+				 * final byte included */
+				int len = mouse_len;
+
 				mouse_state = 0;
 				mouse_len = 0;
 				esc_pending = 0;
@@ -312,7 +315,7 @@ gboolean gui_mouse_try_parse_key(gunichar key)
 					reemit_guard = 1;
 					signal_emit("gui key pressed", 1, GINT_TO_POINTER(0x1b));
 					signal_emit("gui key pressed", 1, GINT_TO_POINTER('['));
-					for (i = 0; i < mouse_len; i++) {
+					for (i = 0; i < len; i++) {
 						signal_emit("gui key pressed", 1, GINT_TO_POINTER((unsigned char)mouse_buf[i]));
 					}
 					reemit_guard = 0;
