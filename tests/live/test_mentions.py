@@ -83,8 +83,8 @@ def main():
         st["ircd"] = ircd
         port = ircd.start()
         st["port"] = port
-        cfg = harness.config(port, "alice", servers=[("E2E", port), ("Botnet", port)])
-        cfg = cfg.replace('Botnet = { type = "IRC"; };', 'Botnet = { type = "IRC"; nick = "alicebot"; };')
+        cfg = harness.config(port, "alice", servers=[("E2E", port), ("Bitlbee", port)])
+        cfg = cfg.replace('Bitlbee = { type = "IRC"; };', 'Bitlbee = { type = "IRC"; nick = "alicebot"; };')
         assert 'nick = "alicebot"' in cfg, cfg
         # as in the shipped config: the nick anywhere in a line is a hilight
         cfg = cfg.replace('theme = "default";', 'theme = "default"; hilight_nick_matches_everywhere = "yes";')
@@ -210,8 +210,8 @@ def main():
     def t_excluded_network():
         alice = st["alice"]
         off = log_size()
-        alice.type("/set mentions_exclude_networks Botnet")
-        assert wait_log_re(r"mentions_exclude_networks\s+(= )?Botnet", off), "setting not changed"
+        alice.type("/set mentions_exclude_networks Bitlbee")
+        assert wait_log_re(r"mentions_exclude_networks\s+(= )?Bitlbee", off), "setting not changed"
         st["carol"].send("PRIVMSG alicebot :partyline text")
         assert alice.wait_file(alice.all_log(), "partyline text", WAIT), "alicebot did not get it"
         absent_ml("partyline text")
@@ -281,7 +281,7 @@ def main():
         assert wait_ml("[E2E] #test <bob> ops only, alice"), ml_text()
 
     def t_channel_excluded_network():
-        # alicebot is on Botnet (excluded): its hilights are left out
+        # alicebot is on Bitlbee (excluded): its hilights are left out
         alice = st["alice"]
         st["carol"].send("PRIVMSG #test :alicebot: botnet hilight")
         assert alice.wait_file(alice.all_log(), "alicebot: botnet hilight", WAIT), "not delivered"
@@ -302,6 +302,13 @@ def main():
             assert alice.wait_file(alice.all_log(), "bardzodlugi_nick", WAIT), "long nick did not join"
             long.send("PRIVMSG #test :alice: long nick")
             assert wait_ml("[E2E] #test <bardzodlugi_nick> alice: long nick"), ml_text()
+            # the channel shows the nick cut to the nick column, so the
+            # check above is not vacuous
+            chan_log = alice.home / "logs" / "E2E" / "#test.log"
+            assert alice.wait_file(chan_log, "alice: long nick", WAIT), "no channel line"
+            line = [x for x in chan_log.read_text(errors="replace").splitlines()
+                    if "alice: long nick" in x][-1]
+            assert "bardzodlugi_nick" not in line, "nick not cut: " + line
             assert alice.wait_file(alice.all_log(), "#test bardzodlugi_nick: alice: long nick", WAIT), \
                 "the Mentions window does not show the whole nick"
         finally:
@@ -317,7 +324,7 @@ def main():
         # later hilight; a hilight printed while one is recorded (a "mention"
         # handler echoing) is not recorded again, so it cannot loop.
         if not st["inst"].has_perl:
-            return
+            raise harness.SkipCase("erssi was built without Perl")
         alice = st["alice"]
         (alice.home / "scripts" / "mtest.pl").write_text(
             "use Irssi;\n"
@@ -361,7 +368,7 @@ def main():
 
     def t_webjournal():
         if not st["inst"].has_perl:
-            return
+            raise harness.SkipCase("erssi was built without Perl")
         alice = st["alice"]
         script = st["inst"].scriptdir / "webjournal.pl"
         if not script.is_file() and len(sys.argv) > 2:
@@ -444,7 +451,7 @@ def main():
             lsock.close()
 
     def t_dcc_excluded_network():
-        # a DCC CHAT that came through an excluded network (Botnet) is left out.
+        # a DCC CHAT that came through an excluded network (Bitlbee) is left out.
         # The offer is from carol: the chat with bob of t_dcc may still be
         # on its way out, and a second "/dcc chat bob" would race with it.
         alice = st["alice"]
