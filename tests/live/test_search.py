@@ -7,6 +7,7 @@ Usage: test_search.py <build dir> [<source dir>]"""
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -281,6 +282,21 @@ def main():
         test = st["win_test_log"].read_text(errors="replace")
         assert "Search for bigneedle: 1 hits in 1 files" in test, "not in the active window:\n" + test
 
+    def t_child_killed():
+        # the search process dies without a summary: the failure says why
+        alice = st["alice"]
+        off = log_size()
+        alice.write_raw(b"/search -target #big -regexp (x+x+)+y\r")
+        kids = wait_children()
+        assert kids, "no search process"
+        time.sleep(0.5)
+        for k in kids:
+            os.kill(int(k), signal.SIGKILL)
+        assert wait_log_since(off, "failed: the search process ended without a result"), \
+            log_since(off)
+        assert "time limit" not in log_since(off), log_since(off)
+        assert no_children(), children()
+
     def t_help():
         alice = st["alice"]
         alice.type(f"/set help_path {st['inst'].helpdir}")
@@ -304,7 +320,7 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_basic, t_window, t_bad_scope, t_max, t_regexp_case,
-                      t_all_network, t_no_item, t_stop_idle, t_async_and_limit, t_busy, t_help,
+                      t_all_network, t_no_item, t_stop_idle, t_async_and_limit, t_busy, t_child_killed, t_help,
                       t_quit_running])
     finally:
         if "bob" in st:

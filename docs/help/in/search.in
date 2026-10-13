@@ -38,7 +38,7 @@
     a search reads at most search_max_size bytes in all (of a log that
     does not fit, its last part) and at most 5000 files. The summary line
     says when one of these limits stopped it. A search still running
-    after 120 seconds is ended and says it failed, without hits. Lines
+    after 120 seconds is ended and says it failed (and why), without hits. Lines
     longer than 400 characters are shortened.
 
     /SEARCH is not available in capability mode (/CAPSICUM ENTER).
