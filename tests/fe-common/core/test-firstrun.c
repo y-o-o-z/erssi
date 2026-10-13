@@ -484,7 +484,7 @@ static void test_nick_valid(void)
 	long31[31] = '\0';
 	memset(long30, 'a', 30);
 	long30[30] = '\0';
-	g_assert_true(firstrun_nick_valid("yooz"));
+	g_assert_true(firstrun_nick_valid("alice"));
 	g_assert_true(firstrun_nick_valid("a-b_[]{}|^`\\"));
 	g_assert_false(firstrun_nick_valid("-x"));
 	g_assert_false(firstrun_nick_valid("1x"));
