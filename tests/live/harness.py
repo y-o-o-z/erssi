@@ -27,12 +27,16 @@ class Skip(Exception):
     """The test cannot run here (missing tool or feature)."""
 
 
+class SkipCase(Exception):
+    """One test case cannot run here; the rest go on. Reported as SKIP."""
+
+
 def keep_work():
     return os.environ.get("KEEP_WORK") == "1"
 
 
 def main(tests):
-    ok = failed = 0
+    ok = failed = skipped = 0
     try:
         for test in tests:
             name = getattr(test, "__name__", str(test))
@@ -42,6 +46,9 @@ def main(tests):
                 ok += 1
             except Skip:
                 raise
+            except SkipCase as exc:
+                print(f"  SKIP {name}: {exc}", flush=True)
+                skipped += 1
             except Exception as exc:  # AssertionError included
                 if not isinstance(exc, AssertionError):
                     traceback.print_exc()
@@ -53,7 +60,8 @@ def main(tests):
             print(f"result: {ok} ok, {failed} failed", flush=True)
             sys.exit(1)
         sys.exit(77)
-    print(f"result: {ok} ok, {failed} failed", flush=True)
+    print(f"result: {ok} ok, {failed} failed" + (f", {skipped} skipped" if skipped else ""),
+          flush=True)
     sys.exit(1 if failed else 0)
 
 

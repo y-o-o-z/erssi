@@ -4,6 +4,7 @@ client, TESTRAW, a hermetic environment.
 Usage: test_harness.py <build dir> [<source dir>]"""
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -89,8 +90,21 @@ def main():
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
+    def t_skip_case():
+        # a case that raises SkipCase is reported as SKIP, the others still run
+        r = subprocess.run([sys.executable, "-c",
+                            "import sys; sys.path.insert(0, %r); import harness\n"
+                            "def t_skipped(): raise harness.SkipCase('no such feature')\n"
+                            "def t_after(): pass\n"
+                            "harness.main([t_after, t_skipped, t_after])" % str(Path(harness.__file__).parent)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r
+        assert "  SKIP t_skipped: no such feature" in r.stdout, r.stdout
+        assert "  ok   t_skipped" not in r.stdout, r.stdout
+        assert "result: 2 ok, 0 failed, 1 skipped" in r.stdout, r.stdout
+
     try:
-        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke])
+        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke, t_skip_case])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)
