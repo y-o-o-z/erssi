@@ -1,0 +1,70 @@
+#ifndef IRSSI_FE_COMMON_CORE_FIRSTRUN_H
+#define IRSSI_FE_COMMON_CORE_FIRSTRUN_H
+
+#include <glib.h>
+#include <stdio.h>
+#include <irssi/src/lib-config/iconfig.h>
+
+/* One network the first-run setup can offer: the first server of an IRC chatnet. */
+typedef struct {
+	char *chatnet, *address;
+	int port;
+	gboolean tls;
+} FIRSTRUN_NETWORK;
+
+/* What the user answered. chatnet NULL = no network (connect later). sasl_user and
+ * sasl_pass are both set or both NULL. theme may be NULL (keep the current one). */
+typedef struct {
+	char *chatnet;
+	char *nick;
+	char *sasl_user;
+	char *sasl_pass;
+	char *theme;
+} FIRSTRUN_ANSWERS;
+
+/* Returns a newly allocated line (g_free it; the caller wipes secrets), or NULL on
+ * EOF/timeout. SECRET is TRUE for the SASL password: the reader must not echo it. */
+typedef char *(*FIRSTRUN_READ_FUNC)(void *ctx, gboolean secret);
+
+typedef enum { FIRSTRUN_DONE, FIRSTRUN_SKIPPED } FIRSTRUN_RESULT;
+
+/* tty && (forced || (!config_exists && !scripted)) */
+gboolean firstrun_wanted(gboolean config_exists, gboolean tty, gboolean forced,
+                         gboolean scripted);
+
+/* One entry per chatnet of type IRC that has at least one server; the entry takes the
+ * first server of that chatnet in list order. Sorted by name, case-insensitively. The
+ * array has a free func; g_ptr_array_free(array, TRUE) releases it. */
+GPtrArray *firstrun_networks(CONFIG_REC *config);
+
+/* Asks the questions on OUT, reading answers through READ. THEMES is a NULL terminated
+ * list (NULL or empty = no theme question). Invalid input is asked again, up to 3 times
+ * per question, then the default is used. "n" at "Set up now?" or NULL from READ at any
+ * point gives FIRSTRUN_SKIPPED with ANSWERS wiped. The SASL questions are only asked
+ * when the chosen network's server has TLS (never a password over plaintext); an empty
+ * account, or an empty password, means no SASL. ANSWERS is initialised here. */
+FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtrArray *networks,
+                             char **themes, const char *default_nick,
+                             const char *default_theme, FIRSTRUN_ANSWERS *answers);
+
+/* If a chatnet is set: autoconnect = yes on its first server. If sasl_user is set:
+ * sasl_mechanism = PLAIN, sasl_username and sasl_password in chatnets/<chatnet>.
+ * Nothing else changes. */
+void firstrun_apply_config(CONFIG_REC *config, const FIRSTRUN_ANSWERS *answers);
+
+/* 1-30 bytes; first char [A-Za-z[]\`_^{|}], the rest also [0-9-]. */
+gboolean firstrun_nick_valid(const char *nick);
+
+/* Reads one line from FD, waiting at most TIMEOUT_MS in total (negative = no limit).
+ * Reads byte by byte, so nothing past the line is consumed. At most 511 bytes are
+ * returned; the rest of a longer line is discarded. Trailing \r\n is stripped.
+ * Returns NULL on timeout and on EOF with nothing read. Rule for a partial line (no
+ * newline yet): EOF returns the text read so far, timeout returns NULL.
+ * If SECRET and FD is a terminal, ECHO is off during the read and restored on every
+ * exit path (a newline is printed afterwards). Internal buffers are wiped. */
+char *firstrun_read_fd(int fd, int timeout_ms, gboolean secret);
+
+/* Frees everything and zeroes the struct; the password is wiped before it is freed. */
+void firstrun_answers_clear(FIRSTRUN_ANSWERS *answers);
+
+#endif
