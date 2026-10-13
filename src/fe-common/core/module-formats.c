@@ -326,7 +326,7 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "search_stopped", "Search stopped", 0 },
 	{ "search_idle", "Search: nothing is running", 0 },
 	{ "search_capsicum", "Search: not available in capability mode", 0 },
-	{ "search_failed", "Search for {hilight $0} failed: the search process ended without a result", 1, { 0 } },
+	{ "search_failed", "Search for {hilight $0} failed: the search process ended without a result (time limit 120 s)", 1, { 0 } },
 
 	{ NULL, NULL, 0 }
 	/* clang-format on */
