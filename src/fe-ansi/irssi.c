@@ -319,11 +319,17 @@ static void textui_finish_init(void)
 		            TXT_FIRSTRUN_HOWTO);
 	}
 
-	/* a later start that kept the shipped nick */
-	if (!firstrun_ran && config_existed &&
-	    g_strcmp0(settings_get_str("nick"), "erssi_user") == 0)
-		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT, "%s",
-		          "Your nick is still erssi_user: /SET nick <nick>, or run erssi --setup.");
+	/* a later start that kept the nick of the built-in default config */
+	if (!firstrun_ran && config_existed) {
+		char *shipped = settings_get_builtin_str("core", "nick");
+
+		if (shipped != NULL && *shipped != '\0' &&
+		    g_strcmp0(settings_get_str("nick"), shipped) == 0)
+			printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT,
+			          "Your nick is still %s: /SET nick <nick>, or run erssi --setup.",
+			          shipped);
+		g_free(shipped);
+	}
 
 	term_environment_check();
 }
@@ -428,6 +434,7 @@ static void copy_default_files(void)
  * waiting returns (EINTR) and restores the terminal first. */
 static const int firstrun_signals[] = { SIGINT, SIGQUIT, SIGTERM, SIGHUP };
 static volatile sig_atomic_t firstrun_signal;
+static gboolean firstrun_last_secret; /* a secret read ends with its own newline */
 
 static void sig_firstrun(int signo)
 {
@@ -438,6 +445,7 @@ static char *firstrun_read_stdin(void *ctx, gboolean secret)
 {
 	if (firstrun_signal != 0)
 		return NULL;
+	firstrun_last_secret = secret;
 	return firstrun_read_fd(STDIN_FILENO, FIRSTRUN_ANSWER_TIMEOUT_MS, secret);
 }
 
@@ -446,7 +454,8 @@ static gint firstrun_theme_cmp(gconstpointer a, gconstpointer b)
 	return strcmp(*(const char *const *) a, *(const char *const *) b);
 }
 
-/* adds the names of the *.theme files in DIR that LIST does not have yet */
+/* adds the names of the *.theme files in DIR that LIST does not have yet; no dotfiles,
+ * only regular files (or links to them), only names that are printable */
 static void firstrun_add_themes(GPtrArray *list, const char *dir)
 {
 	const char *fname;
@@ -457,17 +466,16 @@ static void firstrun_add_themes(GPtrArray *list, const char *dir)
 		return;
 	while ((fname = g_dir_read_name(d)) != NULL) {
 		size_t len = strlen(fname);
-		gboolean dup = FALSE;
-		const char *p;
-		char *name;
+		gboolean dup = FALSE, regular;
+		char *name, *path;
 
-		if (len <= 6 || !g_str_has_suffix(fname, ".theme"))
+		if (len <= 6 || *fname == '.' || !g_str_has_suffix(fname, ".theme") ||
+		    !firstrun_printable(fname))
 			continue;
-		/* the name is printed to the terminal: printable ASCII only */
-		for (p = fname; *p != '\0'; p++)
-			if (!g_ascii_isprint(*p))
-				break;
-		if (*p != '\0')
+		path = g_build_filename(dir, fname, NULL);
+		regular = g_file_test(path, G_FILE_TEST_IS_REGULAR);
+		g_free(path);
+		if (!regular)
 			continue;
 		name = g_strndup(fname, len - 6);
 		for (i = 0; i < list->len && !dup; i++)
@@ -525,7 +533,8 @@ static void firstrun_run_tty(void)
 
 		/* interrupted: nothing is saved, the next start asks again */
 		firstrun_answers_clear(&a);
-		fputs("\n", stdout);
+		if (!firstrun_last_secret)
+			fputs("\n", stdout); /* after the ^C the terminal echoed */
 		fflush(stdout);
 		signal(signo, SIG_DFL);
 		raise(signo);
@@ -613,6 +622,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	tty = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
+	      g_strcmp0(g_getenv("TERM"), "dumb") != 0;
+	if (setup && !tty) {
+		fprintf(stderr, "erssi: --setup needs a terminal\n");
+		return 1;
+	}
+
 	srand(time(NULL));
 
 	quitting = FALSE;
@@ -643,8 +659,6 @@ int main(int argc, char **argv)
 	copy_default_files();
 
 	/* the first-run setup, on a terminal, before the screen is set up */
-	tty = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
-	      g_strcmp0(g_getenv("TERM"), "dumb") != 0;
 	home_config = g_strdup_printf("%s/" IRSSI_HOME_CONFIG, get_irssi_dir());
 	scripted = fe_common_core_scripted_start() ||
 	           g_strcmp0(get_irssi_config(), home_config) != 0;

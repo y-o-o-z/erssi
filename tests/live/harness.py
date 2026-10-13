@@ -325,16 +325,29 @@ class Erssi:
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
-    def run_detached(self, timeout):
-        """erssi without a terminal: stdin /dev/null, stdout and stderr one
-        pipe, the same environment, HOME and --home as start(). Killed after
-        TIMEOUT seconds if it is still running; returns its output (bytes)."""
+    def run_detached(self, timeout, stdin_tty=False):
+        """erssi without a terminal on stdout: stdout and stderr one pipe,
+        stdin /dev/null (or, with stdin_tty, the slave of a new pty), the
+        same environment, HOME and --home as start(). Killed after TIMEOUT
+        seconds if it is still running. Returns (exit status, output bytes);
+        the status is negative for a signal, as in subprocess."""
         self._prepare()
         env = self.child_env()
-        proc = subprocess.Popen([str(self.inst.erssi), f"--home={self.home}"] + self.args,
-                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, env=env, cwd=str(self.home_dir),
-                                start_new_session=True)
+        master = slave = None
+        if stdin_tty:
+            master, slave = os.openpty()
+        try:
+            proc = subprocess.Popen([str(self.inst.erssi), f"--home={self.home}"] + self.args,
+                                    stdin=slave if stdin_tty else subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                                    cwd=str(self.home_dir), start_new_session=True)
+        except BaseException:
+            if master is not None:
+                os.close(master)
+            raise
+        finally:
+            if slave is not None:
+                os.close(slave)
         try:
             out, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -343,7 +356,10 @@ class Erssi:
             except OSError:
                 proc.kill()
             out, _ = proc.communicate()
-        return out
+        finally:
+            if master is not None:
+                os.close(master)
+        return proc.returncode, out
 
     def _reader(self):
         while True:
