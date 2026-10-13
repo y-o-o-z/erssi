@@ -31,7 +31,7 @@ repository's commitlint rules.
 | [#8](https://github.com/erssi-org/erssi/pull/8) | sidepanels and fe-ansi: network windows, clipping, scroll arrows, themed lines, key input batches, memcpy from NULL | 17 |
 | [#9](https://github.com/erssi-org/erssi/pull/9) | fe-web: login, frames, TLS, output queue, Unix socket, use after free and leaks, fuzz targets with corpora | 26 |
 | [#10](https://github.com/erssi-org/erssi/pull/10) | build and tests: fe-fuzz paths, tests keep out of HOME, install.sh options | 3 |
-| [#3](https://github.com/erssi-org/erssi/pull/3) | a native Mentions window (`fe-mentions.c`, `mentions-log.c`): private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, migration from `mentions.pl`, unit tests and a live test | 3 |
+| [#3](https://github.com/erssi-org/erssi/pull/3) | a native Mentions window (`fe-mentions.c`, `mentions-log.c`): private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, unit tests and a live test (the migration from `mentions.pl` is fork-only) | 4 |
 
 Merge order does not matter. The only overlap: #7 and #9 both add one
 line to `docs/help/meson.build` at the same place; keep both.
@@ -68,8 +68,10 @@ for example `git show 6c8c3adb -- src/fe-common/core/themes.c`.
 
 ### Ready to take, not yet in a pull request: features of 2026.10.0
 
-These are new features with their own tests. None changes a default of
-erssi main (each is off, or only runs when the user asks). Each row can be
+These are new features with their own tests. Off by default, except
+the Mentions window (`mentions_window` is "Mentions" in C: every start
+creates a background window) and the first-run setup (it asks on a fresh
+home when a terminal is attached, and saves a config). Each row can be
 taken as it is; the commits are on `dev/2026.10`.
 
 | Commits | Change | Notes |
@@ -78,7 +80,7 @@ taken as it is; the commits are on `dev/2026.10`.
 | `c1666ab5 2c027e55` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 aff57f18 d62b2913`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
 | `c0e4cd84 ba40df8c 560daae9` | Terminal notifications: OSC 9 / OSC 777 sequences when a mention or private message arrives while the terminal is not focused (focus reports, tmux pass-through, throttle, control characters removed). New setting `term_notify` | `560daae9` is neutral: the default of `term_notify` is `off`. The fork's default is a separate commit (`d4dd0003`, section 4). Follow-ups: `e8aa02c6` (ASCII only on a terminal that is not UTF-8), `71a7ec4c` (bidi and line-separator characters removed), `f5b0faf4` (tests) |
 | `ef4c0adc 8584127c` | Key input: `gui-mouse.c` dropped the final letter of a CSI sequence (`ESC [ I` Page Up, `ESC [ Z` Shift-Tab, `ESC [ G`) and waited for more after a CSI that ends in a lowercase letter or `@` (rxvt shift-arrows, CSI u) | Bug fixes in code of v1.3.1, with a live test (`tests/live/test_keys.py`). Independent of the rest |
-| `e4ad53f9 d6d50441 11708591 3b070dca 943f9001 9c83e708 3dfb804c 28ee82ee dbc2862e 9906974e` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise |
+| `e4ad53f9 d6d50441 11708591 3b070dca 943f9001 9c83e708 3dfb804c 28ee82ee dbc2862e 9906974e` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise. The default network offered is "IRCnet" (`firstrun.c`), also a fork preference |
 | `228daa9b 52a95cbd 48610063 5f53bedf e88f27c0` | `/SEARCH` in the autolog files: a search in a child process with a hit, size and file limit and a 120 s time limit; new setting `search_max_size` | The search is not available in Capsicum mode. Live test: `tests/live/test_search.py` |
 
 ## 3. Behind a setting
@@ -97,7 +99,7 @@ Since 2026.10.0 the fork keeps erssi-org defaults in C (section 2); the rows bel
 
 ## 4. Fork-only
 
-Not meant for erssi main. 99 commits.
+Not meant for erssi main.
 
 - Branding and version (31): `/VERSION` text, start banner, topic bar,
   `SV` alias, README, NEWS, screenshots, version numbers
