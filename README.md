@@ -57,9 +57,15 @@ them yours or root's. In a rootless container or another user namespace see
 **FreeBSD** — 2026.10.0 builds with no warnings and passes its test suite
 on FreeBSD 14.5, with the OpenSSL of the base system. Packages:
 `pkg install git glib pkgconf perl5 python3 ninja` (and `meson`, or let the
-installer put it into its venv). Capsicum capability mode works:
-`/capsicum enter`, after which erssi can only open files in its irclogs
-directory (`capsicum_irclogs_path`, `~/irclogs`).
+installer put it into its venv); recommended:
+`utf8proc libotr libgcrypt curl chafa`. Capsicum capability mode works:
+`/capsicum enter`, or `/set capsicum on` and `/save` to enter it at every
+start, which [docs/capsicum.txt](docs/capsicum.txt) recommends. erssi can
+then open files only below `capsicum_irclogs_path` (`~/irclogs` by
+default), and `/save` and `/search` do not work. The shipped config logs to
+`~/.erssi/logs`, so first `/set capsicum_irclogs_path ~/.erssi/logs` (and
+`/save`), or autolog and the Mentions log stop writing. `/help capsicum`
+has the details.
 
 ### Update
 
@@ -74,8 +80,10 @@ of that installer (a tag pushed by anyone else is skipped), builds, tests
 and installs it into the same prefix, with the settings of the first install.
 A release of the installed version published again with changes (its
 signed tag moved to a new commit) counts as an update too. Nothing is built
-when erssi is up to date. In a running erssi, `/upgrade` then loads the new
-version without disconnecting.
+when erssi is up to date. `--update` needs git 2.34+ and ssh-keygen to
+check the signature; without them it stops and says how to update with
+the installer's `--ref` instead. In a running erssi, `/upgrade` then
+loads the new version without disconnecting.
 
 Releases are signed with an SSH key (ED25519,
 `SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`, public key in
@@ -95,16 +103,19 @@ where the new version is. The sha256 of what erssi installed is kept in
 
 ### Upgrading from 1.3.x
 
-`erssi --update` on 1.3.10 finds 2026.10.0. Your `~/.erssi/config` is
-kept; at the first start erssi adds what changed, once:
+`erssi --update` on 1.3.10 finds 2026.10.0. 1.3.9 and older have no
+`--update`: run the install command above again (with the same `--prefix`
+and `--src` if you gave any), which builds the new release in the same
+places. Your `~/.erssi/config` is kept; at the first start erssi adds what
+changed, once:
 
 - **The Shellter look stays.** Up to 1.3.10 it was built into erssi; now it
   comes from the default config of a new home. Your config gets the former
-  values (theme, nick and rank colours, hilight colours, WHOIS in the
-  network window, the join count line, 24-bit colours) written into it for
-  every setting it does not set yet, so nothing you see changes. Settings
-  you set yourself are not touched. erssi says so in one line after the
-  banner.
+  values (theme, nick column width, nick and rank colours, hilight
+  colours, WHOIS in the network window, the join count line, 24-bit
+  colours) written into it for every setting it does not set yet, so
+  nothing you see changes. Settings you set yourself are not touched.
+  erssi says so in one line after the banner.
 - **E2E statusbar item.** If your info bar is still the one erssi shipped,
   it gets the `e2e` item after `window`. A bar you changed keeps its items:
   `/statusbar additem -after window e2e info`.
@@ -227,7 +238,7 @@ loaded on demand (`/script load <name>`, or a symlink in
 |---|---|
 | `trackbar.pl` | The read marker of trackbar 2.9.2, drawn as `├────` from the theme's separator column when the theme has one. `/mark`, `/trackbar`. |
 | `webjournal.pl` | Journals every window to `~/.erssi/journal` (one JSON line per message, files only you can read), for a web client that reads the journal to show history after a restart. |
-| `mentions.pl` | Only a stub now: the Mentions window is built in. Loading it moves its settings to the built-in ones and unloads it; remove it from `~/.erssi/scripts/autorun/`. |
+| `mentions.pl` | Only a stub now: the Mentions window is built in, and erssi moves the script's settings to it at start. Loaded, the stub is unloaded again with a notice; remove it from `~/.erssi/scripts/autorun/`. |
 
 ### Reliability
 
@@ -257,9 +268,13 @@ sanitizers.
 - **Web frontend (fe-web)** — built for a shared shell box: the password
   travels in an `Authorization` header, never in a URL; one guess per
   connection, compared in constant time; after 5 wrong passwords from one
-  peer (a uid on the Unix socket, an address on TCP) that peer gets one
-  check every 2 s, while your own uid and peers that logged in before are
-  never held up, so nobody else on the box can lock you out; 16 KB and
+  peer, that peer gets one check every 2 s. A peer is a uid on the Unix
+  socket (and on a loopback port on Linux), otherwise an address; your own
+  uid is never paced, and a peer that logged in before is not held up by
+  the wrong passwords of others. On the Unix socket, and on Linux also on
+  127.0.0.1, nobody else on the box can lock you out; elsewhere (FreeBSD)
+  every local user is the one peer 127.0.0.1, so use the socket
+  (`fe_web_socket`) on a shared box; 16 KB and
   10 seconds to log in, with a separate limit for connections still logging
   in; at most 16 clients; oversized frames and oversized or fragmented
   control frames refused. The TLS certificate is kept in
