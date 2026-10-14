@@ -1,9 +1,1 @@
-install_data(
-  files(
-    'default.theme',
-    'nexus.theme',
-    'shellter.theme',
-    'shellter-light.theme',
-    'colorless.theme',
-  ),
-  install_dir : themedir)
+install_data(shipped_themes, install_dir : themedir)
