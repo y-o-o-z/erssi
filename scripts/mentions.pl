@@ -17,5 +17,5 @@ our %IRSSI = (
     name        => 'mentions',
     description => 'Stub: the Mentions window is built into erssi now',
     license     => 'MIT',
-    url         => 'https://github.com/y-o-o-z/irssi_scripts',
+    url         => 'https://github.com/y-o-o-z/erssi',
 );
