@@ -12,7 +12,7 @@ WEBJOURNAL%|
     /SET webjournal. A command of the webjournal.pl script.
 
     The script writes to disk everything visible in erssi windows, so that
-    the web client can fill in gaps after a restart:
+    a web client that reads the journal can fill in gaps after a restart:
       <dir>/<tag>/<channel|nick>.jsonl   channel and query messages (JSON
                                          entries: time, kind, nick, text),
                                          plus client and script messages
