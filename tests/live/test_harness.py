@@ -2,6 +2,7 @@
 """Tests of the live-test harness: erssi in a pty, a fake IRC server, a raw
 client, TESTRAW, a hermetic environment.
 Usage: test_harness.py <build dir> [<source dir>]"""
+import json
 import os
 import shutil
 import subprocess
@@ -17,6 +18,20 @@ LEAKY = {"TMUX": "/nonexistent/tmux-sock,1,0", "STY": "1.leak", "TERM_PROGRAM": 
          "LC_TERMINAL": "leakterm", "IRCNICK": "leaknick", "XDG_RUNTIME_DIR": "/nonexistent",
          "SSH_AUTH_SOCK": "/nonexistent", "KITTY_PID": "1", "WEZTERM_PANE": "1",
          "GHOSTTY_RESOURCES_DIR": "/nonexistent", "LANGUAGE": "xx"}
+
+
+def environ_of(pid):
+    """The NAME=value strings of process pid's environment: /proc on Linux,
+    procstat on FreeBSD (no /proc there); SkipCase when neither is there."""
+    path = Path(f"/proc/{pid}/environ")
+    if path.exists():
+        return [x.decode(errors="replace") for x in path.read_bytes().split(b"\0") if x]
+    if shutil.which("procstat"):
+        r = subprocess.run(["procstat", "--libxo=json", "-e", str(pid)],
+                           capture_output=True, text=True, check=True)
+        procs = json.loads(r.stdout)["procstat"]["environment"]
+        return procs[str(pid)]["environment"]
+    raise harness.SkipCase("neither /proc/<pid>/environ nor procstat: the environment of a process cannot be read")
 
 
 def main():
@@ -53,10 +68,10 @@ def main():
             (work / "leakcheck").mkdir()
             with harness.Erssi(inst, work / "leakcheck", "leak", harness.config(1, "leak")) as live:
                 live.start()
-                raw = Path(f"/proc/{live.proc.pid}/environ").read_bytes().split(b"\0")
-                names = {x.split(b"=", 1)[0].decode() for x in raw if x}
+                env = environ_of(live.proc.pid)
+                names = {x.split("=", 1)[0] for x in env}
                 assert not names & set(LEAKY), names & set(LEAKY)
-                assert f"HOME={live.home_dir}".encode() in raw
+                assert f"HOME={live.home_dir}" in env, env
         finally:
             for k, v in saved.items():
                 if v is None:
