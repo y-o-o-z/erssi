@@ -399,6 +399,26 @@ void firstrun_apply_config(CONFIG_REC *config, const FIRSTRUN_ANSWERS *answers)
 	config_node_set_str(config, net, "sasl_password", answers->sasl_pass);
 }
 
+/* Switches the terminal at once, then drops its pending input: nothing
+ * typed before the switch is read after it. Not TCSAFLUSH, which also waits
+ * until the terminal has read everything written to it: on the BSDs that
+ * blocks for good on a pty whose master has stopped reading (^S, a stalled
+ * ssh). 0, or -1 with errno. */
+static int tty_switch(int fd, const struct termios *t)
+{
+	int rc;
+
+	do {
+		rc = tcsetattr(fd, TCSANOW, t);
+	} while (rc != 0 && errno == EINTR);
+	if (rc != 0)
+		return rc;
+	do {
+		rc = tcflush(fd, TCIFLUSH);
+	} while (rc != 0 && errno == EINTR);
+	return rc;
+}
+
 /* sets up a no-echo, no-signal, byte-at-a-time terminal; FALSE = could not, fail closed */
 static gboolean secret_tty_begin(int fd, struct termios *saved)
 {
@@ -410,12 +430,14 @@ static gboolean secret_tty_begin(int fd, struct termios *saved)
 	quiet.c_lflag &= ~(tcflag_t) (ECHO | ECHONL | ISIG | ICANON);
 	quiet.c_cc[VMIN] = 1;
 	quiet.c_cc[VTIME] = 0;
-	/* TCSAFLUSH also drops anything typed ahead of the prompt */
-	if (tcsetattr(fd, TCSAFLUSH, &quiet) != 0)
+	/* anything typed ahead of the prompt is dropped */
+	if (tty_switch(fd, &quiet) != 0) {
+		tcsetattr(fd, TCSANOW, saved);
 		return FALSE;
+	}
 	/* tcsetattr reports success if only part of the change was applied */
 	if (tcgetattr(fd, &check) != 0 || (check.c_lflag & (ECHO | ISIG | ICANON)) != 0) {
-		tcsetattr(fd, TCSAFLUSH, saved);
+		tcsetattr(fd, TCSANOW, saved);
 		return FALSE;
 	}
 	return TRUE;
@@ -586,13 +608,8 @@ restart:
 	}
 
 	if (raw) {
-		int rc;
-
-		do {
-			rc = tcsetattr(fd, TCSAFLUSH, &saved);
-		} while (rc != 0 && errno == EINTR);
-		if (rc != 0)
-			tcsetattr(fd, TCSANOW, &saved);
+		/* no half-typed password stays queued */
+		tty_switch(fd, &saved);
 		write_tty(fd, "\n");
 		raw = FALSE;
 	}
