@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -51,17 +52,30 @@ def main():
         time.sleep(0.3)
         return log_since(off)
 
-    def children():
-        """The pids of alice's erssi's child processes (Linux /proc), or None."""
-        pid = st["alice"].proc.pid
-        kids = []
+    def processes():
+        """pid -> (parent pid, state) of every process, from ps (the same on
+        Linux and the BSDs; FreeBSD has no /proc), or None."""
         try:
-            for task in os.listdir(f"/proc/{pid}/task"):
-                with open(f"/proc/{pid}/task/{task}/children") as f:
-                    kids += f.read().split()
-        except OSError:
+            r = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "stat="],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
             return None
-        return kids
+        if r.returncode != 0:
+            return None
+        table = {}
+        for line in r.stdout.splitlines():
+            f = line.split()
+            if len(f) >= 3:
+                table[f[0]] = (f[1], f[2])
+        return table
+
+    def children():
+        """The pids of alice's erssi's child processes, or None."""
+        pid = str(st["alice"].proc.pid)
+        table = processes()
+        if table is None:
+            return None
+        return [k for k, (ppid, _) in table.items() if ppid == pid]
 
     def no_children(timeout=WAIT):
         end = time.time() + timeout
@@ -88,11 +102,8 @@ def main():
         """pid has ended (no process, or a zombie of another parent)."""
         end = time.time() + timeout
         while True:
-            try:
-                with open(f"/proc/{pid}/stat") as f:
-                    if f.read().rsplit(")", 1)[1].split()[0] == "Z":
-                        return True
-            except (OSError, IndexError):
+            table = processes()
+            if table is not None and (pid not in table or table[pid][1].startswith("Z")):
                 return True
             if time.time() >= end:
                 return False
