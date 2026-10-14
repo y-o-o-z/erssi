@@ -145,8 +145,7 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 
 /* The key and certificate are kept in the irssi directory, so the
  * certificate stays the same across restarts and a web client can pin it
- * (NexusIRC: irssiConnection.caFile) instead of accepting any certificate
- * from whatever listens on the port. */
+ * instead of accepting any certificate from whatever listens on the port. */
 #define FE_WEB_KEY_FILE "fe-web-key.pem"
 #define FE_WEB_CERT_FILE "fe-web-cert.pem"
 

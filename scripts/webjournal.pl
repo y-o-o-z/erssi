@@ -59,7 +59,7 @@ our %IRSSI = (
     name        => 'webjournal',
     description => 'Journal of erssi windows (channels, queries, Notices, Mentions, status) for the web client',
     license     => 'MIT',
-    url         => 'https://github.com/y-o-o-z/irssi_scripts',
+    url         => 'https://github.com/y-o-o-z/erssi',
 );
 
 Irssi::settings_add_bool('webjournal', 'webjournal',        1);

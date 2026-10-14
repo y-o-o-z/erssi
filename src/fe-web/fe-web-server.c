@@ -79,8 +79,8 @@ static time_t refused_logged = 0;
  * A proxy that runs as the owner's user (a reverse proxy, socat, an ssh -L
  * tunnel others can use) connects as the owner, so every client behind it
  * counts as the owner and is never paced: such a proxy must sign its own
- * users in. NexusIRC on the Unix socket does (its own sign-in, with the
- * fe-web password stored on its side). */
+ * users in, as a web client that keeps the fe-web password on its side
+ * and has its own sign-in does. */
 static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
 /* the pacing notice is printed once a minute at most, the peers paced in
