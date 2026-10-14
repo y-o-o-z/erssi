@@ -147,6 +147,7 @@ test('test-mentions-log test', test_test_mentions_log,
   args : ['--tap'],
   protocol : 'tap')
 
+# dlsym(RTLD_NEXT): in libdl before glibc 2.34
 test_test_firstrun = executable('test-firstrun',
   files(
     'test-firstrun.c',
@@ -161,7 +162,7 @@ test_test_firstrun = executable('test-firstrun',
   ],
   include_directories : rootinc,
   implicit_include_directories : false,
-  dependencies : dep
+  dependencies : dep + [cc.find_library('dl', required : false)]
 )
 test('test-firstrun test', test_test_firstrun,
   args : ['--tap'],

@@ -85,15 +85,17 @@ void firstrun_set_abort_flag(volatile sig_atomic_t *flag);
  * A signal that interrupts the wait (EINTR; core handles SIGTERM/SIGHUP this way) aborts
  * the read: NULL, so the caller treats it as "skipped" and then honours core's flag.
  * If SECRET and FD is a terminal, echo, ISIG and ICANON are off during the read (like
- * getpass, with erase/kill/EOF handled here) and the terminal is restored with
- * TCSAFLUSH on every exit path, so no half-typed password stays queued; a newline is
- * printed afterwards. Erase removes a whole UTF-8 character; an escape sequence (an
- * arrow key: ESC [ ... final byte, ESC O x; Alt+key) is dropped whole; other control
- * bytes are ignored and never stored; a secret longer than 511 bytes is rejected (NULL). The
- * overall deadline holds even for a stream with no newline (with TIMEOUT_MS 0 at most a
- * few KiB already queued are taken). In a secret read the interrupt and quit characters
- * abort the read (NULL) and then raise SIGINT or SIGQUIT, as the terminal would have
- * done; the suspend character restores the terminal, raises SIGTSTP and, once resumed,
+ * getpass, with erase/kill/EOF handled here) and the terminal is restored on every exit
+ * path, with its pending input dropped, so no half-typed password stays queued; a newline
+ * is printed afterwards. Input typed ahead of the prompt is dropped too. Neither waits for
+ * the terminal to read what was written to it (no TCSAFLUSH), so a terminal that has
+ * stopped reading cannot hang the read. Erase removes a whole UTF-8 character; an escape
+ * sequence (an arrow key: ESC [ ... final byte, ESC O x; Alt+key) is dropped whole; other
+ * control bytes are ignored and never stored; a secret longer than 511 bytes is rejected
+ * (NULL). The overall deadline holds even for a stream with no newline (with TIMEOUT_MS 0
+ * at most a few KiB already queued are taken). In a secret read the interrupt and quit
+ * characters abort the read (NULL) and then raise SIGINT or SIGQUIT, as the terminal would
+ * have done; the suspend character restores the terminal, raises SIGTSTP and, once resumed,
  * writes FIRSTRUN_SECRET_PROMPT again and reads the secret from the start (input typed
  * meanwhile is dropped), within the same deadline. The typed part is wiped before any
  * signal is raised.

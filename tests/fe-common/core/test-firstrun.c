@@ -4,18 +4,40 @@
  */
 #define _XOPEN_SOURCE 600
 #define _DEFAULT_SOURCE
+#define _GNU_SOURCE /* RTLD_NEXT */
 #include <irssi/src/common.h>
 #include <glib/gstdio.h>
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/fe-common/core/firstrun.h>
 
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
+
+/* tcsetattr() for firstrun.c (the definition in the executable comes before
+ * the C library's): counts the calls that wait for the terminal's output to
+ * drain (TCSADRAIN, TCSAFLUSH). On the BSDs such a call on a pty blocks until
+ * the master has read all of it, so a terminal that has stopped reading (^S,
+ * a stalled ssh) would hang the password prompt; Linux returns at once. */
+static int draining_tcsetattr;
+
+int tcsetattr(int fd, int action, const struct termios *t)
+{
+	static int (*real)(int, int, const struct termios *);
+
+	if (real == NULL)
+		real = (int (*)(int, int, const struct termios *)) dlsym(RTLD_NEXT, "tcsetattr");
+	g_assert_nonnull(real);
+	if (action != TCSANOW)
+		g_atomic_int_inc(&draining_tcsetattr);
+	return real(fd, action, t);
+}
 
 static const char SAMPLE[] =
     "chatnets = {\n"
@@ -669,20 +691,74 @@ static int open_pty(int *master)
 	return slave;
 }
 
+/* The terminal of a test: a thread that types on the master side of a pty
+ * and, like a terminal emulator, reads what is written to the slave (the
+ * prompt, the newline after a secret) until late_join(). A stalled terminal
+ * (^S, a stalled ssh) never reads it. */
 typedef struct {
 	int fd;
 	const char *text;
+	gboolean stalled;
+	gint stop;
+	GString *seen; /* what the terminal read */
 } LATE_WRITE;
+
+static void late_init(LATE_WRITE *w, int master, const char *text)
+{
+	w->fd = master;
+	w->text = text;
+	w->stalled = FALSE;
+	w->stop = 0;
+	w->seen = g_string_new(NULL);
+}
+
+/* reads the master until late_join() */
+static void terminal_reads(LATE_WRITE *w)
+{
+	char buf[256];
+
+	while (!w->stalled && !g_atomic_int_get(&w->stop)) {
+		struct pollfd pfd = { w->fd, POLLIN, 0 };
+		ssize_t n;
+
+		if (poll(&pfd, 1, 10) <= 0)
+			continue;
+		n = read(w->fd, buf, sizeof(buf));
+		if (n > 0)
+			g_string_append_len(w->seen, buf, n);
+		else if (n == 0 || errno != EINTR)
+			break;
+	}
+}
+
+/* what the terminal read, and what is still there to read; g_free() it */
+static char *late_join(GThread *th, LATE_WRITE *w)
+{
+	char buf[256];
+	int fl;
+	ssize_t n;
+
+	g_atomic_int_set(&w->stop, 1);
+	g_thread_join(th);
+	fl = fcntl(w->fd, F_GETFL);
+	g_assert_cmpint(fcntl(w->fd, F_SETFL, fl | O_NONBLOCK), ==, 0);
+	while ((n = read(w->fd, buf, sizeof(buf))) > 0)
+		g_string_append_len(w->seen, buf, n);
+	g_assert_cmpint(fcntl(w->fd, F_SETFL, fl), ==, 0);
+	return g_string_free(w->seen, FALSE);
+}
 
 /* types the answer after ECHO has been turned off by the reader */
 static gpointer late_writer(gpointer data)
 {
 	LATE_WRITE *w = data;
+	gpointer ret = NULL;
 
 	g_usleep(200 * 1000);
 	if (write(w->fd, w->text, strlen(w->text)) < 0)
-		return GINT_TO_POINTER(1);
-	return NULL;
+		ret = GINT_TO_POINTER(1);
+	terminal_reads(w);
+	return ret;
 }
 
 static void test_read_fd_secret_pty(void)
@@ -691,8 +767,7 @@ static void test_read_fd_secret_pty(void)
 	GThread *th;
 	int master, slave;
 	struct termios t;
-	char *s, echo[64];
-	ssize_t n;
+	char *s, *out;
 
 	slave = open_pty(&master);
 	if (slave < 0) {
@@ -703,23 +778,18 @@ static void test_read_fd_secret_pty(void)
 	t.c_lflag |= ECHO;
 	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
 
-	w.fd = master;
-	w.text = "hunter2\n";
+	late_init(&w, master, "hunter2\n");
 	th = g_thread_new("late-writer", late_writer, &w);
 	s = firstrun_read_fd(slave, 3000, TRUE);
-	g_thread_join(th);
+	out = late_join(th, &w);
 	g_assert_cmpstr(s, ==, "hunter2");
 	g_free(s);
 	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
 	g_assert_true(t.c_lflag & ECHO);
 
 	/* nothing typed from the master side may have been echoed back */
-	g_assert_cmpint(fcntl(master, F_SETFL, O_NONBLOCK), ==, 0);
-	n = read(master, echo, sizeof(echo) - 1);
-	if (n > 0) {
-		echo[n] = '\0';
-		g_assert_null(strstr(echo, "hunter2"));
-	}
+	g_assert_null(strstr(out, "hunter2"));
+	g_free(out);
 
 	/* timeout path restores ECHO too */
 	g_assert_null(firstrun_read_fd(slave, 50, TRUE));
@@ -738,8 +808,7 @@ static void test_read_fd_secret_pty(void)
 
 static void pty_late_write(int master, const char *text, GThread **th, LATE_WRITE *w)
 {
-	w->fd = master;
-	w->text = text;
+	late_init(w, master, text);
 	*th = g_thread_new("late-writer", late_writer, w);
 }
 
@@ -821,7 +890,7 @@ static void test_read_fd_secret_interrupt(void)
 		signal_tty = slave;
 		pty_late_write(master, inputs[i], &th, &w);
 		s = firstrun_read_fd(slave, 5000, TRUE);
-		g_thread_join(th);
+		g_free(late_join(th, &w));
 		restore_signals(old);
 		signal_tty = -1;
 		g_assert_null(s);
@@ -836,27 +905,27 @@ static void test_read_fd_secret_interrupt(void)
 	close(master);
 }
 
-typedef struct {
-	int fd;
-} SUSPEND_WRITE;
-
 /* "ab", ^Z; then (the reader has raised SIGTSTP and read again) "cd", Enter */
 static gpointer suspend_writer(gpointer data)
 {
-	SUSPEND_WRITE *w = data;
+	LATE_WRITE *w = data;
+	gpointer ret = GINT_TO_POINTER(1);
 
 	g_usleep(200 * 1000);
 	if (write(w->fd, "ab\032", 3) != 3)
-		return GINT_TO_POINTER(1);
+		goto out;
 	/* "cd" comes after the restart (the drop of input typed while stopped
 	 * is not tested: a pty delivers input asynchronously, so a byte written
-	 * from the handler can still land after the reader's TCSAFLUSH) */
+	 * from the handler can still land after the reader's input flush) */
 	while (!raised)
 		g_usleep(1000);
 	g_usleep(300 * 1000);
 	if (write(w->fd, "cd\n", 3) != 3)
-		return GINT_TO_POINTER(1);
-	return NULL;
+		goto out;
+	ret = NULL;
+out:
+	terminal_reads(w);
+	return ret;
 }
 
 /* ^Z restores the terminal, raises SIGTSTP and reads the secret again from the start */
@@ -864,10 +933,10 @@ static void test_read_fd_secret_suspend(void)
 {
 	struct sigaction old[3];
 	struct termios t;
-	SUSPEND_WRITE w;
+	LATE_WRITE w;
 	GThread *th;
 	int master, slave;
-	char *s;
+	char *s, *out;
 
 	slave = open_pty(&master);
 	if (slave < 0) {
@@ -879,10 +948,10 @@ static void test_read_fd_secret_suspend(void)
 	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
 	record_signals(old);
 	signal_tty = slave;
-	w.fd = master;
+	late_init(&w, master, NULL);
 	th = g_thread_new("suspend-writer", suspend_writer, &w);
 	s = firstrun_read_fd(slave, 5000, TRUE);
-	g_thread_join(th);
+	out = late_join(th, &w);
 	restore_signals(old);
 	signal_tty = -1;
 	g_assert_cmpint(raised, ==, SIGTSTP);
@@ -891,16 +960,8 @@ static void test_read_fd_secret_suspend(void)
 	g_free(s);
 	assert_cooked(slave);
 	/* after the resume the prompt is shown again */
-	{
-		char out[256];
-		ssize_t n;
-
-		g_assert_cmpint(fcntl(master, F_SETFL, O_NONBLOCK), ==, 0);
-		n = read(master, out, sizeof(out) - 1);
-		g_assert_cmpint(n, >, 0);
-		out[n] = '\0';
-		g_assert_nonnull(strstr(out, FIRSTRUN_SECRET_PROMPT));
-	}
+	g_assert_nonnull(strstr(out, FIRSTRUN_SECRET_PROMPT));
+	g_free(out);
 	close(slave);
 	close(master);
 }
@@ -930,18 +991,15 @@ static void test_read_fd_abort_at_start(void)
 	close(master);
 }
 
-typedef struct {
-	int fd;
-} ABORT_WRITE;
-
 /* "ab", then the flag is set (as a signal handler would), then "c\n" */
 static gpointer abort_writer(gpointer data)
 {
-	ABORT_WRITE *w = data;
+	LATE_WRITE *w = data;
+	gpointer ret = GINT_TO_POINTER(1);
 
 	g_usleep(200 * 1000);
 	if (write(w->fd, "ab", 2) != 2)
-		return GINT_TO_POINTER(1);
+		goto out;
 	g_usleep(200 * 1000);
 	/* Set from a thread, like a signal handler sets it from the middle of the
 	   read. It is a plain volatile sig_atomic_t, exactly what production
@@ -949,8 +1007,11 @@ static gpointer abort_writer(gpointer data)
 	   a data race detector would flag it, which is the point of the model. */
 	abort_flag = 1;
 	if (write(w->fd, "c\n", 2) != 2)
-		return GINT_TO_POINTER(1);
-	return NULL;
+		goto out;
+	ret = NULL;
+out:
+	terminal_reads(w);
+	return ret;
 }
 
 /* the flag is checked between bytes, so a line that keeps coming is not taken */
@@ -959,7 +1020,7 @@ static void test_read_fd_abort_between_bytes(void)
 	gboolean secret;
 
 	for (secret = FALSE; secret <= TRUE; secret++) {
-		ABORT_WRITE w;
+		LATE_WRITE w;
 		GThread *th;
 		int master, slave;
 		char *s;
@@ -971,10 +1032,10 @@ static void test_read_fd_abort_between_bytes(void)
 		}
 		abort_flag = 0;
 		firstrun_set_abort_flag(&abort_flag);
-		w.fd = master;
+		late_init(&w, master, NULL);
 		th = g_thread_new("abort-writer", abort_writer, &w);
 		s = firstrun_read_fd(slave, 4000, secret);
-		g_thread_join(th);
+		g_free(late_join(th, &w));
 		firstrun_set_abort_flag(NULL);
 		g_assert_null(s);
 		assert_cooked(slave);
@@ -993,7 +1054,7 @@ static void test_read_fd_abort_after_suspend(void)
 	GThread *th;
 	int master, slave;
 	gint64 t0;
-	char *s;
+	char *s, *out;
 
 	slave = open_pty(&master);
 	if (slave < 0) {
@@ -1007,7 +1068,7 @@ static void test_read_fd_abort_after_suspend(void)
 	t0 = g_get_monotonic_time();
 	pty_late_write(master, "ab\032", &th, &w);
 	s = firstrun_read_fd(slave, 4000, TRUE);
-	g_thread_join(th);
+	out = late_join(th, &w);
 	firstrun_set_abort_flag(NULL);
 	tstp_aborts = FALSE;
 	restore_signals(old);
@@ -1015,15 +1076,8 @@ static void test_read_fd_abort_after_suspend(void)
 	g_assert_null(s);
 	g_assert_cmpint(g_get_monotonic_time() - t0, <, 3000000);
 	assert_cooked(slave);
-	{
-		char out[256];
-		ssize_t n;
-
-		g_assert_cmpint(fcntl(master, F_SETFL, O_NONBLOCK), ==, 0);
-		n = read(master, out, sizeof(out) - 1);
-		out[n > 0 ? n : 0] = '\0';
-		g_assert_null(strstr(out, FIRSTRUN_SECRET_PROMPT));
-	}
+	g_assert_null(strstr(out, FIRSTRUN_SECRET_PROMPT));
+	g_free(out);
 	abort_flag = 0;
 	close(slave);
 	close(master);
@@ -1096,7 +1150,7 @@ static void test_read_fd_secret_erase(void)
 	}
 	pty_late_write(master, "ab\177c\n", &th, &w);
 	s = firstrun_read_fd(slave, 3000, TRUE);
-	g_thread_join(th);
+	g_free(late_join(th, &w));
 	g_assert_cmpstr(s, ==, "ac");
 	g_free(s);
 	assert_cooked(slave);
@@ -1125,7 +1179,7 @@ static void test_read_fd_secret_flush(void)
 
 		pty_late_write(master, "yy", &th, &w);
 		g_assert_null(firstrun_read_fd(slave, 600, TRUE));
-		g_thread_join(th);
+		g_free(late_join(th, &w));
 	}
 	assert_cooked(slave);
 	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
@@ -1136,6 +1190,72 @@ static void test_read_fd_secret_flush(void)
 	fl = fcntl(slave, F_GETFL);
 	fcntl(slave, F_SETFL, fl | O_NONBLOCK);
 	g_assert_cmpint(read(slave, &c, 1), <=, 0);
+	close(slave);
+	close(master);
+}
+
+/* A terminal that has stopped reading (^S, a stalled ssh): the prompt it was
+ * sent is never read, and the secret is still read without waiting for it
+ * (no TCSADRAIN or TCSAFLUSH, see tcsetattr() above; on FreeBSD the read
+ * hung there). Input typed ahead of the prompt is still dropped, and on ^C
+ * the terminal is still restored before the signal. */
+static void test_read_fd_secret_stalled_terminal(void)
+{
+	static const char prompt[] = "Password: ";
+	const char *const typed[] = { "ab\n", "ab\003" };
+	struct sigaction old[3];
+	struct termios t, raw;
+	int master, slave, i;
+
+	slave = open_pty(&master);
+	if (slave < 0) {
+		g_test_skip("no pty available");
+		return;
+	}
+	g_assert_cmpint(tcgetattr(slave, &t), ==, 0);
+	t.c_lflag |= ECHO | ISIG | ICANON;
+	g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
+	for (i = 0; i < 2; i++) {
+		struct pollfd pfd = { slave, POLLIN, 0 };
+		LATE_WRITE w;
+		GThread *th;
+		char *s;
+
+		/* typed ahead, and in the slave's input queue (no longer on its
+		 * way through the pty) before the read starts */
+		raw = t;
+		raw.c_lflag &= ~(tcflag_t) (ICANON | ECHO);
+		raw.c_cc[VMIN] = 1;
+		raw.c_cc[VTIME] = 0;
+		g_assert_cmpint(tcsetattr(slave, TCSANOW, &raw), ==, 0);
+		g_assert_cmpint(write(master, "zz", 2), ==, 2);
+		g_assert_cmpint(poll(&pfd, 1, 2000), ==, 1);
+		g_assert_cmpint(tcsetattr(slave, TCSANOW, &t), ==, 0);
+		g_assert_cmpint(write(slave, prompt, strlen(prompt)), ==, (gssize) strlen(prompt));
+
+		record_signals(old);
+		signal_tty = slave;
+		g_atomic_int_set(&draining_tcsetattr, 0);
+		late_init(&w, master, typed[i]);
+		w.stalled = TRUE;
+		th = g_thread_new("late-writer", late_writer, &w);
+		s = firstrun_read_fd(slave, 3000, TRUE);
+		g_thread_join(th);
+		g_string_free(w.seen, TRUE);
+		restore_signals(old);
+		signal_tty = -1;
+		g_assert_cmpint(g_atomic_int_get(&draining_tcsetattr), ==, 0);
+		if (i == 0) {
+			g_assert_cmpint(raised, ==, 0);
+			g_assert_cmpstr(s, ==, "ab");
+		} else {
+			g_assert_cmpint(raised, ==, SIGINT);
+			g_assert_true(cooked_at_signal);
+			g_assert_null(s);
+		}
+		g_free(s);
+		assert_cooked(slave);
+	}
 	close(slave);
 	close(master);
 }
@@ -1153,7 +1273,7 @@ static char *pty_secret(const char *typed, gboolean *aborted_fast)
 		return (char *) -1;
 	pty_late_write(master, typed, &th, &w);
 	s = firstrun_read_fd(slave, 4000, TRUE);
-	g_thread_join(th);
+	g_free(late_join(th, &w));
 	*aborted_fast = g_get_monotonic_time() - t0 < 3000000;
 	assert_cooked(slave);
 	close(slave);
@@ -1269,6 +1389,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/unprintable_skipped", test_unprintable_skipped);
 	g_test_add_func("/firstrun/read_fd_secret_erase", test_read_fd_secret_erase);
 	g_test_add_func("/firstrun/read_fd_secret_flush", test_read_fd_secret_flush);
+	g_test_add_func("/firstrun/read_fd_secret_stalled_terminal",
+	                test_read_fd_secret_stalled_terminal);
 	g_test_add_func("/firstrun/ask_no", test_ask_no);
 	g_test_add_func("/firstrun/ask_eof_skips", test_ask_eof_skips);
 	g_test_add_func("/firstrun/ask_eof_at_password_wipes", test_ask_eof_at_password_wipes);
