@@ -66,9 +66,9 @@ int chmod(const char *path, mode_t mode)
  * fsync()) come through here while watch_renames is set. */
 static gboolean watch_renames;
 static int renames, bad_renames, syncs;
-static gboolean fail_fsync;	/* fsync() fails with EIO (Linux) */
-
 #ifdef __linux__
+static gboolean fail_fsync; /* fsync() fails with EIO */
+
 int fsync(int fd)
 {
 	syncs++;
