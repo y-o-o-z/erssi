@@ -421,6 +421,7 @@ limit_stdio_fd(int fd)
 	return (0);
 }
 
+/* SYNTAX: CAPSICUM ENTER */
 static void cmd_capsicum_enter(void)
 {
 	u_int mode;
@@ -487,6 +488,7 @@ static void cmd_capsicum_enter(void)
 	}
 }
 
+/* SYNTAX: CAPSICUM STATUS */
 static void cmd_capsicum_status(void)
 {
 	u_int mode;

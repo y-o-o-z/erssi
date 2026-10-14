@@ -8,6 +8,7 @@ install_data(
     'ban',
     'beep',
     'bind',
+    'capsicum',
     'cat',
     'cd',
     'channel',
