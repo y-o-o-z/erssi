@@ -7,8 +7,9 @@
 #   erssi --update          (= this installer, installed with erssi: --update)
 #   erssi --check-update    (= --update --check)
 #
-# Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. Missing build
-# tools (meson, ninja) are installed into a private Python venv; missing
+# Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. A missing
+# build tool (meson, ninja) is installed into a private Python venv, as a
+# ready-made wheel only (none: the package to ask for is named); missing
 # libraries are listed with the command for your system.
 #
 # Install: without --ref the newest release recorded below, checked against
@@ -660,6 +661,12 @@ check_system() {
 names() {   # features -> package names (once each)
     for f in "$@"; do packages "$f"; done | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ' | sed 's/ $//'
 }
+and_list() {   # words -> "a", "a and b"
+    printf '%s' "$1"; [ $# -lt 2 ] || printf ' and %s' "$2"
+}
+pip_spec() {   # build tool -> the version pip installs
+    case "$1" in meson) echo "$MESON_PIP" ;; ninja) echo "$NINJA_PIP" ;; esac
+}
 what() {   # recommended feature -> what it gives
     case "$1" in
         perlembed) echo "Perl scripts" ;; utf8proc) echo "emoji and wide characters" ;;
@@ -725,20 +732,38 @@ else
         for f in $REC; do warn "$(what "$f") not available - recommended: $(names "$f")"; done
     fi
     MESON=meson; NINJA=ninja
-    if ! have meson || ! have ninja; then
+    # only the tools the system lacks come from the venv
+    MISSING=""
+    have meson || MISSING="meson"
+    have ninja || MISSING="${MISSING:+$MISSING }ninja"
+    if [ -n "$MISSING" ]; then
         PY=""
         for p in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do have "$p" && { PY=$p; break; }; done
-        [ -n "$PY" ] || die "meson and ninja are missing and so is Python 3: $(pm_hint "$(names meson ninja)")"
+        # shellcheck disable=SC2086 # tool list
+        [ -n "$PY" ] || die "$(and_list $MISSING) missing and so is Python 3: $(pm_hint "$(names $MISSING)")"
         VENV="$SRC.venv"
         # made here when missing, and checked before it is built or reused
         [ -e "$VENV" ] || [ -L "$VENV" ] || mkdir "$VENV" || die "cannot create $VENV"
         safe_dir "$VENV"
-        if [ ! -x "$VENV/bin/meson" ] || [ ! -x "$VENV/bin/ninja" ]; then
-            warn "meson/ninja not found - installing $MESON_PIP and $NINJA_PIP into $VENV (no root needed)"
+        # of those, what an earlier run did not put into the venv
+        PIP=""
+        for t in $MISSING; do [ -x "$VENV/bin/$t" ] || PIP="${PIP:+$PIP }$t"; done
+        if [ -n "$PIP" ]; then
+            # shellcheck disable=SC2046,SC2086 # tool lists
+            warn "$(and_list $PIP) not found - installing $(and_list $(for t in $PIP; do pip_spec "$t"; done)) into $VENV (no root needed)"
             run_logged "$PY" -m venv "$VENV" || die_log "$PY -m venv failed ($(pm_hint python3-venv))"
-            run_logged "$VENV/bin/pip" install -q "$MESON_PIP" "$NINJA_PIP" || die_log "pip could not install meson and ninja"
+            # wheels only: meson's is pure Python (any system); ninja has
+            # none for some systems (FreeBSD), and its source package builds
+            # cmake from source first - half an hour without a word. With
+            # no wheel the installer stops here and names the package.
+            for t in $PIP; do
+                run_logged "$VENV/bin/pip" install -q --only-binary=:all: "$(pip_spec "$t")" ||
+                    die_log "pip could not install $t (taken only as a ready-made wheel, which may not exist for this system): $(pm_hint "$(names "$t")")"
+            done
         fi
-        PATH="$VENV/bin:$PATH"; export PATH
+        # after the system's directories: a tool of the system is never
+        # shadowed by one of the venv
+        PATH="$PATH:$VENV/bin"; export PATH
     fi
     done_ "meson $("$MESON" --version) $S_SEP ninja $("$NINJA" --version) $S_SEP glib $($PKGCONFIG --modversion glib-2.0) $S_SEP openssl $(openssl_version)"
 fi

@@ -153,19 +153,55 @@ run_update_check() {
     RC=$?
 }
 
-# no meson or ninja in PATH, but a python3 that builds a venv with them; it
-# logs whether the source lock is held when it runs. Another user acting
-# while it runs: FAKE_PLANT_SRC=1 or git (they make the source directory,
-# empty or a git checkout)
+# no meson or ninja in PATH, but a python3 that builds a venv with a pip
+# that installs them; it logs whether the source lock is held when it runs.
+# Another user acting while it runs: FAKE_PLANT_SRC=1 or git (they make the
+# source directory, empty or a git checkout)
 no_meson_python() {
     rm -f "$W/shim/meson" "$W/shim/ninja"
-    # shellcheck disable=SC2016 # a stand-in script
-    printf '#!/bin/sh\necho pip >> "$TEST_W/ran-pip"\nexit 0\n' | stand pip
+    # pip: one line per run with its arguments in $W/ran-pip; meson==V and
+    # ninja==V become tools in its bin that log to $W/ran-venv. No wheel for
+    # $FAKE_PIP_NO_WHEEL: refused when that package is binary-only
+    # (--only-binary), otherwise "built from the sdist" ($W/pip-sdist)
+    stand pip <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$TEST_W/ran-pip"
+[ "$1" = install ] || exit 0
+binary=""; prev=""
+for a in "$@"; do
+    case "$a" in --only-binary=*) binary="$binary,${a#--only-binary=}" ;; esac
+    [ "$prev" = --only-binary ] && binary="$binary,$a"
+    prev=$a
+done
+for a in "$@"; do
+    case "$a" in
+        meson==*|ninja==*)
+            t=${a%%==*}
+            [ "${FAKE_PIP_NO_WHEEL:-}" = "$t" ] || continue
+            case "$binary," in
+                *,:all:,*|*,"$t",*)
+                    echo "ERROR: Could not find a version that satisfies the requirement $a (from versions: none)" >&2
+                    exit 1 ;;
+            esac
+            echo "$t" >> "$TEST_W/pip-sdist" ;;
+    esac
+done
+for a in "$@"; do
+    case "$a" in
+        meson==*|ninja==*)
+            t=${a%%==*}
+            # shellcheck disable=SC2016 # the stand-in tool
+            { printf '#!/bin/sh\necho %s >> "$TEST_W/ran-venv"\n' "$t"; tail -n +2 "$TEST_W/stand/$t"; } > "${0%/*}/$t" &&
+                chmod 755 "${0%/*}/$t" || exit 1 ;;
+    esac
+done
+exit 0
+EOF
     stand python3 <<'EOF'
 #!/bin/sh
 if [ -d "$HOME/.local/src/erssi.lock" ]; then echo "venv locked"; else echo "venv unlocked"; fi >> "$TEST_W/py.log"
 [ "$1" = -m ] && [ "$2" = venv ] || exit 0
-mkdir -p "$3/bin" && cp "$TEST_W/stand/meson" "$TEST_W/stand/ninja" "$TEST_W/stand/pip" "$3/bin/"
+mkdir -p "$3/bin" && cp "$TEST_W/stand/pip" "$3/bin/"
 case "${FAKE_PLANT_SRC:-0}" in
     1) mkdir -p "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi 4242 -" >> "$TEST_W/lsfake" ;;
     git) git -c init.defaultBranch=main init -q "$HOME/.local/src/erssi" && echo "$HOME/.local/src/erssi 4242 -" >> "$TEST_W/lsfake" ;;
@@ -239,6 +275,29 @@ base_openssl_files() {
     : > "$1/lib/libssl.so"
     : > "$1/lib/libcrypto.so"
 }
+
+# a system that names its package manager: $1 the os-release ID (FreeBSD
+# goes through freebsd())
+os_release() {
+    printf 'ID=%s\n' "$1" > "$W/os-release"
+    SHELLTER_OS_RELEASE=$W/os-release; export SHELLTER_OS_RELEASE
+}
+# shellcheck disable=SC2317 # called through check
+pip_runs() { [ "$(wc -l 2>/dev/null < "$W/ran-pip" || echo 0)" -eq "$1" ]; }
+# shellcheck disable=SC2317 # some pip run installs $1 and no other build tool
+pip_installs_only() {
+    o=meson; [ "$1" = meson ] && o=ninja
+    grep -q "$1==" "$W/ran-pip" && ! grep -q "$o==" "$W/ran-pip"
+}
+# shellcheck disable=SC2317 # every pip run with ninja takes it as a wheel only
+ninja_binary_only() {
+    grep -q 'ninja==' "$W/ran-pip" || return 1
+    ! grep 'ninja==' "$W/ran-pip" | grep -vqE -- '--only-binary[= ](:all:|([^ ]*,)?ninja(,[^ ]*)?)( |$)'
+}
+# shellcheck disable=SC2317 # the venv's $1 ran
+venv_ran() { grep -qx "$1" "$W/ran-venv" 2>/dev/null; }
+# shellcheck disable=SC2317 # the venv's $1 did not run
+venv_not_ran() { ! grep -qx "$1" "$W/ran-venv" 2>/dev/null; }
 
 # shellcheck disable=SC2317 # called through check
 ascii_only() { [ "$(LC_ALL=C tr -d '\000-\177' < "$1" | wc -c)" -eq 0 ]; }
@@ -1004,6 +1063,112 @@ userns-kernel)
     else
         echo "skip: own uid unmapped (unshare --user without a map not allowed here)"
     fi
+    ;;
+venv-meson-only)
+    # the system has ninja, not meson: the venv gets meson only, and the
+    # system's ninja builds
+    os_release debian
+    no_meson_python
+    use_tool ninja
+    V=$HOME/.local/src/erssi.venv
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "pip ran once" pip_runs 1
+    check "pip installs meson only" pip_installs_only meson
+    check "the warning names meson only" grep -q 'meson not found - installing meson==1.12.1 into' "$W/out"
+    check "no ninja in the venv" none_exist "$V/bin/ninja"
+    check "the venv's meson ran" venv_ran meson
+    check "the system's ninja ran" venv_not_ran ninja
+    # the next run reuses the venv's meson: nothing installed
+    rm -f "$W/ran-pip" "$W/ran-venv" "$W/py.log"
+    run_install
+    check "again: installed" [ "$RC" = 0 ]
+    check "again: no pip" none_exist "$W/ran-pip" "$W/py.log"
+    check "again: the venv's meson ran" venv_ran meson
+    # the system loses ninja: only ninja is added, meson stays
+    rm -f "$W/shim/ninja" "$W/ran-pip" "$W/ran-venv"
+    run_install
+    check "ninja gone: installed" [ "$RC" = 0 ]
+    check "ninja gone: pip installs ninja only" pip_installs_only ninja
+    check "ninja gone: as a wheel only" ninja_binary_only
+    check "ninja gone: the venv's ninja ran" venv_ran ninja
+    ;;
+venv-ninja-only)
+    # the system has meson, not ninja: the venv gets ninja only, as a
+    # wheel (never built from the sdist), and the system's meson builds
+    os_release debian
+    no_meson_python
+    use_tool meson
+    V=$HOME/.local/src/erssi.venv
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "pip ran once" pip_runs 1
+    check "pip installs ninja only" pip_installs_only ninja
+    check "ninja as a wheel only" ninja_binary_only
+    check "nothing built from the sdist" none_exist "$W/pip-sdist"
+    check "the warning names ninja only" grep -q 'ninja not found - installing ninja==1.13.2 into' "$W/out"
+    check "no meson in the venv" none_exist "$V/bin/meson"
+    check "the venv's ninja ran" venv_ran ninja
+    check "the system's meson ran" venv_not_ran meson
+    # a venv from an older installer with both: reused, and its meson does
+    # not shadow the system's
+    plant_venv "$V"
+    rm -f "$W/ran-pip" "$W/ran-venv" "$W/py.log"
+    run_install
+    check "older venv: installed" [ "$RC" = 0 ]
+    check "older venv: no pip" none_exist "$W/ran-pip" "$W/py.log"
+    check "older venv: its ninja ran" venv_ran ninja
+    check "older venv: the system's meson ran" venv_not_ran meson
+    ;;
+venv-no-ninja-wheel)
+    # no ninja wheel for the platform (FreeBSD): pip is not left to build
+    # ninja (and cmake) from source; the installer stops at once and names
+    # the package
+    freebsd
+    base_openssl_files "$W/base" '# define OPENSSL_VERSION_TEXT "OpenSSL 3.0.15 3 Sep 2024"'
+    no_meson_python
+    use_tool meson
+    FAKE_PIP_NO_WHEEL=ninja; export FAKE_PIP_NO_WHEEL
+    run_install
+    check "FreeBSD: refused" [ "$RC" = 1 ]
+    check "FreeBSD: nothing built from the sdist" none_exist "$W/pip-sdist"
+    check "FreeBSD: ninja as a wheel only" ninja_binary_only
+    check "FreeBSD: the package named" grep -qF 'pkg install ninja   (as root)' "$W/out"
+    check "FreeBSD: nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi"
+    # without meson as well: meson comes from pip, ninja still stops it
+    rm -f "$W/shim/meson" "$W/ran-pip" "$W/pip-sdist"
+    run_install
+    check "no meson either: refused" [ "$RC" = 1 ]
+    check "no meson either: nothing built from the sdist" none_exist "$W/pip-sdist"
+    check "no meson either: the package named" grep -qF 'pkg install ninja   (as root)' "$W/out"
+    check "no meson either: not meson" no_grep 'pkg install meson' "$W/out"
+    # Debian: the package of apt
+    FAKE_UNAME=Linux FAKE_NO_OPENSSL_PC=0; export FAKE_UNAME FAKE_NO_OPENSSL_PC
+    os_release debian
+    rm -rf "$HOME/.local/src/erssi.venv" "$W/ran-pip"
+    use_tool meson
+    run_install
+    check "Debian: refused" [ "$RC" = 1 ]
+    check "Debian: the package named" grep -qF 'sudo apt install ninja-build' "$W/out"
+    ;;
+venv-both)
+    # neither meson nor ninja: both into the venv, ninja as a wheel only
+    os_release debian
+    no_meson_python
+    V=$HOME/.local/src/erssi.venv
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "meson installed" grep -q 'meson==1.12.1' "$W/ran-pip"
+    check "ninja installed" grep -q 'ninja==1.13.2' "$W/ran-pip"
+    check "ninja as a wheel only" ninja_binary_only
+    check "nothing built from the sdist" none_exist "$W/pip-sdist"
+    check "the warning names both" grep -q 'meson and ninja not found - installing meson==1.12.1 and ninja==1.13.2 into' "$W/out"
+    check "the venv's meson ran" venv_ran meson
+    check "the venv's ninja ran" venv_ran ninja
+    rm -f "$W/ran-pip" "$W/py.log"
+    run_install
+    check "again: installed" [ "$RC" = 0 ]
+    check "again: no pip" none_exist "$W/ran-pip" "$W/py.log"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

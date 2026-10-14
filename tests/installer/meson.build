@@ -8,7 +8,8 @@ foreach c : ['ascii', 'utf8',
     'lock-before-venv', 'lock-held-during-venv',
     'freebsd-base-openssl', 'freebsd-no-openssl',
     'src-foreign', 'src-writable', 'src-shared-parent', 'acl-bsd',
-    'userns', 'userns-kernel']
+    'userns', 'userns-kernel',
+    'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)
