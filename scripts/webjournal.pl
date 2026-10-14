@@ -1,9 +1,9 @@
-# webjournal.pl - a journal of erssi windows for the web client (NexusIRC)
+# webjournal.pl - a journal of erssi windows for a web client
 #
-# The web client talks to erssi through fe-web and gets events only while it
+# A web client talks to erssi through fe-web and gets events only while it
 # is connected. This script writes everything shown in erssi windows to
-# disk, so that after a restart the web client can fill the gaps and show
-# the same as the terminal:
+# disk, so that after a restart a web client that reads the journal can
+# fill the gaps and show the same as the terminal:
 #
 #   * channels and queries - structured entries (time, kind, nick, text)
 #     from which the web client rebuilds ordinary messages,
@@ -23,7 +23,7 @@
 # signal_add_first): the web client still learns who left and came back.
 #
 # Directory layout (webjournal_dir, ~/.erssi/journal by default):
-#   <tag>/<channel|nick>.jsonl   e.g. ircnet/#polska.jsonl
+#   <tag>/<channel|nick>.jsonl   e.g. ircnet/#example.jsonl
 #   <tag>/%status.jsonl          the status window of network <tag>
 #   %windows/<window name>.jsonl e.g. %windows/notices.jsonl
 # Names: ASCII lower case, characters outside [a-z0-9#&+!._-] as %XX (UTF-8
@@ -136,7 +136,7 @@ sub append {
 }
 
 # The file is created with mode 0600 right away (sysopen), the directory
-# 0700; writes are unbuffered, so a reader (Nexus) sees whole lines at once.
+# 0700; writes are unbuffered, so a reader sees whole lines at once.
 sub handle_for {
     my ($file) = @_;
     $fh_used{$file} = ++$fh_clock;
