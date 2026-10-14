@@ -48,10 +48,14 @@ static int fe_web_fuzz_ssl_accept(FE_WEB_SSL_CHANNEL *chan);
 static int fe_web_fuzz_ssl_read(FE_WEB_SSL_CHANNEL *chan, char *buf, int len);
 static int fe_web_fuzz_ssl_write(FE_WEB_SSL_CHANNEL *chan, const char *data, int len);
 static time_t fe_web_fuzz_time(time_t *t);
-static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len);
 static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode);
 static int fe_web_fuzz_connect(int fd, const struct sockaddr *addr, socklen_t len);
 static int fe_web_fuzz_flock(int fd, int op);
+/* the peer's credentials: SO_PEERCRED on Linux, getpeereid() on the BSDs */
+#ifdef __linux__
+static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len);
+#define getsockopt fe_web_fuzz_getsockopt
+#endif
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
     defined(__NetBSD__) || defined(__APPLE__)
 static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
@@ -65,7 +69,6 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
 #define fe_web_ssl_read fe_web_fuzz_ssl_read
 #define fe_web_ssl_write fe_web_fuzz_ssl_write
 #define time(t) fe_web_fuzz_time(t)
-#define getsockopt fe_web_fuzz_getsockopt
 #define g_mkdir_with_parents fe_web_fuzz_mkdir_with_parents
 #define connect fe_web_fuzz_connect
 #define flock fe_web_fuzz_flock
@@ -84,10 +87,12 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid);
 #undef fe_web_ssl_read
 #undef fe_web_ssl_write
 #undef time
-#undef getsockopt
 #undef g_mkdir_with_parents
 #undef connect
 #undef flock
+#ifdef __linux__
+#undef getsockopt
+#endif
 #ifdef getpeereid
 #undef getpeereid
 #endif
@@ -676,17 +681,19 @@ void fe_web_fuzz_mkdir_first(const char *dir, int mode)
 	mkdir_first_mode = mode;
 }
 
+#ifdef __linux__
 static int fe_web_fuzz_getsockopt(int fd, int level, int name, void *val, socklen_t *len)
 {
 	int ret = getsockopt(fd, level, name, val, len);
 
-#if defined(__linux__) && defined(SO_PEERCRED)
+#ifdef SO_PEERCRED
 	if (ret == 0 && fake_peer_other && level == SOL_SOCKET && name == SO_PEERCRED &&
 	    *len == sizeof(struct ucred))
 		((struct ucred *) val)->uid = getuid() + 1;
 #endif
 	return ret;
 }
+#endif
 
 #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || \
     defined(__NetBSD__) || defined(__APPLE__)
