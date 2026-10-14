@@ -41,6 +41,12 @@ use_tool() { for t in "$@"; do cp "$W/stand/$t" "$W/shim/$t"; done; }
 setup() {
     W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
     trap 'rm -rf "$W"' EXIT
+    # The BSDs give a new directory the group of its parent, not the
+    # creator's: under /tmp (group wheel) every fixture would be in a group
+    # with other members, and none of the "private group" cases could pass.
+    # Everything below $W inherits the user's own group from here (on
+    # Linux too, when $TMPDIR is set-group-ID)
+    chgrp "$(id -g)" "$W" || exit 1
     trap 'exit 1' HUP INT TERM
     TEST_W=$W; export TEST_W
     HOME=$W/home; export HOME
