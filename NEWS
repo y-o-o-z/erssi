@@ -136,6 +136,8 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    peer; the owner and trusted peers keep theirs
 	  - fe-web: fe_web_socket gets a <socket>.lock file, so a busy erssi keeps
 	    its socket on the BSDs; a lock file open to others is refused
+	  - fe-web: no "Failed to set SO_SNDBUF" warning for every connection on
+	    FreeBSD; the largest send buffer up to 2 MB the system allows is taken
 	  - fe-web closes the connection on an unmasked client frame with status
 	    1002 (RFC 6455)
 	  - fe-web refuses /UNLOAD of itself sent from a web client (it crashed
