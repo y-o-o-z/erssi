@@ -148,6 +148,8 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    home, never as root, never over the binary or over a file
 	  - shellter-install.sh: the source lock is taken before the venv is built
 	  - shellter-install.sh: FreeBSD's base OpenSSL is enough
+	  - shellter-install.sh: the venv gets only the missing meson or ninja,
+	    as a wheel only (ninja's source build ran half an hour on FreeBSD)
 	  - shellter-install.sh refuses a source directory (--src, kept for
 	    erssi --update) that is a link to, or lies in, a directory another user
 	    can write to or a directory that belongs to another user (root
