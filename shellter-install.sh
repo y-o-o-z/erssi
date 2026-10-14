@@ -9,8 +9,9 @@
 #
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. A missing
 # build tool (meson, ninja) is installed into a private Python venv, as a
-# ready-made wheel only (none: the package to ask for is named); missing
-# libraries are listed with the command for your system.
+# ready-made wheel only; where there is none, the installer stops and names
+# the package to ask for. Missing libraries are listed with the command for
+# your system.
 #
 # Install: without --ref the newest release recorded below, checked against
 # the recorded commit, so neither a moved nor a newly pushed tag changes what
@@ -80,7 +81,9 @@ erssi Shellter Edition - install and update
 
 As root the installer lists the system packages erssi needs and installs
 them after you confirm; on a user account it lists them with the command
-for the administrator.
+for the administrator. There a missing meson or ninja comes from pip, into
+a venv next to the source directory (DIR.venv), as a ready-made wheel only:
+where pip has none (ninja on FreeBSD), the package is asked for instead.
 
 The source directory and its venv must be yours; the directories above
 them yours or root's. In a user namespace (rootless container, bwrap,
@@ -739,8 +742,11 @@ else
     if [ -n "$MISSING" ]; then
         PY=""
         for p in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do have "$p" && { PY=$p; break; }; done
+        # a safeguard only: without python3, check_system has already asked
+        # for meson and ninja as packages
+        case "$MISSING" in *" "*) are=are ;; *) are=is ;; esac
         # shellcheck disable=SC2086 # tool list
-        [ -n "$PY" ] || die "$(and_list $MISSING) missing and so is Python 3: $(pm_hint "$(names $MISSING)")"
+        [ -n "$PY" ] || die "$(and_list $MISSING) $are missing, and so is Python 3: $(pm_hint "$(names $MISSING)")"
         VENV="$SRC.venv"
         # made here when missing, and checked before it is built or reused
         [ -e "$VENV" ] || [ -L "$VENV" ] || mkdir "$VENV" || die "cannot create $VENV"
@@ -758,7 +764,7 @@ else
             # no wheel the installer stops here and names the package.
             for t in $PIP; do
                 run_logged "$VENV/bin/pip" install -q --only-binary=:all: "$(pip_spec "$t")" ||
-                    die_log "pip could not install $t (taken only as a ready-made wheel, which may not exist for this system): $(pm_hint "$(names "$t")")"
+                    die_log "pip could not install $t (no network, or no ready-made wheel for this system): $(pm_hint "$(names "$t")")"
             done
         fi
         # after the system's directories: a tool of the system is never

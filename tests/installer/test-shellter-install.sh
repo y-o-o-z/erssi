@@ -1140,6 +1140,7 @@ venv-no-ninja-wheel)
     check "FreeBSD: nothing built from the sdist" none_exist "$W/pip-sdist"
     check "FreeBSD: ninja as a wheel only" ninja_binary_only
     check "FreeBSD: the package named" grep -qF 'pkg install ninja   (as root)' "$W/out"
+    check "FreeBSD: the causes named" grep -qF 'pip could not install ninja (no network, or no ready-made wheel for this system)' "$W/out"
     check "FreeBSD: nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi"
     # without meson as well: meson comes from pip, ninja still stops it
     rm -f "$W/shim/meson" "$W/ran-pip" "$W/pip-sdist"
