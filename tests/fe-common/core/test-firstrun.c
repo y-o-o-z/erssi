@@ -26,6 +26,7 @@
  * the master has read all of it, so a terminal that has stopped reading (^S,
  * a stalled ssh) would hang the password prompt; Linux returns at once. */
 static int draining_tcsetattr;
+static int all_tcsetattr; /* every call: shows that firstrun.c comes here at all */
 
 int tcsetattr(int fd, int action, const struct termios *t)
 {
@@ -34,6 +35,7 @@ int tcsetattr(int fd, int action, const struct termios *t)
 	if (real == NULL)
 		real = (int (*)(int, int, const struct termios *)) dlsym(RTLD_NEXT, "tcsetattr");
 	g_assert_nonnull(real);
+	g_atomic_int_inc(&all_tcsetattr);
 	if (action != TCSANOW)
 		g_atomic_int_inc(&draining_tcsetattr);
 	return real(fd, action, t);
@@ -1236,6 +1238,7 @@ static void test_read_fd_secret_stalled_terminal(void)
 		record_signals(old);
 		signal_tty = slave;
 		g_atomic_int_set(&draining_tcsetattr, 0);
+		g_atomic_int_set(&all_tcsetattr, 0);
 		late_init(&w, master, typed[i]);
 		w.stalled = TRUE;
 		th = g_thread_new("late-writer", late_writer, &w);
@@ -1244,6 +1247,8 @@ static void test_read_fd_secret_stalled_terminal(void)
 		g_string_free(w.seen, TRUE);
 		restore_signals(old);
 		signal_tty = -1;
+		/* switched on entry and back: fewer calls, and firstrun.c bypassed the stand-in */
+		g_assert_cmpint(g_atomic_int_get(&all_tcsetattr), >=, 2);
 		g_assert_cmpint(g_atomic_int_get(&draining_tcsetattr), ==, 0);
 		if (i == 0) {
 			g_assert_cmpint(raised, ==, 0);

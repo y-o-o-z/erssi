@@ -841,7 +841,7 @@ static void test_tcp_loopback_sources_share_key(void)
 		}
 		g_assert_cmpuint(tried, >=, 1);
 		if (tried == 1)
-			g_test_message("no loopback address but 127.0.0.1 here: other sources not tried");
+			g_test_message("only 127.0.0.1 here: other loopback sources not tried");
 	}
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());

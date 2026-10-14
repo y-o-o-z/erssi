@@ -1097,9 +1097,12 @@ static void sig_listen(void)
 		int bufsize = 2 * 1024 * 1024; /* 2MB */
 		int rc;
 
-		while ((rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize))) < 0 &&
-		       errno == ENOBUFS && bufsize > 64 * 1024)
+		for (;;) {
+			rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
+			if (rc == 0 || errno != ENOBUFS || bufsize <= 64 * 1024)
+				break;
 			bufsize /= 2;
+		}
 		if (rc < 0) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTCRAP,
 			          "fe-web: Warning: Failed to set SO_SNDBUF to %d bytes: %s",
