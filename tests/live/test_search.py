@@ -54,7 +54,10 @@ def main():
 
     def processes():
         """pid -> (parent pid, state) of every process, from ps (the same on
-        Linux and the BSDs; FreeBSD has no /proc), or None."""
+        Linux and the BSDs; FreeBSD has no /proc), or None when ps failed
+        (not known: no answer either way)."""
+        if shutil.which("ps") is None:
+            raise harness.SkipCase("no ps: the child processes of erssi cannot be listed")
         try:
             r = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "stat="],
                                capture_output=True, text=True, timeout=10)
@@ -70,7 +73,7 @@ def main():
         return table
 
     def children():
-        """The pids of alice's erssi's child processes, or None."""
+        """The pids of alice's erssi's child processes, or None (not known)."""
         pid = str(st["alice"].proc.pid)
         table = processes()
         if table is None:
@@ -81,7 +84,7 @@ def main():
         end = time.time() + timeout
         while True:
             kids = children()
-            if not kids:
+            if kids == []:
                 return True
             if time.time() >= end:
                 return False
