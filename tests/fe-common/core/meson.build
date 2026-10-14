@@ -187,3 +187,22 @@ test_test_log_search = executable('test-log-search',
 test('test-log-search test', test_test_log_search,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_shipped_themes = executable('test-shipped-themes',
+  files(
+    'test-shipped-themes.c',
+  ),
+  link_with : [
+    libconfig_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-shipped-themes test', test_test_shipped_themes,
+  env : test_env,
+  args : ['--tap'] + shipped_themes,
+  protocol : 'tap')

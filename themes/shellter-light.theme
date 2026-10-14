@@ -859,7 +859,6 @@ formats = {
     spellcheck_info = "   %Z59636Espellcheck{col}$0";
     spellcheck_error = "   %Z59636Espellcheck{col}%ZCF222E$0%N";
   };
-  };
   "Irssi::Script::tk" = {
     tk_loaded = "           %Z59636Etk{col}TK v$0 - /tk help";
     tk_info = "           %Z59636Etk{col}$0";
