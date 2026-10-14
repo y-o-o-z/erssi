@@ -1,0 +1,73 @@
+
+%9Syntax:%9
+
+@SYNTAX:capsicum@
+
+%9Parameters:%9
+
+    ENTER:       Enters capability mode. There is no way back: erssi stays
+                 in it until it exits.
+    STATUS:      Says whether erssi is in capability mode.
+
+    Without an argument the subcommands are listed.
+
+%9Description:%9
+
+    Capsicum is the capability and sandbox framework of FreeBSD. In
+    capability mode erssi can no longer reach the file system or the
+    network by itself, which limits what a security hole in erssi or in a
+    library could do. Only an erssi built with Capsicum support has this
+    command and its settings: the default on FreeBSD (meson option
+    with-capsicum).
+
+    When the mode is entered, erssi sets up TLS, creates the directory
+    capsicum_irclogs_path if it is missing and starts a small helper
+    process outside the sandbox, which makes the connections to servers
+    and the name lookups for it. If one of these steps fails, erssi stays
+    as it was and says why ("Capability mode failed").
+
+    In capability mode:
+
+        - files can be opened only below capsicum_irclogs_path, the
+          directory it named when the mode was entered (a later change
+          takes effect after a restart). That covers the log files
+          (autolog, /LOG, /RAWLOG, the Mentions log) and /CAT; every
+          other file erssi would read or write from then on (the config,
+          scripts, themes) cannot be opened,
+        - /SAVE and the automatic save of the settings cannot write the
+          config,
+        - /SEARCH is not available,
+        - servers can be reached only on the ports from
+          capsicum_port_min to capsicum_port_max.
+
+    The default config writes autolog files to ~/.erssi/logs and the
+    Mentions log to ~/.erssi/logs/mentions.log. With the default
+    capsicum_irclogs_path (~/irclogs) they stop being written in
+    capability mode: set capsicum_irclogs_path to ~/.erssi/logs first.
+    awaylog_file (~/.erssi/away.log by default) has to be below it too.
+
+    Entering the mode at every start (/SET capsicum ON, then /SAVE) is
+    better than /CAPSICUM ENTER by hand, which leaves the connections
+    made before it outside the sandbox. docs/capsicum.txt in the erssi
+    sources has more.
+
+%9Settings:%9
+
+    capsicum (boolean; default: OFF)
+        Enters capability mode when erssi has started.
+    capsicum_irclogs_path (default: ~/irclogs)
+        The only directory erssi can open files in while in capability
+        mode; created when the mode is entered.
+    capsicum_port_min, capsicum_port_max (default: 6667 and 9999)
+        The server ports that can be connected to in capability mode.
+
+%9Examples:%9
+
+    /SET capsicum_irclogs_path ~/.erssi/logs
+    /SET awaylog_file ~/.erssi/logs/away.log
+    /SET capsicum ON
+    /SAVE
+    /CAPSICUM STATUS
+
+%9See also:%9 CAT, LOG, SAVE, SEARCH
+
