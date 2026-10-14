@@ -20,6 +20,7 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/fe-web/fe-web-pacing.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
@@ -610,8 +611,9 @@ static void tcp_listen(void)
 
 /* Connect from 'src' (any port) to fe-web; the new web client (fd in
  * *fd, to be closed - its client is then closed too, so keep the fds of
- * several open until the end) */
-static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
+ * several open until the end). NULL if this machine has no address 'src':
+ * Linux answers on all of 127/8, FreeBSD's lo0 has only 127.0.0.1. */
+static WEB_CLIENT_REC *try_connect_from(const char *src, int *fd)
 {
 	struct sockaddr_in sa;
 	guint before = g_slist_length(web_clients);
@@ -622,7 +624,12 @@ static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
 	memset(&sa, 0, sizeof(sa));
 	sa.sin_family = AF_INET;
 	g_assert_cmpint(inet_pton(AF_INET, src, &sa.sin_addr), ==, 1);
-	g_assert_cmpint(bind(*fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	if (bind(*fd, (struct sockaddr *) &sa, sizeof(sa)) != 0) {
+		g_assert_cmpint(errno, ==, EADDRNOTAVAIL);
+		close(*fd);
+		*fd = -1;
+		return NULL;
+	}
 	sa.sin_port = htons(fe_web_fuzz_listen_port());
 	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
 	g_assert_cmpint(connect(*fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
@@ -630,6 +637,36 @@ static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
 		fe_web_fuzz_iterate(5);
 	g_assert_cmpuint(g_slist_length(web_clients), ==, before + 1);
 	return g_slist_last(web_clients)->data;
+}
+
+static WEB_CLIENT_REC *connect_from(const char *src, int *fd)
+{
+	WEB_CLIENT_REC *c = try_connect_from(src, fd);
+
+	g_assert_nonnull(c);
+	return c;
+}
+
+/* The 2 MiB send buffer for large state dumps is above FreeBSD's default
+ * kern.ipc.maxsockbuf (2 MiB including its bookkeeping, so ENOBUFS): a
+ * smaller one is taken, with no warning */
+static void test_tcp_send_buffer_no_warning(void)
+{
+	WEB_CLIENT_REC *c;
+	char *printed;
+	int fd;
+
+	setup();
+	tcp_listen();
+	g_free(fe_web_fuzz_take_printed());
+	c = connect_from("127.0.0.1", &fd);
+	g_assert_nonnull(c);
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "SO_SNDBUF"));
+	g_free(printed);
+	close(fd);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
 }
 
 #ifdef __linux__
@@ -788,15 +825,23 @@ static void test_tcp_loopback_sources_share_key(void)
 	close_connections();
 #else
 	{
+		/* only the sources this machine has (FreeBSD: 127.0.0.1 alone) */
+		const char *const srcs[] = { "127.0.0.1", "127.0.0.2", "127.1.2.3" };
 		WEB_CLIENT_REC *c;
+		guint i, tried = 0;
 		int fd;
 
-		c = connect_from("127.0.0.2", &fd);
-		g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
-		close(fd);
-		c = connect_from("127.1.2.3", &fd);
-		g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
-		close(fd);
+		for (i = 0; i < G_N_ELEMENTS(srcs); i++) {
+			c = try_connect_from(srcs[i], &fd);
+			if (c == NULL)
+				continue;
+			tried++;
+			g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+			close(fd);
+		}
+		g_assert_cmpuint(tried, >=, 1);
+		if (tried == 1)
+			g_test_message("no loopback address but 127.0.0.1 here: other sources not tried");
 	}
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
@@ -846,6 +891,8 @@ int main(int argc, char **argv)
 #endif
 	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
 	                test_tcp_loopback_sources_share_key);
+	g_test_add_func("/fe-web/login/tcp-send-buffer-no-warning",
+	                test_tcp_send_buffer_no_warning);
 
 	ret = g_test_run();
 	if (last != NULL)

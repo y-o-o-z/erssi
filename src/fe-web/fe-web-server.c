@@ -1089,11 +1089,18 @@ static void sig_listen(void)
 		}
 	}
 
-	/* Increase the send buffer to 2MB for large state dumps */
+	/* Increase the send buffer to 2MB for large state dumps. FreeBSD
+	 * refuses one above kern.ipc.maxsockbuf (by default 2MB including its
+	 * bookkeeping) with ENOBUFS: the largest of 1MB, 512KB, ... it takes */
 	{
 		int fd = g_io_channel_unix_get_fd(handle);
 		int bufsize = 2 * 1024 * 1024; /* 2MB */
-		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
+		int rc;
+
+		while ((rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize))) < 0 &&
+		       errno == ENOBUFS && bufsize > 64 * 1024)
+			bufsize /= 2;
+		if (rc < 0) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTCRAP,
 			          "fe-web: Warning: Failed to set SO_SNDBUF to %d bytes: %s",
 			          bufsize, strerror(errno));
