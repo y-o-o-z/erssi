@@ -133,13 +133,19 @@ GSList *build_sorted_window_list(void)
 			/* 1. Notices window - always first */
 			sort_rec->sort_group = 0;
 			sort_rec->sort_key = g_strdup("Notices");
-		} else if (window_is_network(win) && win->active != NULL &&
-		           server_find_tag(win->servertag) != NULL) {
-			/* 2. A network window that holds a query (a network with
-			 * one_window) is still listed as the network, by its name */
+		} else if (window_is_network(win) && win->active != NULL) {
+			/* A network window that holds a query (a network with
+			 * one_window) is still listed as the network, not as the
+			 * query: 2. while connected; while it waits to reconnect, by
+			 * its own name, as an empty network window is then */
 			sort_rec->server = server_find_tag(win->servertag);
-			sort_rec->sort_group = 1;
-			sort_rec->sort_key = g_strdup(server_get_display_name(SERVER(sort_rec->server)));
+			if (sort_rec->server != NULL) {
+				sort_rec->sort_group = 1;
+				sort_rec->sort_key = g_strdup(server_get_display_name(SERVER(sort_rec->server)));
+			} else {
+				sort_rec->sort_group = 4;
+				sort_rec->sort_key = g_strdup(win->name);
+			}
 		} else if (sort_rec->server && !win->active) {
 			/* Check if this is a kicked channel (has server, no active, but name is a channel) */
 			if (win_name && server_ischannel(SERVER(sort_rec->server), win_name)) {

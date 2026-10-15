@@ -174,6 +174,82 @@ def main():
         name, item, _ = where("peer4")
         assert item == "peer4" and name != "E2E", (name, item)
 
+    def t_panel_while_reconnecting():
+        """the side panel lists the Talk window (holding the query) by the
+        network's name, also while Talk waits to reconnect"""
+        a = st["alice"]
+        message(st["talk_port"], "peer", "hello before the drop")
+        mark = a.mark()
+        with harness.Client(st["talk_port"], "dropper") as c:
+            c.send("TESTDROP alice")
+            assert a.wait_file(a.all_log(), "Connection lost to 127.0.0.1", WAIT), "the link did not drop"
+        a.type("/window goto Notices")
+        time.sleep(1.5)
+        panel = a.text(mark)  # the panel lines redrawn since the drop
+        assert re.search(r"\d+\. Talk\b", panel), "the Talk window is not in the panel:\n" + panel[-2000:]
+        assert not re.search(r"\d+\. peer\b", panel), "the panel lists the query:\n" + panel[-2000:]
+        a.type("/rmreconns")
+        a.type("/connect Talk")
+        got = wait_tags(["E2E", "Talk"])
+        assert got == ["E2E", "Talk"], got
+
+    def own_window(name):
+        """a new empty window named NAME on Talk, made active"""
+        a = st["alice"]
+        a.type("/window new hidden")
+        a.type(f"/window name {name}")
+        a.type("/window server Talk")
+        off = log_size()
+        a.type("/wi")
+        assert wait_log_since(off, f"at=[{name}]"), log_since(off)
+
+    def t_query_window_option():
+        """/QUERY -window on a one_window network: the query opens in the
+        current window, as asked, without a GLib critical"""
+        a = st["alice"]
+        own_window("here")
+        off = log_size()
+        a.type("/query -window peerx")
+        time.sleep(1)
+        name, item, _ = where("peerx")
+        assert (name, item) == ("here", "peerx"), (name, item)
+        assert "critical" not in log_since(off).lower(), log_since(off)
+        a.type("/unquery peerx")
+
+    def t_layout_bound_query():
+        """a query /LAYOUT SAVE keeps in its own window comes back to that
+        window after a restart, not to the network window"""
+        a = st["alice"]
+        own_window("keep")
+        a.type("/query -window peerl")
+        assert where("peerl")[:2] == ("keep", "peerl")
+        # without the left side panel: a layout saved with it (main window at
+        # column 15) crashes the next start in mainwindows-layout.c (no main
+        # window at column 0 - not part of this change)
+        a.type("/set sidepanel_left off")
+        off = log_size()
+        a.type("/layout save")
+        a.type("/save")
+        assert wait_log_since(off, "Saved configuration"), log_since(off)
+        a.quit()
+        assert a.sanitizer_reports() == [], a.sanitizer_reports()
+        b = harness.Erssi(st["inst"], work, "alice", None)  # the same home and config
+        st["alice"] = b
+        opened = log_since(0).count("Log opened")
+        b.start()
+        end = time.time() + 15
+        while log_since(0).count("Connection to 127.0.0.1 established") < 2 + opened and time.time() < end:
+            time.sleep(0.2)
+        b.type("/alias sl server;echo sl-done")
+        b.type("/alias wi echo at=[$winname] item=[$T] ref=$winref")
+        got = wait_tags(["E2E", "Talk"], 15)
+        assert got == ["E2E", "Talk"], got
+        message(st["talk_port"], "peerl", "hello after restart")
+        name, item, _ = where("peerl")
+        assert (name, item) == ("keep", "peerl"), (name, item)
+        net = [w for w in windows() if w[1].startswith("Talk ")]
+        assert net, windows()
+
     def t_quit():
         a = st["alice"]
         a.quit()
@@ -181,7 +257,8 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_query_in_network_window, t_close_and_connect,
-                      t_option_off_own_window, t_network_modify, t_quit])
+                      t_option_off_own_window, t_network_modify, t_panel_while_reconnecting, t_query_window_option,
+                      t_layout_bound_query, t_quit])
     finally:
         if "alice" in st:
             st["alice"].kill()
