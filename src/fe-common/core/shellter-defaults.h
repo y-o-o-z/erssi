@@ -12,6 +12,20 @@
    or newer. Returns the number of settings written. */
 int shellter_defaults_migrate(CONFIG_REC *config);
 
+/* a former default: the setting `key' of `module' gets `value' in a config
+   whose erssi/defaults_version is lower than `since' */
+typedef struct {
+	int since;
+	const char *module;
+	const char *key;
+	const char *value;
+} SHELLTER_DEFAULT_REC;
+
+/* shellter_defaults_migrate() with the `rows' (`rows_count' of them) of a
+   defaults version `version'. Exposed for the tests. */
+int shellter_defaults_migrate_rows(CONFIG_REC *config, const SHELLTER_DEFAULT_REC *rows,
+                                   int rows_count, int version);
+
 /* erssi/statusbar_version of a config whose info bar got the items added
    to the shipped one since 2026.10.0 (the e2e item), when it was the
    shipped one */
@@ -23,6 +37,10 @@ int shellter_defaults_migrate(CONFIG_REC *config);
    bar, are left alone. Sets the marker; nothing when the marker is already
    SHELLTER_STATUSBAR_VERSION or newer. TRUE when the item was added. */
 int shellter_statusbar_migrate(CONFIG_REC *config);
+
+/* shellter_statusbar_migrate() up to the statusbar version `version'.
+   Exposed for the tests. */
+int shellter_statusbar_migrate_to(CONFIG_REC *config, int version);
 
 /* what shellter_defaults_init() did with the written values */
 enum {
