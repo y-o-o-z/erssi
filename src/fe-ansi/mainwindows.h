@@ -43,6 +43,7 @@ extern GSList *mainwindows;
 extern MAIN_WINDOW_REC *active_mainwin;
 extern MAIN_WINDOW_BORDER_REC *clrtoeol_info;
 extern int screen_reserved_top, screen_reserved_bottom;
+extern int screen_reserved_left, screen_reserved_right;
 
 void mainwindows_init(void);
 void mainwindows_deinit(void);
