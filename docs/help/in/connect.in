@@ -33,12 +33,19 @@
     Opens a new connection to the specified network or server; existing
     connections are kept.
 
+    When a network is given and a server of that network is already
+    connected, still connecting or waiting to reconnect, no second
+    connection is opened: the window of that server becomes active and a
+    line says so. To open a second connection to the same network on
+    purpose, give a server address (and -network to name the network).
+
 %9Examples:%9
 
     /CONNECT liberachat
     /CONNECT -6 liberachat
     /CONNECT -4 -! -host staff.irssi.org -network liberachat irc.libera.chat
     /CONNECT irc.irssi.org 6667 WzerT8zq mike
+    /CONNECT -network liberachat irc.libera.chat
 
 %9See also:%9 DISCONNECT, RMRECONNS, SERVER
 

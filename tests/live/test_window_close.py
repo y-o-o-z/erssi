@@ -201,7 +201,7 @@ def main():
 
     def t_setting_off():
         """window_close_disconnects off: the old behaviour - the connection
-        stays and the next /CONNECT gets Talk2"""
+        stays; /CONNECT Talk then says it is connected (no Talk2)"""
         a = st["alice"]
         off = log_size()
         a.type("/set window_close_disconnects off")
@@ -211,9 +211,10 @@ def main():
         close_window("Talk")
         time.sleep(2)
         assert "QUIT" not in trace("talk")[start:], "Talk was disconnected with the setting off"
+        off = log_size()
         a.type("/connect Talk")
-        got = wait_tags(["E2E", "Talk", "Talk2"])
-        assert got == ["E2E", "Talk", "Talk2"], got
+        assert wait_log_since(off, "Already connected to Talk"), log_since(off)
+        assert sorted(tags()) == ["E2E", "Talk"], tags()
 
     def t_quit():
         a = st["alice"]
