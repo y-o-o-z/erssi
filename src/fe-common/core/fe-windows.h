@@ -86,6 +86,10 @@ WINDOW_REC *window_find_level(void *server, int level);
 WINDOW_REC *window_find_closest(void *server, const char *name, int level);
 WINDOW_REC *window_find_refnum(int refnum);
 WINDOW_REC *window_find_name(const char *name);
+/* The network window of a server: named after the server tag and sticky to
+   it. Its items do not matter - it may hold a query. */
+gboolean window_is_network(WINDOW_REC *window);
+WINDOW_REC *window_find_network(const char *servertag);
 WINDOW_REC *window_find_item(SERVER_REC *server, const char *name);
 
 int window_refnum_prev(int refnum, int wrap);

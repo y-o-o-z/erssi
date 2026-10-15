@@ -41,6 +41,10 @@
                      Use '' to disable the authentication.
     -sasl_username   Specifies the username to use during the SASL authentication.
     -sasl_password   Specifies the password to use during the SASL authentication.
+    -onewindow:      Opens the queries of the network in its network window
+                     (the window named after the server tag) instead of a
+                     window per query. The config key is one_window.
+    -noonewindow:    A window per query again (the default).
 
 
     The name of the network to add, edit or remove; if no parameter is given,
@@ -54,6 +58,12 @@
     When using the ADD parameter on a network that already exists, the
     configuration will be merged with each other.
 
+    With -onewindow a network has one window per connection: a query the
+    server or anyone else opens lands in the network window, which keeps
+    the network's name; channels still get windows of their own. Closing
+    that window disconnects the server (see SET window_close_disconnects).
+    In the config: chatnets = { Name = { type = "IRC"; one_window = "yes"; }; };
+
     We recommend using 'WAIT 2000' between the automated commands in order to
     prevent you from being kicked from the network due to flooding commands.
 
@@ -64,6 +74,7 @@
     /NETWORK ADD -autosendcmd '^MSG NickServ identify WzerT8zq' liberachat
     /NETWORK ADD -autosendcmd '^MSG Q@CServe.quakenet.org AUTH mike WzerT8zq; WAIT 2000; OPER mike WzerT8zq; WAIT 2000; MODE mike +kXP' Quakenet
     /NETWORK MODIFY -usermode +gi EFnet
+    /NETWORK MODIFY -onewindow Bitlbee
     /NETWORK REMOVE liberachat
 
 %9See also:%9 CHANNEL, CONNECT, SERVER
