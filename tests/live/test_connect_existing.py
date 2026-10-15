@@ -78,18 +78,19 @@ def main():
         assert wait_log_since(off, "active=["), "no /wn output"
         return re.findall(r"active=\[([^\]]*)\]", log_since(off))[-1]
 
-    def connect_again(name):
-        """/CONNECT NAME from the Notices window; returns the output mark"""
+    def connect_again(name, notice=NOTICE):
+        """/CONNECT NAME from the Notices window; NOTICE is in the line that
+        answers it. Returns the output mark"""
         a = st["alice"]
         a.type("/window goto Notices")
         assert active() == "Notices"
         off = log_size()
         mark = a.mark()
         a.type(f"/connect {name}")
-        assert wait_log_since(off, NOTICE), "no notice:\n" + log_since(off)
-        line = [x for x in log_since(off).splitlines() if NOTICE in x]
+        assert wait_log_since(off, notice), "no notice:\n" + log_since(off)
+        line = [x for x in log_since(off).splitlines() if notice in x]
         assert name in line[0], line
-        assert a.wait_output(NOTICE.encode(), WAIT), "notice not on the screen:\n" + a.text(mark)[-2000:]
+        assert a.wait_output(notice.encode(), WAIT), "notice not on the screen:\n" + a.text(mark)[-2000:]
         return mark
 
     def t_install():
@@ -144,7 +145,9 @@ def main():
             c.send("TESTDROP alice")
             assert a.wait_file(a.all_log(), "Connection lost to 127.0.0.1", WAIT), "the link did not drop"
         assert re.search(r"RECON-\d+: 127\.0\.0\.1:\d+ \(Talk\)", servers()), servers()
-        connect_again("Talk")
+        recon = re.search(r"(RECON-\d+): 127\.0\.0\.1:\d+ \(Talk\)", servers()).group(1)
+        # waiting to reconnect: the line points to /RECONNECT, not /CONNECT <address>
+        connect_again("Talk", f"waiting to reconnect - use /RECONNECT {recon}")
         assert active() == "Talk", active()  # its window, by its own name
         time.sleep(2)
         assert registrations("talk") == before, trace("talk")
