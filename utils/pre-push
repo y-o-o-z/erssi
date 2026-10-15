@@ -5,9 +5,10 @@
 # 1. the build works and `meson test` passes (when Build/ exists)
 # 2. every pushed commit (branches and tags) is authored and committed by
 #    y-o-o-z (noreply address) and carries no AI attribution trailer;
-#    every commit that a push to main adds carries a valid SSH signature by
-#    the key in utils/allowed_signers (pushes to other branches are not
-#    checked); annotated tags are tagged by y-o-o-z; a release tag - a push
+#    every commit that a push to main adds to the remote's main - also one
+#    already pushed to another branch or remote, e.g. staging - carries a
+#    valid SSH signature by the key in utils/allowed_signers (pushes to
+#    other branches are not checked); annotated tags are tagged by y-o-o-z; a release tag - a push
 #    that creates refs/tags/shellter-v* on the remote, whatever the local
 #    name (HEAD:refs/tags/shellter-v... too) - must be an annotated tag of a
 #    commit that names that tag and carries a valid SSH signature by the key
@@ -32,6 +33,7 @@ ROOT=$(git rev-parse --show-toplevel)
 EMAIL='136268860+y-o-o-z@users.noreply.github.com'
 PATTERNS="$HOME/.config/git-private-patterns"
 ZERO=0000000000000000000000000000000000000000
+REMOTE=${1:-}                                   # its name, or the URL
 fail=0
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
 # git with SSH signatures checked against utils/allowed_signers only (no gpg
@@ -107,11 +109,6 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         if git log -1 --format=%B "$c" | grep -qiE '^co-authored-by:.*(claude|anthropic)|generated with \[?claude'; then
             bad "$(git log -1 --format='%h %s' "$c"): AI attribution trailer"
         fi
-        # the box builds main only from commits signed by the release key
-        if [ "$remote_ref" = refs/heads/main ]; then
-            verify verify-commit "$c" ||
-                bad "$(git log -1 --format='%h %s' "$c"): not signed by the release key (git commit -S; utils/allowed_signers)"
-        fi
         if [ "$check_private" = 1 ]; then
             hits=$(git show --format= --unified=0 "$c" | grep -a '^+' | grep -a -v '^+++ \(b/\|/dev/null\)' | private)
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the diff: $hits"
@@ -121,6 +118,31 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in a file path: $hits"
         fi
     done
+    # the box builds main only from commits signed by the release key: every
+    # commit that the remote's main does not have yet, including those already
+    # on another branch or remote (the range above leaves them out). The base
+    # is what the remote reports for main; when it is unknown here (main is
+    # created, or a force push without fetching), our last copy of that
+    # remote's main, and without one the whole history.
+    if [ "$remote_ref" = refs/heads/main ]; then
+        if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+            base=$remote_sha
+        else
+            base=$(git rev-parse -q --verify "refs/remotes/$REMOTE/main^{commit}" 2>/dev/null) || base=
+        fi
+        main_range=$(git rev-list "$tip" --not ${base:+"$base"}) ||
+            { bad "$remote_ref: cannot list the commits new to main"; main_range=; }
+        unsigned=0
+        for c in $main_range; do
+            verify verify-commit "$c" && continue
+            unsigned=$((unsigned + 1))
+            if [ "$unsigned" -gt 10 ]; then
+                bad "$remote_ref: more commits not signed by the release key; stopped after 10"
+                break
+            fi
+            bad "$(git log -1 --format='%h %s' "$c"): not signed by the release key (git commit -S; utils/allowed_signers)"
+        done
+    fi
     # an annotated tag has its own author line and message
     if [ "$(git cat-file -t "$local_sha")" = tag ]; then
         tagger=$(git cat-file -p "$local_sha" | sed -n 's/^tagger .*<\(.*\)>.*/\1/p')
