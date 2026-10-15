@@ -25,6 +25,7 @@
 #include <irssi/src/lib-config/iconfig.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
+#include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <irssi/src/fe-common/irc/fe-mentions.h>
 #include <irssi/src/perl/perl-core.h>
 
@@ -105,8 +106,11 @@ static void migrate_settings(void)
 		mainconfig->modifycounter = counter;
 	} else if (mainconfig->fname != NULL &&
 	           g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR)) {
-		/* saved at once: /RELOAD or settings_autosave OFF keep it */
-		settings_save(NULL, TRUE);
+		/* saved at once: /RELOAD or settings_autosave OFF keep it. A
+		   failed write leaves no error that looks like a parse error;
+		   the values apply for this run and settings_save's dialog
+		   says why. */
+		shellter_save_at_start(NULL);
 	}
 }
 
