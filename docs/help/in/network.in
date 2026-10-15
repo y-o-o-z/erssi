@@ -60,8 +60,10 @@
 
     With -onewindow a network has one window per connection: a query the
     server or anyone else opens lands in the network window, which keeps
-    the network's name; channels still get windows of their own. Closing
-    that window disconnects the server (see SET window_close_disconnects).
+    the network's name; channels still get windows of their own, and
+    /QUERY -window or a window /LAYOUT SAVE keeps for a query still decide
+    where that query goes. Closing that window disconnects the server (see
+    SET window_close_disconnects).
     In the config: chatnets = { Name = { type = "IRC"; one_window = "yes"; }; };
 
     We recommend using 'WAIT 2000' between the automated commands in order to

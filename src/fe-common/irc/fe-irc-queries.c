@@ -139,16 +139,31 @@ static WINDOW_REC *network_window(SERVER_REC *server)
 	return window;
 }
 
+/* a window keeps a slot for the query (/LAYOUT SAVE, or a query window
+   waiting for its server): window_item_create() puts it back there */
+static gboolean query_has_bound_window(QUERY_REC *query)
+{
+	GSList *tmp;
+
+	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
+		if (window_bind_find(tmp->data, query->server->tag, query->visible_name) != NULL)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* one_window in the network's block: a query opens in the network window,
-   not in a window of its own (fe-queries.c leaves a query that already has
-   a window alone) */
+   not in a window of its own. Added with the default priority after
+   fe-queries.c, so it runs before fe-queries' handler (which leaves a query
+   that already has a window alone) but after the handlers /QUERY -window
+   and the layout restore add for the moment - those choose the window. */
 static void sig_query_created(QUERY_REC *query, gpointer automatic)
 {
 	IRC_CHATNET_REC *chatnet;
 	WINDOW_REC *window;
 
 	if (!IS_IRC_SERVER(query->server) || window_item_window(query) != NULL ||
-	    query->server->connrec->chatnet == NULL)
+	    query->server->connrec->chatnet == NULL || query_has_bound_window(query))
 		return;
 
 	chatnet = ircnet_find(query->server->connrec->chatnet);
@@ -168,7 +183,7 @@ void fe_irc_queries_init(void)
 
 	signal_add("server connected", sig_window_bound_query);
 	signal_add_first("event privmsg", (SIGNAL_FUNC) event_privmsg);
-	signal_add_first("query created", (SIGNAL_FUNC) sig_query_created);
+	signal_add("query created", (SIGNAL_FUNC) sig_query_created);
 }
 
 void fe_irc_queries_deinit(void)
