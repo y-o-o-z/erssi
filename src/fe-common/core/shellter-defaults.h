@@ -28,20 +28,25 @@ int shellter_statusbar_migrate(CONFIG_REC *config);
 enum {
 	SHELLTER_DEFAULTS_SAVED,	/* saved in the config file */
 	SHELLTER_DEFAULTS_BROKEN,	/* the file has errors: this run only */
-	SHELLTER_DEFAULTS_UNSAVED	/* no file yet, or the save failed */
+	SHELLTER_DEFAULTS_SAVE_FAILED,	/* writing the file failed: until /SAVE */
+	SHELLTER_DEFAULTS_NO_FILE	/* no file of the user's yet: in memory,
+					   no note, not written at quit */
 };
 
 /* Migrates mainconfig (the settings, then the info bar) and saves it at
    once, unless the config file had errors (the part not read would be
-   lost) or does not exist yet. */
+   lost) or does not exist yet. A failed write leaves no error in
+   mainconfig (config_last_error() stays for parse errors). */
 void shellter_defaults_init(void);
 
 /* The note printed after the banner (printtext text, a % in the path is
    doubled), or NULL when nothing was written. The caller frees it. */
 char *shellter_defaults_note(void);
 
-/* The note for `count' settings (NULL when 0) in the `state' above, about
-   the config file `fname'. Exposed for the tests. */
-char *shellter_defaults_format_note(int count, int state, const char *fname);
+/* The note for `count' settings (NULL when 0, or in the state NO_FILE) in
+   the `state' above, about the config file `fname'; `reason' is why the
+   write failed (SAVE_FAILED). Exposed for the tests. */
+char *shellter_defaults_format_note(int count, int state, const char *fname,
+                                    const char *reason);
 
 #endif

@@ -54,6 +54,7 @@ static const SHELLTER_DEFAULT_REC shellter_defaults[] = {
 
 static int migrated_count;
 static int migrated_state;
+static char *save_error;	/* why the write failed (SAVE_FAILED) */
 
 /* TRUE when `parent' has no node `key' or a block of that name. A node of
    another shape would be replaced by lib-config (with a g_critical, fatal
@@ -214,40 +215,65 @@ void shellter_defaults_init(void)
 {
 	int counter;
 
+	g_free_and_null(save_error);
 	counter = mainconfig->modifycounter;
-	migrated_state = SHELLTER_DEFAULTS_UNSAVED;
+	migrated_state = SHELLTER_DEFAULTS_SAVED;
 	migrated_count = shellter_defaults_migrate(mainconfig);
 	/* the item shows itself; no note */
 	shellter_statusbar_migrate(mainconfig);
 	if (mainconfig->modifycounter == counter)
 		return;
 
-	if (config_last_error(mainconfig) != NULL) {
+	if (mainconfig->fname == NULL ||
+	    !g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR)) {
+		/* the user has no config file yet: the config was read from
+		   elsewhere (SYSCONFDIR/irssi.conf, which may be irssi's,
+		   without the markers). Like an upstream first run: the
+		   values apply, nothing is said, and the counter is put back
+		   so that settings_autosave does not write the file at quit
+		   because of this. */
+		mainconfig->modifycounter = counter;
+		migrated_state = SHELLTER_DEFAULTS_NO_FILE;
+	} else if (config_last_error(mainconfig) != NULL) {
 		/* the file was read only in part: writing it would lose the
 		   rest. The values apply for this run; the counter is put back
 		   so that settings_autosave does not write the file either. */
 		mainconfig->modifycounter = counter;
 		migrated_state = SHELLTER_DEFAULTS_BROKEN;
-	} else if (mainconfig->fname != NULL &&
-	           g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR) &&
-	           settings_save(NULL, TRUE)) {
-		/* saved at once: /RELOAD or settings_autosave OFF keep it */
-		migrated_state = SHELLTER_DEFAULTS_SAVED;
+	} else if (!settings_save(NULL, TRUE)) {
+		/* saved at once, so that /RELOAD or settings_autosave OFF
+		   keep it - but the write failed (a full quota, a read-only
+		   directory). lib-config left the reason in last_error, where
+		   it would look like a parse error for the rest of the run
+		   (erssi --setup, the mentions migration). The file is
+		   intact: the reason is kept here for the note and cleared
+		   there - lib-config has no public call for that. */
+		save_error = g_strdup(config_last_error(mainconfig));
+		g_free_and_null(mainconfig->last_error);
+		migrated_state = SHELLTER_DEFAULTS_SAVE_FAILED;
 	}
 }
 
-char *shellter_defaults_format_note(int count, int state, const char *fname)
+/* `text' for printtext: a % is not a colour code */
+static char *escape_percent(const char *text)
 {
-	char *path, *note, **parts;
+	char **parts, *escaped;
 
-	if (count == 0)
+	parts = g_strsplit(text, "%", -1);
+	escaped = g_strjoinv("%%", parts);
+	g_strfreev(parts);
+	return escaped;
+}
+
+char *shellter_defaults_format_note(int count, int state, const char *fname,
+                                    const char *reason)
+{
+	char *path, *why, *note;
+
+	if (count == 0 || state == SHELLTER_DEFAULTS_NO_FILE)
 		return NULL;
 
-	/* printed as text: a % in the path is not a colour code */
-	parts = g_strsplit(fname != NULL ? fname : "the config", "%", -1);
-	path = g_strjoinv("%%", parts);
-	g_strfreev(parts);
-
+	path = escape_percent(fname != NULL ? fname : "the config");
 	switch (state) {
 	case SHELLTER_DEFAULTS_SAVED:
 		note = g_strdup_printf("%d settings keep their Shellter Edition values, "
@@ -261,9 +287,12 @@ char *shellter_defaults_format_note(int count, int state, const char *fname)
 		                       "changed; fix it and restart erssi", count, path);
 		break;
 	default:
+		why = escape_percent(reason != NULL ? reason : "unknown error");
 		note = g_strdup_printf("%d settings keep their Shellter Edition values "
-		                       "(built-in defaults before 2026.10.0) - /SAVE to "
-		                       "keep them in %s", count, path);
+		                       "for now (built-in defaults before 2026.10.0), but "
+		                       "writing %s failed: %s - /SAVE to retry",
+		                       count, path, why);
+		g_free(why);
 		break;
 	}
 	g_free(path);
@@ -273,5 +302,5 @@ char *shellter_defaults_format_note(int count, int state, const char *fname)
 char *shellter_defaults_note(void)
 {
 	return shellter_defaults_format_note(migrated_count, migrated_state,
-	                                     mainconfig->fname);
+	                                     mainconfig->fname, save_error);
 }
