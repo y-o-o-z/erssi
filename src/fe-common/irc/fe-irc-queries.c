@@ -26,7 +26,9 @@
 #include <irssi/src/core/nicklist.h>
 #include <irssi/src/irc/core/irc-servers.h>
 #include <irssi/src/irc/core/irc-queries.h>
+#include <irssi/src/irc/core/irc-chatnets.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
+#include <irssi/src/fe-common/core/window-items.h>
 
 int query_type;
 
@@ -117,6 +119,47 @@ static void sig_window_bound_query(SERVER_REC *server)
 	}
 }
 
+/* the network window of SERVER, made if it has none: named after the tag
+   and sticky to the server. NULL when another window has that name. */
+static WINDOW_REC *network_window(SERVER_REC *server)
+{
+	WINDOW_REC *window;
+
+	window = window_find_network(server->tag);
+	if (window != NULL || window_find_name(server->tag) != NULL)
+		return window;
+
+	/* as /WINDOW NEW HIDE, without its messages */
+	signal_emit("gui window create override", 1, GINT_TO_POINTER(MAIN_WINDOW_TYPE_HIDDEN));
+	window = window_create(NULL, FALSE);
+	window_set_name(window, server->tag);
+	window_change_server(window, server);
+	g_free(window->servertag);
+	window->servertag = g_strdup(server->tag);
+	return window;
+}
+
+/* one_window in the network's block: a query opens in the network window,
+   not in a window of its own (fe-queries.c leaves a query that already has
+   a window alone) */
+static void sig_query_created(QUERY_REC *query, gpointer automatic)
+{
+	IRC_CHATNET_REC *chatnet;
+	WINDOW_REC *window;
+
+	if (!IS_IRC_SERVER(query->server) || window_item_window(query) != NULL ||
+	    query->server->connrec->chatnet == NULL)
+		return;
+
+	chatnet = ircnet_find(query->server->connrec->chatnet);
+	if (chatnet == NULL || !chatnet->one_window)
+		return;
+
+	window = network_window(query->server);
+	if (window != NULL)
+		window_item_add(window, (WI_ITEM_REC *) query, GPOINTER_TO_INT(automatic));
+}
+
 void fe_irc_queries_init(void)
 {
 	query_type = module_get_uniq_id_str("WINDOW ITEM TYPE", "QUERY");
@@ -125,10 +168,12 @@ void fe_irc_queries_init(void)
 
 	signal_add("server connected", sig_window_bound_query);
 	signal_add_first("event privmsg", (SIGNAL_FUNC) event_privmsg);
+	signal_add_first("query created", (SIGNAL_FUNC) sig_query_created);
 }
 
 void fe_irc_queries_deinit(void)
 {
 	signal_remove("server connected", sig_window_bound_query);
 	signal_remove("event privmsg", (SIGNAL_FUNC) event_privmsg);
+	signal_remove("query created", (SIGNAL_FUNC) sig_query_created);
 }

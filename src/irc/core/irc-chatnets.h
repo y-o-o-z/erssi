@@ -30,6 +30,9 @@ struct _IRC_CHATNET_REC {
 
 	/* max. number of kicks/msgs/mode/whois per command */
 	int max_kicks, max_msgs, max_modes, max_whois;
+
+	/* queries open in the network window, not in windows of their own */
+	int one_window;
 };
 
 void ircnet_create(IRC_CHATNET_REC *rec);

@@ -7,6 +7,7 @@ static void perl_irc_chatnet_fill_hash(HV *hv, IRC_CHATNET_REC *chatnet)
 {
 	perl_chatnet_fill_hash(hv, (CHATNET_REC *) chatnet);
 	(void) hv_store(hv, "usermode", 8, new_pv(chatnet->usermode), 0);
+	(void) hv_store(hv, "one_window", 10, newSViv(chatnet->one_window), 0);
 }
 
 static void perl_irc_connect_fill_hash(HV *hv, IRC_SERVER_CONNECT_REC *conn)

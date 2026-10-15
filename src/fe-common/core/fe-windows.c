@@ -462,6 +462,29 @@ WINDOW_REC *window_find_name(const char *name)
 	return NULL;
 }
 
+gboolean window_is_network(WINDOW_REC *window)
+{
+	g_return_val_if_fail(window != NULL, FALSE);
+
+	return window->servertag != NULL && window->name != NULL &&
+	       g_ascii_strcasecmp(window->servertag, window->name) == 0;
+}
+
+WINDOW_REC *window_find_network(const char *servertag)
+{
+	GSList *tmp;
+
+	g_return_val_if_fail(servertag != NULL, NULL);
+
+	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
+		WINDOW_REC *rec = tmp->data;
+
+		if (window_is_network(rec) && g_ascii_strcasecmp(rec->servertag, servertag) == 0)
+			return rec;
+	}
+	return NULL;
+}
+
 WINDOW_REC *window_find_item(SERVER_REC *server, const char *name)
 {
 	WINDOW_REC *rec;

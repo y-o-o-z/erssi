@@ -54,25 +54,11 @@ extern SP_MAINWIN_CTX *get_ctx(MAIN_WINDOW_REC *mw, gboolean create);
 /* Helper function to find server separator window */
 static WINDOW_REC *find_server_separator_window(const char *server_tag)
 {
-	GSList *tmp;
-	
-	if (!server_tag)
-		return NULL;
-		
-	for (tmp = windows; tmp != NULL; tmp = tmp->next) {
-		WINDOW_REC *win = tmp->data;
-
-		/* A server separator window: the window itself is named after the
-		 * server tag and is sticky to that server. Its items do not matter -
-		 * a script may keep a query there; judging
-		 * by the active item's name created a second network window on every
-		 * reconnect. */
-		if (win->servertag != NULL && g_ascii_strcasecmp(win->servertag, server_tag) == 0 &&
-		    win->name != NULL && g_ascii_strcasecmp(win->name, server_tag) == 0) {
-			return win;
-		}
-	}
-	return NULL;
+	/* The window itself is named after the server tag and is sticky to
+	 * that server. Its items do not matter - a query may live there (a
+	 * network with one_window); judging by the active item's name created
+	 * a second network window on every reconnect. */
+	return server_tag == NULL ? NULL : window_find_network(server_tag);
 }
 
 /* Initialize Notices window programmatically using direct functions */

@@ -81,6 +81,8 @@ static void cmd_network_list(void)
 			g_string_append_printf(str, "max_modes: %d, ", rec->max_modes);
 		if (rec->max_whois > 0)
 			g_string_append_printf(str, "max_whois: %d, ", rec->max_whois);
+		if (rec->one_window)
+			g_string_append(str, "one_window, ");
 
 		if (str->len > 1) g_string_truncate(str, str->len-2);
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP,
@@ -174,6 +176,11 @@ static void cmd_network_add_modify(const char *data, gboolean add)
 	value = g_hash_table_lookup(optlist, "sasl_password");
 	if (value != NULL) rec->sasl_password = *value != '\0' ? g_strdup(value) : NULL;
 
+	if (g_hash_table_lookup(optlist, "onewindow") != NULL)
+		rec->one_window = TRUE;
+	if (g_hash_table_lookup(optlist, "noonewindow") != NULL)
+		rec->one_window = FALSE;
+
 	ircnet_create(rec);
 	printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, IRCTXT_NETWORK_ADDED, name);
 
@@ -186,7 +193,7 @@ static void cmd_network_add_modify(const char *data, gboolean add)
                               [-kicks <count>] [-modes <count>] [-cmdspeed <ms>]
                               [-cmdmax <count>] [-sasl_mechanism <mechanism>]
                               [-sasl_username <username>] [-sasl_password <password>]
-                              <name> */
+                              [-onewindow | -noonewindow] <name> */
 static void cmd_network_add(const char *data)
 {
 	cmd_network_add_modify(data, TRUE);
@@ -233,9 +240,11 @@ void fe_ircnet_init(void)
 	command_bind("network remove", NULL, (SIGNAL_FUNC) cmd_network_remove);
 
 	command_set_options("network add", "-kicks -msgs -modes -whois -cmdspeed "
-			    "-cmdmax -nick -alternate_nick -user -realname -host -autosendcmd -querychans -usermode -sasl_mechanism -sasl_username -sasl_password");
+			    "-cmdmax -nick -alternate_nick -user -realname -host -autosendcmd -querychans -usermode -sasl_mechanism -sasl_username -sasl_password "
+			    "onewindow noonewindow");
 	command_set_options("network modify", "-kicks -msgs -modes -whois -cmdspeed "
-			    "-cmdmax -nick -alternate_nick -user -realname -host -autosendcmd -querychans -usermode -sasl_mechanism -sasl_username -sasl_password");
+			    "-cmdmax -nick -alternate_nick -user -realname -host -autosendcmd -querychans -usermode -sasl_mechanism -sasl_username -sasl_password "
+			    "onewindow noonewindow");
 }
 
 void fe_ircnet_deinit(void)
