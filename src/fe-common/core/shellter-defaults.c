@@ -21,35 +21,36 @@
  erssi added to it since (the e2e item) once - only when its list is
  exactly one erssi shipped (erssi/statusbar_version marks it done); a list
  the user changed is the user's.
+
+ Each value and each statusbar change belongs to the version of its
+ marker that brought it, and applies only to a config whose marker is
+ lower: a later version brings only its own changes.
 */
 
 #include "module.h"
 #include <irssi/src/core/settings.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 
-typedef struct {
-	const char *module;
-	const char *key;
-	const char *value;
-} SHELLTER_DEFAULT_REC;
-
-/* the C defaults of erssi Shellter Edition before 2026.10.0 */
+/* the C defaults of erssi Shellter Edition before 2026.10.0. `since' is the
+   defaults_version that brought the row: a config whose marker is lower
+   gets it. A later version adds its rows with its own number and leaves
+   these alone (a key the user removed after version 1 stays removed). */
 static const SHELLTER_DEFAULT_REC shellter_defaults[] = {
-	{ "fe-ansi", "colors_ansi_24bit", "yes" },
-	{ "fe-common/irc", "print_whois_rpl_in_server_window", "yes" },
-	{ "fe-common/core", "theme", "shellter" },
-	{ "fe-common/core", "show_names_on_join_limit", "1" },
-	{ "fe-common/core", "show_names_on_join_alone", "no" },
-	{ "fe-common/core", "nick_column_width", "13" },
-	{ "fe-common/core", "nick_hash_colors",
+	{ 1, "fe-ansi", "colors_ansi_24bit", "yes" },
+	{ 1, "fe-common/irc", "print_whois_rpl_in_server_window", "yes" },
+	{ 1, "fe-common/core", "theme", "shellter" },
+	{ 1, "fe-common/core", "show_names_on_join_limit", "1" },
+	{ 1, "fe-common/core", "show_names_on_join_alone", "no" },
+	{ 1, "fe-common/core", "nick_column_width", "13" },
+	{ 1, "fe-common/core", "nick_hash_colors",
 	  "#f59e0b #fcd34d #fdba74 #79c0ff #a5d6ff #d2a8ff #3fb950 #7ee787" },
-	{ "fe-common/core", "nick_mode_color_owner", "%ZFF7B72%_" },
-	{ "fe-common/core", "nick_mode_color_op", "%ZF59E0B%_" },
-	{ "fe-common/core", "nick_mode_color_halfop", "%Z3FB950%_" },
-	{ "fe-common/core", "nick_mode_color_voice", "%Z79C0FF%_" },
-	{ "fe-common/core", "hilight_color", "%ZFCD34D" },
-	{ "fe-common/core", "hilight_act_color", "%ZFF7B72" },
-	{ "fe-common/core", "hidden_settings", "translate_deepl_key" },
+	{ 1, "fe-common/core", "nick_mode_color_owner", "%ZFF7B72%_" },
+	{ 1, "fe-common/core", "nick_mode_color_op", "%ZF59E0B%_" },
+	{ 1, "fe-common/core", "nick_mode_color_halfop", "%Z3FB950%_" },
+	{ 1, "fe-common/core", "nick_mode_color_voice", "%Z79C0FF%_" },
+	{ 1, "fe-common/core", "hilight_color", "%ZFCD34D" },
+	{ 1, "fe-common/core", "hilight_act_color", "%ZFF7B72" },
+	{ 1, "fe-common/core", "hidden_settings", "translate_deepl_key" },
 };
 
 static int migrated_count;
@@ -67,12 +68,14 @@ static int block_or_missing(CONFIG_NODE *parent, const char *key)
 	return node == NULL || node->type == NODE_TYPE_BLOCK;
 }
 
-int shellter_defaults_migrate(CONFIG_REC *config)
+int shellter_defaults_migrate_rows(CONFIG_REC *config, const SHELLTER_DEFAULT_REC *rows,
+                                   int rows_count, int version)
 {
-	CONFIG_NODE *marker, *version, *settings, *section;
-	int i, count;
+	CONFIG_NODE *marker, *node, *settings, *section;
+	int i, count, stored;
 
 	g_return_val_if_fail(config != NULL, 0);
+	g_return_val_if_fail(rows != NULL || rows_count == 0, 0);
 
 	/* without a place for the marker it would run at every start (a
 	   defaults_version that is not a scalar is such a case, below) */
@@ -81,11 +84,11 @@ int shellter_defaults_migrate(CONFIG_REC *config)
 		return 0;
 
 	marker = config_node_find(config->mainnode, "erssi");
-	version = marker == NULL ? NULL : config_node_find(marker, "defaults_version");
-	if (version != NULL && !has_node_value(version))
+	node = marker == NULL ? NULL : config_node_find(marker, "defaults_version");
+	if (node != NULL && !has_node_value(node))
 		return 0;
-	if (marker != NULL &&
-	    config_node_get_int(marker, "defaults_version", 0) >= SHELLTER_DEFAULTS_VERSION)
+	stored = marker == NULL ? 0 : config_node_get_int(marker, "defaults_version", 0);
+	if (stored >= version)
 		return 0;
 
 	/* module names contain '/', so the sections are found by node, not by
@@ -93,9 +96,12 @@ int shellter_defaults_migrate(CONFIG_REC *config)
 	   returns a block. */
 	settings = config_node_traverse(config, "settings", TRUE);
 	count = 0;
-	for (i = 0; i < (int) G_N_ELEMENTS(shellter_defaults); i++) {
-		const SHELLTER_DEFAULT_REC *rec = &shellter_defaults[i];
+	for (i = 0; i < rows_count; i++) {
+		const SHELLTER_DEFAULT_REC *rec = &rows[i];
 
+		/* the config had this row's version already */
+		if (rec->since <= stored || rec->since > version)
+			continue;
 		if (!block_or_missing(settings, rec->module))
 			continue;
 		section = config_node_section(config, settings, rec->module, NODE_TYPE_BLOCK);
@@ -106,9 +112,19 @@ int shellter_defaults_migrate(CONFIG_REC *config)
 		count++;
 	}
 
-	config_set_int(config, "erssi", "defaults_version", SHELLTER_DEFAULTS_VERSION);
+	config_set_int(config, "erssi", "defaults_version", version);
 	return count;
 }
+
+int shellter_defaults_migrate(CONFIG_REC *config)
+{
+	return shellter_defaults_migrate_rows(config, shellter_defaults,
+	                                      G_N_ELEMENTS(shellter_defaults),
+	                                      SHELLTER_DEFAULTS_VERSION);
+}
+
+/* the statusbar version that added the e2e item to the info bar */
+#define STATUSBAR_E2E_SINCE 1
 
 /* statusbar.default.info.items of every irssi.conf erssi shipped since the
    info bar became the default (53b2a8b1) up to the one with the e2e item
@@ -179,10 +195,10 @@ static CONFIG_NODE *info_items(CONFIG_REC *config)
 	return node;
 }
 
-int shellter_statusbar_migrate(CONFIG_REC *config)
+int shellter_statusbar_migrate_to(CONFIG_REC *config, int version)
 {
-	CONFIG_NODE *marker, *version, *items, *window;
-	int added = FALSE;
+	CONFIG_NODE *marker, *node, *items, *window;
+	int added = FALSE, stored;
 
 	g_return_val_if_fail(config != NULL, FALSE);
 
@@ -190,15 +206,21 @@ int shellter_statusbar_migrate(CONFIG_REC *config)
 	if (!block_or_missing(config->mainnode, "erssi"))
 		return FALSE;
 	marker = config_node_find(config->mainnode, "erssi");
-	version = marker == NULL ? NULL : config_node_find(marker, "statusbar_version");
-	if (version != NULL && !has_node_value(version))
+	node = marker == NULL ? NULL : config_node_find(marker, "statusbar_version");
+	if (node != NULL && !has_node_value(node))
 		return FALSE;
-	if (marker != NULL &&
-	    config_node_get_int(marker, "statusbar_version", 0) >= SHELLTER_STATUSBAR_VERSION)
+	stored = marker == NULL ? 0 : config_node_get_int(marker, "statusbar_version", 0);
+	if (stored >= version)
 		return FALSE;
 
+	/* Each change belongs to the statusbar version that brought it and
+	   applies only below that version: a later version adds its own
+	   change here, under its own check, and leaves the e2e item of a
+	   config already at version 1 alone (the user may have removed it).
+	   shipped_info_items are the lists before version 1. */
 	items = info_items(config);
-	if (items != NULL && shipped_info_list(items) && config_node_find(items, "e2e") == NULL) {
+	if (stored < STATUSBAR_E2E_SINCE && items != NULL && shipped_info_list(items) &&
+	    config_node_find(items, "e2e") == NULL) {
 		window = config_node_find(items, "window");
 		/* every shipped list has window, as a block */
 		config_node_section_index(config, items, "e2e",
@@ -207,8 +229,13 @@ int shellter_statusbar_migrate(CONFIG_REC *config)
 		added = TRUE;
 	}
 
-	config_set_int(config, "erssi", "statusbar_version", SHELLTER_STATUSBAR_VERSION);
+	config_set_int(config, "erssi", "statusbar_version", version);
 	return added;
+}
+
+int shellter_statusbar_migrate(CONFIG_REC *config)
+{
+	return shellter_statusbar_migrate_to(config, SHELLTER_STATUSBAR_VERSION);
 }
 
 void shellter_defaults_init(void)

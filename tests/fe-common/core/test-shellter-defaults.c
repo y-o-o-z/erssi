@@ -175,6 +175,48 @@ static void test_newer_marker(void)
 	config_close(c);
 }
 
+/* A config with marker 1 whose user removed `theme' after the migration:
+   nothing comes back under version 1, and a later version applies only
+   its own rows. */
+static void test_rows_since_marker(void)
+{
+	static const SHELLTER_DEFAULT_REC rows[] = {
+		{ 1, "fe-common/core", "theme", "shellter" },
+		{ 1, "fe-common/core", "nick_column_width", "13" },
+		{ 2, "fe-common/core", "new_in_two", "yes" },
+		{ 2, "fe-common/irc", "other_in_two", "5" },
+	};
+	static const char config[] =
+		"settings = { \"fe-common/core\" = { nick_column_width = \"10\"; }; };\n"
+		"erssi = { defaults_version = \"1\"; };";
+	CONFIG_REC *c;
+	int counter;
+
+	g_assert_cmpint(SHELLTER_DEFAULTS_VERSION, ==, 1);
+	c = cfg_parse(config);
+	counter = c->modifycounter;
+	g_assert_cmpint(shellter_defaults_migrate(c), ==, 0);
+	g_assert_null(cfg_get(c, "fe-common/core", "theme"));
+	g_assert_cmpint(c->modifycounter, ==, counter);
+	config_close(c);
+
+	c = cfg_parse(config);
+	g_assert_cmpint(shellter_defaults_migrate_rows(c, rows, G_N_ELEMENTS(rows), 2), ==, 2);
+	g_assert_null(cfg_get(c, "fe-common/core", "theme"));
+	g_assert_cmpstr(cfg_get(c, "fe-common/core", "nick_column_width"), ==, "10");
+	g_assert_cmpstr(cfg_get(c, "fe-common/core", "new_in_two"), ==, "yes");
+	g_assert_cmpstr(cfg_get(c, "fe-common/irc", "other_in_two"), ==, "5");
+	g_assert_cmpint(config_get_int(c, "erssi", "defaults_version", 0), ==, 2);
+	config_close(c);
+
+	/* without a marker every row applies */
+	c = cfg_parse("settings = { core = { nick = \"alice\"; }; };");
+	g_assert_cmpint(shellter_defaults_migrate_rows(c, rows, G_N_ELEMENTS(rows), 2), ==, 4);
+	g_assert_cmpstr(cfg_get(c, "fe-common/core", "theme"), ==, "shellter");
+	g_assert_cmpint(config_get_int(c, "erssi", "defaults_version", 0), ==, 2);
+	config_close(c);
+}
+
 static void test_empty_config(void)
 {
 	CONFIG_REC *c;
@@ -385,6 +427,26 @@ static void test_statusbar_runs_once(void)
 	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = \"2\"; };");
 	g_assert_false(shellter_statusbar_migrate(c));
 	assert_bar(c, "info", "time user window lag act more");
+	config_close(c);
+}
+
+/* The e2e item belongs to statusbar version 1: a later version does not
+   add it to a config already at version 1 (the user removed it, or kept
+   the shipped list on purpose), only to one below 1. */
+static void test_statusbar_since_marker(void)
+{
+	CONFIG_REC *c;
+
+	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = \"1\"; };");
+	g_assert_false(shellter_statusbar_migrate_to(c, 2));
+	assert_bar(c, "info", "time user window lag act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
+	config_close(c);
+
+	c = cfg_parse(SHIPPED_INFO);
+	g_assert_true(shellter_statusbar_migrate_to(c, 2));
+	assert_bar(c, "info", "time user window e2e lag act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	config_close(c);
 }
 
@@ -916,6 +978,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/legacy_fe_text_section", test_legacy_fe_text_section);
 	g_test_add_func("/shellter_defaults/runs_once", test_runs_once);
 	g_test_add_func("/shellter_defaults/newer_marker", test_newer_marker);
+	g_test_add_func("/shellter_defaults/rows_since_marker", test_rows_since_marker);
 	g_test_add_func("/shellter_defaults/empty_config", test_empty_config);
 	g_test_add_func("/shellter_defaults/odd_shapes_untouched", test_odd_shapes_untouched);
 	g_test_add_func("/shellter_defaults/builtin_config_fresh_values",
@@ -934,6 +997,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/statusbar_custom_untouched",
 	                test_statusbar_custom_untouched);
 	g_test_add_func("/shellter_defaults/statusbar_runs_once", test_statusbar_runs_once);
+	g_test_add_func("/shellter_defaults/statusbar_since_marker",
+	                test_statusbar_since_marker);
 	g_test_add_func("/shellter_defaults/statusbar_no_section", test_statusbar_no_section);
 	g_test_add_func("/shellter_defaults/statusbar_builtin_config",
 	                test_statusbar_builtin_config);
