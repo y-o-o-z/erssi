@@ -9,13 +9,14 @@ fi
 if [ -z "$DATE" ]; then
     DATE=`grep '^v' "$1"/NEWS | head -1`
 fi
-VERSION_DATE=`echo "$DATE" | cut -f 2 -d ' ' | tr -d -`
+# fields separated by any whitespace, as utils/check-version.sh reads them
+VERSION_DATE=`echo "$DATE" | awk '{ print $2 }' | tr -d -`
 case $VERSION_DATE in
   *xx)
     VERSION_DATE=`date +%Y%m%d`
     ;;
 esac
-HEADER_VERSION=`echo "$DATE" | cut -f 1 -d ' '`
+HEADER_VERSION=`echo "$DATE" | awk '{ print $1 }'`
 case $HEADER_VERSION in
   shellter-v[0-9][0-9][0-9][0-9].*)
     # calendar version YYYY.M.PATCH: month*100+patch without a leading zero,

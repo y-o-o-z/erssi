@@ -61,7 +61,8 @@ if ! printf '%s\n' "$version" |
   exit 1
 fi
 
-header=${news_first%% *}
+# the header and the date are separated by any whitespace
+header=${news_first%%[[:space:]]*}
 cr=$(printf '\r')
 if [ "$header" != "shellter-v$version" ] ||
   [ "${news_first#*"$cr"}" != "$news_first" ]; then
@@ -73,10 +74,10 @@ if [ "$tag_mode" = 1 ]; then
     problem "tag $tag does not name meson.build version $version"
   fi
 
-  date=$(printf '%s\n' "$news_first" | cut -d ' ' -f 2)
+  date=$(printf '%s\n' "$news_first" | awk '{ print $2 }')
   if ! printf '%s\n' "$date" |
     grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'; then
-    problem "NEWS: the release has no date ($date)"
+    problem "NEWS: the release has no date ($date), expected 'shellter-v$version YYYY-MM-DD'"
   else
     year=${date%%-*}
     month=${date#*-}

@@ -47,6 +47,8 @@ iv 'shellter 2026.10.0 unreleased' "shellter-v2026.10.0 2026-10-xx  $who" "$toda
 iv 'shellter 1.3.10 legacy' "shellter-v1.3.10 2026-10-08  $who" 20261008 1310
 iv 'erssi 1.3.10' "erssi-v1.3.10 2026-10-08  $who" 20261008 1310
 iv 'irssi 1.4.5' "v1.4.5 2023-07-13  The Irssi team <staff@irssi.org>" 20230713 1405
+iv 'shellter 2026.10.0, two spaces before the date' "shellter-v2026.10.0  2026-10-10  $who" 20261010 1000
+iv 'shellter 2026.10.0, a tab before the date' "shellter-v2026.10.0$(printf '\t')2026-10-10  $who" 20261010 1000
 iv 'shellter first, older erssi later' "shellter-v2026.10.0 2026-10-10  $who" 20261010 1000 \
   'erssi-v1.3.0 2026-03-24  erssi-org team <https://github.com/erssi-org>'
 
@@ -78,7 +80,7 @@ cv() {
 
 cv 'unreleased, no tag' 2026.10.0 'shellter-v2026.10.0 2026-10-xx' '' 0 ''
 cv 'unreleased, tag' 2026.10.0 'shellter-v2026.10.0 2026-10-xx' shellter-v2026.10.0 1 \
-  'check-version: NEWS: the release has no date (2026-10-xx)'
+  "check-version: NEWS: the release has no date (2026-10-xx), expected 'shellter-v2026.10.0 YYYY-MM-DD'"
 cv 'released, tag' 2026.10.0 'shellter-v2026.10.0 2026-10-12' shellter-v2026.10.0 0 ''
 cv 'wrong tag' 2026.10.0 'shellter-v2026.10.0 2026-10-12' shellter-v2026.10.1 1 \
   'check-version: tag shellter-v2026.10.1 does not name meson.build version 2026.10.0'
@@ -94,9 +96,15 @@ cv 'month mismatch' 2026.10.0 'shellter-v2026.10.0 2026-11-02' shellter-v2026.10
   'check-version: 2026.10.0 is not the month of its release date 2026-11-02'
 
 cv 'impossible release day' 2026.10.0 'shellter-v2026.10.0 2026-10-99' shellter-v2026.10.0 1 \
-  'check-version: NEWS: the release has no date (2026-10-99)'
+  "check-version: NEWS: the release has no date (2026-10-99), expected 'shellter-v2026.10.0 YYYY-MM-DD'"
 cv 'impossible release month' 2026.10.0 'shellter-v2026.10.0 2026-00-12' shellter-v2026.10.0 1 \
-  'check-version: NEWS: the release has no date (2026-00-12)'
+  "check-version: NEWS: the release has no date (2026-00-12), expected 'shellter-v2026.10.0 YYYY-MM-DD'"
+cv 'two spaces before the date' 2026.10.0 'shellter-v2026.10.0  2026-10-12' shellter-v2026.10.0 0 ''
+cv 'a tab before the date' 2026.10.0 "shellter-v2026.10.0$(printf '\t')2026-10-12" shellter-v2026.10.0 0 ''
+cv 'no date, author only' 2026.10.0 'shellter-v2026.10.0' shellter-v2026.10.0 1 \
+  "check-version: NEWS: the release has no date (y-o-o-z), expected 'shellter-v2026.10.0 YYYY-MM-DD'"
+cv 'a space before the header' 2026.10.0 ' shellter-v2026.10.0 2026-10-12' '' 1 \
+  'check-version: NEWS: the first line is not the header of shellter-v2026.10.0'
 
 # Argument handling and unreadable input must fail with exit 2.
 # ex NAME WANT_STATUS ARGS...
