@@ -8,7 +8,7 @@
     LOG:          %|Turn on or off logging of the active window, optionally specifying the log file to use.
     LOGFILE:      %|Sets the location of the log file to use for window logging without starting to log.
     NEW:          %|Creates a new hidden or split window.
-    CLOSE:        %|Closes the current window, the specified one or all windows in the given range.
+    CLOSE:        %|Closes the current window, the specified one or all windows in the given range. A server that no window shows any more is disconnected, see SET window_close_disconnects.
     REFNUM:       %|Go to the window with the given number.
     GOTO:         %|Go to the window with activity, with the given nickname, channel or with the specified number.
     NEXT:         %|Go to the next window numerically.
@@ -75,5 +75,5 @@
     /WINDOW HIDELEVEL ^JOINS ^PARTS ^QUITS
     /WINDOW LOGFILE ~/logs/notices.log
 
-%9See also:%9 JOIN, LEVELS, LOG, QUERY, SET window_default_level, SET window_default_hidelevel
+%9See also:%9 JOIN, LEVELS, LOG, QUERY, SET window_close_disconnects, SET window_default_level, SET window_default_hidelevel
 

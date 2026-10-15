@@ -1,0 +1,39 @@
+%9Setting:%9
+
+    window_close_disconnects (boolean; default: ON)
+
+%9Description:%9
+
+    Disconnects a server when /WINDOW CLOSE closes the last window that
+    shows it, so a connection you can no longer see is not left open.
+
+    A server is shown by its network window (named after the server tag),
+    any window whose server is sticky to it, a window with a channel or a
+    query of it, a window kept for one of its channels (waiting to rejoin
+    after a reconnect), and a status window whose active server it is. As
+    long as one of them is left, the server stays connected: closing the
+    network window while its channels are open in other windows changes
+    nothing.
+
+    The server quits with quit_message, as with /DISCONNECT, and a pending
+    reconnect of it is dropped. One line in the window that becomes active
+    says so. A later /CONNECT gets the server's tag again, not the tag with
+    a number appended.
+
+    With the setting OFF a closed window leaves its server connected, as in
+    irssi: the connection goes on without a window, and the next /CONNECT
+    to the same network opens a second one with a tag such as IRCnet2.
+
+    Only /WINDOW CLOSE does this: a window closed by /PART or by a query
+    ending, /DISCONNECT, /QUIT, /UPGRADE and a lost connection work as
+    before.
+
+%9Examples:%9
+
+    /SET window_close_disconnects on
+    /SET window_close_disconnects off
+
+%9See also:%9
+
+    SET, WINDOW, CONNECT, DISCONNECT, RMRECONNS, QUIT_MESSAGE
+
