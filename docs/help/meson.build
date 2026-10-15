@@ -143,6 +143,7 @@ install_data(
     'whois',
     'whowas',
     'window',
+    'window_close_disconnects',
   ),
   install_dir : helpdir)
 

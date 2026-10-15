@@ -91,6 +91,7 @@ install_headers(
     'fe-messages.h',
     'fe-queries.h',
     'fe-recode.h',
+    'fe-server.h',
     'fe-settings.h',
     'fe-tls.h',
     'fe-windows.h',

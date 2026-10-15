@@ -15,6 +15,8 @@ and nick names that way (utf8: NFKC, then Python's casefold); without it
 no CASEMAPPING is sent and names are folded with str.lower().
 --hide-casemapping folds as --casemapping says but names none in 005.
 TESTRAW <nick> :<raw line> (sent by any client) writes <raw line> to that nick.
+TESTDROP <nick> closes that nick's connection without a word, as a link that
+dies does.
 """
 import argparse
 import asyncio
@@ -164,11 +166,17 @@ async def handle(reader, writer, wire_path, times_path):
                 target = clients.get(fold(args[0]))
                 if target:
                     target.send(trailing)
+            elif cmd == "TESTDROP" and args:
+                target = clients.get(fold(args[0]))
+                if target:
+                    target.writer.close()
             elif cmd == "QUIT":
                 break
             elif cmd not in ("CAP", "PONG", "USERHOST", "ISON", "AWAY", "MODE", "TOPIC"):
                 me.send(f":{SRV} 421 {me.nick} {cmd} :Unknown command")
             await writer.drain()
+    except ConnectionError:
+        pass  # the client reset its connection: it is gone, as with QUIT
     finally:
         clients.pop(fold(me.nick), None)
         for chan in channels.values():

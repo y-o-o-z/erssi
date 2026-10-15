@@ -87,6 +87,8 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "server_reconnect_list", "{server $0}: $1:$2 ($3) ($5 left before reconnecting)", 6, { 0, 0, 1, 0, 0, 0 } },
 	{ "server_reconnect_removed", "Removed reconnection to server {server $0} port {hilight $1}", 3, { 0, 1, 0 } },
 	{ "server_reconnect_not_found", "Reconnection tag {server $0} not found", 1, { 0 } },
+	{ "server_window_closed", "Disconnected from {server $0}: its last window was closed - use /CONNECT $1 to come back", 2, { 0, 0 } },
+	{ "server_window_closed_reconnect", "Stopped reconnecting to {server $0}: its last window was closed - use /CONNECT $1 to come back", 2, { 0, 0 } },
 	{ "setupserver_added", "Server {server $0} saved", 2, { 0, 1 } },
 	{ "setupserver_removed", "Server {server $0} {hilight $1} removed", 2, { 0, 1 } },
 	{ "setupserver_not_found", "Server {server $0} {hilight $1} not found", 2, { 0, 1 } },

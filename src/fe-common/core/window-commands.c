@@ -30,6 +30,7 @@
 
 #include <irssi/src/fe-common/core/themes.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
+#include <irssi/src/fe-common/core/fe-server.h>
 #include <irssi/src/fe-common/core/window-items.h>
 #include <irssi/src/fe-common/core/windows-layout.h>
 #include <irssi/src/fe-common/core/printtext.h>
@@ -189,7 +190,7 @@ static void cmd_window_new(const char *data, void *server, WI_ITEM_REC *item)
 /* SYNTAX: WINDOW CLOSE [<first> [<last>]] */
 static void cmd_window_close(const char *data)
 {
-        GSList *tmp, *destroys;
+        GSList *tmp, *destroys, *servertags;
 	char *first, *last;
         int first_num, last_num;
 	void *free_arg;
@@ -216,13 +217,15 @@ static void cmd_window_close(const char *data)
 	}
 
         /* really destroy the windows */
+	servertags = NULL;
 	while (destroys != NULL) {
 		WINDOW_REC *rec = destroys->data;
 
 		if (windows->next != NULL) {
-			if (!rec->immortal)
+			if (!rec->immortal) {
+				servertags = fe_server_window_tags(rec, servertags);
 				window_destroy(rec);
-			else {
+			} else {
 				printformat_window(rec, MSGLEVEL_CLIENTERROR,
 						   TXT_WINDOW_IMMORTAL_ERROR);
 			}
@@ -230,6 +233,8 @@ static void cmd_window_close(const char *data)
 
                 destroys = g_slist_remove(destroys, rec);
 	}
+	/* a server none of the windows left shows is disconnected */
+	fe_server_windows_closed(servertags);
 
 	cmd_params_free(free_arg);
 }
