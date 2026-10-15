@@ -19,6 +19,7 @@
 */
 
 #include "module.h"
+#include <errno.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/levels.h>
@@ -90,18 +91,21 @@ static void sig_layout_restore_item(WINDOW_REC *window, const char *type,
 	}
 }
 
+/* NODE's items, an item that is no block skipped (see sig_layout_restore) */
 static void window_add_items(WINDOW_REC *window, CONFIG_NODE *node)
 {
 	GSList *tmp;
 	char *type;
 
-	if (node == NULL)
+	if (node == NULL || !is_node_list(node))
 		return;
 
 	tmp = config_node_first(node->value);
 	for (; tmp != NULL; tmp = config_node_next(tmp)) {
 		CONFIG_NODE *node = tmp->data;
 
+		if (node->type != NODE_TYPE_BLOCK)
+			continue;
 		type = config_node_get_str(node, "type", NULL);
 		if (type != NULL) {
 			signal_emit("layout restore item", 3,
@@ -115,25 +119,51 @@ void windows_layout_restore(void)
 	signal_emit("layout restore", 0);
 }
 
+/* The window number a `windows` entry is saved under, 0 when its key is
+   none (1 .. G_MAXINT, the whole key). */
+static int layout_refnum(const char *key)
+{
+	char *end;
+	long refnum;
+
+	if (key == NULL || !i_isdigit(*key))
+		return 0;
+	errno = 0;
+	refnum = strtol(key, &end, 10);
+	if (errno != 0 || *end != '\0' || refnum < 1 || refnum > G_MAXINT)
+		return 0;
+	return (int) refnum;
+}
+
+/* The `windows` block is read only when it is a block, and an entry only
+   when it is a block saved under a window number: a config getter on a
+   node that is no block is a critical, and a critical is fatal at start.
+   The entries that are not are skipped. */
 static void sig_layout_restore(void)
 {
 	WINDOW_REC *window;
 	CONFIG_NODE *node;
 	GSList *tmp;
 
-	node = iconfig_node_traverse("windows", FALSE);
-	if (node == NULL) return;
+	node = config_node_find(mainconfig->mainnode, "windows");
+	if (node == NULL || !is_node_list(node))
+		return;
 
 	tmp = config_node_first(node->value);
 	for (; tmp != NULL; tmp = config_node_next(tmp)) {
 		CONFIG_NODE *node = tmp->data;
+		int refnum;
 
-		if (node->key == NULL) continue;
-		window = window_find_refnum(atoi(node->key));
+		if (node->type != NODE_TYPE_BLOCK)
+			continue;
+		refnum = layout_refnum(node->key);
+		if (refnum == 0)
+			continue;
+		window = window_find_refnum(refnum);
 		if (window == NULL)
 			window = window_create(NULL, TRUE);
 
-		window_set_refnum(window, atoi(node->key));
+		window_set_refnum(window, refnum);
                 window->sticky_refnum = config_node_get_bool(node, "sticky_refnum", FALSE);
                 window->immortal = config_node_get_bool(node, "immortal", FALSE);
 		window_set_name(window, config_node_get_str(node, "name", NULL));
@@ -145,7 +175,7 @@ static void sig_layout_restore(void)
 		if (window->theme_name != NULL)
 			window->theme = theme_load(window->theme_name);
 
-		window_add_items(window, iconfig_node_section(node, "items", -1));
+		window_add_items(window, config_node_find(node, "items"));
 		signal_emit("layout restore window", 2, window, node);
 	}
 }

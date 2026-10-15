@@ -9,6 +9,7 @@ number of main windows, stacked or side by side, share them, after a
 /SET, a terminal resize, a split, /WINDOW HIDE|SHOW|GROW|SHRINK and a
 restored layout (before, every main window reserved them again: wrong
 columns, overlapping panels, and erssi hung at about 15 main windows).
+A `windows` block of the wrong shape is skipped, not fatal at start.
 Usage: test_layout.py <build dir> [<source dir>]"""
 import re
 import shutil
@@ -378,6 +379,25 @@ windows = {
         t.__name__ = "t_bad_layout_" + name
         return t
 
+    # a `windows` block of the wrong shape: the bad entries are skipped
+    WINDOWS_BAD = {
+        "scalar": 'windows = "x";',
+        "entry": 'windows = { 1 = "x"; 2 = { name = "two"; }; };',
+        "list": 'windows = ( "x", { name = "y"; } );',
+        "badkey": 'windows = { abc = { name = "abc"; }; 0 = { name = "zero"; }; 3 = { name = "three"; }; };',
+        "items": 'windows = { 1 = { name = "one"; items = "x"; }; };',
+        "item": 'windows = { 1 = { name = "one"; items = ( "x", { type = "CHANNEL"; } ); }; };',
+    }
+
+    def bad_windows(name):
+        def t():
+            e = new("badwin-" + name, cfg("badwin" + name, True, WINDOWS_BAD[name]))
+            saved = save(e)
+            assert block(saved, "windows") is not None, saved
+            e.quit()
+        t.__name__ = "t_bad_windows_" + name
+        return t
+
     def t_sanitizers():
         reports = [p for e in st["all"] for p in e.sanitizer_reports()]
         for p in reports:
@@ -393,7 +413,7 @@ windows = {
                       t_left_panel_restore_15_rows, t_left_panel_save_restart_twice_80x24,
                       t_panels_off_split, t_panels_off_side_by_side,
                       t_old_layout_with_panel_columns, t_old_layout_split_panels_off]
-                     + [bad_layout(n) for n in BAD]
+                     + [bad_layout(n) for n in BAD] + [bad_windows(n) for n in WINDOWS_BAD]
                      + [t_sanitizers])
     finally:
         for e in st["all"]:
