@@ -19,6 +19,7 @@
 */
 
 #include "module.h"
+#include <errno.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/misc.h>
 #include <irssi/src/lib-config/iconfig.h>
@@ -79,6 +80,9 @@ static void sig_layout_window_restore(WINDOW_REC *window, CONFIG_NODE *node)
 	}
 }
 
+/* The columns of a layout are those of the main area: the columns the side
+   panels (and anything else) reserve on the left are not part of it, so a
+   layout restores the same with the panels on or off. */
 static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 {
 	char num[MAX_INT_STRLEN];
@@ -88,7 +92,8 @@ static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 
 	iconfig_node_set_int(node, "first_line", window->first_line);
 	iconfig_node_set_int(node, "lines", window->height);
-	iconfig_node_set_int(node, "first_column", window->first_column);
+	iconfig_node_set_int(node, "first_column",
+	                     MAX(0, window->first_column - screen_reserved_left));
 	iconfig_node_set_int(node, "columns", window->width);
 }
 
@@ -102,164 +107,243 @@ static void sig_layout_save(void)
 	g_slist_foreach(mainwindows, (GFunc) main_window_save, node);
 }
 
-static int window_node_cmp(CONFIG_NODE *n1, CONFIG_NODE *n2)
+/* larger than any terminal (its size is 16 bits) */
+#define LAYOUT_MAX_VALUE 65535
+
+typedef struct {
+	int refnum;
+	int first_line, lines;
+	int first_column, columns;
+} LAYOUT_WINDOW_REC;
+
+/* A number 0..LAYOUT_MAX_VALUE, the whole string. */
+static gboolean layout_parse_num(const char *str, int *out)
 {
-	return (config_node_get_int(n1, "first_line", 0) ==
-	            config_node_get_int(n2, "first_line", 0) &&
-	        config_node_get_int(n1, "first_column", 0) >
-	            config_node_get_int(n2, "first_column", 0)) ||
-	               config_node_get_int(n1, "first_line", 0) >
-	                   config_node_get_int(n2, "first_line", 0) ?
-	           -1 :
-	           1;
+	char *end;
+	long value;
+
+	if (str == NULL || !g_ascii_isdigit(*str))
+		return FALSE;
+	errno = 0;
+	value = strtol(str, &end, 10);
+	if (errno != 0 || *end != '\0' || value > LAYOUT_MAX_VALUE)
+		return FALSE;
+	*out = (int) value;
+	return TRUE;
 }
 
-/* Returns list of mainwindow nodes sorted by first_line
-   (lowest in screen first) */
-static GSList *get_sorted_windows_config(CONFIG_NODE *node)
+/* The value of KEY in the block NODE into *out, DEF when it is not there
+   (DEF < 0: it must be there). Never a config getter on a node that is no
+   block: a critical at start is fatal. */
+static gboolean layout_get_num(CONFIG_NODE *node, const char *key, int def, int min, int *out)
 {
-	GSList *tmp, *output;
+	CONFIG_NODE *value = config_node_find(node, key);
 
-	output = NULL;
-	tmp = config_node_first(node->value);
-	for (; tmp != NULL; tmp = config_node_next(tmp)) {
-		output = g_slist_insert_sorted(output, tmp->data, (GCompareFunc) window_node_cmp);
+	if (value == NULL) {
+		*out = def;
+		return def >= 0;
 	}
-
-	return output;
+	return value->type == NODE_TYPE_KEY && layout_parse_num(value->value, out) &&
+	       *out >= min;
 }
 
-static GSList *get_windows_config_filter_line(GSList *in)
+static int layout_window_cmp(const LAYOUT_WINDOW_REC *w1, const LAYOUT_WINDOW_REC *w2)
 {
-	GSList *tmp, *output;
-
-	output = NULL;
-	for (tmp = in; tmp != NULL; tmp = tmp->next) {
-		CONFIG_NODE *node = tmp->data;
-		if (config_node_get_int(node, "first_column", 0) == 0)
-			output = g_slist_append(output, node);
-	}
-
-	return output;
+	if (w1->first_line != w2->first_line)
+		return w1->first_line < w2->first_line ? -1 : 1;
+	return w1->first_column < w2->first_column ? -1 : w1->first_column > w2->first_column;
 }
 
-static GSList *get_windows_config_filter_column(GSList *in, int first_line, int last_line)
+/* The saved main windows, sorted from the top left, NULL when the block
+   makes no sense (then nothing is restored: one main window): an entry
+   that is no block, a key that is no window number, a key twice, a number
+   out of range, main windows that overlap. A main window line ("band") is
+   the windows with the same first_line; the first column may be that of
+   the main area (0) or, as saved before, after a side panel. */
+static GArray *layout_read(CONFIG_NODE *node)
 {
-	GSList *tmp, *output;
+	GArray *wins;
+	GHashTable *seen;
+	GSList *tmp;
+	guint i;
+	gboolean ok = TRUE;
 
-	output = NULL;
-	for (tmp = in; tmp != NULL; tmp = tmp->next) {
-		int l1, l2;
-		CONFIG_NODE *node = tmp->data;
-		l1 = config_node_get_int(node, "first_line", -1);
-		l2 = l1 + config_node_get_int(node, "lines", 0) - 1;
-		if (l1 >= first_line && l2 <= last_line)
-			output = g_slist_prepend(output, node);
+	if (node == NULL || node->type != NODE_TYPE_BLOCK)
+		return NULL;
+
+	wins = g_array_new(FALSE, FALSE, sizeof(LAYOUT_WINDOW_REC));
+	seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	for (tmp = config_node_first(node->value); ok && tmp != NULL; tmp = config_node_next(tmp)) {
+		CONFIG_NODE *wnode = tmp->data;
+		LAYOUT_WINDOW_REC rec;
+		char *end;
+		long refnum;
+
+		if (wnode->type != NODE_TYPE_BLOCK || wnode->key == NULL ||
+		    !g_ascii_isdigit(*wnode->key)) {
+			ok = FALSE;
+			break;
+		}
+		errno = 0;
+		refnum = strtol(wnode->key, &end, 10);
+		if (errno != 0 || *end != '\0' || refnum < 1 || refnum > G_MAXINT ||
+		    g_hash_table_contains(seen, GINT_TO_POINTER((int) refnum))) {
+			ok = FALSE;
+			break;
+		}
+		rec.refnum = (int) refnum;
+		g_hash_table_add(seen, GINT_TO_POINTER(rec.refnum));
+
+		ok = layout_get_num(wnode, "first_line", -1, 0, &rec.first_line) &&
+		     layout_get_num(wnode, "lines", -1, 1, &rec.lines) &&
+		     layout_get_num(wnode, "first_column", 0, 0, &rec.first_column) &&
+		     layout_get_num(wnode, "columns", NEW_WINDOW_WIDTH, 1, &rec.columns);
+		if (ok)
+			g_array_append_val(wins, rec);
+	}
+	g_hash_table_destroy(seen);
+
+	if (ok && wins->len == 0)
+		ok = FALSE;
+	if (ok) {
+		g_array_sort(wins, (GCompareFunc) layout_window_cmp);
+		for (i = 1; i < wins->len; i++) {
+			LAYOUT_WINDOW_REC *prev = &g_array_index(wins, LAYOUT_WINDOW_REC, i - 1);
+			LAYOUT_WINDOW_REC *rec = &g_array_index(wins, LAYOUT_WINDOW_REC, i);
+
+			if (rec->first_line == prev->first_line ?
+			        rec->first_column < prev->first_column + prev->columns :
+			        rec->first_line < prev->first_line + prev->lines) {
+				ok = FALSE;
+				break;
+			}
+		}
+	}
+	if (!ok) {
+		g_array_free(wins, TRUE);
+		return NULL;
+	}
+	return wins;
+}
+
+/* The heights of the bands (from the top, the lines of their first window)
+   fitted to the terminal: as many as fit, each in proportion to its saved
+   height and at least WINDOW_MIN_SIZE + 1. Returns the number of bands. */
+static int layout_fit_heights(int *heights, int count, int avail_height)
+{
+	gint64 height;
+	int i, diff, changed;
+
+	if (avail_height <= (WINDOW_MIN_SIZE * 2) + 1) {
+		/* we can fit only one window to screen -
+		   give it all the height we can */
+		heights[0] = MAX(avail_height, 1);
+		return 1;
 	}
 
-	return output;
+	/* the bands that do not fit go, the lowest first */
+	while (count > 1 && count * (WINDOW_MIN_SIZE + 1) > avail_height)
+		count--;
+
+	height = 0;
+	for (i = 0; i < count; i++)
+		height += heights[i];
+	if (height == avail_height)
+		return count;
+
+	/* try to keep the windows' size about the same in percents */
+	for (i = 0; i < count; i++) {
+		int size = (int) ((gint64) avail_height * heights[i] / height);
+		heights[i] = MAX(size, WINDOW_MIN_SIZE + 1);
+	}
+
+	/* give/remove the last bits, a line at a time (never below the
+	   minimum: the minimums all fit, see above) */
+	height = 0;
+	for (i = 0; i < count; i++)
+		height += heights[i];
+	diff = height < avail_height ? 1 : -1;
+	changed = TRUE;
+	while (height != avail_height && changed) {
+		changed = FALSE;
+		for (i = 0; i < count && height != avail_height; i++) {
+			if (diff > 0 || heights[i] > WINDOW_MIN_SIZE + 1) {
+				height += diff;
+				heights[i] += diff;
+				changed = TRUE;
+			}
+		}
+	}
+	return count;
 }
 
 static void sig_layout_restore(void)
 {
 	MAIN_WINDOW_REC *lower_window;
 	WINDOW_REC *window, *first;
-	CONFIG_NODE *node;
-	GSList *tmp, *sorted_config, *lines_config;
-	int avail_height, height, *heights, *widths, max_wins_line;
-	int i, lower_size, lines_count, columns_count, diff;
+	GArray *wins;
+	int *starts, *heights;
+	int avail_height, avail_width, max_wins_line;
+	int i, band, bands, all_bands, lower_size;
 
-	node = iconfig_node_traverse("mainwindows", FALSE);
-	if (node == NULL)
+	/* not iconfig_node_traverse(): it is critical (fatal at start) when
+	   "mainwindows" is no block */
+	wins = layout_read(config_node_find(mainconfig->mainnode, "mainwindows"));
+	if (wins == NULL)
 		return;
 
-	sorted_config = get_sorted_windows_config(node);
-	if (sorted_config == NULL)
-		return;
+	/* the bands from the top: index of their first window, their height */
+	starts = g_new0(int, wins->len + 1);
+	heights = g_new0(int, wins->len);
+	bands = 0;
+	for (i = 0; i < (int) wins->len; i++) {
+		LAYOUT_WINDOW_REC *rec = &g_array_index(wins, LAYOUT_WINDOW_REC, i);
+		LAYOUT_WINDOW_REC *prev = i == 0 ? NULL : rec - 1;
 
-	lines_config = get_windows_config_filter_line(sorted_config);
-	lines_count = g_slist_length(lines_config);
-
-	/* calculate the saved terminal height */
-	avail_height = term_height - screen_reserved_top - screen_reserved_bottom;
-	height = 0;
-	heights = g_new0(int, lines_count);
-	for (i = 0, tmp = lines_config; tmp != NULL; tmp = tmp->next, i++) {
-		CONFIG_NODE *node = tmp->data;
-
-		heights[i] = config_node_get_int(node, "lines", 0);
-		height += heights[i];
+		if (prev == NULL || rec->first_line != prev->first_line) {
+			starts[bands] = i;
+			heights[bands] = rec->lines;
+			bands++;
+		}
 	}
+	starts[bands] = wins->len;
 
-	max_wins_line = (term_width + 1) / (NEW_WINDOW_WIDTH + 1);
+	/* fitted from the bottom: those that do not fit are the top ones, as
+	   before (the lowest band is created first) */
+	for (i = 0; i < bands / 2; i++) {
+		int h = heights[i];
+		heights[i] = heights[bands - 1 - i];
+		heights[bands - 1 - i] = h;
+	}
+	avail_height = term_height - screen_reserved_top - screen_reserved_bottom;
+	all_bands = bands;
+	bands = layout_fit_heights(heights, bands, avail_height);
+
+	avail_width = term_width - screen_reserved_left - screen_reserved_right;
+	max_wins_line = (avail_width + 1) / (NEW_WINDOW_WIDTH + 1);
 	if (max_wins_line < 1)
 		max_wins_line = 1;
 
-	if (avail_height <= (WINDOW_MIN_SIZE * 2) + 1) {
-		/* we can fit only one window to screen -
-		   give it all the height we can */
-		lines_count = 1;
-		heights[0] = avail_height;
-	} else if (height != avail_height) {
-		/* Terminal's height is different from the saved one.
-		   Resize the windows so they fit to screen. */
-		while (height > avail_height &&
-		       lines_count * (WINDOW_MIN_SIZE + 1) > avail_height) {
-			/* all windows can't fit into screen,
-			   remove the lowest ones */
-			lines_count--;
-		}
-
-		/* try to keep the windows' size about the same in percents */
-		for (i = 0; i < lines_count; i++) {
-			int size = avail_height * heights[i] / height;
-			if (size < WINDOW_MIN_SIZE + 1)
-				size = WINDOW_MIN_SIZE + 1;
-			heights[i] = size;
-		}
-
-		/* give/remove the last bits */
-		height = 0;
-		for (i = 0; i < lines_count; i++)
-			height += heights[i];
-
-		diff = height < avail_height ? 1 : -1;
-		for (i = 0; height != avail_height; i++) {
-			if (i == lines_count)
-				i = 0;
-
-			if (heights[i] > WINDOW_MIN_SIZE + 1) {
-				height += diff;
-				heights[i] += diff;
-			}
-		}
-	}
-
-	/* create all the visible windows with correct size */
+	/* create all the visible windows with correct size, the lowest band
+	   first: each one splits the one created before */
 	lower_window = NULL;
 	lower_size = 0;
 	first = NULL;
-	for (i = 0, tmp = lines_config; i < lines_count; tmp = tmp->next, i++) {
-		GSList *tmp2, *columns_config, *line;
-		int j, l1, l2;
-		CONFIG_NODE *node = tmp->data;
-		if (node->key == NULL)
-			continue;
-
-		l1 = config_node_get_int(node, "first_line", -1);
-		l2 = l1 + config_node_get_int(node, "lines", 0) - 1;
-		columns_config = get_windows_config_filter_column(sorted_config, l1, l2);
+	for (band = 0; band < bands; band++) {
+		/* heights[] is from the bottom, starts[] from the top */
+		int top = all_bands - 1 - band;
+		GSList *line, *tmp2;
+		int *widths;
+		int j, n, columns_count;
 
 		window = NULL;
 		columns_count = 0;
-		widths = g_new0(int, max_wins_line);
-		for (j = 0, tmp2 = columns_config; j < max_wins_line && tmp2 != NULL;
-		     tmp2 = tmp2->next, j++) {
-			int width;
+		n = MIN(starts[top + 1] - starts[top], max_wins_line);
+		widths = g_new0(int, n);
+		for (j = 0; j < n; j++) {
+			LAYOUT_WINDOW_REC *rec =
+			    &g_array_index(wins, LAYOUT_WINDOW_REC, starts[top] + j);
 			WINDOW_REC *new_win;
-			CONFIG_NODE *node2 = tmp2->data;
-			if (node2->key == NULL)
-				continue;
 
 			/* create a new window + mainwindow */
 			signal_emit("gui window create override", 1,
@@ -267,11 +351,9 @@ static void sig_layout_restore(void)
 			                                             MAIN_WINDOW_TYPE_RSPLIT));
 
 			new_win = window_create(NULL, TRUE);
-
-			window_set_refnum(new_win, atoi(node2->key));
-			width = config_node_get_int(node2, "columns", NEW_WINDOW_WIDTH);
-			widths[j] = width;
-			columns_count += width + (window == NULL ? 0 : 1);
+			window_set_refnum(new_win, rec->refnum);
+			widths[j] = rec->columns;
+			columns_count += rec->columns + (window == NULL ? 0 : 1);
 
 			if (window == NULL)
 				window = new_win;
@@ -281,14 +363,16 @@ static void sig_layout_restore(void)
 			window_set_active(new_win);
 			active_mainwin = WINDOW_MAIN(new_win);
 		}
-		if (window == NULL)
-			continue;
+
 		line = g_slist_reverse(mainwindows_get_line(WINDOW_MAIN(window)));
 		for (j = g_slist_length(line), tmp2 = line; tmp2 != NULL; tmp2 = tmp2->next, j--) {
-			int width =
-			    MAX(NEW_WINDOW_WIDTH, widths[j - 1] * term_width / columns_count);
 			MAIN_WINDOW_REC *rec = tmp2->data;
-			mainwindow_set_rsize(rec, width);
+			int width;
+
+			if (j > n)
+				continue;
+			width = (int) ((gint64) widths[j - 1] * avail_width / columns_count);
+			mainwindow_set_rsize(rec, MAX(NEW_WINDOW_WIDTH, width));
 		}
 		g_slist_free(line);
 		g_free(widths);
@@ -297,12 +381,11 @@ static void sig_layout_restore(void)
 			mainwindow_set_size(lower_window, lower_size, FALSE);
 
 		lower_window = WINDOW_MAIN(window);
-		lower_size = heights[i];
-		if (lower_size < WINDOW_MIN_SIZE + 1)
-			lower_size = WINDOW_MIN_SIZE + 1;
+		lower_size = MAX(heights[band], WINDOW_MIN_SIZE + 1);
 	}
-	g_slist_free(sorted_config);
+	g_free(starts);
 	g_free(heights);
+	g_array_free(wins, TRUE);
 
 	if (lower_size > 0)
 		mainwindow_set_size(lower_window, lower_size, FALSE);
