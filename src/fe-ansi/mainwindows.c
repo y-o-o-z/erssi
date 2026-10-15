@@ -337,10 +337,13 @@ static MAIN_WINDOW_REC *mainwindows_find_right(MAIN_WINDOW_REC *window, int find
 	MAIN_WINDOW_REC *best;
 	GSList *tmp;
 
+	/* the rightmost column of the window, even when it has been resized
+	   the wrong way round (last_column before first_column): otherwise it
+	   is right of itself, and mainwindows_get_line() never ends */
 	if (window != NULL) {
 		first_line = window->first_line;
 		last_line = window->last_line;
-		last_column = window->last_column;
+		last_column = MAX(window->first_column, window->last_column);
 	} else {
 		first_line = last_line = last_column = -1;
 	}
@@ -401,10 +404,11 @@ static MAIN_WINDOW_REC *mainwindows_find_left(MAIN_WINDOW_REC *window, int find_
 	MAIN_WINDOW_REC *best;
 	GSList *tmp;
 
+	/* the leftmost column of the window (see mainwindows_find_right) */
 	if (window != NULL) {
 		first_line = window->first_line;
 		last_line = window->last_line;
-		first_column = window->first_column;
+		first_column = MIN(window->first_column, window->last_column);
 	} else {
 		first_line = last_line = screen_height;
 		first_column = screen_width;
@@ -448,25 +452,34 @@ static MAIN_WINDOW_REC *mainwindows_find_left_upper(MAIN_WINDOW_REC *window)
 	return best;
 }
 
+/* The row of REC, from the left. Each step of find_left/find_right goes
+   strictly further left/right, so no window comes twice; the count of main
+   windows bounds both loops all the same. */
 GSList *mainwindows_get_line(MAIN_WINDOW_REC *rec)
 {
 	MAIN_WINDOW_REC *win;
-	GSList *list;
+	GSList *list, *right;
+	int max, n;
 
-	list = NULL;
+	list = right = NULL;
+	max = g_slist_length(mainwindows);
 
-	for (win = mainwindows_find_left(rec, FALSE); win != NULL;
-	     win = mainwindows_find_left(win, FALSE)) {
-		list = g_slist_append(list, win);
+	/* the nearest one is found first: prepended, the row is from the left */
+	n = 0;
+	for (win = mainwindows_find_left(rec, FALSE); win != NULL && n < max;
+	     win = mainwindows_find_left(win, FALSE), n++) {
+		list = g_slist_prepend(list, win);
 	}
 
 	if (rec != NULL)
 		list = g_slist_append(list, rec);
 
-	for (win = mainwindows_find_right(rec, FALSE); win != NULL;
-	     win = mainwindows_find_right(win, FALSE)) {
-		list = g_slist_append(list, win);
+	n = 0;
+	for (win = mainwindows_find_right(rec, FALSE); win != NULL && n < max;
+	     win = mainwindows_find_right(win, FALSE), n++) {
+		right = g_slist_prepend(right, win);
 	}
+	list = g_slist_concat(list, g_slist_reverse(right));
 
 	return list;
 }
