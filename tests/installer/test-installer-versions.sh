@@ -13,11 +13,20 @@ fail() { echo "FAIL $1: $2"; failed=1; }
 
 cp "$src/shellter-install.sh" "$tmp/cur.sh" || exit 1
 copies="cur"
-if git -C "$src" cat-file -e shellter-v1.3.10:shellter-install.sh 2>/dev/null; then
-    git -C "$src" show shellter-v1.3.10:shellter-install.sh > "$tmp/old.sh" || exit 1
-    copies="cur old"
-else
+# the old copy is shellter-v1.3.10 as the current installer pins it: a clone
+# can keep a stale local tag (the tag was moved on GitHub, and a plain fetch
+# does not move a tag that exists here)
+pinned=$(sed -n '/^RELEASES="/,/^"/p' "$tmp/cur.sh" | awk '$1 == "shellter-v1.3.10" { print $2 }')
+here=$(git -C "$src" rev-parse -q --verify 'shellter-v1.3.10^{commit}' 2>/dev/null)
+if [ -z "$pinned" ]; then
+    pass "skip: shellter-install.sh pins no shellter-v1.3.10 in RELEASES"
+elif [ -z "$here" ]; then
     pass "skip: no shellter-v1.3.10 here (shallow clone)"
+elif [ "$here" != "$pinned" ]; then
+    pass "skip: the local shellter-v1.3.10 is $here, not the pinned $pinned (stale tag; git fetch --tags --force)"
+else
+    git -C "$src" show "$pinned:shellter-install.sh" > "$tmp/old.sh" || exit 1
+    copies="cur old"
 fi
 
 # newer A B EXPECTED_EXIT, run with the function loaded from FILE
