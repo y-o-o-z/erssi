@@ -914,6 +914,8 @@ fi
 # ── 6. install ───────────────────────────────────────────────────────
 step "Installing"
 run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
+# erssi before 2026.10.0 shipped it
+rm -f "$PREFIX/share/irssi/themes/nexus.theme"
 mkdir -p "$PREFIX/share/irssi"
 LINKED=0
 if bin_link_wanted; then

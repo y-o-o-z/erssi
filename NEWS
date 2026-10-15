@@ -17,6 +17,8 @@ shellter-v2026.10.0 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - show_names_on_join_alone (off in the default config): a join while alone
 	    prints the count line, not a table with your own nick
 	  - /set -default and /reset give erssi's built-in value
+	  - nexus.theme removed; shellter.theme is the Shellter theme (an upgrade
+	    removes the installed copy; a copy in ~/.erssi is kept)
 
 	+ First start
 	  - a new home on a terminal asks for a network (or none), the nick, a

@@ -731,7 +731,6 @@ fuzz_test_env.set('ASAN_OPTIONS', 'detect_leaks=1:abort_on_error=1')
 # the themes erssi installs (themes/meson.build); the tests parse each one
 shipped_themes = files(
   'themes/default.theme',
-  'themes/nexus.theme',
   'themes/shellter.theme',
   'themes/shellter-light.theme',
   'themes/colorless.theme',

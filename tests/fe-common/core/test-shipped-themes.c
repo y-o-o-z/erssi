@@ -25,22 +25,6 @@
 static const char *const THEME_BLOCKS[] = { "replaces", "abstracts", "formats" };
 static const char *const THEME_SCALARS[] = { "default_color", "info_eol" };
 
-/* nexus.theme closes "abstracts" early since its first version (1.0.0), so
- * these abstracts sit at the top level, where erssi never reads them. They
- * are allowed in that theme only, until it is fixed; any other loose key,
- * or one of these in another theme, is an error. */
-static const char *const NEXUS_LOOSE_KEYS[] = {
-	"sb_background", "window_border", "sb_topic_bg", "sb", "sbmode",
-	"sbservertag", "sbmore", "sblag", "sb_default_bg", "sb_act_sep",
-	"sb_act_text", "sb_act_msg", "sb_act_hilight", "sb_act_hilight_color",
-	"sb_info1_bg", "sb_window_bg", "sb_window2_bg", "sb_info2_bg", "sbstart",
-	"sbend", "topicsbstart", "topicsbend", "prompt", "sbaway", "sbnickmode",
-	"sb_usercount", "sb_uc_normal", "sb_uc_ops", "sb_uc_voices", "whois_field",
-	"whois_label", "whois_chan_op", "whois_chan_voice", "whois_chan_normal",
-	"whois_chan_owner", "whois_chan_admin", "whois_nick", "whois_userhost",
-	"whois_realname",
-};
-
 static gboolean in_list(const char *key, const char *const *list, int count)
 {
 	int i;
@@ -91,11 +75,10 @@ static void check_modules(GString *errors, CONFIG_NODE *formats)
 }
 
 /* The problems of a parsed theme, one per line; empty when there are none.
- * name: the theme's file name (nexus.theme has its known loose keys). */
+ * name: the theme's file name. */
 static GString *theme_problems(CONFIG_REC *config, const char *name)
 {
 	GString *errors = g_string_new(NULL);
-	gboolean nexus = strcmp(name, "nexus.theme") == 0;
 	CONFIG_NODE *formats;
 	GSList *tmp;
 
@@ -114,10 +97,8 @@ static GString *theme_problems(CONFIG_REC *config, const char *name)
 			if (strcmp(key, "formats") != 0)
 				check_values(errors, node, key);
 		} else if (has_node_value(node) &&
-		           (in_list(key, THEME_SCALARS, G_N_ELEMENTS(THEME_SCALARS)) ||
-		            (nexus && in_list(key, NEXUS_LOOSE_KEYS,
-		                              G_N_ELEMENTS(NEXUS_LOOSE_KEYS))))) {
-			/* read by theme_read(), or a known loose key of nexus */
+		           in_list(key, THEME_SCALARS, G_N_ELEMENTS(THEME_SCALARS))) {
+			/* read by theme_read() */
 		} else {
 			g_string_append_printf(errors, "top level: \"%s\" is out of place (%s)\n",
 			                       key, node->type == NODE_TYPE_BLOCK ?
@@ -203,12 +184,9 @@ static const BROKEN_THEME BROKEN[] = {
 	{ "formats nested in abstracts", "test.theme",
 	  "abstracts = { line_start = \"x\";\nformats = {\n" GOOD_CORE "};\n};\n",
 	  "abstracts: \"formats\" is not a single value" },
-	{ "a loose key of nexus.theme in another theme", "test.theme",
+	{ "a loose abstract at the top level", "test.theme",
 	  GOOD_ABSTRACTS "sb_background = \"%8\";\nformats = {\n" GOOD_CORE "};\n",
 	  "\"sb_background\" is out of place" },
-	{ "a loose key nexus.theme does not have", "nexus.theme",
-	  GOOD_ABSTRACTS "sb_new = \"%8\";\nformats = {\n" GOOD_CORE "};\n",
-	  "\"sb_new\" is out of place" },
 };
 
 static void test_broken_themes(void)
@@ -221,13 +199,6 @@ static void test_broken_themes(void)
 	                     "replaces = { \"[]\" = \"%K$*%n\"; };\n" GOOD_ABSTRACTS
 	                     "formats = {\n" GOOD_CORE GOOD_IRC "};\n",
 	                     "test.theme");
-	g_assert_cmpstr(errors->str, ==, "");
-	g_string_free(errors, TRUE);
-
-	/* nexus.theme's known loose keys pass in nexus.theme */
-	errors = problems_of(GOOD_ABSTRACTS "sb_background = \"%8\";\nformats = {\n" GOOD_CORE
-	                     "};\n",
-	                     "nexus.theme");
 	g_assert_cmpstr(errors->str, ==, "");
 	g_string_free(errors, TRUE);
 

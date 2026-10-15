@@ -1177,6 +1177,20 @@ venv-both)
     check "again: installed" [ "$RC" = 0 ]
     check "again: no pip" none_exist "$W/ran-pip" "$W/py.log"
     ;;
+stale-nexus)
+    # erssi before 2026.10.0 shipped nexus.theme: an install removes it from
+    # the prefix and keeps the other themes (and a copy in the home)
+    P=$HOME/.local/opt/erssi
+    mkdir -p "$P/share/irssi/themes" "$HOME/.erssi"
+    : > "$P/share/irssi/themes/nexus.theme"
+    : > "$P/share/irssi/themes/shellter.theme"
+    : > "$HOME/.erssi/nexus.theme"
+    run_install
+    check "installed" [ "$RC" = 0 ]
+    check "nexus.theme gone from the prefix" none_exist "$P/share/irssi/themes/nexus.theme"
+    check "another theme kept" [ -f "$P/share/irssi/themes/shellter.theme" ]
+    check "a copy in the home kept" [ -f "$HOME/.erssi/nexus.theme" ]
+    ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
 esac
