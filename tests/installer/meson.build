@@ -9,7 +9,8 @@ foreach c : ['ascii', 'utf8',
     'freebsd-base-openssl', 'freebsd-no-openssl',
     'src-foreign', 'src-writable', 'src-shared-parent', 'acl-bsd',
     'userns', 'userns-kernel',
-    'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both']
+    'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both',
+    'stale-nexus']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)
