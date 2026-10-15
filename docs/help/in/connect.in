@@ -36,8 +36,9 @@
     When a network is given and a server of that network is already
     connected, still connecting or waiting to reconnect, no second
     connection is opened: the window of that server becomes active and a
-    line says so. To open a second connection to the same network on
-    purpose, give a server address (and -network to name the network).
+    line says so (for a server waiting to reconnect it names the /RECONNECT
+    that connects it now). To open a second connection to the same network
+    on purpose, give a server address (and -network to name the network).
 
 %9Examples:%9
 

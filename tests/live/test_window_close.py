@@ -78,7 +78,7 @@ def main():
         return log_since(off)
 
     def tags():
-        return re.findall(r"^\S+ (\S+): 127\.0\.0\.1:", servers(), re.M)
+        return re.findall(r"^\S+ (\S+): (?:127\.0\.0\.1|localhost):", servers(), re.M)
 
     def wait_tags(want, timeout=WAIT):
         end = time.time() + timeout
@@ -199,6 +199,61 @@ def main():
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
 
+
+    def t_range_close():
+        """/WINDOW CLOSE <first> <last> over Talk's network window and its
+        channel window: one disconnect, one line"""
+        a = st["alice"]
+        a.type("/window goto Talk")
+        a.type("/join #range")
+        assert a.wait_file(a.all_log(), "has joined #range", WAIT), "no #range"
+        wl = windows()
+        net = re.search(r"^\S+ (\d+)\s+Talk\s", wl, re.M)
+        chan = re.search(r"^\S+ (\d+)\s+\S*\s*#range\s", wl, re.M)
+        assert net and chan, wl
+        first, last = sorted((int(net.group(1)), int(chan.group(1))))
+        inside = [int(r) for r in re.findall(r"^\S+ (\d+)\s", wl, re.M) if first <= int(r) <= last]
+        assert len(inside) == 2, f"windows {first}..{last} are not just Talk and #range:\n" + wl
+        start = len(trace("talk"))
+        mark = a.mark()
+        off = log_size()
+        a.type(f"/window close {first} {last}")
+        assert wait_trace("talk", rf" in alice QUIT :{QUIT_MSG}$", start), trace("talk")[start:]
+        time.sleep(1)
+        assert log_since(off).count(NOTICE) == 1, log_since(off)
+        assert len(re.findall(r" in alice QUIT ", trace("talk")[start:])) == 1
+        assert a.wait_output(NOTICE.encode(), WAIT), a.text(mark)[-2000:]
+        assert sorted(tags()) == ["E2E"], tags()
+        a.type("/connect Talk")
+        got = wait_tags(["E2E", "Talk"])
+        assert got == ["E2E", "Talk"], got
+
+    def t_address_comeback():
+        """a server of no network: the comeback hint keeps its port"""
+        a = st["alice"]
+        (work / "bare").mkdir()
+        st["bare"] = harness.Ircd(work / "bare")
+        port = st["bare"].start()
+        before = set(tags())
+        # by a name of no setup server (127.0.0.1 would match Talk's setup and
+        # join its network)
+        a.type(f"/connect -4 localhost {port}")
+        end = time.time() + WAIT
+        while len(set(tags()) - before) != 1 and time.time() < end:
+            time.sleep(0.3)
+        new = set(tags()) - before
+        assert len(new) == 1, tags()
+        tag = new.pop()
+        end = time.time() + WAIT
+        while not re.search(rf"^\S+ \d+\s+{re.escape(tag)}\s", windows(), re.M) and time.time() < end:
+            time.sleep(0.3)
+        off = log_size()
+        close_window(tag)
+        assert wait_log_since(off, NOTICE), log_since(off)
+        line = [x for x in log_since(off).splitlines() if NOTICE in x]
+        assert f"/CONNECT localhost {port} to come back" in line[0], line
+        assert sorted(tags()) == sorted(before), tags()
+
     def t_setting_off():
         """window_close_disconnects off: the old behaviour - the connection
         stays; /CONNECT Talk then says it is connected (no Talk2)"""
@@ -213,7 +268,50 @@ def main():
         assert "QUIT" not in trace("talk")[start:], "Talk was disconnected with the setting off"
         off = log_size()
         a.type("/connect Talk")
-        assert wait_log_since(off, "Already connected to Talk"), log_since(off)
+        # no window to switch to: the line says so and names /DISCONNECT
+        assert wait_log_since(off, "Already connected to Talk, but no window shows it"), log_since(off)
+        assert "/DISCONNECT Talk" in log_since(off), log_since(off)
+        assert sorted(tags()) == ["E2E", "Talk"], tags()
+
+    def t_classic_layout():
+        """the irssi layout (auto_create_separators off, a status window,
+        no network windows): closing the last channel window of a network
+        that is not the status window's active server keeps it connected -
+        the status window shows every server"""
+        alice = st["alice"]
+        alice.quit()
+        assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
+        w = work / "classic"
+        w.mkdir()
+        cfg = harness.config(0, "carol", servers=[("E2E", st["e2e_port"]), ("Talk", st["talk_port"])],
+                             channels=("#classic",))
+        cfg = cfg.replace('"fe-common/core" = {', '"fe-ansi" = { auto_create_separators = "no"; };\n'
+                          '  "fe-common/core" = {', 1)
+        assert "auto_create_separators" in cfg, cfg
+        c = harness.Erssi(st["inst"], w, "carol", cfg)
+        st["alice"] = c
+        c.start()
+        end = time.time() + 15
+        while log_since(0).count("has joined #classic") < 2 and time.time() < end:
+            time.sleep(0.2)
+        c.type("/alias sl server;echo sl-done")
+        got = wait_tags(["E2E", "Talk"])
+        assert got == ["E2E", "Talk"], got
+        wl = windows()
+        assert "(status)" in wl, wl
+        status = re.search(r"^\S+ \d+\s+\(status\)\s+(\S+)", wl, re.M)
+        assert status, wl
+        other = "Talk" if status.group(1) == "E2E" else "E2E"
+        chan = [l for l in wl.splitlines() if "#classic" in l and re.search(rf"\s{other}\s", l)]
+        assert chan, f"no #classic window of {other}:\n" + wl
+        ref = re.search(r"^\S+ (\d+)\s", chan[0]).group(1)
+        name = other.lower()
+        start = len(trace(name))
+        c.type(f"/window {ref}")
+        c.type("/window close")  # what the /WC alias of the shipped config runs
+        assert wait_trace(name, r" in carol PART #classic", start), trace(name)[start:]
+        time.sleep(2)
+        assert "QUIT" not in trace(name)[start:], f"{other} was disconnected:\n" + trace(name)[start:]
         assert sorted(tags()) == ["E2E", "Talk"], tags()
 
     def t_quit():
@@ -223,11 +321,11 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_close_disconnects, t_channel_keeps_server,
-                      t_reconnect_dropped, t_setting_off, t_quit])
+                      t_reconnect_dropped, t_range_close, t_address_comeback, t_setting_off, t_classic_layout, t_quit])
     finally:
         if "alice" in st:
             st["alice"].kill()
-        for name in ("talk", "e2e"):
+        for name in ("talk", "e2e", "bare"):
             if name in st:
                 st[name].stop()
         if not harness.keep_work():

@@ -522,21 +522,24 @@ static const char *window_item_server_tag(WI_ITEM_REC *item)
 	return NULL;
 }
 
+/* A window bound to no server that shows messages (a level), as the irssi
+   status window: the messages of every server without a window of its own
+   land there (window_find_closest()), and ^X switches it to any of them.
+   The Notices window ("*") and a level-0 window (Mentions) show no server. */
+static gboolean window_shows_all_servers(WINDOW_REC *window)
+{
+	return window->servertag == NULL && window->level != 0;
+}
+
 /* The window shows the server TAG: it is the server's own window (sticky to
    it, as a network window is), holds a channel or query of it, is kept for
-   one (bound to it: waiting to rejoin after a reconnect or a kick), or is a
-   window of no particular server that shows messages (a level) and has it
-   as its server - the status window. A level-0 window that only happens to
-   have the server as its active one shows nothing of it. */
+   one (bound to it: waiting to rejoin after a reconnect or a kick), or it
+   shows every server. */
 static gboolean window_shows_server(WINDOW_REC *window, const char *tag)
 {
 	GSList *tmp;
 
-	if (tag_is(window->servertag, tag))
-		return TRUE;
-	if (window->servertag == NULL && window->level != 0 &&
-	    ((window->active_server != NULL && tag_is(window->active_server->tag, tag)) ||
-	     (window->connect_server != NULL && tag_is(window->connect_server->tag, tag))))
+	if (tag_is(window->servertag, tag) || window_shows_all_servers(window))
 		return TRUE;
 	for (tmp = window->items; tmp != NULL; tmp = tmp->next) {
 		if (tag_is(window_item_server_tag(tmp->data), tag))
@@ -576,11 +579,13 @@ GSList *fe_server_window_tags(WINDOW_REC *window, GSList *tags)
 	/* the same servers window_shows_server() finds; "*" is no server */
 	if (window->servertag != NULL && g_strcmp0(window->servertag, "*") != 0)
 		tags = tags_add(tags, window->servertag);
-	if (window->servertag == NULL && window->level != 0) {
-		if (window->active_server != NULL)
-			tags = tags_add(tags, window->active_server->tag);
-		if (window->connect_server != NULL)
-			tags = tags_add(tags, window->connect_server->tag);
+	if (window_shows_all_servers(window)) {
+		for (tmp = servers; tmp != NULL; tmp = tmp->next)
+			tags = tags_add(tags, ((SERVER_REC *) tmp->data)->tag);
+		for (tmp = lookup_servers; tmp != NULL; tmp = tmp->next)
+			tags = tags_add(tags, ((SERVER_REC *) tmp->data)->tag);
+		for (tmp = reconnects; tmp != NULL; tmp = tmp->next)
+			tags = tags_add(tags, ((RECONNECT_REC *) tmp->data)->conn->tag);
 	}
 	for (tmp = window->items; tmp != NULL; tmp = tmp->next)
 		tags = tags_add(tags, window_item_server_tag(tmp->data));
@@ -606,10 +611,13 @@ static gboolean server_tag_visible(const char *tag, SERVER_REC *server)
 	return FALSE;
 }
 
-/* what /CONNECT takes to come back: the network, or the address */
-static const char *connect_target(SERVER_CONNECT_REC *conn)
+/* what /CONNECT takes to come back: the network, or the address with its
+   port (and -tls), since a bare address would use the default port */
+static char *connect_target(SERVER_CONNECT_REC *conn)
 {
-	return conn->chatnet != NULL && *conn->chatnet != '\0' ? conn->chatnet : conn->address;
+	if (conn->chatnet != NULL && *conn->chatnet != '\0')
+		return g_strdup(conn->chatnet);
+	return g_strdup_printf("%s%s %d", conn->use_tls ? "-tls " : "", conn->address, conn->port);
 }
 
 /* drops the reconnects waiting under TAG */
@@ -656,7 +664,7 @@ static void server_close_unseen(const char *tag)
 	if ((server == NULL && reconnect == NULL) || server_tag_visible(tag, server))
 		return;
 
-	target = g_strdup(connect_target(server != NULL ? server->connrec : reconnect->conn));
+	target = connect_target(server != NULL ? server->connrec : reconnect->conn);
 	format = server != NULL ? TXT_SERVER_WINDOW_CLOSED : TXT_SERVER_WINDOW_CLOSED_RECONNECT;
 	if (server != NULL) {
 		/* as /DISCONNECT does, with the user's quit message */
@@ -741,16 +749,36 @@ static void cmd_connect_existing(const char *data)
 
 	tag = server != NULL ? server->tag :
 	      reconnect->conn->tag != NULL ? reconnect->conn->tag : chatnet->name;
+	/* its network window, else a window of its own (sticky, a channel or
+	   query of it), else a window that shows every server */
 	window = window_find_network(tag);
 	for (tmp = windows; tmp != NULL && window == NULL; tmp = tmp->next) {
-		if (window_shows_server(tmp->data, tag))
+		if (window_shows_server(tmp->data, tag) && !window_shows_all_servers(tmp->data))
+			window = tmp->data;
+	}
+	for (tmp = windows; tmp != NULL && window == NULL; tmp = tmp->next) {
+		if (window_shows_all_servers(tmp->data))
 			window = tmp->data;
 	}
 	if (window != NULL)
 		window_set_active(window);
-	printformat_window(active_win, MSGLEVEL_CLIENTNOTICE,
-	                   server != NULL && server->connected ? TXT_SERVER_ALREADY_CONNECTED :
-	                   TXT_SERVER_ALREADY_CONNECTING, tag);
+
+	if (reconnect != NULL) {
+		char *recon = g_strdup_printf("RECON-%d", reconnect->tag);
+
+		printformat_window(active_win, MSGLEVEL_CLIENTNOTICE,
+		                   TXT_SERVER_ALREADY_RECONNECTING, tag, recon);
+		g_free(recon);
+	} else if (window == NULL) {
+		/* nothing to switch to (window_close_disconnects is OFF and its
+		   window was closed) */
+		printformat_window(active_win, MSGLEVEL_CLIENTNOTICE,
+		                   TXT_SERVER_ALREADY_CONNECTED_UNSEEN, tag);
+	} else {
+		printformat_window(active_win, MSGLEVEL_CLIENTNOTICE,
+		                   server->connected ? TXT_SERVER_ALREADY_CONNECTED :
+		                   TXT_SERVER_ALREADY_CONNECTING, tag);
+	}
 
 	signal_stop();
 	cmd_params_free(free_arg);
