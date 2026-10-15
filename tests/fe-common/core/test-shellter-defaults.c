@@ -12,14 +12,31 @@
 #include <irssi/src/fe-common/core/formats.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
+#include <irssi/src/fe-common/irc/fe-mentions.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 void fe_whois_init(void);
+
+/* When not 0, rename() fails with this errno. lib-config's config_write()
+   then returns 0 with last_error set (its rename path), as for a config
+   file bind-mounted into a container (EBUSY) or made immutable (EPERM).
+   The call in lib-config is linked to this one. */
+static int rename_errno;
+
+int rename(const char *oldpath, const char *newpath)
+{
+	if (rename_errno != 0) {
+		errno = rename_errno;
+		return -1;
+	}
+	return renameat(AT_FDCWD, oldpath, AT_FDCWD, newpath);
+}
 
 typedef struct {
 	const char *module;
@@ -878,6 +895,9 @@ static void test_broken_config(void)
 	g_assert_no_error(error);
 	g_assert_cmpmem(contents, length, config, strlen(config));
 	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+	/* a real parse error is never hidden: erssi --setup and the mentions
+	   migration must still see it */
+	g_assert_nonnull(config_last_error(mainconfig));
 
 	/* the part read has only core.nick, so all the rows are in memory */
 	note = shellter_defaults_note();
@@ -926,6 +946,77 @@ static void test_save_failed(void)
 
 	g_free(expected);
 	g_free(note);
+	g_free(contents);
+	g_free(fname);
+	g_free(home);
+}
+
+/* The temporary file is written but renaming it over the config fails:
+   lib-config returns success with last_error set. That is a failed save
+   too - no "now written" note, no error left in mainconfig. */
+static void test_rename_failed(void)
+{
+	static const char config[] = "settings = { core = { nick = \"alice\"; }; };\n";
+	char *home, *fname, *contents, *note, *expected;
+	gsize length;
+	GError *error = NULL;
+
+	if (!run_in_child(config))
+		return;
+
+	rename_errno = EBUSY;
+	home = start_in_home();
+	rename_errno = 0;
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+
+	fname = g_build_filename(home, "config", NULL);
+	g_file_get_contents(fname, &contents, &length, &error);
+	g_assert_no_error(error);
+	g_assert_cmpmem(contents, length, config, strlen(config));
+
+	note = shellter_defaults_note();
+	expected = g_strdup_printf("14 settings keep their Shellter Edition values for now "
+	                           "(built-in defaults before 2026.10.0), but writing %s "
+	                           "failed: %s - /SAVE to retry", fname, g_strerror(EBUSY));
+	g_assert_cmpstr(note, ==, expected);
+
+	g_free(expected);
+	g_free(note);
+	g_free(contents);
+	g_free(fname);
+	g_free(home);
+}
+
+/* The mentions.pl migration (fe-common/irc, after this one) saves at start
+   too: in a read-only home its failed write leaves no error in mainconfig
+   either, so erssi --setup sees a good file; the moved value applies. */
+static void test_mentions_save_failed(void)
+{
+	static const char config[] =
+		"settings = { \"perl/core/scripts\" = { mentions_window = \"Hl\"; }; };\n";
+	char *home, *fname, *contents;
+	gsize length;
+	GError *error = NULL;
+
+	if (!run_in_child_mode(config, TRUE))
+		return;
+
+	home = start_in_home();
+	g_assert_null(config_last_error(mainconfig));
+	settings_add_str_module("fe-common/irc", "mentions", "mentions_window", "Mentions");
+	settings_add_bool_module("fe-common/irc", "mentions", "mentions_log", FALSE);
+	settings_add_str_module("fe-common/irc", "mentions", "mentions_log_file", "");
+	fe_mentions_migrate_init();
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_cmpstr(settings_get_str("mentions_window"), ==, "Hl");
+
+	fname = g_build_filename(home, "config", NULL);
+	g_file_get_contents(fname, &contents, &length, &error);
+	g_assert_no_error(error);
+	g_assert_cmpmem(contents, length, config, strlen(config));
+
+	fe_mentions_migrate_deinit();
 	g_free(contents);
 	g_free(fname);
 	g_free(home);
@@ -992,6 +1083,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/upgraded_home", test_upgraded_home);
 	g_test_add_func("/shellter_defaults/broken_config", test_broken_config);
 	g_test_add_func("/shellter_defaults/save_failed", test_save_failed);
+	g_test_add_func("/shellter_defaults/rename_failed", test_rename_failed);
+	g_test_add_func("/shellter_defaults/mentions_save_failed", test_mentions_save_failed);
 	g_test_add_func("/shellter_defaults/no_user_file", test_no_user_file);
 	g_test_add_func("/shellter_defaults/statusbar_shipped_list", test_statusbar_shipped_list);
 	g_test_add_func("/shellter_defaults/statusbar_custom_untouched",

@@ -238,6 +238,32 @@ int shellter_statusbar_migrate(CONFIG_REC *config)
 	return shellter_statusbar_migrate_to(config, SHELLTER_STATUSBAR_VERSION);
 }
 
+int shellter_save_at_start(char **reason)
+{
+	int ok;
+
+	if (reason != NULL)
+		*reason = NULL;
+	/* the callers save only a config read without errors: what is
+	   cleared below can only be the error of this write */
+	g_return_val_if_fail(config_last_error(mainconfig) == NULL, FALSE);
+
+	/* lib-config's rename path returns success with the error set, so
+	   an error after the write is a failed write too */
+	ok = settings_save(NULL, TRUE) && config_last_error(mainconfig) == NULL;
+	if (!ok) {
+		/* The file is intact, but the reason left in last_error would
+		   look like a parse error for the rest of the run (erssi
+		   --setup, the other migrations). lib-config has no public
+		   call to clear it. */
+		if (reason != NULL)
+			*reason = g_strdup(config_last_error(mainconfig) != NULL ?
+			                   config_last_error(mainconfig) : "unknown error");
+		g_free_and_null(mainconfig->last_error);
+	}
+	return ok;
+}
+
 void shellter_defaults_init(void)
 {
 	int counter;
@@ -267,16 +293,10 @@ void shellter_defaults_init(void)
 		   so that settings_autosave does not write the file either. */
 		mainconfig->modifycounter = counter;
 		migrated_state = SHELLTER_DEFAULTS_BROKEN;
-	} else if (!settings_save(NULL, TRUE)) {
+	} else if (!shellter_save_at_start(&save_error)) {
 		/* saved at once, so that /RELOAD or settings_autosave OFF
 		   keep it - but the write failed (a full quota, a read-only
-		   directory). lib-config left the reason in last_error, where
-		   it would look like a parse error for the rest of the run
-		   (erssi --setup, the mentions migration). The file is
-		   intact: the reason is kept here for the note and cleared
-		   there - lib-config has no public call for that. */
-		save_error = g_strdup(config_last_error(mainconfig));
-		g_free_and_null(mainconfig->last_error);
+		   directory); the reason is kept for the note */
 		migrated_state = SHELLTER_DEFAULTS_SAVE_FAILED;
 	}
 }

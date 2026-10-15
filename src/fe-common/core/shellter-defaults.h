@@ -51,6 +51,15 @@ enum {
 					   no note, not written at quit */
 };
 
+/* settings_save() of mainconfig at start, by a migration, that leaves no
+   error in mainconfig: a failed write is no parse error (erssi --setup and
+   the other migrations check config_last_error()). Call it only when
+   config_last_error(mainconfig) is NULL. A write that lib-config reports
+   as done but with an error set (a failed rename) counts as failed.
+   Returns TRUE when the file was written; else `reason' (when not NULL)
+   gets why, to be freed by the caller. */
+int shellter_save_at_start(char **reason);
+
 /* Migrates mainconfig (the settings, then the info bar) and saves it at
    once, unless the config file had errors (the part not read would be
    lost) or does not exist yet. A failed write leaves no error in
