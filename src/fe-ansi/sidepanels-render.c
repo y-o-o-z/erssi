@@ -55,9 +55,13 @@ gboolean batch_mode_active = FALSE;
 
 /* External functions we need */
 extern void sp_logf(const char *fmt, ...);
-extern SP_MAINWIN_CTX *get_ctx(MAIN_WINDOW_REC *mw, gboolean create);
-extern void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx);
-extern void draw_main_window_borders(MAIN_WINDOW_REC *mw);
+
+/* The window whose theme the panels are drawn with, and whose channel's
+   nicks the right panel shows: the active one of the active main window. */
+static WINDOW_REC *panel_window(void)
+{
+	return active_mainwin != NULL ? active_mainwin->active : active_win;
+}
 
 /* Forward declarations - ci_nick_compare is declared in activity header */
 
@@ -498,8 +502,9 @@ static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int hei
 	return drawn;
 }
 
-void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
+void draw_left_contents(SP_MAINWIN_CTX *ctx)
 {
+	WINDOW_REC *wctx = panel_window();
 	TERM_WINDOW *tw;
 	int row;
 	int skip;
@@ -614,7 +619,7 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 			term_clrtoeol(tw);
 
 			/* Draw the new content */
-			draw_str_themed_2params(tw, 0, row, mw->active, format,
+			draw_str_themed_2params(tw, 0, row, wctx, format,
 			                        refnum_str, truncated_name, width - 1);
 
 			/* Update cache */
@@ -657,7 +662,7 @@ void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	draw_border_vertical(tw, width, height, 1);
 
 	/* Scroll markers in the column next to the border */
-	lines_changed += draw_scroll_markers(tw, mw->active, width - 2, height, has_more_above,
+	lines_changed += draw_scroll_markers(tw, wctx, width - 2, height, has_more_above,
 	                                     has_more_below);
 
 	/* Only mark dirty if something changed */
@@ -711,7 +716,7 @@ static void get_nick_format_and_prefix(NICK_REC *nick, int *format, const char *
 	}
 }
 
-void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
+void draw_right_contents(SP_MAINWIN_CTX *ctx)
 {
 	TERM_WINDOW *tw;
 	WINDOW_REC *aw;
@@ -740,7 +745,7 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	if (height > SP_CACHE_MAX_LINES)
 		height = SP_CACHE_MAX_LINES;
 	width = ctx->right_w;
-	aw = mw->active;
+	aw = panel_window();
 	index = 0;
 	row = 0;
 	new_count = 0;
@@ -904,7 +909,7 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 				term_clrtoeol(tw);
 
 				/* Draw the new content */
-				draw_str_themed_2params(tw, 1, row, mw->active, format,
+				draw_str_themed_2params(tw, 1, row, aw, format,
 				                        prefix_str, truncated_nick, width - 1);
 
 				/* Update cache */
@@ -949,7 +954,7 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	/* Scroll markers in the outer (right) column: column 1, right after the
 	 * border, is the nick's mode prefix - a marker there read as part of the
 	 * nick (e.g. "vKnut") */
-	lines_changed += draw_scroll_markers(tw, mw->active, width - 1, height, has_more_above,
+	lines_changed += draw_scroll_markers(tw, aw, width - 1, height, has_more_above,
 	                                     has_more_below);
 
 	/* Only mark dirty if something changed */
@@ -958,46 +963,26 @@ void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
 	}
 }
 
-void redraw_one(MAIN_WINDOW_REC *mw)
+/* The panels are laid out (sp_layout_panels: it may create or destroy
+   them, e.g. the right one for a window that is no channel) before they
+   are drawn - once for the screen, not once for each main window. */
+void redraw_all(void)
 {
-	SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-	if (!ctx)
+	SP_MAINWIN_CTX *ctx;
+
+	if (!mainwindows)
 		return;
 
 	/* Freeze terminal updates to prevent flicker */
 	term_refresh_freeze();
 
-	position_tw(mw, ctx);
-	draw_left_contents(mw, ctx);
-	/* Only draw right contents if right panel is actually shown */
-	if (ctx->right_tw && ctx->right_h > 0) {
-		draw_right_contents(mw, ctx);
-	}
-	draw_main_window_borders(mw);
-	irssi_set_dirty();
-
-	/* Thaw and flush all updates at once */
-	term_refresh_thaw();
-}
-
-void redraw_all(void)
-{
-	GSList *t;
-
-	/* Freeze terminal updates to prevent flicker */
-	term_refresh_freeze();
-
-	for (t = mainwindows; t; t = t->next) {
-		MAIN_WINDOW_REC *mw = t->data;
-		SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-		if (!ctx)
-			continue;
-		position_tw(mw, ctx);
-		draw_left_contents(mw, ctx);
-		if (ctx->right_tw && ctx->right_h > 0) {
-			draw_right_contents(mw, ctx);
-		}
-		draw_main_window_borders(mw);
+	sp_layout_panels();
+	ctx = sp_get_ctx(FALSE);
+	if (ctx != NULL) {
+		draw_left_contents(ctx);
+		if (ctx->right_tw && ctx->right_h > 0)
+			draw_right_contents(ctx);
+		draw_panel_borders();
 		irssi_set_dirty();
 	}
 
@@ -1007,92 +992,48 @@ void redraw_all(void)
 
 void redraw_right_panels_only(const char *event_name)
 {
-	/* Redraw only right panels (nicklists) in all main windows */
-	GSList *t;
 	SP_MAINWIN_CTX *ctx;
 
 	(void) event_name; /* unused */
 
 	/* Safety check: ensure mainwindows is initialized */
-	if (!mainwindows) {
+	if (!mainwindows)
 		return;
-	}
 
-	/* Freeze terminal updates to prevent flicker */
 	term_refresh_freeze();
-
-	for (t = mainwindows; t; t = t->next) {
-		MAIN_WINDOW_REC *mw = t->data;
-
-		/* Safety check: ensure mw is valid */
-		if (!mw) {
-			continue;
-		}
-
-		ctx = get_ctx(mw, FALSE);
-		if (!ctx) {
-			continue;
-		}
-
-		/* ALWAYS call position_tw first - it may create/destroy right panel
-		 * based on current window type (channel vs DCC/query) */
-		position_tw(mw, ctx);
-
-		/* Now check panel state AFTER position_tw has updated it */
-		if (ctx->right_tw && ctx->right_h > 0) {
-			draw_right_contents(mw, ctx);
-			draw_main_window_borders(mw);
-			irssi_set_dirty();
-		}
+	sp_layout_panels();
+	ctx = sp_get_ctx(FALSE);
+	if (ctx != NULL && ctx->right_tw && ctx->right_h > 0) {
+		draw_right_contents(ctx);
+		draw_panel_borders();
+		irssi_set_dirty();
 	}
-
-	/* Thaw and flush all updates at once */
 	term_refresh_thaw();
 }
 
 void redraw_left_panels_only(const char *event_name)
 {
-	/* Redraw only left panels (window list) in all main windows */
-	GSList *t;
 	SP_MAINWIN_CTX *ctx;
 
 	(void) event_name; /* unused */
 
 	/* Safety check: ensure mainwindows is initialized */
-	if (!mainwindows) {
+	if (!mainwindows)
 		return;
-	}
 
-	/* Freeze terminal updates to prevent flicker */
+	ctx = sp_get_ctx(FALSE);
+	/* Only redraw left panel if it exists and is visible */
+	if (ctx == NULL || !ctx->left_tw || ctx->left_h <= 0)
+		return;
+
 	term_refresh_freeze();
-
-	for (t = mainwindows; t; t = t->next) {
-		MAIN_WINDOW_REC *mw = t->data;
-
-		/* Safety check: ensure mw is valid */
-		if (!mw) {
-			sp_logf("DEBUG: NULL mainwindow in list, skipping redraw_left_panels_only");
-			continue;
-		}
-
-		ctx = get_ctx(mw, FALSE);
-		if (!ctx) {
-			continue;
-		}
-
-		/* Only redraw left panel if it exists and is visible */
-		if (ctx->left_tw && ctx->left_h > 0) {
-			/* Position panels if needed (only if left panel exists) */
-			position_tw(mw, ctx);
-			/* Draw only left contents */
-			draw_left_contents(mw, ctx);
-			/* Update borders as activity colors may have changed */
-			draw_main_window_borders(mw);
-			irssi_set_dirty();
-		}
+	sp_layout_panels();
+	if (ctx->left_tw && ctx->left_h > 0) {
+		draw_left_contents(ctx);
+		/* Update borders as activity colors may have changed */
+		draw_panel_borders();
+		irssi_set_dirty();
 	}
-
-	/* Thaw and flush all updates at once */
 	term_refresh_thaw();
 }
 
@@ -1102,74 +1043,48 @@ void redraw_left_panels_only(const char *event_name)
    line (a nick that had already left). */
 void sidepanels_invalidate_caches(void)
 {
-	GSList *t;
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
 
-	for (t = mainwindows; t != NULL; t = t->next) {
-		SP_MAINWIN_CTX *ctx = get_ctx(t->data, FALSE);
-
-		if (ctx == NULL)
-			continue;
-		sp_cache_clear(ctx->left_cache);
-		sp_cache_clear(ctx->right_cache);
-	}
+	if (ctx == NULL)
+		return;
+	sp_cache_clear(ctx->left_cache);
+	sp_cache_clear(ctx->right_cache);
 }
 
 void redraw_both_panels_only(const char *event_name)
 {
-	/* Redraw both left and right panels efficiently in all main windows */
-	GSList *t;
+	SP_MAINWIN_CTX *ctx;
 	gboolean needs_redraw = FALSE;
 
 	(void) event_name; /* unused */
 
 	/* Safety check: ensure mainwindows is initialized */
-	if (!mainwindows) {
+	if (!mainwindows)
 		return;
-	}
 
-	/* Freeze terminal updates to prevent flicker */
 	term_refresh_freeze();
 
-	for (t = mainwindows; t; t = t->next) {
-		MAIN_WINDOW_REC *mw = t->data;
-		SP_MAINWIN_CTX *ctx;
-
-		/* Safety check: ensure mw is valid */
-		if (!mw) {
-			continue;
-		}
-
-		ctx = get_ctx(mw, FALSE);
-		if (!ctx) {
-			continue;
-		}
-
-		needs_redraw = FALSE;
-
-		/* ALWAYS call position_tw first - it may create/destroy panels based on
-		 * current window type (channel vs DCC/query). This fixes the bug where
-		 * nicklist stays empty when returning from DCC chat window. */
-		position_tw(mw, ctx);
-
-		/* Now check panel states AFTER position_tw has updated them */
+	/* ALWAYS lay out first - it may create/destroy panels based on the
+	 * current window type (channel vs DCC/query). This fixes the bug where
+	 * nicklist stays empty when returning from DCC chat window. */
+	sp_layout_panels();
+	ctx = sp_get_ctx(FALSE);
+	if (ctx != NULL) {
 		if (ctx->left_tw && ctx->left_h > 0) {
-			draw_left_contents(mw, ctx);
+			draw_left_contents(ctx);
 			needs_redraw = TRUE;
 		}
-
 		if (ctx->right_tw && ctx->right_h > 0) {
-			draw_right_contents(mw, ctx);
+			draw_right_contents(ctx);
 			needs_redraw = TRUE;
 		}
-
 		/* Update borders if any panel was redrawn */
 		if (needs_redraw) {
-			draw_main_window_borders(mw);
+			draw_panel_borders();
 			irssi_set_dirty();
 		}
 	}
 
-	/* Thaw and flush all updates at once */
 	term_refresh_thaw();
 }
 

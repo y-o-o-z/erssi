@@ -736,75 +736,101 @@ static void mainwindows_resize_smaller(int ydiff)
 	g_slist_free(sorted);
 }
 
-static void mainwindows_rresize_line(int xdiff, MAIN_WINDOW_REC *win)
+/* Lay the row of WIN out over the main area (the columns between the ones
+   reserved on the left and on the right), one separator column between
+   two windows: each window keeps its share of the row (its current width,
+   rounded to the largest remainders) and is at least NEW_WINDOW_WIDTH
+   wide when they all fit that way - otherwise they are made as equal as
+   they fit, at least one column each, and never end before they start.
+   Every loop is bounded by the number of windows or of columns. */
+static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 {
-	int windows, i, extra_width, next_column, shrunk;
-	int *widths;
 	GSList *line, *tmp;
-	int new_avail, old_avail, width_mod;
+	int *widths;
+	gint64 *rem, total;
+	int windows, avail, minw, used, col, i, j;
 
 	line = mainwindows_get_line(win);
 	windows = g_slist_length(line);
+	if (windows == 0)
+		return;
+
+	avail = screen_width - screen_reserved_left - screen_reserved_right - (windows - 1);
+	if (avail < windows)
+		avail = windows; /* no room at all: one column each */
+	minw = avail >= windows * NEW_WINDOW_WIDTH ? NEW_WINDOW_WIDTH : avail / windows;
+
 	widths = g_new0(int, windows);
-
-	/* Available text width on this line should respect globally reserved columns */
-	new_avail = screen_width - screen_reserved_left - screen_reserved_right - windows + 1;
-	old_avail =
-	    (screen_width - xdiff) - screen_reserved_left - screen_reserved_right - windows + 1;
-	extra_width = new_avail;
+	rem = g_new0(gint64, windows);
+	total = 0;
 	for (tmp = line, i = 0; tmp != NULL; tmp = tmp->next, i++) {
 		MAIN_WINDOW_REC *rec = tmp->data;
-		/* Scale each window proportionally based on available text widths (excluding
-		 * reserved columns) */
-		widths[i] = old_avail > 0 ? (MAIN_WINDOW_TEXT_WIDTH(rec) * new_avail) / old_avail :
-		                            MAIN_WINDOW_TEXT_WIDTH(rec);
-		extra_width -= widths[i] + rec->statusbar_columns;
+
+		widths[i] = MAX(1, rec->width);
+		total += widths[i];
 	}
-	shrunk = FALSE;
-	for (i = windows; extra_width < 0; i = i > 1 ? i - 1 : windows) {
-		if (widths[i - 1] > NEW_WINDOW_WIDTH || (i == 1 && !shrunk)) {
-			widths[i - 1]--;
-			extra_width++;
-			shrunk = i == 1;
+	used = 0;
+	for (i = 0; i < windows; i++) {
+		gint64 share = (gint64) widths[i] * avail;
+
+		widths[i] = (int) (share / total);
+		rem[i] = share % total;
+		used += widths[i];
+	}
+	/* the columns the rounding left over (fewer than the windows) */
+	for (j = 0; j < windows && used < avail; j++, used++) {
+		int best = 0;
+
+		for (i = 1; i < windows; i++) {
+			if (rem[i] > rem[best])
+				best = i;
+		}
+		widths[best]++;
+		rem[best] = -1;
+	}
+	widths[windows - 1] += avail - used;
+
+	/* the narrow ones get columns from the widest one */
+	for (i = 0; i < windows; i++) {
+		while (widths[i] < minw) {
+			int widest = -1;
+
+			for (j = 0; j < windows; j++) {
+				if (widths[j] > minw && (widest < 0 || widths[j] > widths[widest]))
+					widest = j;
+			}
+			if (widest < 0)
+				break;
+			widths[widest]--;
+			widths[i]++;
 		}
 	}
 
-	/* Start after reserved left columns */
-	next_column = screen_reserved_left;
-
-	/* Distribute any leftover width across windows; base modulo on available width */
-	width_mod = new_avail % windows;
-#define extra                                                                                      \
-	((i >= width_mod && i < extra_width + width_mod) ||                                        \
-	         i + windows < extra_width + width_mod ?                                           \
-	     1 :                                                                                   \
-	     0)
-
+	col = screen_reserved_left;
 	for (tmp = line, i = 0; tmp != NULL; tmp = tmp->next, i++) {
 		MAIN_WINDOW_REC *rec = tmp->data;
-		gboolean is_last = (tmp->next == NULL);
-		rec->first_column = next_column;
-		if (is_last) {
-			/* Anchor rightmost window to reserved-right boundary to avoid gap/lag */
-			rec->last_column = screen_width - 1 - screen_reserved_right;
-			mainwindow_resize(
-			    rec, (rec->last_column - rec->first_column + 1) - rec->width, 0);
-		} else {
-			rec->last_column =
-			    rec->first_column + widths[i] + rec->statusbar_columns + extra - 1;
-			/* Ensure we never write past the globally reserved right columns */
-			if (rec->last_column > screen_width - 1 - screen_reserved_right)
-				rec->last_column = screen_width - 1 - screen_reserved_right;
-			mainwindow_resize(
-			    rec, widths[i] + rec->statusbar_columns + extra - rec->width, 0);
-		}
+		int old_width = rec->width;
+
+		rec->first_column = col;
+		rec->last_column = col + widths[i] - 1;
+		mainwindow_resize(rec, widths[i] - old_width, 0);
+		rec->width = widths[i];
 		rec->size_dirty = TRUE;
-		next_column = rec->last_column + 2;
+		col = rec->last_column + 2;
 	}
-#undef extra
 
 	g_free(widths);
+	g_free(rem);
 	g_slist_free(line);
+}
+
+/* Every row of main windows laid out again over the main area. */
+static void mainwindows_fit_lines(void)
+{
+	MAIN_WINDOW_REC *win;
+
+	for (win = mainwindows_find_lower(NULL); win != NULL; win = mainwindows_find_lower(win))
+		mainwindows_fit_line(win);
 }
 
 void mainwindows_resize(int width, int height)
@@ -856,7 +882,6 @@ void mainwindows_resize(int width, int height)
 		} else if (screen_collapsed) {
 			/* Recover from collapsed state: restore both width and height.
 			 * Windows were set to 1x1 during collapse, now restore proper geometry. */
-			MAIN_WINDOW_REC *win;
 			int avail_height = avail_h;
 			int num_windows = 0;
 			int height_per_window, extra_height;
@@ -904,10 +929,7 @@ void mainwindows_resize(int width, int height)
 			}
 
 			/* Reflow horizontal layout */
-			for (win = mainwindows_find_lower(NULL); win != NULL;
-			     win = mainwindows_find_lower(win)) {
-				mainwindows_rresize_line(0, win);
-			}
+			mainwindows_fit_lines();
 			irssi_set_dirty();
 
 			/* Skip normal ydiff/xdiff processing since we just rebuilt everything */
@@ -934,12 +956,7 @@ void mainwindows_resize(int width, int height)
 
 	if (xdiff > 0) {
 		/* algorithm: distribute new space on each line */
-		MAIN_WINDOW_REC *win;
-
-		for (win = mainwindows_find_lower(NULL); win != NULL;
-		     win = mainwindows_find_lower(win)) {
-			mainwindows_rresize_line(xdiff, win);
-		}
+		mainwindows_fit_lines();
 	}
 
 	if (xdiff < 0) {
@@ -949,7 +966,7 @@ void mainwindows_resize(int width, int height)
 
 		for (win = mainwindows_find_lower(NULL); win != NULL;
 		     win = mainwindows_find_lower(win)) {
-			int max_windows, i, last_column;
+			int max_windows, i;
 			GSList *line, *tmp;
 
 			line = mainwindows_get_line(win);
@@ -959,19 +976,15 @@ void mainwindows_resize(int width, int height)
 			    (NEW_WINDOW_WIDTH + 1);
 			if (max_windows < 1)
 				max_windows = 1;
-			last_column = screen_width - 1 - screen_reserved_right;
 			for (tmp = line, i = 0; tmp != NULL; tmp = tmp->next, i++) {
 				MAIN_WINDOW_REC *rec = tmp->data;
 				if (i >= max_windows)
 					mainwindow_destroy_half(rec);
-				else
-					last_column = rec->last_column;
 			}
 			win = line->data;
 			g_slist_free(line);
 
-			mainwindows_rresize_line(
-			    screen_width - screen_reserved_right - last_column + 1, win);
+			mainwindows_fit_line(win);
 		}
 	}
 
@@ -2152,37 +2165,44 @@ void mainwindows_deinit(void)
 	signal_remove("window print info", (SIGNAL_FUNC) sig_window_print_info);
 }
 
+/* Reserve columns for the whole screen (the side panels): on the left
+   and on the right of every row of main windows, not only of one. The
+   rows are laid out again over the new main area (not while the screen
+   is collapsed: mainwindows_resize() lays them out when it recovers). */
 int mainwindows_reserve_columns(int left, int right)
 {
-	MAIN_WINDOW_REC *window;
 	int ret = -1;
+
 	if (left != 0) {
-		GSList *list, *tmp;
-		g_return_val_if_fail(left > 0 || screen_reserved_left > left, -1);
+		g_return_val_if_fail(screen_reserved_left + left >= 0, -1);
 		ret = screen_reserved_left;
 		screen_reserved_left += left;
-		list = mainwindows_get_line(mainwindows_find_lower_right(NULL));
-		for (tmp = list; tmp != NULL; tmp = tmp->next) {
-			window = tmp->data;
-			window->first_column += left;
-			mainwindow_resize(window, -left, 0);
-		}
-		g_slist_free(list);
 	}
 	if (right != 0) {
-		GSList *list, *tmp;
-		g_return_val_if_fail(right > 0 || screen_reserved_right > right, -1);
+		g_return_val_if_fail(screen_reserved_right + right >= 0, -1);
 		ret = screen_reserved_right;
 		screen_reserved_right += right;
-		list = mainwindows_get_line(mainwindows_find_left_upper(NULL));
-		for (tmp = list; tmp != NULL; tmp = tmp->next) {
-			window = tmp->data;
-			window->last_column -= right;
-			mainwindow_resize(window, -right, 0);
-		}
-		g_slist_free(list);
 	}
+	if ((left != 0 || right != 0) && !screen_collapsed)
+		mainwindows_fit_lines();
 	return ret;
+}
+
+/* The fewest columns the main area can have: the widest row of main
+   windows at NEW_WINDOW_WIDTH each, with the separators. */
+int mainwindows_min_columns(void)
+{
+	MAIN_WINDOW_REC *win;
+	int need = 0;
+
+	for (win = mainwindows_find_lower(NULL); win != NULL; win = mainwindows_find_lower(win)) {
+		GSList *line = mainwindows_get_line(win);
+		int windows = g_slist_length(line);
+
+		need = MAX(need, windows * (NEW_WINDOW_WIDTH + 1) - 1);
+		g_slist_free(line);
+	}
+	return need;
 }
 
 int mainwindow_set_statusbar_columns(MAIN_WINDOW_REC *window, int left, int right)

@@ -31,12 +31,17 @@
 /* Forward declaration for cache structures */
 typedef struct _SP_PANEL_CACHE SP_PANEL_CACHE;
 
-/* SP_MAINWIN_CTX structure definition - shared across all modules */
+/* SP_MAINWIN_CTX structure definition - shared across all modules. There is
+   one, for the whole screen: the panels are not per main window. */
 typedef struct {
 	TERM_WINDOW *left_tw;
 	TERM_WINDOW *right_tw;
 	int left_w;
 	int right_w;
+	/* the columns the panel reserved (mainwindows_reserve_columns), 0
+	   without the panel: given back exactly when it goes */
+	int left_reserved;
+	int right_reserved;
 	/* selection and scroll state */
 	int left_selected_index;
 	int left_scroll_offset;

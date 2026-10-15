@@ -30,6 +30,9 @@
 #include <irssi/src/fe-ansi/gui-windows.h>
 #include <irssi/src/fe-ansi/textbuffer-view.h>
 
+/* larger than any terminal (its size is 16 bits) */
+#define LAYOUT_MAX_VALUE 65535
+
 static void sig_layout_window_save(WINDOW_REC *window, CONFIG_NODE *node)
 {
 	WINDOW_REC *active;
@@ -82,7 +85,9 @@ static void sig_layout_window_restore(WINDOW_REC *window, CONFIG_NODE *node)
 
 /* The columns of a layout are those of the main area: the columns the side
    panels (and anything else) reserve on the left are not part of it, so a
-   layout restores the same with the panels on or off. */
+   layout restores the same with the panels on or off. Every number is one
+   the restore accepts (layout_read): never below 0, a size never below 1,
+   so erssi never saves a layout that its next start drops. */
 static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 {
 	char num[MAX_INT_STRLEN];
@@ -90,11 +95,11 @@ static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 	ltoa(num, window->active->refnum);
 	node = iconfig_node_section(node, num, NODE_TYPE_BLOCK);
 
-	iconfig_node_set_int(node, "first_line", window->first_line);
-	iconfig_node_set_int(node, "lines", window->height);
+	iconfig_node_set_int(node, "first_line", CLAMP(window->first_line, 0, LAYOUT_MAX_VALUE));
+	iconfig_node_set_int(node, "lines", CLAMP(window->height, 1, LAYOUT_MAX_VALUE));
 	iconfig_node_set_int(node, "first_column",
-	                     MAX(0, window->first_column - screen_reserved_left));
-	iconfig_node_set_int(node, "columns", window->width);
+	                     CLAMP(window->first_column - screen_reserved_left, 0, LAYOUT_MAX_VALUE));
+	iconfig_node_set_int(node, "columns", CLAMP(window->width, 1, LAYOUT_MAX_VALUE));
 }
 
 static void sig_layout_save(void)
@@ -106,9 +111,6 @@ static void sig_layout_save(void)
 
 	g_slist_foreach(mainwindows, (GFunc) main_window_save, node);
 }
-
-/* larger than any terminal (its size is 16 bits) */
-#define LAYOUT_MAX_VALUE 65535
 
 typedef struct {
 	int refnum;
@@ -245,9 +247,13 @@ static int layout_fit_heights(int *heights, int count, int avail_height)
 	while (count > 1 && count * (WINDOW_MIN_SIZE + 1) > avail_height)
 		count--;
 
+	/* a band is created at least this high (a split makes lower ones, and
+	   the sum of the saved heights is then no longer the one restored) */
 	height = 0;
-	for (i = 0; i < count; i++)
+	for (i = 0; i < count; i++) {
+		heights[i] = MAX(heights[i], WINDOW_MIN_SIZE + 1);
 		height += heights[i];
+	}
 	if (height == avail_height)
 		return count;
 

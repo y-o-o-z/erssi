@@ -333,6 +333,10 @@ class Erssi:
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
+    def resize(self, cols, rows):
+        """A new terminal size: the kernel sends SIGWINCH to erssi."""
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
     def run_detached(self, timeout, stdin_tty=False):
         """erssi without a terminal on stdout: stdout and stderr one pipe,
         stdin /dev/null (or, with stdin_tty, the slave of a new pty), the

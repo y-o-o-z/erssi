@@ -50,11 +50,10 @@ const char *sidepanel_ellipsis(void);
 char *truncate_nick_for_sidepanel(const char *nick, int max_width);
 
 /* Panel content drawing */
-void draw_left_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx);
-void draw_right_contents(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx);
+void draw_left_contents(SP_MAINWIN_CTX *ctx);
+void draw_right_contents(SP_MAINWIN_CTX *ctx);
 
 /* Redraw functions */
-void redraw_one(MAIN_WINDOW_REC *mw);
 void redraw_all(void);
 void redraw_right_panels_only(const char *event_name);
 void redraw_left_panels_only(const char *event_name);
