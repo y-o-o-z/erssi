@@ -37,6 +37,7 @@ SP_MAINWIN_CTX *sp_get_ctx(gboolean create);
    their columns reserved once (sp_layout_panels), or only moved over the
    rows of the main windows (sp_move_panels, safe in "mainwindow resized") */
 void sp_layout_panels(void);
+gboolean sp_layout_busy(void);
 void sp_move_panels(void);
 void apply_reservations_all(void);
 void apply_and_redraw(void);

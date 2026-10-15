@@ -769,8 +769,15 @@ static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 		return;
 
 	avail = screen_width - screen_reserved_left - screen_reserved_right - (windows - 1);
+	/* No room at all: one column each, and the row ends past the right
+	   edge. The callers never get here: mainwindows_resize() destroys
+	   the windows a row has no room for first (xdiff < 0), it collapses
+	   the screen below MW_MIN_AVAIL_WIDTH and the reserve skips the
+	   layout while collapsed, and the side panels reserve only what
+	   leaves room for the widest row (mainwindows_min_columns). Every
+	   window still keeps first_column <= last_column. */
 	if (avail < windows)
-		avail = windows; /* no room at all: one column each */
+		avail = windows;
 	minw = avail >= windows * NEW_WINDOW_WIDTH ? NEW_WINDOW_WIDTH : avail / windows;
 
 	widths = g_new0(int, windows);

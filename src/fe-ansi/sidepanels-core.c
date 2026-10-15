@@ -189,7 +189,7 @@ gboolean sidepanels_try_parse_mouse_key(unichar key)
 
 static void sig_mainwindow_created(MAIN_WINDOW_REC *mw)
 {
-	/* Panel reservations are now handled dynamically in position_tw() for better control */
+	/* the panels are laid out for the screen in sp_layout_panels() */
 	(void) mw;
 }
 

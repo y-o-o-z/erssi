@@ -517,6 +517,10 @@ void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 		/* Move the panels over the main windows' rows and redraw their
 		 * CONTENTS only - do NOT lay them out here: sp_layout_panels()
 		 * emits "mainwindow resized" when it creates or destroys a panel. */
+		/* sp_layout_panels() draws the panels once itself after the
+		 * "mainwindow resized" it emits for every main window */
+		if (sp_layout_busy())
+			return;
 		resize_debug_redraw("draw_contents_only", mw_id);
 		sp_move_panels();
 		if (ctx->left_tw && ctx->left_h > 0) {

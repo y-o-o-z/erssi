@@ -201,26 +201,31 @@ static gboolean relayout_after_collapse(gpointer data)
 	return FALSE;
 }
 
+/* sp_layout_panels() is running; a call from inside it (through the
+   signals it emits) is remembered and done once it is over */
+static gboolean layout_busy = FALSE;
+static gboolean layout_pending = FALSE;
+
+/* at most this many passes per call: a pass asked for from inside one is
+   done after it, but a pass never makes an endless chain of them */
+#define LAYOUT_MAX_PASSES 3
+
+gboolean sp_layout_busy(void)
+{
+	return layout_busy;
+}
+
 /* Which panels the screen has room for, and their columns: a panel is
  * created (its columns reserved) or destroyed (given back) here only, so
  * the columns are reserved once whatever the number of main windows. The
  * main area keeps at least MIN_MAIN_WINDOW_WIDTH columns and room for the
  * widest row of main windows; the right panel goes first. */
-void sp_layout_panels(void)
+static void layout_panels_once(SP_MAINWIN_CTX *ctx)
 {
-	static gboolean busy = FALSE;
-	SP_MAINWIN_CTX *ctx;
 	WINDOW_REC *aw;
 	int left_w, right_w, base, need, y, h;
 	gboolean rows, want_left, want_right, show_left, show_right, changed, destroyed;
 	GSList *tmp;
-
-	/* no panels before "irssi init finished" (sig_irssi_init_finished
-	   creates the state): the saved layout is restored without them */
-	ctx = sp_get_ctx(FALSE);
-	if (busy || ctx == NULL || mainwindows == NULL)
-		return;
-	busy = TRUE;
 
 	left_w = get_sp_enable_left() ? MAX(0, get_sp_left_width()) : 0;
 	right_w = get_sp_enable_right() ? MAX(0, get_sp_right_width()) : 0;
@@ -273,14 +278,49 @@ void sp_layout_panels(void)
 		if (destroyed)
 			mainwindows_recreate();
 		mainwindows_redraw();
+		/* the panels themselves are drawn once, below, not once for each
+		   main window (sig_mainwindow_resized skips them while busy) */
 		for (tmp = mainwindows; tmp != NULL; tmp = tmp->next)
 			signal_emit("mainwindow resized", 1, tmp->data);
+		sp_cache_clear(ctx->left_cache);
+		sp_cache_clear(ctx->right_cache);
+		if (ctx->left_tw && ctx->left_h > 0)
+			draw_left_contents(ctx);
+		if (ctx->right_tw && ctx->right_h > 0)
+			draw_right_contents(ctx);
+		draw_panel_borders();
+		irssi_set_dirty();
 	}
 	/* a panel went for lack of room: the screen is (or was) too narrow */
 	if (destroyed && ((want_left && !show_left) || (want_right && !show_right)) &&
 	    relayout_tag == 0)
 		relayout_tag = g_idle_add(relayout_after_collapse, NULL);
-	busy = FALSE;
+}
+
+void sp_layout_panels(void)
+{
+	SP_MAINWIN_CTX *ctx;
+	int pass;
+
+	if (layout_busy) {
+		layout_pending = TRUE;
+		return;
+	}
+	/* no panels before "irssi init finished" (sig_irssi_init_finished
+	   creates the state): the saved layout is restored without them */
+	ctx = sp_get_ctx(FALSE);
+	if (ctx == NULL || mainwindows == NULL)
+		return;
+
+	layout_busy = TRUE;
+	for (pass = 0; pass < LAYOUT_MAX_PASSES; pass++) {
+		layout_pending = FALSE;
+		layout_panels_once(ctx);
+		if (!layout_pending)
+			break;
+	}
+	layout_pending = FALSE;
+	layout_busy = FALSE;
 }
 
 void update_left_selection_to_active(void)
