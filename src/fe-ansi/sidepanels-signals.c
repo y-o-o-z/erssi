@@ -49,7 +49,6 @@
 extern void sp_logf(const char *fmt, ...);
 extern void update_left_selection_to_active(void);
 extern int get_auto_create_separators(void);
-extern SP_MAINWIN_CTX *get_ctx(MAIN_WINDOW_REC *mw, gboolean create);
 
 /* Helper function to find server separator window */
 static WINDOW_REC *find_server_separator_window(const char *server_tag)
@@ -226,7 +225,7 @@ void sig_server_connected(SERVER_REC *server)
 
 void sig_window_changed(WINDOW_REC *old, WINDOW_REC *new)
 {
-	GSList *t;
+	SP_MAINWIN_CTX *ctx;
 
 	(void) old;
 
@@ -238,21 +237,13 @@ void sig_window_changed(WINDOW_REC *old, WINDOW_REC *new)
 		reset_window_priority(new);
 	}
 
-	/* Clear right panel cache for all main windows when switching windows.
+	/* Clear the right panel cache when switching windows.
 	 * The cache doesn't track which channel it belongs to, so switching
 	 * between channels with same dimensions wouldn't trigger a redraw.
 	 * This ensures the nicklist is properly refreshed on window change. */
-	for (t = mainwindows; t; t = t->next) {
-		MAIN_WINDOW_REC *mw = t->data;
-		SP_MAINWIN_CTX *ctx;
-
-		if (!mw)
-			continue;
-		ctx = get_ctx(mw, FALSE);
-		if (ctx && ctx->right_cache) {
-			sp_cache_clear(ctx->right_cache);
-		}
-	}
+	ctx = sp_get_ctx(FALSE);
+	if (ctx && ctx->right_cache)
+		sp_cache_clear(ctx->right_cache);
 
 	update_left_selection_to_active();
 	redraw_both_panels_only("window_changed"); /* Window change affects both activity (left) and nicklist (right) */
@@ -505,7 +496,7 @@ void sig_nick_mode_filter(CHANNEL_REC *channel, NICK_REC *nick,
 
 void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 {
-	SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
 	int mw_id = mw ? (int)(long)mw : -1;
 
 	resize_debug_log("SP_MW_RESIZED", "mainwindow %p resized, ctx=%p", (void*)mw, (void*)ctx);
@@ -523,17 +514,18 @@ void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 			resize_debug_cache("CLEAR", "right", mw_id);
 		}
 
-		/* Redraw panel CONTENTS only - do NOT call position_tw here!
-		 * position_tw emits "mainwindow resized" when destroying panels,
-		 * which would cause infinite recursion if we called it from here. */
+		/* Move the panels over the main windows' rows and redraw their
+		 * CONTENTS only - do NOT lay them out here: sp_layout_panels()
+		 * emits "mainwindow resized" when it creates or destroys a panel. */
 		resize_debug_redraw("draw_contents_only", mw_id);
+		sp_move_panels();
 		if (ctx->left_tw && ctx->left_h > 0) {
-			draw_left_contents(mw, ctx);
+			draw_left_contents(ctx);
 		}
 		if (ctx->right_tw && ctx->right_h > 0) {
-			draw_right_contents(mw, ctx);
+			draw_right_contents(ctx);
 		}
-		draw_main_window_borders(mw);
+		draw_panel_borders();
 		irssi_set_dirty();
 	}
 
@@ -541,44 +533,30 @@ void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 }
 
 /* Clear ALL sidepanel caches when terminal is resized.
- * This is a safety net in addition to per-mainwindow cache clearing. */
+ * This is a safety net in addition to the cache clearing on a main window
+ * resize. */
 static void sig_terminal_resized(void)
 {
-	GSList *tmp;
-	int count = 0;
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
 
 	resize_debug_log("SP_TERM_RESIZED", "'terminal resized' signal received, term_width=%d, term_height=%d",
 	                 term_width, term_height);
 
-	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
-		MAIN_WINDOW_REC *mw = tmp->data;
-		SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-		int mw_id = mw ? (int)(long)mw : -1;
-		if (ctx) {
-			if (ctx->left_cache) {
-				sp_cache_clear(ctx->left_cache);
-				resize_debug_cache("CLEAR_ALL", "left", mw_id);
-			}
-			if (ctx->right_cache) {
-				sp_cache_clear(ctx->right_cache);
-				resize_debug_cache("CLEAR_ALL", "right", mw_id);
-			}
-			count++;
+	if (ctx) {
+		if (ctx->left_cache) {
+			sp_cache_clear(ctx->left_cache);
+			resize_debug_cache("CLEAR_ALL", "left", -1);
+		}
+		if (ctx->right_cache) {
+			sp_cache_clear(ctx->right_cache);
+			resize_debug_cache("CLEAR_ALL", "right", -1);
 		}
 	}
 
-	resize_debug_log("SP_TERM_RESIZED", "cleared caches for %d mainwindows", count);
-
-	/* Recalculate sidepanel geometry for all mainwindows.
-	 * This is critical after resize - setup_ctx_for recalculates widths
-	 * and position_tw handles collapsed mode if terminal is too small. */
+	/* Recalculate the sidepanel geometry (once, for the screen): the
+	 * panels the new size has room for, and where they are. Then a full
+	 * redraw of the sidepanels. */
 	resize_debug_log("SP_TERM_RESIZED", "recalculating sidepanel geometry...");
-	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
-		MAIN_WINDOW_REC *mw = tmp->data;
-		setup_ctx_for(mw);
-	}
-
-	/* Force full redraw of all sidepanels */
 	resize_debug_redraw("redraw_all", -1);
 	redraw_all();
 	resize_debug_log("SP_TERM_RESIZED", "redraw_all complete");

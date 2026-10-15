@@ -60,9 +60,9 @@ static int sp_auto_create_separators;
 /* Mouse scroll setting - still needed for sidepanel scrolling */
 static int mouse_scroll_chat;
 
-/* SP_MAINWIN_CTX is now defined in sidepanels-types.h */
-
-static GHashTable *mw_to_ctx;
+/* The panels' state, one for the whole screen (SP_MAINWIN_CTX is defined
+   in sidepanels-types.h) */
+static SP_MAINWIN_CTX *sp_ctx;
 
 /* Logging system */
 static FILE *sp_log;
@@ -109,19 +109,16 @@ void sp_logf(const char *fmt, ...)
 	fflush(sp_log);
 }
 
-SP_MAINWIN_CTX *get_ctx(MAIN_WINDOW_REC *mw, gboolean create)
+SP_MAINWIN_CTX *sp_get_ctx(gboolean create)
 {
-	SP_MAINWIN_CTX *ctx = g_hash_table_lookup(mw_to_ctx, mw);
-	if (!ctx && create) {
-		ctx = g_new0(SP_MAINWIN_CTX, 1);
-		g_hash_table_insert(mw_to_ctx, mw, ctx);
-	}
-	return ctx;
+	if (sp_ctx == NULL && create)
+		sp_ctx = g_new0(SP_MAINWIN_CTX, 1);
+	return sp_ctx;
 }
 
-static void destroy_ctx(MAIN_WINDOW_REC *mw)
+static void destroy_ctx(void)
 {
-	SP_MAINWIN_CTX *ctx = g_hash_table_lookup(mw_to_ctx, mw);
+	SP_MAINWIN_CTX *ctx = sp_ctx;
 	if (!ctx)
 		return;
 	if (ctx->left_tw) {
@@ -145,8 +142,8 @@ static void destroy_ctx(MAIN_WINDOW_REC *mw)
 		sp_cache_free(ctx->right_cache);
 		ctx->right_cache = NULL;
 	}
-	g_hash_table_remove(mw_to_ctx, mw);
 	g_free(ctx);
+	sp_ctx = NULL;
 }
 
 static void read_settings(void)
@@ -205,6 +202,8 @@ static void sig_irssi_init_finished(void)
 	
 	/* Renumber windows to ensure proper order */
 	renumber_windows_by_position();
+	/* the panels from now on, laid out over the restored main windows */
+	sp_get_ctx(TRUE);
 	apply_reservations_all();
 	apply_and_redraw();
 }
@@ -244,7 +243,6 @@ void sidepanels_init(void)
 		gui_mouse_enable_tracking();
 	}
 	
-	mw_to_ctx = g_hash_table_new(g_direct_hash, g_direct_equal);
 	/* Apply reservations but don't redraw yet - wait for irssi init finished */
 	apply_reservations_all();
 	signal_add("irssi init finished", (SIGNAL_FUNC) sig_irssi_init_finished);
@@ -267,17 +265,13 @@ void sidepanels_deinit(void)
 	signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
 	
 	/* Remove reservations */
+	destroy_ctx();
 	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
 		MAIN_WINDOW_REC *mw = tmp->data;
-		destroy_ctx(mw);
 		if (mw->statusbar_columns_left)
 			mainwindow_set_statusbar_columns(mw, -mw->statusbar_columns_left, 0);
 		if (mw->statusbar_columns_right)
 			mainwindow_set_statusbar_columns(mw, 0, -mw->statusbar_columns_right);
-	}
-	if (mw_to_ctx) {
-		g_hash_table_destroy(mw_to_ctx);
-		mw_to_ctx = NULL;
 	}
 	
 	gui_mouse_disable_tracking();
@@ -315,25 +309,13 @@ static gboolean is_in_chat_area(int x, int y)
 
 	for (tmp = mainwindows; tmp; tmp = tmp->next) {
 		MAIN_WINDOW_REC *mw = tmp->data;
-		SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
 		int chat_x, chat_y, chat_w, chat_h;
 
-		if (!ctx)
-			continue;
-
-		/* Calculate chat area bounds (main window minus sidepanels) */
-		chat_x = mw->first_column;
-		if (ctx->left_tw && ctx->left_h > 0) {
-			chat_x += ctx->left_w;
-		}
+		/* the text area of the main window: the panels' columns are
+		   reserved for the screen, outside every main window */
+		chat_x = mw->first_column + mw->statusbar_columns_left;
 		chat_y = mw->first_line + mw->statusbar_lines_top;
 		chat_w = mw->width - mw->statusbar_columns;
-		if (ctx->left_tw && ctx->left_h > 0) {
-			chat_w -= ctx->left_w;
-		}
-		if (ctx->right_tw && ctx->right_h > 0) {
-			chat_w -= ctx->right_w;
-		}
 		chat_h = mw->height - mw->statusbar_lines;
 
 		/* Check if coordinates are within chat area */
@@ -357,7 +339,7 @@ static gboolean chat_area_validator(int x, int y, gpointer user_data)
 
 static gboolean handle_click_at(int x, int y, int button)
 {
-	GSList *mt;
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
 	/* Debug: Mouse clicks - useful for mouse interaction debugging */
 	sp_logf("MOUSE_CLICK: at x=%d y=%d button=%d", x, y, button);
 
@@ -366,11 +348,7 @@ static gboolean handle_click_at(int x, int y, int button)
 		/* For now, just log that we detected a chat area click */
 		sp_logf("MOUSE_CLICK: Chat area click detected - scroll support ready");
 	}
-	for (mt = mainwindows; mt; mt = mt->next) {
-		MAIN_WINDOW_REC *mw = mt->data;
-		SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-		if (!ctx)
-			continue;
+	if (ctx != NULL) {
 		if (ctx->left_tw) {
 			int px = ctx->left_x, py = ctx->left_y, pw = ctx->left_w, ph = ctx->left_h;
 			if (x >= px && x < px + pw && y >= py && y < py + ph) {
@@ -397,7 +375,7 @@ static gboolean handle_click_at(int x, int y, int button)
 						ctx->left_selected_index = target_index;
 						if (win)
 							window_set_active(win);
-						redraw_one(mw);
+						redraw_all();
 						irssi_set_dirty();
 						free_sorted_window_list(sort_list);
 						return TRUE;
@@ -412,7 +390,7 @@ static gboolean handle_click_at(int x, int y, int button)
 			    ph = ctx->right_h;
 			if (x >= px && x < px + pw && y >= py && y < py + ph) {
 				int row = y - py;
-				WINDOW_REC *aw = mw->active;
+				WINDOW_REC *aw = active_mainwin != NULL ? active_mainwin->active : NULL;
 				if (aw && IS_CHANNEL(aw->active)) {
 					CHANNEL_REC *ch = CHANNEL(aw->active);
 					int target_index = ctx->right_scroll_offset + row;
@@ -431,7 +409,7 @@ static gboolean handle_click_at(int x, int y, int button)
 						if (nick && nick->nick)
 							signal_emit("command query", 3, nick->nick,
 							            ch->server, ch);
-						redraw_one(mw);
+						redraw_all();
 						irssi_set_dirty();
 						return TRUE;
 					}
@@ -445,12 +423,11 @@ static gboolean handle_click_at(int x, int y, int button)
 /* Handle application-specific mouse events (scroll, clicks) */
 static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpointer user_data)
 {
-	GSList *mt;
-
 	(void) user_data;
 
 	/* Handle scroll events */
 	if (gui_mouse_is_scroll_event(event->raw_button) && event->press) {
+		SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
 		int dir = event->raw_button - 64;
 		int delta = (dir == 0) ? -3 : 3;
 		int px, py, pw, ph;
@@ -484,11 +461,7 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 		}
 
 		/* Handle sidepanel scrolling */
-		for (mt = mainwindows; mt; mt = mt->next) {
-			MAIN_WINDOW_REC *mw = mt->data;
-			SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-			if (!ctx)
-				continue;
+		if (ctx != NULL) {
 			if (ctx->left_tw) {
 				px = ctx->left_x;
 				py = ctx->left_y;
@@ -497,7 +470,7 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 				if (event->x >= px && event->x < px + pw &&
 				    event->y >= py && event->y < py + ph) {
 					ctx->left_scroll_offset = MAX(0, ctx->left_scroll_offset + delta);
-					redraw_one(mw);
+					redraw_all();
 					irssi_set_dirty();
 					return TRUE;
 				}
@@ -510,7 +483,7 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 				if (event->x >= px && event->x < px + pw &&
 				    event->y >= py && event->y < py + ph) {
 					ctx->right_scroll_offset = MAX(0, ctx->right_scroll_offset + delta);
-					redraw_one(mw);
+					redraw_all();
 					irssi_set_dirty();
 					return TRUE;
 				}

@@ -4,6 +4,11 @@ side panels on (the panel's columns are not part of the saved layout) and
 off, a layout saved with the panel's columns in it (as before 2026.10.1)
 is restored too, and a layout block that makes no sense never stops erssi
 from starting - it falls back to one main window.
+The side panels reserve their columns once for the whole screen: any
+number of main windows, stacked or side by side, share them, after a
+/SET, a terminal resize, a split, /WINDOW HIDE|SHOW|GROW|SHRINK and a
+restored layout (before, every main window reserved them again: wrong
+columns, overlapping panels, and erssi hung at about 15 main windows).
 Usage: test_layout.py <build dir> [<source dir>]"""
 import re
 import shutil
@@ -24,6 +29,40 @@ def cfg(nick, panels=True, extra=""):
     if not panels:
         text = text.replace('"irc/core" =', PANELS_OFF + '\n  "irc/core" =', 1)
     return text
+
+
+def tiling(layout, cols, rows, reserved=15):
+    """The main windows tile the main area of a cols x rows terminal with
+    `reserved` columns for the left panel: the rows from line 1 down to
+    the last line of the main area, without gaps; in each row, windows of
+    the same height side by side from column 0 of the main area to its
+    right edge, one separator column between two. Returns the problems."""
+    width, bad = cols - reserved, []
+    bands = {}
+    for key, w in layout.items():
+        for f in ("first_line", "lines", "first_column", "columns"):
+            if not re.fullmatch(r"\d+", w.get(f, "")):
+                bad.append(f"{key}: {f} = {w.get(f)!r}")
+        if bad:
+            return bad
+        bands.setdefault(int(w["first_line"]), []).append(w)
+    line = 1
+    for first in sorted(bands):
+        band = sorted(bands[first], key=lambda w: int(w["first_column"]))
+        heights = {int(w["lines"]) for w in band}
+        if first != line or len(heights) != 1:
+            bad.append(f"row at line {first} (expected {line}), heights {heights}")
+        col = 0
+        for w in band:
+            if int(w["first_column"]) != col:
+                bad.append(f"row at line {first}: a window at column {w['first_column']}, expected {col}")
+            col = int(w["first_column"]) + int(w["columns"]) + 1
+        if col - 1 != width:
+            bad.append(f"row at line {first} ends at column {col - 1}, expected {width}")
+        line = first + max(heights)
+    if line - 1 != rows - 3:
+        bad.append(f"the rows end at line {line - 1}, expected {rows - 3}")
+    return bad
 
 
 def block(config_text, name):
@@ -65,20 +104,28 @@ def main():
             time.sleep(0.1)
         return conf.read_text()
 
-    def new(name, text):
+    def new(name, text, cols=200, rows=50):
         e = harness.Erssi(st["inst"], work, name, text, args=("--noconnect",))
         st["all"].append(e)
-        e.start()
+        e.start(cols, rows)
         time.sleep(2)
         started(e)
         return e
 
-    def restart(e):
+    def restart(e, cols=200, rows=50):
         e.quit()
         e.config_text = None  # the config it saved
-        e.start()
+        e.start(cols, rows)
         time.sleep(2)
         started(e)
+
+    def tiles(e, cols=200, rows=50, what="", reserved=15):
+        """The layout erssi saves now tiles the screen; that layout."""
+        layout = block(save(e), "mainwindows")
+        assert layout, f"{what}: no main window saved"
+        bad = tiling(layout, cols, rows, reserved)
+        assert not bad, f"{what}: {bad}\n{layout}"
+        return layout
 
     def save_restart(name, text, cmds):
         """cmds, /LAYOUT SAVE, restart: (the saved config, the layout saved
@@ -128,23 +175,141 @@ def main():
         (w,) = layout.values()
         assert w["first_column"] == "0" and w["columns"] == "170", layout
 
-    # With the left panel on and more than one main window only the rows
-    # are compared: the panel's columns are then reserved once for each
-    # main window at the first setup change (sidepanels-layout.c, not the
-    # layout) and the columns come out wrong, with or without a layout.
+    # With the left panel on and more than one main window the columns
+    # are compared too: the panel's columns are reserved once for the
+    # screen, not once for each main window.
     def t_left_panel_split():
         saved, again = save_restart("lsplit", cfg("lsplit"), ["/window new split"])
-        layout = block(saved, "mainwindows")
-        assert len(layout) == 2 and all(w["first_column"] == "0" for w in layout.values()), layout
-        restored = block(again, "mainwindows")
-        assert len(restored) == 2 and rows(restored) == rows(layout), again
+        layout = same_layout(saved, again)
+        assert len(layout) == 2 and not tiling(layout, 200, 50), (tiling(layout, 200, 50), layout)
 
     def t_left_panel_side_by_side():
         saved, again = save_restart("lright", cfg("lright"), ["/window new -right"])
-        layout = block(saved, "mainwindows")
-        assert sorted(int(w["first_column"]) for w in layout.values())[0] == 0, layout
-        restored = block(again, "mainwindows")
-        assert len(restored) == 2 and rows(restored) == rows(layout), again
+        layout = same_layout(saved, again)
+        assert len(layout) == 2 and not tiling(layout, 200, 50), (tiling(layout, 200, 50), layout)
+
+    # A /SET reads the settings again and lays the panels out again: the
+    # columns are not reserved a second time.
+    def t_left_panel_three_rows_set():
+        e = new("rows3", cfg("rows3"))
+        e.type("/window new split")
+        e.type("/window new split")
+        tiles(e, what="three rows")
+        e.type("/set mouse_scroll_chat off")
+        e.type("/set sidepanel_left_width 15")
+        layout = tiles(e, what="three rows after /set")
+        assert len(layout) == 3, layout
+        e.quit()
+
+    def t_left_panel_side_by_side_set():
+        e = new("side2", cfg("side2"))
+        e.type("/window new -right")
+        e.type("/set mouse_scroll_chat off")
+        layout = tiles(e, what="side by side after /set")
+        assert len(layout) == 2 and len(rows(layout)) == 1, layout
+        # one left panel: the two windows and their separator share the
+        # 185 columns of the main area
+        assert sum(int(w["columns"]) for w in layout.values()) == 184, layout
+        e.quit()
+
+    def t_left_panel_width_set():
+        # a new panel width: the old columns are given back, the new
+        # ones reserved, for every row
+        e = new("width", cfg("width"))
+        e.type("/window new split")
+        e.type("/window new -right")
+        e.type("/set sidepanel_left_width 25")
+        tiles(e, what="width 25", reserved=25)
+        e.type("/set sidepanel_left off")
+        tiles(e, what="panel off", reserved=0)
+        e.type("/set sidepanel_left on")
+        e.type("/set sidepanel_left_width 15")
+        tiles(e, what="panel back")
+        e.quit()
+
+    def t_left_panel_window_commands():
+        e = new("wcmds", cfg("wcmds"))
+        for c in ["/window new split", "/window new split", "/window new -right", "/window grow 2",
+                  "/window shrink 1", "/window grow -right 5", "/window hide", "/set mouse_scroll_chat off",
+                  "/window show 2", "/window shrink -right 3", "/window balance",
+                  "/set mouse_scroll_chat on"]:
+            e.type(c)
+            tiles(e, what=c)
+        e.quit()
+
+    def t_left_panel_terminal_resize():
+        e = new("resize", cfg("resize"))
+        e.type("/window new split")
+        e.type("/window new -right")
+        # 30 columns: no room for the panel (it goes, its columns come back)
+        for cols, rows_, reserved in ((120, 40, 15), (200, 50, 15), (90, 30, 15), (30, 20, 0),
+                                      (200, 50, 15)):
+            e.resize(cols, rows_)
+            time.sleep(1)
+            started(e)
+            tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
+        e.quit()
+
+    def t_both_panels_rows_and_side_by_side():
+        # the right panel too is one for the screen, at its right edge
+        text = cfg("both2").replace('"irc/core" =',
+                                    '"fe-ansi" = { sidepanel_right_auto_hide = "no"; };\n  "irc/core" =', 1)
+        e = new("both2", text)
+        for c in ["/window new split", "/window new split", "/window new -right",
+                  "/set mouse_scroll_chat off"]:
+            e.type(c)
+            tiles(e, what=c, reserved=30)
+        e.type("/set sidepanel_right off")
+        tiles(e, what="right panel off", reserved=15)
+        e.quit()
+
+    def t_left_panel_fifteen_rows_set():
+        # about 15 main windows and a /set hung erssi (the columns reserved
+        # 15 times over one row: its last column before its first one)
+        e = new("rows15", cfg("rows15"))
+        for _ in range(14):
+            e.type("/window new split")
+        e.type("/set mouse_scroll_chat off")
+        started(e)
+        layout = tiles(e, what="15 rows")
+        assert len(layout) == 15, layout
+        e.quit()
+
+    def rows_block(count, lines, columns):
+        return "mainwindows = { " + " ".join(
+            f'{i + 1} = {{ first_line = "{1 + i * lines}"; lines = "{lines}"; '
+            f'first_column = "0"; columns = "{columns}"; }};'
+            for i in range(count)) + " };"
+
+    def restored_rows(name, count, lines, cols, rows_):
+        e = new(name, cfg(name, True, rows_block(count, lines, cols - 15)), cols, rows_)
+        layout = tiles(e, cols, rows_, f"{count} rows restored")
+        assert len(layout) == count, layout
+        e.quit()
+
+    # a valid layout hung the start with the left panel on
+    def t_left_panel_restore_7_rows_80x24():
+        restored_rows("r7", 7, 3, 80, 24)
+
+    def t_left_panel_restore_15_rows():
+        restored_rows("r15", 15, 3, 200, 50)
+
+    def t_left_panel_save_restart_twice_80x24():
+        # a layout erssi saves is one it restores: save, restart, save,
+        # restart (it saved negative columns, and the next start dropped
+        # the layout). Six splits make rows of 2 lines, the restore makes
+        # every row at least 3: all 7 come back, and from then on the
+        # layout stays the same.
+        e = new("twice", cfg("twice"), 80, 24)
+        for _ in range(6):
+            e.type("/window new split")
+        layouts = [tiles(e, 80, 24, "six splits")]
+        for i in range(2):
+            restart(e, 80, 24)
+            layouts.append(tiles(e, 80, 24, f"restart {i + 1}"))
+        e.quit()
+        assert [len(lay) for lay in layouts] == [7, 7, 7], layouts
+        assert geometry(layouts[1]) == geometry(layouts[2]), layouts
 
     def t_panels_off_split():
         layout = same_layout(*save_restart("nosplit", cfg("nosplit", False), ["/window new split"]))
@@ -202,9 +367,7 @@ windows = {
 
     def bad_layout(name):
         def t():
-            # "tiny" with the panels off: 15 main windows with the left
-            # panel on hang erssi in the side panels (a layout or not)
-            e = new("bad-" + name, cfg("bad" + name, name != "tiny", BAD[name]))
+            e = new("bad-" + name, cfg("bad" + name, True, BAD[name]))
             layout = block(save(e), "mainwindows")
             assert layout, f"no main window saved: {layout}"
             if name == "tiny":  # as many as fit: 47 lines, 3 each at least
@@ -223,9 +386,15 @@ windows = {
 
     try:
         harness.main([t_install, t_left_panel_one_main_window, t_both_panels, t_left_panel_split,
-                      t_left_panel_side_by_side, t_panels_off_split, t_panels_off_side_by_side,
+                      t_left_panel_side_by_side, t_left_panel_three_rows_set, t_left_panel_side_by_side_set,
+                      t_left_panel_width_set, t_left_panel_window_commands, t_left_panel_terminal_resize,
+                      t_both_panels_rows_and_side_by_side,
+                      t_left_panel_fifteen_rows_set, t_left_panel_restore_7_rows_80x24,
+                      t_left_panel_restore_15_rows, t_left_panel_save_restart_twice_80x24,
+                      t_panels_off_split, t_panels_off_side_by_side,
                       t_old_layout_with_panel_columns, t_old_layout_split_panels_off]
-                     + [bad_layout(n) for n in BAD] + [t_sanitizers])
+                     + [bad_layout(n) for n in BAD]
+                     + [t_sanitizers])
     finally:
         for e in st["all"]:
             e.kill()

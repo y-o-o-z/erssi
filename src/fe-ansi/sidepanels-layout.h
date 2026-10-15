@@ -29,10 +29,16 @@
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include "sidepanels-types.h"
 
-/* Panel positioning and geometry */
-void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx);
+/* The panels' state: one for the whole screen (created by the first call
+   with create = TRUE). */
+SP_MAINWIN_CTX *sp_get_ctx(gboolean create);
+
+/* Panel positioning and geometry: the panels the screen has room for,
+   their columns reserved once (sp_layout_panels), or only moved over the
+   rows of the main windows (sp_move_panels, safe in "mainwindow resized") */
+void sp_layout_panels(void);
+void sp_move_panels(void);
 void apply_reservations_all(void);
-void setup_ctx_for(MAIN_WINDOW_REC *mw);
 void apply_and_redraw(void);
 
 /* Selection management */
@@ -41,8 +47,8 @@ void update_left_selection_to_active(void);
 /* Window management */
 void renumber_windows_by_position(void);
 
-/* Main window border drawing */
-void draw_main_window_borders(MAIN_WINDOW_REC *mw);
+/* Border drawing between the panels and the main windows */
+void draw_panel_borders(void);
 
 /* Signal handlers are now in sidepanels-core.c */
 

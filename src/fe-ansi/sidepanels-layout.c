@@ -48,11 +48,18 @@
  * sidepanels will be hidden to prevent UI freeze */
 #define MIN_MAIN_WINDOW_WIDTH 20
 
-/* SP_MAINWIN_CTX is now defined in sidepanels-types.h */
+/* The panels belong to the screen, not to a main window: the left one is
+ * one strip of columns at the left of the whole screen, the right one one
+ * at the right, and every main window (stacked or side by side) is laid
+ * out between them. Their columns are reserved once, with
+ * mainwindows_reserve_columns(), when a panel is created, and given back
+ * when it goes: ctx->left_reserved/right_reserved are those columns, never
+ * anything else. Before, every main window had its own panels and
+ * reserved the columns again (wrong columns, panels over each other, and
+ * a main window whose last column came before its first one hung erssi). */
 
 /* External functions we need */
 extern void sp_logf(const char *fmt, ...);
-extern SP_MAINWIN_CTX *get_ctx(MAIN_WINDOW_REC *mw, gboolean create);
 extern void clear_window_full(TERM_WINDOW *tw, int width, int height);
 extern void sp_cache_clear(SP_PANEL_CACHE *cache);
 /* Settings are accessed through functions from sidepanels.h */
@@ -67,307 +74,228 @@ void apply_reservations_all(void)
 			mainwindow_set_statusbar_columns(mw, -mw->statusbar_columns_left, 0);
 		if (mw->statusbar_columns_right)
 			mainwindow_set_statusbar_columns(mw, 0, -mw->statusbar_columns_right);
-		/* Left panel reservations are now handled in position_tw() for better control */
-		/* Don't reserve right space here - let auto-hide logic in position_tw() decide */
 	}
 }
 
 void sig_mainwindow_created(MAIN_WINDOW_REC *mw)
 {
-	/* Panel reservations are now handled dynamically in position_tw() for better control */
+	/* the panels are laid out for the screen in sp_layout_panels() */
 	(void) mw;
 }
 
-/* Remove a panel and give back exactly the columns it reserved (its width
- * at creation - the setting may have changed since). */
+/* The rows the panels cover: from the first text row of the highest main
+ * window to the last text row of the lowest one. FALSE when there are
+ * none (no main window, or a screen too low for any text). */
+static gboolean panel_rows(int *y, int *h)
+{
+	GSList *tmp;
+	int top = -1, bottom = -1;
+
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *mw = tmp->data;
+		int first = mw->first_line + mw->statusbar_lines_top;
+		int last = mw->last_line - mw->statusbar_lines_bottom;
+
+		if (top < 0 || first < top)
+			top = first;
+		if (last > bottom)
+			bottom = last;
+	}
+	if (top < 0 || bottom < top)
+		return FALSE;
+	*y = top;
+	*h = bottom - top + 1;
+	return TRUE;
+}
+
+/* Remove a panel and give back exactly the columns it reserved. */
 static void destroy_left_panel(SP_MAINWIN_CTX *ctx)
 {
-	clear_window_full(ctx->left_tw, ctx->left_w, ctx->left_h);
+	clear_window_full(ctx->left_tw, ctx->left_reserved, ctx->left_h);
 	term_window_destroy_left_panel(ctx->left_tw);
 	ctx->left_tw = NULL;
 	ctx->left_h = 0;
-	mainwindows_reserve_columns(-ctx->left_w, 0);
+	mainwindows_reserve_columns(-ctx->left_reserved, 0);
+	ctx->left_reserved = 0;
 	if (ctx->left_cache)
 		sp_cache_clear(ctx->left_cache);
 }
 
 static void destroy_right_panel(SP_MAINWIN_CTX *ctx)
 {
-	clear_window_full(ctx->right_tw, ctx->right_w, ctx->right_h);
+	clear_window_full(ctx->right_tw, ctx->right_reserved, ctx->right_h);
 	term_window_destroy_right_panel(ctx->right_tw);
 	ctx->right_tw = NULL;
 	ctx->right_h = 0;
-	mainwindows_reserve_columns(0, -ctx->right_w);
+	mainwindows_reserve_columns(0, -ctx->right_reserved);
+	ctx->right_reserved = 0;
+	/* when the panel comes back the cache must not claim its old lines */
 	if (ctx->right_cache)
 		sp_cache_clear(ctx->right_cache);
 }
 
-void setup_ctx_for(MAIN_WINDOW_REC *mw)
+static void create_left_panel(SP_MAINWIN_CTX *ctx, int width)
 {
-	SP_MAINWIN_CTX *ctx;
-	int left_w, right_w;
+	mainwindows_reserve_columns(width, 0);
+	ctx->left_reserved = width;
+	/* created at row 0 with the full terminal height: sp_move_panels()
+	   puts it where it belongs before anything is drawn in it */
+	ctx->left_tw = term_window_create_left_panel(width);
+	ctx->left_h = 0;
+	if (ctx->left_cache)
+		sp_cache_clear(ctx->left_cache);
+}
 
-	ctx = get_ctx(mw, TRUE);
-	left_w = (get_sp_enable_left() ? get_sp_left_width() : 0);
-	right_w = (get_sp_enable_right() ? get_sp_right_width() : 0);
+static void create_right_panel(SP_MAINWIN_CTX *ctx, int width)
+{
+	mainwindows_reserve_columns(0, width);
+	ctx->right_reserved = width;
+	ctx->right_tw = term_window_create_right_panel(width);
+	ctx->right_h = 0;
+	if (ctx->right_cache)
+		sp_cache_clear(ctx->right_cache);
+}
 
-	/* A panel turned off or resized with /SET: remove it with its old
-	 * width; position_tw() creates it again with the new one. */
-	if (ctx->left_tw != NULL && left_w != ctx->left_w) {
-		destroy_left_panel(ctx);
-		mainwindows_recreate();
+/* Put the existing panels over the rows of the main windows. Creates,
+ * destroys and reserves nothing: safe from "mainwindow resized". A moved
+ * panel has none of its cached lines at the new rows - forget them, or
+ * the old rows stay on screen shifted. */
+void sp_move_panels(void)
+{
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
+	int x, y, h;
+
+	if (ctx == NULL || !panel_rows(&y, &h))
+		return;
+
+	if (ctx->left_tw != NULL) {
+		x = 0;
+		if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h)
+			sp_cache_clear(ctx->left_cache);
+		term_window_move(ctx->left_tw, x, y, ctx->left_reserved, h);
+		ctx->left_x = x;
+		ctx->left_y = y;
+		ctx->left_h = h;
 	}
-	if (ctx->right_tw != NULL && right_w != ctx->right_w) {
-		destroy_right_panel(ctx);
-		mainwindows_recreate();
+	if (ctx->right_tw != NULL) {
+		x = MAX(0, term_width - ctx->right_reserved);
+		if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h)
+			sp_cache_clear(ctx->right_cache);
+		term_window_move(ctx->right_tw, x, y, ctx->right_reserved, h);
+		ctx->right_x = x;
+		ctx->right_y = y;
+		ctx->right_h = h;
 	}
-	ctx->left_w = left_w;
-	ctx->right_w = right_w;
-	position_tw(mw, ctx);
 }
 
 /* Collapsing gives the panels' columns back after the main windows were
- * laid out without them: lay them out again, once the current resize is
- * over (calling it from here would recurse through "mainwindow resized"). */
+   laid out without them: lay them out again, once the current resize is
+   over (calling it from here would recurse through "terminal resized"). */
 static guint relayout_tag = 0;
 
 static gboolean relayout_after_collapse(gpointer data)
 {
+	(void) data;
 	relayout_tag = 0;
 	mainwindows_resize(term_width, term_height);
 	return FALSE;
 }
 
-void update_left_selection_to_active(void)
+/* Which panels the screen has room for, and their columns: a panel is
+ * created (its columns reserved) or destroyed (given back) here only, so
+ * the columns are reserved once whatever the number of main windows. The
+ * main area keeps at least MIN_MAIN_WINDOW_WIDTH columns and room for the
+ * widest row of main windows; the right panel goes first. */
+void sp_layout_panels(void)
 {
+	static gboolean busy = FALSE;
+	SP_MAINWIN_CTX *ctx;
+	WINDOW_REC *aw;
+	int left_w, right_w, base, need, y, h;
+	gboolean rows, want_left, want_right, show_left, show_right, changed, destroyed;
 	GSList *tmp;
 
-	for (tmp = mainwindows; tmp; tmp = tmp->next) {
-		MAIN_WINDOW_REC *mw = tmp->data;
-		SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-		WINDOW_REC *aw = mw->active;
+	/* no panels before "irssi init finished" (sig_irssi_init_finished
+	   creates the state): the saved layout is restored without them */
+	ctx = sp_get_ctx(FALSE);
+	if (busy || ctx == NULL || mainwindows == NULL)
+		return;
+	busy = TRUE;
 
-		if (!ctx || !aw)
-			continue;
+	left_w = get_sp_enable_left() ? MAX(0, get_sp_left_width()) : 0;
+	right_w = get_sp_enable_right() ? MAX(0, get_sp_right_width()) : 0;
+	rows = panel_rows(&y, &h);
 
-		/* Simple: selection index = active window refnum - 1 (0-based indexing) */
-		ctx->left_selected_index = aw->refnum - 1;
+	/* the main area without the panels' own columns */
+	base = term_width - (screen_reserved_left - ctx->left_reserved) -
+	       (screen_reserved_right - ctx->right_reserved);
+	need = MAX(MIN_MAIN_WINDOW_WIDTH, mainwindows_min_columns());
+
+	want_left = rows && left_w > 0;
+	show_left = want_left && base - left_w >= need;
+
+	/* the right panel shows the nicks of the active main window's channel */
+	aw = active_mainwin != NULL ? active_mainwin->active : NULL;
+	want_right = rows && right_w > 0;
+	if (want_right && get_sp_auto_hide_right())
+		want_right = aw != NULL && aw->active != NULL && IS_CHANNEL(aw->active);
+	show_right = want_right && base - (show_left ? left_w : 0) - right_w >= need;
+
+	/* a panel that goes or has a new width gives its columns back first */
+	changed = destroyed = FALSE;
+	if (ctx->right_tw != NULL && (!show_right || ctx->right_reserved != right_w)) {
+		destroy_right_panel(ctx);
+		changed = destroyed = TRUE;
 	}
+	if (ctx->left_tw != NULL && (!show_left || ctx->left_reserved != left_w)) {
+		destroy_left_panel(ctx);
+		changed = destroyed = TRUE;
+	}
+	if (show_left && ctx->left_tw == NULL) {
+		create_left_panel(ctx, left_w);
+		changed = TRUE;
+	}
+	if (show_right && ctx->right_tw == NULL) {
+		create_right_panel(ctx, right_w);
+		changed = TRUE;
+	}
+	ctx->left_w = ctx->left_reserved;
+	ctx->right_w = ctx->right_reserved;
+
+	sp_move_panels();
+
+	if (changed) {
+		resize_debug_log("SP_LAYOUT", "panels: left=%d right=%d, reserved left=%d right=%d",
+		                 ctx->left_reserved, ctx->right_reserved,
+		                 screen_reserved_left, screen_reserved_right);
+		/* the main windows have new columns: clear what the panels left
+		   behind, and every statusbar and entry follows its window */
+		if (destroyed)
+			mainwindows_recreate();
+		mainwindows_redraw();
+		for (tmp = mainwindows; tmp != NULL; tmp = tmp->next)
+			signal_emit("mainwindow resized", 1, tmp->data);
+	}
+	/* a panel went for lack of room: the screen is (or was) too narrow */
+	if (destroyed && ((want_left && !show_left) || (want_right && !show_right)) &&
+	    relayout_tag == 0)
+		relayout_tag = g_idle_add(relayout_after_collapse, NULL);
+	busy = FALSE;
+}
+
+void update_left_selection_to_active(void)
+{
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
+
+	/* Simple: selection index = active window refnum - 1 (0-based indexing) */
+	if (ctx != NULL && active_win != NULL)
+		ctx->left_selected_index = active_win->refnum - 1;
 }
 
 void apply_and_redraw(void)
 {
-	GSList *tmp;
-	for (tmp = mainwindows; tmp; tmp = tmp->next) {
-		MAIN_WINDOW_REC *mw = tmp->data;
-		setup_ctx_for(mw);
-	}
+	sp_layout_panels();
 	redraw_all();
-}
-
-void position_tw(MAIN_WINDOW_REC *mw, SP_MAINWIN_CTX *ctx)
-{
-	int y;
-	int h;
-	int x;
-	int w;
-	gboolean show_right;
-	gboolean show_left;
-	WINDOW_REC *aw;
-	int total_sidepanel_width;
-	int available_for_main;
-
-	y = mw->first_line + mw->statusbar_lines_top;
-	h = mw->height - mw->statusbar_lines;
-
-	/* Calculate total sidepanel width that WOULD BE reserved if we create/keep them.
-	 * Use ACTUAL panel state (ctx->*_tw exists) for existing panels,
-	 * and desired width (ctx->*_w from settings) for panels we might create. */
-	total_sidepanel_width = 0;
-
-	/* For left panel: if it exists, it's already reserved; if not but enabled, we'd want to create it */
-	if (ctx->left_tw) {
-		/* Panel exists - it has reserved space */
-		total_sidepanel_width += ctx->left_w;
-	} else if (get_sp_enable_left() && ctx->left_w > 0) {
-		/* Panel doesn't exist but we'd want to create it - count potential space */
-		total_sidepanel_width += ctx->left_w;
-	}
-
-	/* Same for right panel */
-	if (ctx->right_tw) {
-		total_sidepanel_width += ctx->right_w;
-	} else if (get_sp_enable_right() && ctx->right_w > 0) {
-		total_sidepanel_width += ctx->right_w;
-	}
-
-	/* Check if terminal is wide enough for sidepanels + minimum main window */
-	available_for_main = term_width - total_sidepanel_width;
-
-	resize_debug_log("POSITION_TW", "term_width=%d, total_sidepanel=%d (left=%d/%s, right=%d/%s), available_for_main=%d, min_required=%d",
-	                 term_width, total_sidepanel_width,
-	                 ctx->left_w, ctx->left_tw ? "exists" : "new",
-	                 ctx->right_w, ctx->right_tw ? "exists" : "new",
-	                 available_for_main, MIN_MAIN_WINDOW_WIDTH);
-
-	/* Collapsed mode: terminal too small for any sidepanels */
-	if (available_for_main < MIN_MAIN_WINDOW_WIDTH) {
-		/* If panels don't exist and we can't create them, just return */
-		if (!ctx->left_tw && !ctx->right_tw) {
-			resize_debug_log("POSITION_TW", "COLLAPSED: no space, no panels - nothing to do");
-			return;
-		}
-
-		resize_debug_log("POSITION_TW", "COLLAPSED MODE: terminal too small, hiding all sidepanels");
-
-		/* Destroy left panel if it exists */
-		if (ctx->left_tw) {
-			resize_debug_log("POSITION_TW", "destroying left panel");
-			destroy_left_panel(ctx);
-		}
-
-		/* Destroy right panel if it exists */
-		if (ctx->right_tw) {
-			resize_debug_log("POSITION_TW", "destroying right panel");
-			destroy_right_panel(ctx);
-		}
-
-		if (relayout_tag == 0)
-			relayout_tag = g_idle_add(relayout_after_collapse, NULL);
-
-		/* Note: Do NOT call mainwindows_recreate() or signal_emit() here!
-		 * That would cause infinite recursion via sig_mainwindow_resized -> redraw_one -> position_tw */
-		resize_debug_log("POSITION_TW", "COLLAPSED MODE complete, sidepanels hidden");
-		return;
-	}
-
-	/* Semi-collapsed mode: only enough space for left panel OR no sidepanels
-	 * Priority: hide right panel first (nicklist is less critical than window list) */
-	show_left = get_sp_enable_left() && ctx->left_w > 0;
-	if (show_left && (term_width - ctx->left_w) < MIN_MAIN_WINDOW_WIDTH) {
-		/* Even with just left panel, not enough space - hide it too */
-		show_left = FALSE;
-		resize_debug_log("POSITION_TW", "SEMI-COLLAPSED: left panel alone would leave %d cols, hiding left panel too",
-		                 term_width - ctx->left_w);
-	}
-
-	if (show_left) {
-		/* Left panel is always at x=0, regardless of main window position */
-		x = 0;
-		w = ctx->left_w;
-		if (ctx->left_tw) {
-			/* Panel already exists, just move to correct position. A moved
-			   panel (e.g. a topic bar appeared above it) has nothing of its
-			   cached lines at the new rows - forget them, or the old rows
-			   stay on screen shifted by one. */
-			if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h)
-				sp_cache_clear(ctx->left_cache);
-			term_window_move(ctx->left_tw, x, y, w, h);
-		} else {
-			/* Reserve space for left panel - this shifts main window right */
-			mainwindows_reserve_columns(ctx->left_w, 0);
-			/* Use explicit left panel creation - handles ncplane properly */
-			ctx->left_tw = term_window_create_left_panel(w);
-			/* the panel window is created at row 0 with the full terminal
-			   height; put it where it belongs before anything is drawn in it */
-			term_window_move(ctx->left_tw, x, y, w, h);
-			/* Force statusbar redraw to fix input box positioning */
-			signal_emit("mainwindow resized", 1, mw);
-		}
-		/* Cache geometry for hit-test */
-		ctx->left_x = x;
-		ctx->left_y = y;
-		ctx->left_h = h;
-	} else if (ctx->left_tw) {
-		/* Clear the left panel area before destroying */
-		clear_window_full(ctx->left_tw, ctx->left_w, ctx->left_h);
-		/* Use explicit left panel destruction */
-		term_window_destroy_left_panel(ctx->left_tw);
-		ctx->left_tw = NULL;
-		ctx->left_h = 0;
-		/* Free reserved space - this shifts main window back left */
-		mainwindows_reserve_columns(-ctx->left_w, 0);
-		/* Force complete recreation of mainwindows to clear artifacts */
-		mainwindows_recreate();
-		/* Force statusbar redraw to fix input box positioning */
-		signal_emit("mainwindow resized", 1, mw);
-	}
-
-	/* Right panel auto-hide logic */
-	aw = mw->active;
-	show_right = get_sp_enable_right() && ctx->right_w > 0;
-	if (get_sp_auto_hide_right() && show_right) {
-		/* Auto-hide: only show if active window is a channel (any type: #, &, !, +) */
-		show_right = (aw && aw->active && IS_CHANNEL(aw->active));
-	}
-
-	/* Space-based auto-hide: check if there's enough space for right panel
-	 * Given current left panel state (show_left and ctx->left_tw) */
-	if (show_right) {
-		int left_reserved = (show_left || ctx->left_tw) ? ctx->left_w : 0;
-		int space_with_right = term_width - left_reserved - ctx->right_w;
-		if (space_with_right < MIN_MAIN_WINDOW_WIDTH) {
-			resize_debug_log("POSITION_TW", "SPACE-HIDE RIGHT: with right panel, main window would have %d cols (min=%d), hiding right",
-			                 space_with_right, MIN_MAIN_WINDOW_WIDTH);
-			show_right = FALSE;
-		}
-	}
-
-	/* DEBUG: Log position_tw auto-hide decision */
-	sp_logf("DEBUG position_tw: aw=%p, aw->active=%p, name='%s', IS_CHANNEL=%d, show_right=%d, ctx->right_tw=%p",
-	        (void*)aw,
-	        aw ? (void*)aw->active : NULL,
-	        aw && aw->active ? aw->active->visible_name : "NULL",
-	        aw && aw->active ? IS_CHANNEL(aw->active) : -1,
-	        show_right,
-	        (void*)ctx->right_tw);
-
-	if (show_right) {
-		w = ctx->right_w;
-		if (ctx->right_tw) {
-			/* Panel already exists, space already reserved, use current last_column */
-			x = mw->last_column + 1;
-			if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h)
-				sp_cache_clear(ctx->right_cache);
-			term_window_move(ctx->right_tw, x, y, w, h);
-		} else {
-			/* Reserve space for right panel - this shrinks main window */
-			mainwindows_reserve_columns(0, ctx->right_w);
-			/* After reservation, right panel should be at the new last_column + 1 */
-			x = mw->last_column + 1;
-			/* Use explicit right panel creation - handles ncplane properly */
-			ctx->right_tw = term_window_create_right_panel(w);
-			/* created at row 0 with the full terminal height: drawn there,
-			   then moved under the topic bar, its first nick stayed hidden
-			   and the rest shifted by one row (the cache saw no change) */
-			term_window_move(ctx->right_tw, x, y, w, h);
-			/* Force statusbar redraw to fix input box positioning */
-			signal_emit("mainwindow resized", 1, mw);
-		}
-		/* Cache geometry for hit-test */
-		ctx->right_x = x;
-		ctx->right_y = y;
-		ctx->right_h = h;
-	} else if (ctx->right_tw) {
-		/* Clear the right panel area before destroying */
-		clear_window_full(ctx->right_tw, ctx->right_w, ctx->right_h);
-		/* Use explicit right panel destruction */
-		term_window_destroy_right_panel(ctx->right_tw);
-		ctx->right_tw = NULL;
-		ctx->right_h = 0;
-		/* CRITICAL: Clear the cache when panel is destroyed!
-		 * Otherwise, when returning to a channel, the cache has stale data
-		 * and differential rendering doesn't redraw the nicklist. */
-		if (ctx->right_cache) {
-			sp_cache_clear(ctx->right_cache);
-		}
-		/* Free reserved space - this expands main window */
-		mainwindows_reserve_columns(0, -ctx->right_w);
-		/* Force complete recreation of mainwindows to clear artifacts */
-		mainwindows_recreate();
-		/* Force statusbar redraw to fix input box positioning */
-		signal_emit("mainwindow resized", 1, mw);
-	}
 }
 
 void renumber_windows_by_position(void)
@@ -393,28 +321,37 @@ void renumber_windows_by_position(void)
 	free_sorted_window_list(sort_list);
 }
 
-void draw_main_window_borders(MAIN_WINDOW_REC *mw)
+/* The borders between the panels and the main windows, along the panels;
+ * with the left panel, also the separator before every main window that
+ * is not at the left edge (side by side). */
+void draw_panel_borders(void)
 {
-	SP_MAINWIN_CTX *ctx = get_ctx(mw, FALSE);
-	if (!ctx)
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
+	GSList *tmp;
+	int y;
+
+	if (ctx == NULL)
 		return;
 
-	/* Draw left border (between left panel and main window) */
 	if (ctx->left_tw && ctx->left_h > 0) {
-		int border_x = mw->first_column + mw->statusbar_columns_left - 1;
-		for (int y = 0; y < ctx->left_h; y++) {
-			gui_printtext_window_border(border_x,
-			                            mw->first_line + mw->statusbar_lines_top + y);
+		for (y = 0; y < ctx->left_h; y++)
+			gui_printtext_window_border(ctx->left_x + ctx->left_reserved - 1,
+			                            ctx->left_y + y);
+		for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+			MAIN_WINDOW_REC *mw = tmp->data;
+			int border_x = mw->first_column + mw->statusbar_columns_left - 1;
+
+			if (border_x < screen_reserved_left)
+				continue;
+			for (y = 0; y < mw->height - mw->statusbar_lines; y++)
+				gui_printtext_window_border(border_x,
+				                            mw->first_line + mw->statusbar_lines_top + y);
 		}
 	}
 
-	/* Draw right border (between main window and right panel) */
 	if (ctx->right_tw && ctx->right_h > 0) {
-		int border_x = mw->last_column + 1;
-		for (int y = 0; y < ctx->right_h; y++) {
-			gui_printtext_window_border(border_x,
-			                            mw->first_line + mw->statusbar_lines_top + y);
-		}
+		for (y = 0; y < ctx->right_h; y++)
+			gui_printtext_window_border(ctx->right_x, ctx->right_y + y);
 	}
 }
 
@@ -425,5 +362,8 @@ void sidepanels_layout_init(void)
 
 void sidepanels_layout_deinit(void)
 {
-	/* Nothing to clean up */
+	if (relayout_tag != 0) {
+		g_source_remove(relayout_tag);
+		relayout_tag = 0;
+	}
 }
