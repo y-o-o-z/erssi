@@ -5,9 +5,13 @@
 # 1. the build works and `meson test` passes (when Build/ exists)
 # 2. every pushed commit (branches and tags) is authored and committed by
 #    y-o-o-z (noreply address) and carries no AI attribution trailer;
-#    annotated tags are tagged by y-o-o-z, and a release tag (shellter-v*)
-#    must be annotated and carry a valid SSH signature by the key in
-#    utils/allowed_signers; every release tag except legacy shellter-v1.*
+#    every commit that a push to main adds carries a valid SSH signature by
+#    the key in utils/allowed_signers (pushes to other branches are not
+#    checked); annotated tags are tagged by y-o-o-z; a release tag - a push
+#    that creates refs/tags/shellter-v* on the remote, whatever the local
+#    name (HEAD:refs/tags/shellter-v... too) - must be an annotated tag of a
+#    commit that names that tag and carries a valid SSH signature by the key
+#    in utils/allowed_signers; every release tag except legacy shellter-v1.*
 #    (e.g. shellter-v2026.10.0) must also agree with meson.build and NEWS
 #    (utils/check-version.sh);
 #    src/fe-ansi/default-files-known.h lists every shipped startup/theme
@@ -16,8 +20,12 @@
 #    insensitive; the file stays on your machine, so the patterns themselves
 #    are never published): lines added by the pushed commits, their commit
 #    messages and file paths, annotated tag messages and the ref names.
-#    Without the file the push is refused; PREPUSH_NO_PATTERNS=1 git push
-#    pushes once without this check.
+#    Blank lines, a lone "#" and lines that start with "#" and a space or
+#    tab are comments; every other line is a pattern, "#chan" too.
+#    Without the file, or with no pattern in it, the push is refused;
+#    PREPUSH_NO_PATTERNS=1 git push pushes once without this check.
+# The hook's temporary files live in one directory, removed on exit and on
+# HUP, INT and TERM.
 # Skip in an emergency with: git push --no-verify
 set -u
 ROOT=$(git rev-parse --show-toplevel)
@@ -26,19 +34,41 @@ PATTERNS="$HOME/.config/git-private-patterns"
 ZERO=0000000000000000000000000000000000000000
 fail=0
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
+# git with SSH signatures checked against utils/allowed_signers only (no gpg
+# or gpgsm, whatever the git config says)
+verify() {
+    git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ROOT/utils/allowed_signers" \
+        -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
+        "$@" >/dev/null 2>&1
+}
 
+tmpd=$(mktemp -d) || { echo "pre-push: mktemp failed" >&2; exit 1; }
+trap 'rm -rf "$tmpd"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# the patterns without blank lines and comments (an empty pattern would
+# match every line)
+PATTERNS_CLEAN="$tmpd/patterns"
+: > "$PATTERNS_CLEAN"
 if [ -r "$PATTERNS" ]; then
-    grep -Eq -f "$PATTERNS" </dev/null 2>/dev/null; [ $? -le 1 ] ||
+    grep -v -e '^[[:space:]]*$' -e '^#[[:space:]]' -e '^#$' "$PATTERNS" > "$PATTERNS_CLEAN"
+    [ $? -le 1 ] || { echo "pre-push: cannot read $PATTERNS: push refused" >&2; exit 1; }
+    problem="has no pattern (only blank lines and comments)"
+else
+    problem="is missing or unreadable"
+fi
+if [ -s "$PATTERNS_CLEAN" ]; then
+    grep -Eq -f "$PATTERNS_CLEAN" </dev/null 2>/dev/null; [ $? -le 1 ] ||
         { echo "pre-push: $PATTERNS has an invalid pattern (grep -E): push refused" >&2; exit 1; }
     check_private=1
 elif [ "${PREPUSH_NO_PATTERNS:-}" = 1 ]; then
-    echo "pre-push: warning: $PATTERNS missing - private data check skipped (PREPUSH_NO_PATTERNS=1)" >&2
+    echo "pre-push: warning: $PATTERNS $problem - private data check skipped (PREPUSH_NO_PATTERNS=1)" >&2
     check_private=0
 else
     cat >&2 <<EOF
-pre-push: $PATTERNS is missing or unreadable - push refused,
-          the private data check cannot run. Create it (one extended regex
-          per line), or push once without the check:
+pre-push: $PATTERNS $problem - push refused,
+          the private data check cannot run. Put your patterns in it (one
+          extended regex per line), or push once without the check:
             PREPUSH_NO_PATTERNS=1 git push
 EOF
     exit 1
@@ -46,11 +76,7 @@ fi
 # up to 3 lines of stdin that match a private pattern (-a: a diff with
 # NUL or invalid UTF-8, e.g. fuzz corpora, is text too - without it grep
 # prints "binary file matches" and the check sees nothing)
-# (blank and # lines skipped: an empty pattern would match every line)
 private() { grep -a -iEf "$PATTERNS_CLEAN" | head -3; }
-PATTERNS_CLEAN=$(mktemp)
-trap 'rm -f "$PATTERNS_CLEAN"' EXIT
-grep -v -e '^[[:space:]]*$' -e '^#' "$PATTERNS" > "$PATTERNS_CLEAN" 2>/dev/null || true
 
 pushed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -60,7 +86,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         [ -n "$hits" ] && bad "ref name: private data: $hits"
     fi
     # tags too: a tag can carry commits that no branch on GitHub has
-    tip=$(git rev-parse -q --verify "$local_sha^{commit}") || continue
+    if ! tip=$(git rev-parse -q --verify "$local_sha^{commit}" 2>/dev/null); then
+        case "$remote_ref" in
+            refs/tags/shellter-v*) bad "$remote_ref: the tag does not point to a commit" ;;
+        esac
+        continue
+    fi
     pushed="$pushed $tip"
     # what GitHub does not have yet; when the remote tip is unknown here
     # (force push without fetching), everything not on a known remote
@@ -76,6 +107,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         if git log -1 --format=%B "$c" | grep -qiE '^co-authored-by:.*(claude|anthropic)|generated with \[?claude'; then
             bad "$(git log -1 --format='%h %s' "$c"): AI attribution trailer"
         fi
+        # the box builds main only from commits signed by the release key
+        if [ "$remote_ref" = refs/heads/main ]; then
+            verify verify-commit "$c" ||
+                bad "$(git log -1 --format='%h %s' "$c"): not signed by the release key (git commit -S; utils/allowed_signers)"
+        fi
         if [ "$check_private" = 1 ]; then
             hits=$(git show --format= --unified=0 "$c" | grep -a '^+' | grep -a -v '^+++ \(b/\|/dev/null\)' | private)
             [ -n "$hits" ] && bad "$(git log -1 --format='%h %s' "$c"): private data in the diff: $hits"
@@ -89,21 +125,20 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     if [ "$(git cat-file -t "$local_sha")" = tag ]; then
         tagger=$(git cat-file -p "$local_sha" | sed -n 's/^tagger .*<\(.*\)>.*/\1/p')
         [ "$tagger" = "$EMAIL" ] || bad "$local_ref: tagger $tagger"
-        # a release tag must be signed by the release key (utils/allowed_signers)
-        case "$local_ref" in
+        # a release tag must be signed by the release key (utils/allowed_signers);
+        # what counts is the tag created on the remote, not the local name
+        case "$remote_ref" in
             refs/tags/shellter-v*)
-                # the name inside the signed object must be this tag's
-                [ "$(git cat-file tag "$local_sha" | sed -n '1,/^$/s/^tag //p')" = "${local_ref#refs/tags/}" ] ||
-                    bad "$local_ref: the tag object names another tag"
-                git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$ROOT/utils/allowed_signers" \
-                    -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
-                    verify-tag "$local_sha" >/dev/null 2>&1 ||
-                    bad "$local_ref: not signed by the release key (git tag -s; utils/allowed_signers)"
+                # the name inside the signed object must be the remote tag's
+                [ "$(git cat-file tag "$local_sha" | sed -n '1,/^$/s/^tag //p')" = "${remote_ref#refs/tags/}" ] ||
+                    bad "$remote_ref: the tag object names another tag"
+                verify verify-tag "$local_sha" ||
+                    bad "$remote_ref: not signed by the release key (git tag -s; utils/allowed_signers)"
                 # every release but legacy shellter-v1.* must match meson.build and NEWS
-                case "${local_ref#refs/tags/shellter-v}" in
+                case "${remote_ref#refs/tags/shellter-v}" in
                     1.*) ;;
-                    *) sh "$ROOT/utils/check-version.sh" "$local_sha" "${local_ref#refs/tags/}" ||
-                        bad "$local_ref: utils/check-version.sh refused the release (meson.build, NEWS and the tag must agree)" ;;
+                    *) sh "$ROOT/utils/check-version.sh" "$local_sha" "${remote_ref#refs/tags/}" ||
+                        bad "$remote_ref: utils/check-version.sh refused the release (meson.build, NEWS and the tag must agree)" ;;
                 esac ;;
         esac
         if [ "$check_private" = 1 ]; then
@@ -112,9 +147,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             [ -n "$hits" ] && bad "$local_ref: private data in the tag message: $hits"
         fi
     else
-        # a lightweight tag has no signature to check
-        case "$local_ref" in
-            refs/tags/shellter-v*) bad "$local_ref: release tags must be annotated and signed (git tag -s)" ;;
+        # a lightweight tag, or a commit pushed as a tag, has no signature
+        case "$remote_ref" in
+            refs/tags/shellter-v*) bad "$remote_ref: release tags must be annotated and signed (git tag -s)" ;;
         esac
     fi
 done
@@ -122,7 +157,7 @@ done
 # every shipped version of startup and the themes must be in the list erssi
 # uses to tell an unchanged ~/.erssi copy from the user's own - checked for
 # each pushed commit from its own history and files (not the working tree)
-known=$(mktemp)
+known="$tmpd/known"
 for tip in $pushed; do
     git cat-file -e "$tip:src/fe-ansi/default-files-known.h" 2>/dev/null || continue
     if sh "$ROOT/utils/default-file-hashes.sh" "$tip" "$known" >/dev/null 2>&1; then
@@ -132,15 +167,16 @@ for tip in $pushed; do
         bad "utils/default-file-hashes.sh failed for $(git log -1 --format=%h "$tip")"
     fi
 done
-rm -f "$known"
 
 [ "$fail" = 0 ] || { echo "pre-push: push refused" >&2; exit 1; }
 
 if [ -f "$ROOT/Build/build.ninja" ]; then
     ninja -C "$ROOT/Build" >/dev/null 2>&1 || { echo "pre-push: build failed (ninja -C Build)" >&2; exit 1; }
-    # a throwaway HOME: a test that runs core init without its own --home
-    # (upstream's test-796 does) must never write into the real ~/.erssi
-    test_home=$(mktemp -d) || { echo "pre-push: mktemp failed" >&2; exit 1; }
+    # tests that start erssi's core get their own HOME (test_env in
+    # meson.build, test_home_setup()); this one covers the rest of the suite,
+    # so that nothing it runs ever writes into the real ~/.erssi
+    test_home="$tmpd/home"
+    mkdir "$test_home" || { echo "pre-push: cannot create $test_home" >&2; exit 1; }
     HOME="$test_home" meson test -C "$ROOT/Build" >/dev/null 2>&1; rc=$?
     rm -rf "$test_home"
     [ "$rc" = 0 ] || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }
