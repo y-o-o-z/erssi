@@ -14,6 +14,8 @@ strict-rfc1459 or utf8 sends CASEMAPPING=<value> in 005 and folds channel
 and nick names that way (utf8: NFKC, then Python's casefold); without it
 no CASEMAPPING is sent and names are folded with str.lower().
 --hide-casemapping folds as --casemapping says but names none in 005.
+--register-delay N answers USER only after N seconds, so a client stays
+connecting that long.
 TESTRAW <nick> :<raw line> (sent by any client) writes <raw line> to that nick.
 TESTDROP <nick> closes that nick's connection without a word, as a link that
 dies does.
@@ -27,6 +29,7 @@ SRV = "e2e.test"
 NETWORK = "E2ETest"
 CASEMAPPING = None
 HIDE_CASEMAPPING = False
+REGISTER_DELAY = 0  # --register-delay: seconds before the reply to USER
 TRACE = None   # --trace file: every line in and out, with the time
 clients = {}   # nick (folded) -> Client
 channels = {}  # channel (folded) -> set(nick folded)
@@ -104,6 +107,8 @@ async def handle(reader, writer, wire_path, times_path):
                 clients[fold(me.nick)] = me
             elif cmd == "USER":
                 me.user = args[0]
+                if REGISTER_DELAY:
+                    await asyncio.sleep(REGISTER_DELAY)
                 for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
                                  ("004", f"{SRV} e2e io biklmnopstv")):
                     me.send(f":{SRV} {num} {me.nick} :{msg}")
@@ -194,8 +199,11 @@ async def main():
     parser.add_argument("--casemapping", choices=("ascii", "rfc1459", "strict-rfc1459", "utf8"))
     parser.add_argument("--hide-casemapping", action="store_true",
                         help="fold as --casemapping says, but name no CASEMAPPING in 005")
+    parser.add_argument("--register-delay", type=float, default=0,
+                        help="wait this many seconds before answering USER (a slow registration)")
     args = parser.parse_args()
-    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING, TRACE
+    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING, TRACE, REGISTER_DELAY
+    REGISTER_DELAY = args.register_delay
     TRACE = args.trace
     NETWORK = args.network
     CASEMAPPING = args.casemapping

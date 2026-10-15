@@ -681,6 +681,81 @@ void fe_server_windows_closed(GSList *tags)
 	g_slist_free_full(tags, g_free);
 }
 
+static SERVER_REC *chatnet_server_find(GSList *list, const char *chatnet)
+{
+	for (; list != NULL; list = list->next) {
+		SERVER_REC *server = list->data;
+
+		if (tag_is(server->connrec->chatnet, chatnet))
+			return server;
+	}
+	return NULL;
+}
+
+/* /CONNECT <network> while a server of that network is connected,
+   connecting or waiting to reconnect opens no second connection: the
+   server's window becomes active and one line says so. /CONNECT <address>
+   is left to the core command - that is how a second connection is made. */
+static void cmd_connect_existing(const char *data)
+{
+	GHashTable *optlist;
+	CHATNET_REC *chatnet;
+	SERVER_REC *server;
+	RECONNECT_REC *reconnect;
+	WINDOW_REC *window;
+	GSList *tmp;
+	char *addr, *port, *password, *nick;
+	const char *tag;
+	void *free_arg;
+
+	g_return_if_fail(data != NULL);
+
+	if (!cmd_get_params(data, &free_arg, 4 | PARAM_FLAG_OPTIONS, "connect", &optlist, &addr,
+	                    &port, &password, &nick)) {
+		/* the error is printed already, the core would print it again */
+		signal_stop();
+		return;
+	}
+	if (*addr == '+')
+		addr++;
+	chatnet = *addr == '\0' ? NULL : chatnet_find(addr);
+	if (chatnet == NULL) {
+		cmd_params_free(free_arg);
+		return;
+	}
+
+	server = chatnet_server_find(servers, chatnet->name);
+	if (server == NULL)
+		server = chatnet_server_find(lookup_servers, chatnet->name);
+	reconnect = NULL;
+	for (tmp = reconnects; tmp != NULL && server == NULL && reconnect == NULL; tmp = tmp->next) {
+		RECONNECT_REC *rec = tmp->data;
+
+		if (tag_is(rec->conn->chatnet, chatnet->name))
+			reconnect = rec;
+	}
+	if (server == NULL && reconnect == NULL) {
+		cmd_params_free(free_arg);
+		return;
+	}
+
+	tag = server != NULL ? server->tag :
+	      reconnect->conn->tag != NULL ? reconnect->conn->tag : chatnet->name;
+	window = window_find_network(tag);
+	for (tmp = windows; tmp != NULL && window == NULL; tmp = tmp->next) {
+		if (window_shows_server(tmp->data, tag))
+			window = tmp->data;
+	}
+	if (window != NULL)
+		window_set_active(window);
+	printformat_window(active_win, MSGLEVEL_CLIENTNOTICE,
+	                   server != NULL && server->connected ? TXT_SERVER_ALREADY_CONNECTED :
+	                   TXT_SERVER_ALREADY_CONNECTING, tag);
+
+	signal_stop();
+	cmd_params_free(free_arg);
+}
+
 void fe_server_init(void)
 {
 	settings_add_bool("lookandfeel", "window_close_disconnects", TRUE);
@@ -692,6 +767,7 @@ void fe_server_init(void)
 	command_bind("server remove", NULL, (SIGNAL_FUNC) cmd_server_remove);
 	command_bind_first("server", NULL, (SIGNAL_FUNC) server_command);
 	command_bind_first("disconnect", NULL, (SIGNAL_FUNC) server_command);
+	command_bind_first("connect", NULL, (SIGNAL_FUNC) cmd_connect_existing);
 
 	command_set_options(
 	    "server add", "4 6 !! ~ssl ~nossl ~+ssl_cert ~+ssl_pkey ~+ssl_pass ~ssl_verify "
@@ -730,6 +806,7 @@ void fe_server_deinit(void)
 	command_unbind("server remove", (SIGNAL_FUNC) cmd_server_remove);
 	command_unbind("server", (SIGNAL_FUNC) server_command);
 	command_unbind("disconnect", (SIGNAL_FUNC) server_command);
+	command_unbind("connect", (SIGNAL_FUNC) cmd_connect_existing);
 
 	signal_remove("server looking", (SIGNAL_FUNC) sig_server_looking);
 	signal_remove("server connecting", (SIGNAL_FUNC) sig_server_connecting);
