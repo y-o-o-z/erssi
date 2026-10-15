@@ -1,3 +1,67 @@
+shellter-v2026.10.1 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.1
+
+	+ Networks and windows
+	  - closing the last window of a server (/WINDOW CLOSE) disconnects it
+	    with your quit message and drops its pending reconnect; one line
+	    says so. A server with a channel or query in another window stays
+	    connected, and with a status window (the irssi layout) closing
+	    windows never disconnects. The next /CONNECT gets the plain tag
+	    again (no IRCnet2). /SET window_close_disconnects OFF turns it off
+	  - new network option one_window (/NETWORK MODIFY -onewindow <network>,
+	    or one_window = "yes" in its chatnets block): the network's queries
+	    open in its network window instead of a window each; /QUERY -window
+	    and a query window saved in a layout still get their own window
+	  - /CONNECT <network> while that network is connected, connecting or
+	    waiting to reconnect opens no second connection: it switches to
+	    the network's window and says so (/RECONNECT for one that waits).
+	    /CONNECT <server address> still makes a deliberate second connection
+
+	+ Side panels and layouts
+	  - the side panels belong to the screen: one left and one right panel,
+	    whatever the number of main windows. Windows split above each other
+	    or side by side get the right columns after /SET, a resize,
+	    /WINDOW HIDE, SHOW, GROW and SHRINK and a restored layout, and the
+	    panels no longer overlap; the right panel shows the nicks of the
+	    active main window's channel
+	  - erssi no longer hangs with many main windows (about 7 on 80x24,
+	    15 on 200x50), at runtime or at start with a saved layout
+	  - windows side by side keep their order left to right (three or more
+	    could be reordered by a resize or /WINDOW BALANCE); their widths
+	    are scaled again when the right panel hides or shows
+	  - /LAYOUT SAVE with the left side panel on no longer crashes the next
+	    start: layouts store columns of the main area, so they restore the
+	    same with the panels on or off, and layouts saved before restore too.
+	    /LAYOUT SAVE no longer writes a layout the next start drops
+	  - a mainwindows block that makes no sense is ignored (one main
+	    window), and a windows block of the wrong shape is skipped, instead
+	    of crashing or hanging the start
+
+	+ Settings at start
+	  - when erssi cannot write the config at start (a full quota, a
+	    read-only directory, a bind-mounted or immutable file), the note
+	    says that writing failed and why (/SAVE to retry); erssi --setup and
+	    the mentions.pl migration no longer treat the file as having errors
+	  - a first start without a config of your own (also with a system-wide
+	    irssi.conf) no longer prints the "keep their Shellter Edition
+	    values" note and no longer writes ~/.erssi/config at quit
+	  - the migration of former defaults and of the info bar applies only
+	    the changes of versions newer than the config's marker: a setting
+	    you removed after an earlier migration stays removed
+
+	+ Release tools
+	  - utils/pre-push: the release-tag rules follow the tag created on the
+	    remote (HEAD:refs/tags/shellter-v... is checked too); commits pushed
+	    to main must be signed by the release key; in
+	    ~/.config/git-private-patterns only "# ..." and a lone "#" are
+	    comments ("#chan" is a pattern) and a file with no pattern refuses
+	    the push; temporary files are removed on Ctrl-C
+	  - utils/check-version.sh, utils/irssi-version.sh: any whitespace may
+	    separate the NEWS header and the date; a missing date names the
+	    expected form
+	  - tests: the installer versions test skips the 1.3.10 checks when the
+	    local tag is not the pinned commit (a stale tag in an older clone)
+
 shellter-v2026.10.0 2026-10-15  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.0
 

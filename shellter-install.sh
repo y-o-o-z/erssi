@@ -801,7 +801,7 @@ else
 fi
 if [ "$UPDATE" = 1 ]; then
     step "Finding the release"
-    can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.0"
+    can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.1"
     rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
     [ "$rc" != 2 ] || die "cannot reach $REPO"
     [ "$rc" = 0 ] || die "no signed release newer than $INSTALLED found on $REPO"
