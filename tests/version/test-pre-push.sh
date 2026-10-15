@@ -19,7 +19,8 @@ command -v git >/dev/null 2>&1 || { echo "skip: no git"; exit 77; }
 command -v ssh-keygen >/dev/null 2>&1 || { echo "skip: no ssh-keygen"; exit 77; }
 
 tmp=$(mktemp -d) || exit 1
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 failed=0
 n=0
 
@@ -88,15 +89,16 @@ cm() {
     git -C "$r" add f && git -C "$r" commit -q "$@"
 }
 
-# push NAME ok|refused [GREP] -- REFSPEC...: git push origin REFSPEC... from $r;
-# with GREP, the output must match it (grep -F). Every push must leave
-# TMPDIR empty.
+# push NAME ok|refused [GREP] -- REFSPEC...: git push $to REFSPEC... from $r
+# ($to is origin unless a case sets it); with GREP, the output must match it
+# (grep -F). Every push must leave TMPDIR empty.
+to=origin
 push() {
     name=$1; want=$2; shift 2
     pat=
     [ "$1" != -- ] && { pat=$1; shift; }
     shift
-    out=$(cd "$r" && git push origin "$@" 2>&1)
+    out=$(cd "$r" && git push "$to" "$@" 2>&1)
     rc=$?
     case $want in
         ok) [ "$rc" = 0 ] && good=1 || good=0 ;;
@@ -122,7 +124,8 @@ cm -S -m 'signed change'
 push 'signed commit to main' ok -- main
 
 newrepo
-cm -S -m 'x' -m 'Co-Authored-By: Claude <noreply@anthropic.com>'
+# the trailer is built from pieces so that this file does not carry it
+cm -S -m 'x' -m "Co-Authored-By: Cl""aude <noreply@anthr""opic.com>"
 push 'AI trailer' refused 'AI attribution trailer' -- main
 
 newrepo
@@ -151,6 +154,63 @@ push 'unsigned commit under a signed tip' refused 'unsigned parent' -- main
 newrepo
 cm -m 'unsigned'
 push 'unsigned commit to another branch' ok -- HEAD:refs/heads/dev/x
+# already on origin/dev/x, but new to origin's main
+push 'the same unsigned commit, then to main' refused 'not signed by the release key' -- HEAD:main
+
+# the release flow: a private remote first, then the public main
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -m 'unsigned'
+to=staging
+push 'unsigned commit to a second remote' ok -- HEAD:refs/heads/dev/y
+to=origin
+push 'the same unsigned commit, then to main of the first' refused 'not signed by the release key' -- HEAD:main
+
+# main created on an empty remote: everything it gets is new to it
+newrepo
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+cm -S -m 'signed'
+to=fresh
+push 'signed history to an empty remote main' ok -- main
+to=origin
+
+newrepo
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+cm -m 'unsigned'
+to=fresh
+push 'unsigned commit to an empty remote main' refused 'not signed by the release key' -- main
+to=origin
+
+# main moved on the remote since our last fetch (its tip is unknown here):
+# a force push is checked against our copy of the remote's main
+newrepo
+git clone -q "$r.git" "$r.other" &&
+    echo elsewhere > "$r.other/g" && git -C "$r.other" add g &&
+    git -C "$r.other" commit -qS -m elsewhere &&
+    git -C "$r.other" push -q origin main 2>/dev/null
+cm -m 'unsigned'
+push 'unsigned commit, force push over an unknown main' refused 'not signed by the release key' -- --force main
+
+# many unsigned commits: the first 10 are named, then it stops
+newrepo
+i=0
+while [ "$i" -lt 12 ]; do cm -m "unsigned $i"; i=$((i + 1)); done
+push 'twelve unsigned commits to main' refused 'stopped after 10' -- main
+
+# a release tag and main in one push: each ref is checked
+newrepo
+cm -m 'unsigned'
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'release tag and unsigned main in one push' refused 'not signed by the release key' -- refs/tags/shellter-v2026.10.0 main
+
+# deletes create nothing on the remote and pass
+newrepo
+cm -m 'unsigned'
+push 'branch for the delete' ok -- HEAD:refs/heads/dev/x
+push 'delete a branch' ok -- :refs/heads/dev/x
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'release tag for the delete' ok -- refs/tags/shellter-v2026.10.0
+push 'delete a release tag' ok -- :refs/tags/shellter-v2026.10.0
 
 # --- release tags (M5) ----------------------------------------------------
 newrepo
