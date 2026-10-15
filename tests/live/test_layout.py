@@ -379,21 +379,33 @@ windows = {
         t.__name__ = "t_bad_layout_" + name
         return t
 
-    # a `windows` block of the wrong shape: the bad entries are skipped
+    # a `windows` block of the wrong shape: the bad entries are skipped,
+    # the good ones next to them restored (the names that must come back,
+    # and those that must not). A list has no window numbers: nothing of
+    # it is restored, as before.
     WINDOWS_BAD = {
-        "scalar": 'windows = "x";',
-        "entry": 'windows = { 1 = "x"; 2 = { name = "two"; }; };',
-        "list": 'windows = ( "x", { name = "y"; } );',
-        "badkey": 'windows = { abc = { name = "abc"; }; 0 = { name = "zero"; }; 3 = { name = "three"; }; };',
-        "items": 'windows = { 1 = { name = "one"; items = "x"; }; };',
-        "item": 'windows = { 1 = { name = "one"; items = ( "x", { type = "CHANNEL"; } ); }; };',
+        "scalar": ('windows = "x";', [], []),
+        "entry": ('windows = { 1 = "x"; 2 = { name = "two"; }; 4 = { name = "four"; }; };',
+                  ["two", "four"], []),
+        "list": ('windows = ( "x", { name = "y"; } );', [], ["y"]),
+        "badkey": ('windows = { abc = { name = "abc"; }; 0 = { name = "zero"; }; '
+                   '3 = { name = "three"; }; 5x = { name = "fivex"; }; };', ["three"], ["abc", "zero", "fivex"]),
+        "items": ('windows = { 1 = { name = "one"; items = "x"; }; 2 = { name = "two"; }; };',
+                  ["one", "two"], []),
+        "item": ('windows = { 1 = { name = "one"; items = ( "x", { type = "CHANNEL"; } ); }; '
+                 '2 = { name = "two"; }; };', ["one", "two"], []),
     }
 
     def bad_windows(name):
         def t():
-            e = new("badwin-" + name, cfg("badwin" + name, True, WINDOWS_BAD[name]))
+            text, kept, dropped = WINDOWS_BAD[name]
+            e = new("badwin-" + name, cfg("badwin" + name, True, text))
             saved = save(e)
-            assert block(saved, "windows") is not None, saved
+            windows = block(saved, "windows")
+            assert windows is not None, saved
+            names = [w.get("name") for w in windows.values()]
+            assert all(n in names for n in kept), f"{kept} not all restored: {windows}"
+            assert not any(n in names for n in dropped), f"{dropped} restored: {windows}"
             e.quit()
         t.__name__ = "t_bad_windows_" + name
         return t
