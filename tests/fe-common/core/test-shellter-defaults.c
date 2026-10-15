@@ -13,8 +13,11 @@
 #include <irssi/src/fe-common/core/fe-common-core.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 void fe_whois_init(void);
 
@@ -449,7 +452,7 @@ static void test_note_saved(void)
 {
 	char *note;
 
-	note = shellter_defaults_format_note(12, SHELLTER_DEFAULTS_SAVED, "/home/a/.erssi/config");
+	note = shellter_defaults_format_note(12, SHELLTER_DEFAULTS_SAVED, "/home/a/.erssi/config", NULL);
 	g_assert_cmpstr(note, ==, "12 settings keep their Shellter Edition values, now written "
 	                "in /home/a/.erssi/config (they were built-in defaults before 2026.10.0)");
 	g_free(note);
@@ -459,7 +462,7 @@ static void test_note_broken(void)
 {
 	char *note;
 
-	note = shellter_defaults_format_note(14, SHELLTER_DEFAULTS_BROKEN, "/home/a/.erssi/config");
+	note = shellter_defaults_format_note(14, SHELLTER_DEFAULTS_BROKEN, "/home/a/.erssi/config", NULL);
 	g_assert_cmpstr(note, ==, "14 settings keep their Shellter Edition values for this run "
 	                "only: /home/a/.erssi/config has errors and was not changed; fix it and "
 	                "restart erssi");
@@ -467,26 +470,43 @@ static void test_note_broken(void)
 	g_free(note);
 }
 
-static void test_note_unsaved(void)
+static void test_note_save_failed(void)
 {
 	char *note;
 
-	note = shellter_defaults_format_note(14, SHELLTER_DEFAULTS_UNSAVED, "/home/a/.erssi/config");
-	g_assert_cmpstr(note, ==, "14 settings keep their Shellter Edition values (built-in "
-	                "defaults before 2026.10.0) - /SAVE to keep them in /home/a/.erssi/config");
+	note = shellter_defaults_format_note(14, SHELLTER_DEFAULTS_SAVE_FAILED,
+	                                     "/home/a/.erssi/config", "Disk quota exceeded");
+	g_assert_cmpstr(note, ==, "14 settings keep their Shellter Edition values for now "
+	                "(built-in defaults before 2026.10.0), but writing /home/a/.erssi/config "
+	                "failed: Disk quota exceeded - /SAVE to retry");
 	g_free(note);
+
+	/* the reason is text too */
+	note = shellter_defaults_format_note(2, SHELLTER_DEFAULTS_SAVE_FAILED, "/tmp/a%b/config",
+	                                     "100% full");
+	g_assert_cmpstr(note, ==, "2 settings keep their Shellter Edition values for now "
+	                "(built-in defaults before 2026.10.0), but writing /tmp/a%%b/config "
+	                "failed: 100%% full - /SAVE to retry");
+	g_free(note);
+}
+
+/* no file of the user's yet: nothing to say */
+static void test_note_no_file(void)
+{
+	g_assert_null(shellter_defaults_format_note(14, SHELLTER_DEFAULTS_NO_FILE,
+	                                            "/home/a/.erssi/config", NULL));
 }
 
 static void test_note_percent_and_none(void)
 {
 	char *note;
 
-	note = shellter_defaults_format_note(3, SHELLTER_DEFAULTS_SAVED, "/tmp/a%b/config");
+	note = shellter_defaults_format_note(3, SHELLTER_DEFAULTS_SAVED, "/tmp/a%b/config", NULL);
 	g_assert_cmpstr(note, ==, "3 settings keep their Shellter Edition values, now written "
 	                "in /tmp/a%%b/config (they were built-in defaults before 2026.10.0)");
 	g_free(note);
 
-	g_assert_null(shellter_defaults_format_note(0, SHELLTER_DEFAULTS_SAVED, "/x/config"));
+	g_assert_null(shellter_defaults_format_note(0, SHELLTER_DEFAULTS_SAVED, "/x/config", NULL));
 }
 
 /* Integration: a real start of core and fe-common in a child process, with
@@ -515,13 +535,16 @@ static void remove_tree(const char *path)
 	g_remove(path);
 }
 
-/* In the parent: makes a home with `config' (none when NULL), runs the
-   test in a child process with it, removes the home (also when the child
-   failed) and returns FALSE. In the child: returns TRUE. */
-static gboolean run_in_child(const char *config)
+/* In the parent: makes a home with `config' (none when NULL), read-only
+   when `read_only', runs the test in a child process with it, removes the
+   home (also when the child failed) and returns FALSE. In the child:
+   returns TRUE. A home that stays writable when it is made read-only (a
+   test run by root) skips the test. */
+static gboolean run_in_child_mode(const char *config, gboolean read_only)
 {
 	GError *error = NULL;
 	char *home, *fname;
+	int fd;
 
 	if (g_test_subprocess())
 		return TRUE;
@@ -537,19 +560,43 @@ static gboolean run_in_child(const char *config)
 		g_assert_no_error(error);
 	}
 
+	if (read_only) {
+		g_assert_cmpint(g_chmod(home, 0500), ==, 0);
+		fname = g_build_filename(home, "probe", NULL);
+		fd = g_open(fname, O_WRONLY | O_CREAT | O_EXCL, 0600);
+		if (fd != -1) {
+			close(fd);
+			g_remove(fname);
+		}
+		g_free(fname);
+		if (fd != -1) {
+			g_chmod(home, 0700);
+			remove_tree(home);
+			g_free(home);
+			g_test_skip("a read-only directory is still writable here");
+			return FALSE;
+		}
+	}
+
 	g_setenv(TEST_HOME_ENV, home, TRUE);
 	g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_INHERIT_STDERR);
 	g_unsetenv(TEST_HOME_ENV);
+	if (read_only)
+		g_chmod(home, 0700);
 	remove_tree(home);
 	g_free(home);
 	g_test_trap_assert_passed();
 	return FALSE;
 }
 
-/* in the child: starts erssi's core and
-   fe-common in the home of the test; returns
-   the home */
-static char *start_in_home(void)
+static gboolean run_in_child(const char *config)
+{
+	return run_in_child_mode(config, FALSE);
+}
+
+/* in the child: starts erssi's core in the home of the test; returns the
+   home */
+static char *start_core_in_home(void)
 {
 	const char *home;
 	char *argv[] = { "test-shellter-defaults", "--home", NULL, NULL };
@@ -562,9 +609,19 @@ static char *start_in_home(void)
 	args_execute(3, argv);
 	core_preinit(argv[0]);
 	core_init();
+	return g_strdup(home);
+}
+
+/* in the child: starts erssi's core and fe-common in the home of the test;
+   returns the home */
+static char *start_in_home(void)
+{
+	char *home;
+
+	home = start_core_in_home();
 	fe_common_core_init();
 	fe_whois_init();
-	return g_strdup(home);
+	return home;
 }
 
 static void assert_effective(const DEFAULT_ROW *rows, int count)
@@ -774,6 +831,82 @@ static void test_broken_config(void)
 	g_free(home);
 }
 
+/* The config's directory is read-only, so the config cannot be written:
+   the values apply for this run, the note says that the write failed and
+   why, and no error is left in mainconfig that looks like a parse error
+   (erssi --setup and the mentions migration check it). */
+static void test_save_failed(void)
+{
+	static const char config[] = "settings = { core = { nick = \"alice\"; }; };\n";
+	char *home, *fname, *contents, *note, *expected;
+	gsize length;
+	GError *error = NULL;
+
+	if (!run_in_child_mode(config, TRUE))
+		return;
+
+	home = start_in_home();
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_cmpstr(settings_get_str("theme"), ==, "shellter");
+	g_assert_cmpint(settings_get_int("nick_column_width"), ==, 13);
+	g_assert_cmpstr(settings_get_str("hidden_settings"), ==, "translate_deepl_key");
+
+	fname = g_build_filename(home, "config", NULL);
+	g_file_get_contents(fname, &contents, &length, &error);
+	g_assert_no_error(error);
+	g_assert_cmpmem(contents, length, config, strlen(config));
+
+	note = shellter_defaults_note();
+	expected = g_strdup_printf("14 settings keep their Shellter Edition values for now "
+	                           "(built-in defaults before 2026.10.0), but writing %s "
+	                           "failed: %s - /SAVE to retry", fname, g_strerror(EACCES));
+	g_assert_cmpstr(note, ==, expected);
+
+	g_free(expected);
+	g_free(note);
+	g_free(contents);
+	g_free(fname);
+	g_free(home);
+}
+
+/* No config file of the user's yet, and the one read instead (for example
+   SYSCONFDIR/irssi.conf of irssi) has no markers: the values apply in
+   memory, like at an upstream first run - no note, and the modify counter
+   is as before, so settings_autosave does not write the file at quit. */
+static void test_no_user_file(void)
+{
+	CONFIG_NODE *section;
+	char *home, *fname;
+	int counter;
+
+	if (!run_in_child(NULL))
+		return;
+
+	home = start_core_in_home();
+	fname = g_build_filename(home, "config", NULL);
+	g_assert_cmpstr(mainconfig->fname, ==, fname);
+	g_assert_false(g_file_test(fname, G_FILE_TEST_EXISTS));
+
+	/* a config read from elsewhere, without the markers and a theme */
+	config_node_set_str(mainconfig, mainconfig->mainnode, "erssi", NULL);
+	section = cfg_section(mainconfig, "fe-common/core");
+	if (section != NULL)
+		config_node_set_str(mainconfig, section, "theme", NULL);
+	g_assert_null(cfg_get(mainconfig, "fe-common/core", "theme"));
+	counter = mainconfig->modifycounter;
+
+	shellter_defaults_init();
+	g_assert_cmpstr(cfg_get(mainconfig, "fe-common/core", "theme"), ==, "shellter");
+	g_assert_cmpint(config_get_int(mainconfig, "erssi", "defaults_version", 0), ==, 1);
+	g_assert_cmpint(mainconfig->modifycounter, ==, counter);
+	g_assert_null(shellter_defaults_note());
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_false(g_file_test(fname, G_FILE_TEST_EXISTS));
+
+	g_free(fname);
+	g_free(home);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -789,11 +922,14 @@ int main(int argc, char **argv)
 	                test_builtin_config_fresh_values);
 	g_test_add_func("/shellter_defaults/note_saved", test_note_saved);
 	g_test_add_func("/shellter_defaults/note_broken", test_note_broken);
-	g_test_add_func("/shellter_defaults/note_unsaved", test_note_unsaved);
+	g_test_add_func("/shellter_defaults/note_save_failed", test_note_save_failed);
+	g_test_add_func("/shellter_defaults/note_no_file", test_note_no_file);
 	g_test_add_func("/shellter_defaults/note_percent_and_none", test_note_percent_and_none);
 	g_test_add_func("/shellter_defaults/fresh_home", test_fresh_home);
 	g_test_add_func("/shellter_defaults/upgraded_home", test_upgraded_home);
 	g_test_add_func("/shellter_defaults/broken_config", test_broken_config);
+	g_test_add_func("/shellter_defaults/save_failed", test_save_failed);
+	g_test_add_func("/shellter_defaults/no_user_file", test_no_user_file);
 	g_test_add_func("/shellter_defaults/statusbar_shipped_list", test_statusbar_shipped_list);
 	g_test_add_func("/shellter_defaults/statusbar_custom_untouched",
 	                test_statusbar_custom_untouched);
