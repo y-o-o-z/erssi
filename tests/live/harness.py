@@ -4,6 +4,7 @@ running in a pty, each with its own HOME and --home.
 
 A test script calls main([test, ...]); it prints one line per test and exits
 0 (all ok), 1 (a failure) or 77 (Skip raised: the reason is printed)."""
+import codecs
 import fcntl
 import os
 import re
@@ -17,6 +18,7 @@ import termios
 import threading
 import time
 import traceback
+import unicodedata
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -29,6 +31,230 @@ class Skip(Exception):
 
 class SkipCase(Exception):
     """One test case cannot run here; the rest go on. Reported as SKIP."""
+
+
+class Screen:
+    """What a terminal of COLS x ROWS shows after an output stream: the
+    part of xterm that erssi (term-ansi.c) uses - cursor moves, clearing
+    the screen and to the end of a line, scroll regions with LF and ESC M,
+    lines and characters inserted or deleted. Colours, modes, OSC and DCS
+    strings are read and dropped. A wide character takes two cells, the
+    second one empty."""
+
+    def __init__(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        self.cells = [[" "] * cols for _ in range(rows)]
+        self.x = self.y = 0
+        self.top, self.bottom = 0, rows - 1
+        self.wrap = False
+        self.saved = (0, 0)
+        self.last = " "
+        self._dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._rest = ""
+
+    def resize(self, cols, rows):
+        self.cells = [(row + [" "] * cols)[:cols] for row in self.cells[:rows]]
+        self.cells += [[" "] * cols for _ in range(rows - len(self.cells))]
+        self.cols, self.rows = cols, rows
+        self.top, self.bottom = 0, rows - 1
+        self.x, self.y = min(self.x, cols - 1), min(self.y, rows - 1)
+        self.wrap = False
+
+    def lines(self, first=0, end=None):
+        """Every row as text, columns FIRST to END - 1 (the cells, not the
+        characters: a wide character counts two)."""
+        return ["".join(row[first:end]) for row in self.cells]
+
+    def _blank(self):
+        return [" "] * self.cols
+
+    def _scroll(self, n, top=None):
+        """n lines up (n < 0: down) inside the scroll region, or from
+        row TOP to its bottom"""
+        top = self.top if top is None else top
+        for _ in range(abs(n)):
+            if n > 0:
+                del self.cells[top]
+                self.cells.insert(self.bottom, self._blank())
+            else:
+                del self.cells[self.bottom]
+                self.cells.insert(top, self._blank())
+
+    def _linefeed(self):
+        if self.y == self.bottom:
+            self._scroll(1)
+        elif self.y < self.rows - 1:
+            self.y += 1
+
+    def _put(self, ch):
+        if unicodedata.combining(ch) or ch in "‍️":
+            return
+        w = 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+        if self.wrap or self.x + w > self.cols:
+            self.x, self.wrap = 0, False
+            self._linefeed()
+        self.cells[self.y][self.x] = ch
+        if w == 2 and self.x + 1 < self.cols:
+            self.cells[self.y][self.x + 1] = ""
+        self.last = ch
+        self.x += w
+        if self.x >= self.cols:
+            self.x, self.wrap = self.cols - 1, True
+
+    def feed(self, data):
+        text = self._rest + self._dec.decode(data)
+        self._rest = ""
+        i, n = 0, len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\x1b":
+                end = self._escape(text, i)
+                if end is None:  # cut in the middle: the rest comes later
+                    self._rest = text[i:]
+                    return
+                i = end
+                continue
+            i += 1
+            if ch == "\r":
+                self.x, self.wrap = 0, False
+            elif ch in "\n\x0b\x0c":
+                self.wrap = False
+                self._linefeed()
+            elif ch == "\b":
+                self.x, self.wrap = max(0, self.x - 1), False
+            elif ch == "\t":
+                self.x = min(self.cols - 1, (self.x // 8 + 1) * 8)
+            elif ch >= " " and ch != "\x7f":
+                self._put(ch)
+
+    def _escape(self, text, i):
+        """Handle the sequence at text[i] (ESC); the index after it, None
+        when it is not complete yet."""
+        if i + 1 >= len(text):
+            return None
+        kind = text[i + 1]
+        if kind == "[":
+            j = i + 2
+            while j < len(text) and not "\x40" <= text[j] <= "\x7e":
+                j += 1
+            if j >= len(text):
+                return None
+            self._csi(text[i + 2:j], text[j])
+            return j + 1
+        if kind in "]PX^_":  # a string, to BEL or ST
+            j = i + 2
+            while j < len(text):
+                if text[j] == "\x07" and kind == "]":
+                    return j + 1
+                if text[j] == "\x1b" and j + 1 < len(text) and text[j + 1] == "\\":
+                    return j + 2
+                j += 1
+            return None
+        if kind in "()*+#":
+            return None if i + 2 >= len(text) else i + 3
+        self.wrap = False
+        if kind == "M":
+            if self.y == self.top:
+                self._scroll(-1)
+            elif self.y > 0:
+                self.y -= 1
+        elif kind == "D":
+            self._linefeed()
+        elif kind == "E":
+            self.x = 0
+            self._linefeed()
+        elif kind == "7":
+            self.saved = (self.x, self.y)
+        elif kind == "8":
+            self.x, self.y = self.saved
+        elif kind == "c":
+            self.__init__(self.cols, self.rows)
+        return i + 2
+
+    def _csi(self, params, final):
+        private = params[:1] in ("?", "<", ">", "=")
+        nums = [int(p) if p.isdigit() else None for p in params.lstrip("?<>=").split(";")]
+
+        def arg(k, default=1):
+            v = nums[k] if k < len(nums) else None
+            return default if v is None or (v == 0 and default == 1) else v
+
+        if private:
+            if final in "hl" and any(v in (47, 1047, 1049) for v in nums):
+                self.cells = [self._blank() for _ in range(self.rows)]
+            return
+        if final not in "mb":
+            self.wrap = False
+        if final in "Hf":
+            self.y = min(self.rows - 1, arg(0) - 1)
+            self.x = min(self.cols - 1, arg(1) - 1)
+        elif final == "A":
+            self.y = max(0, self.y - arg(0))
+        elif final == "B":
+            self.y = min(self.rows - 1, self.y + arg(0))
+        elif final == "C":
+            self.x = min(self.cols - 1, self.x + arg(0))
+        elif final == "D":
+            self.x = max(0, self.x - arg(0))
+        elif final == "G":
+            self.x = min(self.cols - 1, arg(0) - 1)
+        elif final == "d":
+            self.y = min(self.rows - 1, arg(0) - 1)
+        elif final == "J":
+            mode = arg(0, 0)
+            row = self.cells[self.y]
+            if mode == 0:
+                row[self.x:] = [" "] * (self.cols - self.x)
+                rows = range(self.y + 1, self.rows)
+            elif mode == 1:
+                row[:self.x + 1] = [" "] * (self.x + 1)
+                rows = range(0, self.y)
+            else:
+                rows = range(self.rows)
+            for r in rows:
+                self.cells[r] = self._blank()
+        elif final == "K":
+            mode = arg(0, 0)
+            row = self.cells[self.y]
+            if mode == 0:
+                row[self.x:] = [" "] * (self.cols - self.x)
+            elif mode == 1:
+                row[:self.x + 1] = [" "] * (self.x + 1)
+            else:
+                self.cells[self.y] = self._blank()
+        elif final == "X":
+            row = self.cells[self.y]
+            n = min(arg(0), self.cols - self.x)
+            row[self.x:self.x + n] = [" "] * n
+        elif final == "@":
+            row = self.cells[self.y]
+            n = min(arg(0), self.cols - self.x)
+            row[self.x:self.x] = [" "] * n
+            del row[self.cols:]
+        elif final == "P":
+            row = self.cells[self.y]
+            n = min(arg(0), self.cols - self.x)
+            del row[self.x:self.x + n]
+            row += [" "] * n
+        elif final in "LM" and self.top <= self.y <= self.bottom:
+            n = min(arg(0), self.bottom - self.y + 1)
+            self._scroll(n if final == "M" else -n, top=self.y)
+        elif final in "ST":
+            self._scroll(arg(0) if final == "S" else -arg(0))
+        elif final == "r":
+            top, bottom = arg(0) - 1, arg(1, self.rows) - 1
+            if 0 <= top < bottom < self.rows:
+                self.top, self.bottom = top, bottom
+            else:
+                self.top, self.bottom = 0, self.rows - 1
+            self.x = self.y = 0
+        elif final == "s":
+            self.saved = (self.x, self.y)
+        elif final == "u":
+            self.x, self.y = self.saved
+        elif final == "b":
+            for _ in range(arg(0)):
+                self._put(self.last)
 
 
 def keep_work():
@@ -279,6 +505,8 @@ class Erssi:
         self._lock = threading.Lock()
         self._thread = None
         self._marks = 0
+        self._screen = None
+        self._screen_off = 0
 
     def child_env(self):
         """The environment of the child, built from an allowlist: nothing
@@ -343,12 +571,38 @@ class Erssi:
         finally:
             os.close(slave)
         self.master = master
+        with self._lock:
+            self._screen = Screen(cols, rows)
+            self._screen_off = len(self._buf)
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
     def resize(self, cols, rows):
         """A new terminal size: the kernel sends SIGWINCH to erssi."""
+        self.screen()  # what came before is drawn at the old size
+        self._screen.resize(cols, rows)
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    def screen(self, first=0, end=None):
+        """The rows of the terminal now as text, columns FIRST to END - 1
+        (see Screen)."""
+        with self._lock:
+            data = bytes(self._buf[self._screen_off:])
+            self._screen_off = len(self._buf)
+        self._screen.feed(data)
+        return self._screen.lines(first, end)
+
+    def wait_screen(self, check, timeout, first=0, end=None):
+        """Poll the screen (columns FIRST to END - 1) until check(rows) is
+        true; the last rows read, and whether it was."""
+        end_time = time.time() + timeout
+        while True:
+            rows = self.screen(first, end)
+            if check(rows):
+                return rows, True
+            if time.time() >= end_time:
+                return rows, False
+            time.sleep(0.1)
 
     def run_detached(self, timeout, stdin_tty=False):
         """erssi without a terminal on stdout: stdout and stderr one pipe,

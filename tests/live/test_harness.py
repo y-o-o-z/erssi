@@ -105,6 +105,21 @@ def main():
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
+    def t_screen():
+        # the terminal text of an output stream, no erssi needed
+        s = harness.Screen(10, 4)
+        s.feed(b"\x1b[?1049h\x1b[H\x1b[2Jtop\x1b[2;3H\x1b[31mab\xe2\x94")
+        s.feed(b"\x82c\x1b[0m\x1b]9;osc\x07\x1b[4;1Hlast")  # a character and an OSC cut
+        assert s.lines() == ["top       ", "  ab\u2502c    ", "          ", "last      "], s.lines()
+        s.feed(b"\x1b[2;4H\x1b[K\x1b[1;4r\x1b[4;1H\n")  # clear to the end, scroll up
+        assert s.lines() == ["  a       ", "          ", "last      ", "          "], s.lines()
+        s.feed(b"\x1b[1;1H\x1bMx\x1b[r\x1b[3;9Hwide\xe5\xad\x97")  # scroll down, wrap
+        # a wide character takes two cells, the second one empty
+        assert s.lines() == ["x         ", "  a       ", "        wi", "de\u5b57      "], s.lines()
+        assert s.lines(2, 5) == ["   ", "a  ", "   ", "\u5b57 "], s.lines(2, 5)
+        s.feed(b"\x1b[r\x1b[1;1H\x1b[2J")
+        assert s.lines() == [" " * 10] * 4, s.lines()
+
     def t_skip_case():
         # a case that raises SkipCase is reported as SKIP, the others still run
         r = subprocess.run([sys.executable, "-c",
@@ -119,7 +134,7 @@ def main():
         assert "result: 2 ok, 0 failed, 1 skipped" in r.stdout, r.stdout
 
     try:
-        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke, t_skip_case])
+        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke, t_screen, t_skip_case])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)
