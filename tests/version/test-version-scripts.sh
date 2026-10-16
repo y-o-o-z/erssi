@@ -2,9 +2,17 @@
 # Tests for utils/irssi-version.sh and utils/check-version.sh.
 # Usage: test-version-scripts.sh SOURCE_ROOT
 
+# a clean environment: nothing from git (GIT_DIR when the real pre-push
+# runs this suite would make the git init and commit below work on the
+# pushing repository) or the caller's HOME
+if [ -z "${VERSION_TEST_CLEAN:-}" ]; then
+    exec env -i VERSION_TEST_CLEAN=1 PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" sh "$0" "$@"
+fi
+
 root=$1
 tmp=$(mktemp -d) || exit 1
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+export HOME="$tmp" GIT_CONFIG_NOSYSTEM=1
 failed=0
 n=0
 today=$(date +%Y%m%d)

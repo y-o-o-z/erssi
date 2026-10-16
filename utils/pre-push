@@ -199,7 +199,13 @@ if [ -f "$ROOT/Build/build.ninja" ]; then
     # so that nothing it runs ever writes into the real ~/.erssi
     test_home="$tmpd/home"
     mkdir "$test_home" || { echo "pre-push: cannot create $test_home" >&2; exit 1; }
-    HOME="$test_home" meson test -C "$ROOT/Build" >/dev/null 2>&1; rc=$?
+    # git gives a hook GIT_DIR and the like (GIT_DIR always in a linked
+    # worktree); a test that runs git in a scratch directory would then
+    # commit to this repository, so the tests get none of them
+    (
+        for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+        HOME="$test_home" meson test -C "$ROOT/Build" >/dev/null 2>&1
+    ); rc=$?
     rm -rf "$test_home"
     [ "$rc" = 0 ] || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }
     # the build uses the working tree; say so when that is not what is pushed
