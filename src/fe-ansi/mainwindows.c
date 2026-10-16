@@ -1720,26 +1720,38 @@ static void mainwindow_grow_right_int(int count)
 
 /* The lines or columns of /WINDOW GROW, SHRINK or SIZE in ARGS: DEF when
    there is none (0: one is needed), otherwise digits only and from 1 to
-   the terminal's lines or (RIGHT) columns. Anything else - a sign, not a
-   number, 0, more than the terminal has (atoi() overflowed there, and a
-   negated INT_MIN too) - is refused with an error: FALSE. */
+   the terminal's lines or (RIGHT) columns, trailing white space allowed.
+   Anything else - a sign, not a number, 0, more than the terminal has
+   (atoi() overflowed there, and a negated INT_MIN too) - is refused with
+   an error: FALSE. */
 static gboolean window_size_arg(const char *args, int right, int def, int *out)
 {
 	int max = MAX(1, right ? term_width : term_height);
 	gint64 value = 0;
+	char *num;
 
-	if (*args == '\0' && def > 0) {
-		*out = def;
-		return TRUE;
-	}
-	/* digits only: strtoll() saturates a number too long for it */
-	if (is_numeric(args, 0))
-		value = g_ascii_strtoll(args, NULL, 10);
-	if (value < 1 || value > max) {
-		printformat_window(active_win, MSGLEVEL_CLIENTERROR, TXT_WINDOW_SIZE_INVALID, args,
-		                   max);
+	/* cmd_get_params() leaves trailing white space on the rest of the
+	   line ("/window grow 5 " from an alias): it is not part of the number */
+	num = g_strstrip(g_strdup(args));
+	if (*num == '\0') {
+		g_free(num);
+		if (def > 0) {
+			*out = def;
+			return TRUE;
+		}
+		printformat_window(active_win, MSGLEVEL_CLIENTERROR, TXT_WINDOW_SIZE_MISSING, max);
 		return FALSE;
 	}
+	/* digits only: strtoll() saturates a number too long for it */
+	if (is_numeric(num, 0))
+		value = g_ascii_strtoll(num, NULL, 10);
+	if (value < 1 || value > max) {
+		printformat_window(active_win, MSGLEVEL_CLIENTERROR, TXT_WINDOW_SIZE_INVALID, num,
+		                   max);
+		g_free(num);
+		return FALSE;
+	}
+	g_free(num);
 	*out = (int) value;
 	return TRUE;
 }
