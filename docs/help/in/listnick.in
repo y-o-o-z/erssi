@@ -6,9 +6,11 @@
 %9Description:%9
 
     Lists the kept nicks: "Keeping <nick> in [network] (active)", or
-    "(inactive)" when keeping is paused after a manual nick change. A
-    nick kept by keepnick_auto for one connection says "this connection"
-    as well. An empty list prints "No nicks in keep list".
+    "(inactive)" when keeping is paused after a manual nick change, or
+    "(refused: ...)" for a nick that cannot be kept (not one IRC word, or
+    longer than the server's NICKLEN). A nick kept by keepnick_auto for
+    one connection says "this connection" as well. An empty list prints
+    "No nicks in keep list".
 
 %9Examples:%9
 

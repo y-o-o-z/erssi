@@ -7,6 +7,7 @@ taken at connect; keepnick_quiet; the nicks of ~/.erssi/keepnick (the
 keepnick.pl script's file) imported once; the built-in off while a script
 named keepnick is loaded.
 Usage: test_keepnick.py <build dir> [<source dir>]"""
+import os
 import re
 import shutil
 import sys
@@ -55,8 +56,11 @@ def main():
                 if re.match(r"^\S+ in ", ln) and re.search(pattern, ln)]
 
     def erssi(name, port, nick, settings="", channels=("#test",), args=(), join=True, before=None,
-              script_settings=None, net_extra=""):
+              script_settings=None, net_extra="", core_settings=""):
         cfg = harness.config(port, nick, channels=channels)
+        if core_settings:
+            assert 'core = { real_name' in cfg, cfg
+            cfg = cfg.replace('core = { real_name', 'core = { %s real_name' % core_settings, 1)
         if net_extra:
             assert 'E2E = { type = "IRC"; };' in cfg, cfg
             cfg = cfg.replace('E2E = { type = "IRC"; };', 'E2E = { type = "IRC"; %s };' % net_extra)
@@ -325,13 +329,112 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         assert wait_log(a, 0, "Keepnick: x,y cannot be kept on E2E"), log_since(a, 0)
         start = len(trace(tr))
         off = log_size(a)
-        for bad in ("bad,nick", ":colon", "#chan", "averyverylongnick"):
+        # NICKLEN counts bytes: five characters, ten bytes
+        for bad in ("bad,nick", ":colon", "#chan", "averyverylongnick", "żżżżż"):
             out = run(a, f"/keepnick {bad}")
             assert f"Keepnick: {bad} cannot be kept on E2E" in out, out
             assert "Now keeping" not in out, out
         time.sleep(CHECK + 1)
         assert not sent(tr, r" (ISON|NICK|MONITOR) ", start), sent(tr, r" (ISON|NICK) ", start)
         assert log_since(a, 0).count("x,y cannot be kept") == 1, log_since(a, 0)
+        finish(a)
+        # too long for NICKLEN only: listed as refused, not as active
+        port, tr = ircd("invalid-len", "--nick-rules")
+        b = erssi("invalid-len", port, "alice", 'keepnick_auto = "no";', net_extra='keepnick = "averylongnick";')
+        assert wait_log(b, 0, "Keepnick: averylongnick cannot be kept on E2E: longer"), log_since(b, 0)
+        out = run(b, "/listnick")
+        assert "Keeping averylongnick in [E2E] (refused: longer than the server's NICKLEN)" in out, out
+        assert not sent(tr, r" (ISON|NICK) :?averylongnick")
+        finish(b)
+
+    def t_autosave_guard():
+        """keepnick_autosave writes the file only when irssi's autosave
+        would: not over a file changed outside erssi, not with
+        settings_autosave OFF - one line each, /SAVE writes it"""
+        a = erssi("guard", 1, "alice", args=("--noconnect",), join=False)
+        run(a, "/echo started")
+        cfg = a.home / "config"
+        cfg.write_text(cfg.read_text() + "\n# edited outside erssi\n")
+        later = time.time() + 10
+        os.utime(cfg, (later, later))
+        out = run(a, "/keepnick -net E2E zed")
+        assert "Keepnick: Now keeping zed on [E2E]" in out, out
+        assert "the config file was changed outside erssi; /SAVE to write the kept nick" in out, out
+        text = cfg.read_text()
+        assert "# edited outside erssi" in text and 'keepnick = "' not in text, text
+        finish(a)
+
+        b = erssi("guard-off", 1, "alice", args=("--noconnect",), join=False,
+                  core_settings='settings_autosave = "no";')
+        out = run(b, "/keepnick -net E2E zed")
+        assert "settings_autosave is OFF; /SAVE to write the kept nick" in out, out
+        assert 'keepnick = "' not in (b.home / "config").read_text()
+        run(b, "/save")
+        assert config_has(b, "zed"), (b.home / "config").read_text()
+        b.quit()
+        assert b.sanitizer_reports() == [], b.sanitizer_reports()
+
+    def t_bad_bytes():
+        """730/731/303 with bytes that are not UTF-8, and rfc1459 case
+        variants of the user's own MONITOR target: compared by the
+        server's casemapping, byte by byte; the user's still printed"""
+        port, tr = ircd("bytes", "--nick-rules", "--monitor", "--casemapping", "rfc1459")
+        holder = harness.Client(port, "{zed}")
+        a = erssi("bytes", port, "alice", 'keepnick_auto = "no";')
+        off = log_size(a)
+        a.type("/quote MONITOR + [bob],[zed]")
+        assert wait_log(a, off, "[bob]"), log_since(a, off)
+        a.type("/keepnick [zed]")
+        assert wait_trace(tr, r" in alice MONITOR \+ \[zed\]$", 0), trace(tr)[-1500:]
+        with harness.Client(port, "ctl") as ctl:
+            for line in (b":e2e.test 731 alice :\xf0", b":e2e.test 730 alice :\xf0!u@h,\xe2\x82",
+                         b":e2e.test 303 alice :\xf0", b":e2e.test 731 alice :{BOB},\xf0\xa0"):
+                ctl.send(f"TESTRAWHEX alice {line.hex()}")
+            ctl.send("PING sync")
+            ctl.expect("PONG")
+        assert wait_log(a, off, "{BOB}"), "the user's target in another case not printed:\n" + log_since(a, off)
+        out = run(a, "/listnick")
+        assert "Keeping [zed] in [E2E] (active)" in out, out
+        off = log_size(a)
+        leave(holder)
+        assert wait_log(a, off, got_back("[zed]"), CHECK + 4), log_since(a, off)
+        # the 731 of the user's own [zed], as the server spells it: printed
+        assert wait_log(a, off, "{zed}"), log_since(a, off)
+        finish(a)
+
+    def t_late_484():
+        """a 484 while our NICK waits for a reply the redirect no longer
+        has (another client's NICK ended it) is not ours: printed, no
+        pause"""
+        port, tr = ircd("late484", "--nick-rules")
+        holder = harness.Client(port, "zed")
+        holder.send("JOIN #test")
+        holder.expect(" 366 ")
+        grab = harness.Client(port, "grab")
+        grab.send("JOIN #test")
+        grab.expect(" 366 ")
+        a = erssi("late484", port, "alice", 'keepnick_auto = "no"; keepnick_check_time = "60s";')
+        off = log_size(a)
+        start = len(trace(tr))
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON"
+        time.sleep(0.5)
+        with harness.Client(port, "ctl") as ctl:
+            ctl.send("TESTMUTE alice")  # our NICK gets no reply at all
+            ctl.send("PING sync")
+            ctl.expect("PONG")
+            holder.sock.sendall(b"NICK zed2\r\n")
+            grab.sock.sendall(b"NICK zed\r\n")
+            assert wait_trace(tr, r" in alice NICK :?zed$", start), trace(tr)[start:]
+            assert wait_log(a, off, "grab is now known as zed"), log_since(a, off)
+            ctl.send("TESTRAW alice ::e2e.test 484 alice :Your connection is restricted!")
+            assert wait_log(a, off, "Your connection is restricted"), log_since(a, off)
+        out = log_since(a, off)
+        assert "deactivated" not in out and "refused" not in out, out
+        out = run(a, "/listnick")
+        assert "Keeping zed in [E2E] (active)" in out, out
+        holder.close()
+        grab.close()
         finish(a)
 
     def t_manual_pause_forced_not():
@@ -559,7 +662,7 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         holder = harness.Client(port, "zed")
         a = erssi("twoserv", port, "alice")
         off = log_size(a)
-        a.type(f"/connect -network E2E 127.0.0.1 {port}")
+        a.type(f"/connect -network e2e 127.0.0.1 {port}")  # the network's name in another case
         assert wait_trace(tr, r" in alice_ ", 0, 15), trace(tr)[-2000:]
         assert wait_log(a, off, "Welcome alice_"), log_since(a, off)
         time.sleep(1)
@@ -656,7 +759,8 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
 
     try:
         harness.main([t_install, t_ison_quit_save_list, t_holder_nick_change, t_holder_flips, t_late_reply,
-                      t_monitor, t_monitor_user, t_nick_delay, t_refused, t_invalid,
+                      t_late_484, t_monitor, t_monitor_user, t_bad_bytes, t_nick_delay,
+                      t_refused, t_invalid, t_autosave_guard,
                       t_manual_pause_forced_not, t_auto, t_auto_pause, t_auto_off, t_two_servers,
                       t_casemapping, t_upgrade, t_migrate, t_script_loaded, t_auto_script])
     finally:

@@ -19,13 +19,16 @@ connecting that long.
 TESTRAW <nick> :<raw line> (sent by any client) writes <raw line> to that nick.
 TESTDROP <nick> closes that nick's connection without a word, as a link that
 dies does.
+TESTRAWHEX <nick> <hex> writes those bytes (and CR LF) to that nick: a
+line that is not UTF-8.
 ISON is answered (303) with the nicks that are on.
 --nick-rules: NICKLEN=9 in 005; a nick in use gets 433 (at registration too: 001 waits for
 a nick that is free), QUIT is sent to the clients that share a channel, and
 TESTDELAY <nick> <seconds> makes a free nick unavailable for that long
 (437, as IRCnet's nick delay); TESTREFUSE <nick> makes NICK <nick> an
-erroneous nickname (432); TESTNICK <nick> <new> renames a client from the
-server side, as a collision or SVSNICK does.
+erroneous nickname (432); TESTMUTE <nick> makes the server ignore that
+client's NICK (no reply at all); TESTNICK <nick> <new> renames a client
+from the server side, as a collision or SVSNICK does.
 --monitor: MONITOR=100 in 005; MONITOR + / - / C answered with 730/731,
 and the watchers get 730/731 when a monitored nick comes or goes.
 """
@@ -43,6 +46,7 @@ NICK_RULES = False  # --nick-rules: 433, QUIT to channels, TESTDELAY, TESTNICK
 MONITOR = False     # --monitor: MONITOR=100 and 730/731
 delayed = {}   # nick (folded) -> time until it is free again (437)
 erroneous = set()  # nicks (folded) that are erroneous (432)
+muted = set()  # clients (folded nick) whose NICK gets no reply
 watchers = {}  # nick (folded) -> set of Client with it in their MONITOR list
 TRACE = None   # --trace file: every line in and out, with the time
 clients = {}   # nick (folded) -> Client
@@ -175,7 +179,9 @@ async def handle(reader, writer, wire_path, times_path):
             elif cmd == "NICK":
                 new = args[0].lstrip(":")
                 refused = nick_refused(me, new)
-                if refused:
+                if NICK_RULES and fold(me.nick) in muted:
+                    pass  # as if the line was lost
+                elif refused:
                     me.send(refused)
                 elif me.nick != "*" and not me.waits_for_nick:
                     rename(me, new)
@@ -255,6 +261,13 @@ async def handle(reader, writer, wire_path, times_path):
                     target.writer.close()
             elif cmd == "TESTDELAY" and len(args) >= 2 and NICK_RULES:
                 delayed[fold(args[0])] = time.time() + float(args[1])
+            elif cmd == "TESTRAWHEX" and len(args) >= 2:
+                target = clients.get(fold(args[0]))
+                if target:
+                    trace("out", target.nick, "(raw bytes) " + args[1])
+                    target.writer.write(bytes.fromhex(args[1]) + b"\r\n")
+            elif cmd == "TESTMUTE" and args and NICK_RULES:
+                muted.add(fold(args[0]))
             elif cmd == "TESTREFUSE" and args and NICK_RULES:
                 erroneous.add(fold(args[0]))
             elif cmd == "TESTNICK" and len(args) >= 2 and NICK_RULES:
