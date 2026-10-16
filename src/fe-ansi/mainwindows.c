@@ -1718,21 +1718,51 @@ static void mainwindow_grow_right_int(int count)
 	}
 }
 
+/* The lines or columns of /WINDOW GROW, SHRINK or SIZE in ARGS: DEF when
+   there is none (0: one is needed), otherwise digits only and from 1 to
+   the terminal's lines or (RIGHT) columns. Anything else - a sign, not a
+   number, 0, more than the terminal has (atoi() overflowed there, and a
+   negated INT_MIN too) - is refused with an error: FALSE. */
+static gboolean window_size_arg(const char *args, int right, int def, int *out)
+{
+	int max = MAX(1, right ? term_width : term_height);
+	gint64 value = 0;
+
+	if (*args == '\0' && def > 0) {
+		*out = def;
+		return TRUE;
+	}
+	/* digits only: strtoll() saturates a number too long for it */
+	if (is_numeric(args, 0))
+		value = g_ascii_strtoll(args, NULL, 10);
+	if (value < 1 || value > max) {
+		printformat_window(active_win, MSGLEVEL_CLIENTERROR, TXT_WINDOW_SIZE_INVALID, args,
+		                   max);
+		return FALSE;
+	}
+	*out = (int) value;
+	return TRUE;
+}
+
 /* SYNTAX: WINDOW GROW [-right] [<lines>|<columns>] */
 static void cmd_window_grow(const char *data)
 {
 	GHashTable *optlist;
 	char *args;
 	void *free_arg;
-	int count;
+	int count, right;
 
 	if (!cmd_get_params(data, &free_arg, 1 | PARAM_FLAG_GETREST | PARAM_FLAG_OPTIONS,
 	                    "window grow", &optlist, &args))
 		return;
 
-	count = *args == '\0' ? 1 : atoi(args);
+	right = g_hash_table_lookup(optlist, "right") != NULL;
+	if (!window_size_arg(args, right, 1, &count)) {
+		cmd_params_free(free_arg);
+		return;
+	}
 
-	if (g_hash_table_lookup(optlist, "right") != NULL) {
+	if (right) {
 		mainwindow_grow_right_int(count);
 	} else {
 		mainwindow_grow_int(count);
@@ -1747,17 +1777,19 @@ static void cmd_window_shrink(const char *data)
 	GHashTable *optlist;
 	char *args;
 	void *free_arg;
-	int count;
+	int count, right;
 
 	if (!cmd_get_params(data, &free_arg, 1 | PARAM_FLAG_GETREST | PARAM_FLAG_OPTIONS,
 	                    "window shrink", &optlist, &args))
 		return;
 
-	count = *args == '\0' ? 1 : atoi(args);
-	if (count < -INT_MAX)
-		count = -INT_MAX;
+	right = g_hash_table_lookup(optlist, "right") != NULL;
+	if (!window_size_arg(args, right, 1, &count)) {
+		cmd_params_free(free_arg);
+		return;
+	}
 
-	if (g_hash_table_lookup(optlist, "right") != NULL) {
+	if (right) {
 		mainwindow_grow_right_int(-count);
 	} else {
 		mainwindow_grow_int(-count);
@@ -1772,26 +1804,24 @@ static void cmd_window_size(const char *data)
 	GHashTable *optlist;
 	char *args;
 	void *free_arg;
-	int size;
+	int size, right;
 
 	if (!cmd_get_params(data, &free_arg, 1 | PARAM_FLAG_GETREST | PARAM_FLAG_OPTIONS,
 	                    "window size", &optlist, &args))
 		return;
 
-	if (!is_numeric(args, 0)) {
+	right = g_hash_table_lookup(optlist, "right") != NULL;
+	if (!window_size_arg(args, right, 0, &size)) {
 		cmd_params_free(free_arg);
 		return;
 	}
-	size = atoi(args);
 
-	if (g_hash_table_lookup(optlist, "right") != NULL) {
+	if (right) {
 		size -= MAIN_WINDOW_TEXT_WIDTH(WINDOW_MAIN(active_win));
 
 		mainwindow_grow_right_int(size);
 	} else {
 		size -= WINDOW_MAIN(active_win)->height - WINDOW_MAIN(active_win)->statusbar_lines;
-		if (size < -INT_MAX)
-			size = -INT_MAX;
 
 		mainwindow_grow_int(size);
 	}
