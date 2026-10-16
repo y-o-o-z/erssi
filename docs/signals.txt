@@ -124,6 +124,14 @@ ctcp.c:
 irc-log.c:
  "awaylog show", LOG_REC, int away_msgs, int filepos
 
+irc-keepnick.c:
+ "keepnick auto", SERVER_REC, char *nick, char *network
+ "keepnick paused", SERVER_REC, char *nick, char *network
+ "keepnick resumed", SERVER_REC, char *nick, char *network
+ "keepnick refused", SERVER_REC, char *nick, char *network, char *reason
+ "keepnick invalid", SERVER_REC, char *nick, char *network, char *reason
+ "keepnick script", int loaded
+
 irc-nicklist.c:
  "server nick changed", SERVER_REC
 

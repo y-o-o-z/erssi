@@ -46,6 +46,9 @@ void fe_irc_commands_deinit(void);
 void fe_ircnet_init(void);
 void fe_ircnet_deinit(void);
 
+void fe_keepnick_init(void);
+void fe_keepnick_deinit(void);
+
 void fe_ctcp_init(void);
 void fe_ctcp_deinit(void);
 
@@ -88,6 +91,7 @@ void fe_common_irc_init(void)
 	fe_mentions_init();
 	fe_irc_commands_init();
 	fe_ircnet_init();
+	fe_keepnick_init();
 	fe_irc_server_init();
 	fe_ctcp_init();
 	fe_events_init();
@@ -112,6 +116,7 @@ void fe_common_irc_deinit(void)
 	fe_irc_messages_deinit();
 	fe_irc_commands_deinit();
 	fe_ircnet_deinit();
+	fe_keepnick_deinit();
 	fe_irc_server_deinit();
 	fe_ctcp_deinit();
 	fe_events_deinit();
