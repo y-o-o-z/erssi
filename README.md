@@ -18,7 +18,7 @@ who live on IRCnet: a polished default theme, help for every command, a
 built-in Mentions window, end-to-end encryption, a signed installer that
 also updates, and a security review of the parts that face the network.
 
-![erssi Shellter Edition 2026.10.2 in #shellter, shellter theme: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
+![erssi Shellter Edition 2026.10.2 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
 
 ## Install
 
