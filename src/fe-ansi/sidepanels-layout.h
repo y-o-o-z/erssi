@@ -49,6 +49,8 @@ void update_left_selection_to_active(void);
 
 /* Window management */
 void renumber_windows_by_position(void);
+/* windows are renumbered from now on (after the start) */
+void renumber_windows_start(void);
 
 /* Border drawing between the panels and the main windows */
 void draw_panel_borders(void);

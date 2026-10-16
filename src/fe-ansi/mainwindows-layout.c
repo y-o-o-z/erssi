@@ -87,7 +87,8 @@ static void sig_layout_window_restore(WINDOW_REC *window, CONFIG_NODE *node)
    panels (and anything else) reserve on the left are not part of it, so a
    layout restores the same with the panels on or off. Every number is one
    the restore accepts (layout_read): never below 0, a size never below 1,
-   so erssi never saves a layout that its next start drops. */
+   so erssi never saves a layout that its next start drops. The active main
+   window is marked, to be the active one again. */
 static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 {
 	char num[MAX_INT_STRLEN];
@@ -100,6 +101,8 @@ static void main_window_save(MAIN_WINDOW_REC *window, CONFIG_NODE *node)
 	iconfig_node_set_int(node, "first_column",
 	                     CLAMP(window->first_column - screen_reserved_left, 0, LAYOUT_MAX_VALUE));
 	iconfig_node_set_int(node, "columns", CLAMP(window->width, 1, LAYOUT_MAX_VALUE));
+	if (window == active_mainwin)
+		iconfig_node_set_bool(node, "active", TRUE);
 }
 
 static void sig_layout_save(void)
@@ -116,6 +119,7 @@ typedef struct {
 	int refnum;
 	int first_line, lines;
 	int first_column, columns;
+	gboolean active; /* the active main window */
 } LAYOUT_WINDOW_REC;
 
 /* A number 0..LAYOUT_MAX_VALUE, the whole string. */
@@ -177,6 +181,7 @@ static GArray *layout_read(CONFIG_NODE *node)
 	seen = g_hash_table_new(g_direct_hash, g_direct_equal);
 	for (tmp = config_node_first(node->value); ok && tmp != NULL; tmp = config_node_next(tmp)) {
 		CONFIG_NODE *wnode = tmp->data;
+		CONFIG_NODE *value;
 		LAYOUT_WINDOW_REC rec;
 		char *end;
 		long refnum;
@@ -200,6 +205,10 @@ static GArray *layout_read(CONFIG_NODE *node)
 		     layout_get_num(wnode, "lines", -1, 1, &rec.lines) &&
 		     layout_get_num(wnode, "first_column", 0, 0, &rec.first_column) &&
 		     layout_get_num(wnode, "columns", NEW_WINDOW_WIDTH, 1, &rec.columns);
+		/* not there (saved before) or no "yes": not the active one */
+		value = config_node_find(wnode, "active");
+		rec.active = value != NULL && value->type == NODE_TYPE_KEY && value->value != NULL &&
+		             g_ascii_strcasecmp(value->value, "yes") == 0;
 		if (ok)
 			g_array_append_val(wins, rec);
 	}
@@ -286,7 +295,7 @@ static int layout_fit_heights(int *heights, int count, int avail_height)
 static void sig_layout_restore(void)
 {
 	MAIN_WINDOW_REC *lower_window;
-	WINDOW_REC *window, *first;
+	WINDOW_REC *window, *first, *active;
 	GArray *wins;
 	int *starts, *heights;
 	int avail_height, avail_width, max_wins_line;
@@ -334,7 +343,7 @@ static void sig_layout_restore(void)
 	   first: each one splits the one created before */
 	lower_window = NULL;
 	lower_size = 0;
-	first = NULL;
+	first = active = NULL;
 	for (band = 0; band < bands; band++) {
 		/* heights[] is from the bottom, starts[] from the top */
 		int top = all_bands - 1 - band;
@@ -362,6 +371,8 @@ static void sig_layout_restore(void)
 				window = new_win;
 			if (first == NULL)
 				first = new_win;
+			if (rec->active)
+				active = new_win;
 
 			window_set_active(new_win);
 			active_mainwin = WINDOW_MAIN(new_win);
@@ -386,9 +397,13 @@ static void sig_layout_restore(void)
 	if (lower_size > 0)
 		mainwindow_set_size(lower_window, lower_size, FALSE);
 
-	if (first != NULL) {
-		window_set_active(first);
-		active_mainwin = WINDOW_MAIN(first);
+	/* the main window that was active, or (none saved, or it did not
+	   fit) the first one created, the lowest at the left, as before */
+	if (active == NULL)
+		active = first;
+	if (active != NULL) {
+		window_set_active(active);
+		active_mainwin = WINDOW_MAIN(active);
 	}
 }
 
