@@ -1756,7 +1756,7 @@ static void cmd_window_size(const char *data)
 		cmd_params_free(free_arg);
 		return;
 	}
-	size = atoi(data);
+	size = atoi(args);
 
 	if (g_hash_table_lookup(optlist, "right") != NULL) {
 		size -= MAIN_WINDOW_TEXT_WIDTH(WINDOW_MAIN(active_win));

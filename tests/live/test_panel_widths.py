@@ -7,10 +7,10 @@ goes and comes back with /SET sidepanel_left. Each time every row of
 side-by-side windows is laid out again over the new main area; before,
 it was laid out from the widths the last time left (already rounded), so
 after a few switches a window was a column wider or narrower than the
-user had made it. Now the widths a user sets (/WINDOW GROW|SHRINK|BALANCE
--right, a split, a window closed, a new terminal size, a restored layout)
-are the reference every later layout is made from, row by row: back to
-the same panels, the same columns.
+user had made it. Now the widths a user sets (/WINDOW GROW, SHRINK,
+SIZE and BALANCE -right, a split, a window closed, a new terminal size,
+a restored layout) are the reference every later layout is made from,
+row by row: back to the same panels, the same columns.
 Usage: test_panel_widths.py <build dir> [<source dir>]"""
 import shutil
 import sys
@@ -50,6 +50,7 @@ def main():
             time.sleep(0.1)
         layout = block(conf.read_text(), "mainwindows")
         assert layout, "no mainwindows block saved"
+        st["layout"] = layout
         rows = {}
         for w in layout.values():
             rows.setdefault(int(w["first_line"]), []).append((int(w["first_column"]), int(w["columns"])))
@@ -244,6 +245,34 @@ def main():
             assert [len(row) for row in off] == [2, 3], off
             right_trips(off, f"after the terminal resized to {cols} columns")
 
+    def lines():
+        """the rows of the layout last saved: [(first_line, lines), ...]"""
+        return sorted({(int(w["first_line"]), int(w["lines"])) for w in st["layout"].values()})
+
+    def t_size_is_new_reference():
+        # /WINDOW SIZE -right N: bee's text N columns wide (and one for
+        # the separator), 7 more than before, the columns from #test next
+        # to it; the widths are the new reference
+        a = st["alice"]
+        other()
+        before = save()
+        want = widths(before)[1][1] + 7
+        a.type(f"/window size -right {want - 1}")
+        off = save()
+        tiles(off, 15)
+        assert widths(off)[1][1] == want and off[0] == before[0], (want, off, before)
+        assert widths(off)[1][0] == widths(before)[1][0], (off, before)
+        right_trips(off, "after /window size -right")
+        # and without -right the lines, as before
+        other()
+        a.type("/window size 10")
+        save()
+        low = lines()
+        a.type("/window size 13")
+        save()
+        high = lines()
+        assert len(low) == 2 and high[1][1] == low[1][1] + 3 and high[0][1] == low[0][1] - 3, (low, high)
+
     def t_restored_layout_is_new_reference():
         # the layout saved (bee active: the right panel off) comes back
         # after a restart, and the panels keep the restored widths
@@ -276,7 +305,7 @@ def main():
         harness.main([t_install, t_start, t_right_panel, t_left_panel, t_both_panels,
                       t_resize_is_new_reference, t_balance_is_new_reference, t_split_is_new_reference,
                       t_close_is_new_reference, t_terminal_resize_is_new_reference,
-                      t_restored_layout_is_new_reference, t_sanitizers])
+                      t_size_is_new_reference, t_restored_layout_is_new_reference, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()
