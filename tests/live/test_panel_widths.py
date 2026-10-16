@@ -264,6 +264,33 @@ def main():
         high = lines()
         assert len(low) == 2 and high[1][1] == low[1][1] + 3 and high[0][1] == low[0][1] - 3, (low, high)
 
+    def t_grow_shrink_one_column():
+        # /WINDOW GROW|SHRINK -right without a number: one column, as the
+        # forms without -right are one line; the widths the new reference
+        a = st["alice"]
+        other()
+        before = save()
+        a.type_and_wait("/window grow -right")
+        grown = save()
+        tiles(grown, 15)
+        assert widths(grown)[1][1] == widths(before)[1][1] + 1 and grown[0] == before[0], (grown, before)
+        assert widths(grown)[1][2] == widths(before)[1][2] - 1, (grown, before)
+        right_trips(grown, "after /window grow -right")
+        a.type_and_wait("/window shrink -right")
+        back = save()
+        assert back == before, (back, before)
+        right_trips(back, "after /window shrink -right")
+        # and the lines, as before
+        other()
+        low = lines()
+        a.type_and_wait("/window grow")
+        save()
+        high = lines()
+        assert high[1][1] == low[1][1] + 1 and high[0][1] == low[0][1] - 1, (low, high)
+        a.type_and_wait("/window shrink")
+        save()
+        assert lines() == low, (low, lines())
+
     def t_restored_layout_is_new_reference():
         # the layout saved (bee active: the right panel off) comes back
         # after a restart, and the panels keep the restored widths
@@ -291,7 +318,8 @@ def main():
         harness.main([t_install, t_start, t_right_panel, t_left_panel, t_both_panels,
                       t_resize_is_new_reference, t_balance_is_new_reference, t_split_is_new_reference,
                       t_close_is_new_reference, t_terminal_resize_is_new_reference,
-                      t_size_is_new_reference, t_restored_layout_is_new_reference, t_sanitizers])
+                      t_size_is_new_reference, t_grow_shrink_one_column, t_restored_layout_is_new_reference,
+                      t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()
