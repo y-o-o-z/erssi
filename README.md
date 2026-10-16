@@ -52,8 +52,8 @@ erssi --update           # build and install it
 ```
 
 `--update` takes the newest release on GitHub that carries a valid
-signature by the release key, builds, tests and installs it into the same prefix; `/upgrade` then loads
-it in a running erssi without disconnecting. Coming from 1.3.9 or older
+signature by the release key, builds, tests and installs it into the same
+prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
 (no `--update`): run the install command again; your `~/.erssi/config` is
 kept and the Shellter look stays.
 
@@ -154,6 +154,9 @@ Details: [docs/shellter/security.md](docs/shellter/security.md).
 
 ## Development
 
+How to report a bug or send a change: [CONTRIBUTING.md](CONTRIBUTING.md);
+security problems: [SECURITY.md](SECURITY.md).
+
 ```sh
 meson setup Build
 meson test -C Build                               # unit tests and fuzz corpus replays
@@ -165,20 +168,20 @@ meson test -C Build-asan                          # the same tests under ASan an
   never writes into your own `~/.erssi`.
 - Changes are kept in topic commits that explain the problem they solve, so
   upstream merges stay reviewable.
-- `utils/pre-push` is the maintainer's release hook (it enforces the
-  maintainer's authorship and signing rules); contributors do not need it.
+- `utils/pre-push` is the release hook of the Shellter team (it enforces
+  the authorship and signing rules of releases); contributors do not need it.
 - Most fixes are offered to erssi-org as pull requests (#3 to #11);
   [docs/UPSTREAM.md](docs/UPSTREAM.md) lists them.
 
 ### Continuous integration
 
 Every commit on `main`, every release tag and the branches of the
-maintainer's pull requests are built and tested on the maintainer's own
+pull requests to erssi-org are built and tested on the Shellter team's own
 server: the hardened build with `meson test`, the ASan/UBSan build, live
 E2E interop with `rpe2e.pl`, libFuzzer runs on the fe-web and E2E parsers,
 the installer test and shellcheck. Each job is a commit status (the check
 mark next to a commit) with a one-line result. Pull requests from other
-contributors are tested after the maintainer has reviewed them.
+contributors are tested after they have been reviewed.
 `.github/workflows/shellter-ci.yml` describes the same jobs for GitHub
 Actions, which stay switched off on this repository.
 
