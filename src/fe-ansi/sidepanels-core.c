@@ -193,7 +193,9 @@ static void sig_irssi_init_finished(void)
 		initialize_notices_window();
 	}
 	
-	/* Renumber windows to ensure proper order */
+	/* Renumber windows to ensure proper order (the restored layout is
+	   complete now) */
+	renumber_windows_start();
 	renumber_windows_by_position();
 	/* the panels from now on, laid out over the restored main windows */
 	sp_get_ctx(TRUE);

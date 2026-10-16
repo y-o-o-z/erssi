@@ -408,10 +408,27 @@ void apply_and_redraw(void)
 	redraw_all();
 }
 
+/* The window numbers follow the window list (Alt+N is the Nth window in
+ * the left panel, and the panel's selection is the active window's
+ * number). Not before "irssi init finished": the saved layout is restored
+ * then, and it names its windows by their saved numbers - each window it
+ * creates renumbered the others, so the numbers it went on with named
+ * other windows, and windows came back in other main windows. They are
+ * renumbered once when the start is over (sig_irssi_init_finished). */
+static gboolean renumber_started = FALSE;
+
+void renumber_windows_start(void)
+{
+	renumber_started = TRUE;
+}
+
 void renumber_windows_by_position(void)
 {
 	GSList *sort_list, *s;
 	int position = 1;
+
+	if (!renumber_started)
+		return;
 
 	/* Get sorted list using shared function */
 	sort_list = build_sorted_window_list();
