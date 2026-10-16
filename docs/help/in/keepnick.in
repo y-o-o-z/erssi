@@ -1,0 +1,94 @@
+
+%9Syntax:%9
+
+@SYNTAX:keepnick@
+
+%9Parameters:%9
+
+    -network:    The network (chatnet) to keep the nick on; -net,
+                 -chatnet or -ircnet may be used instead. Defaults to the
+                 network of the active window's server.
+
+    The nick to keep; defaults to your current nick.
+
+%9Description:%9
+
+    Keeps a nick on a network - one nick per network: when the nick
+    becomes free, erssi takes it back. Built in; it does what the
+    keepnick.pl script did, with the same commands.
+
+    While you are not on the kept nick, erssi watches it: with MONITOR
+    when the server offers it (MONITOR in the 005 numeric), otherwise
+    with ISON every keepnick_check_time. It also reacts at once when the
+    holder changes nick or quits IRC in a channel you share. After the
+    nick is regained, instead of the usual nick change message you see
+    "Keepnick: Nickstealer left [network], got <nick> back".
+
+    erssi never tries the nick more than once per keepnick_check_time,
+    whatever asks for it - also when the holder flips nicks quickly. The
+    server's replies to these nick changes are not shown as errors:
+    "nickname in use" and IRCnet's "temporarily unavailable" (nick delay)
+    are tried again at the next check; an erroneous nick or a restricted
+    connection stops keeping on that network, with one message. The
+    server's MONITOR replies about the kept nick are not shown either;
+    those about the nicks you MONITOR yourself are.
+
+    A nick that is not one IRC word (a space, comma, ! or @, a line
+    break, a leading :, #, & or -) or longer than the server's NICKLEN
+    cannot be kept: /KEEPNICK says so, and so does erssi, once, for such
+    a keepnick option in the config.
+
+    When you change away from the kept nick yourself with /NICK, keeping
+    on that network is paused until you return to that nick or run
+    /KEEPNICK again. A nick change forced by the server (an IRCnet
+    collision that gives you a nick like 0PNAAAAAA, or SVSNICK) does not
+    pause it: erssi keeps trying.
+
+    Works only with IRC servers assigned to a network (/NETWORK, /SERVER
+    ADD -network). With -network and a nick you can also add a network
+    from the configuration that you are not connected to. The first
+    connected server of the network keeps the nick; when it goes, the
+    next one of that network takes over. The nick is the network's
+    keepnick option in the chatnets block of the config; /NETWORK lists
+    it. An unknown option prints "Unknown parameter", but the command
+    still runs. /UPGRADE keeps what is kept and what is paused.
+
+    Without /KEEPNICK, keepnick_auto keeps the nick a connection asked for
+    (the network's nick, or the nick setting) when the server gave you
+    another one because it was taken (alternate_nick, nick_): for that
+    connection only, nothing is saved. Not when another connection of
+    yours to that network is on that nick, nor when the network has a
+    keepnick of its own. A manual /NICK pauses it too.
+
+    The nicks of keepnick.pl (the file ~/.erssi/keepnick) are imported
+    once into the networks that keep no nick yet; the file is left as it
+    is, with the script's keepnick_quiet and keepnick_autosave. While the
+    keepnick.pl script is loaded, the built-in keepnick is off (also
+    keepnick_auto) and these commands are the script's.
+
+%9Settings:%9
+
+    keepnick_check_time = 12s
+        How often ISON asks for the kept nick (at least 5s), and the
+        shortest time between two attempts to take it, always.
+    keepnick_quiet = OFF
+        ON = report a regained nick only once, in the network window,
+        instead of in every channel and query window of that network.
+    keepnick_auto = ON
+        Keep the nick a connection asked for when it was taken at
+        connect. OFF = only the nicks of /KEEPNICK.
+    keepnick_autosave = ON
+        /KEEPNICK and /UNKEEPNICK save the configuration at once (as the
+        script saved its file) - the whole file, when irssi's own
+        autosave would: not with settings_autosave OFF, and not when the
+        file was changed outside erssi (then a line says /SAVE writes
+        it). OFF = only /SAVE (and settings_autosave) writes it.
+
+%9Examples:%9
+
+    /KEEPNICK
+    /KEEPNICK alice
+    /KEEPNICK -network IRCnet alice
+
+%9See also:%9 LISTNICK, NETWORK, NICK, UNKEEPNICK
+

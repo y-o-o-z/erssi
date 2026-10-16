@@ -33,6 +33,9 @@ struct _IRC_CHATNET_REC {
 
 	/* queries open in the network window, not in windows of their own */
 	int one_window;
+
+	/* the nick keepnick takes back when it is free (/KEEPNICK) */
+	char *keepnick;
 };
 
 void ircnet_create(IRC_CHATNET_REC *rec);

@@ -34,6 +34,7 @@
 
 #include <irssi/src/irc/core/ctcp.h>
 #include <irssi/src/irc/core/irc-commands.h>
+#include <irssi/src/irc/core/irc-keepnick.h>
 #include <irssi/src/irc/core/netsplit.h>
 
 void irc_expandos_init(void);
@@ -124,6 +125,7 @@ void irc_core_init(void)
 	irc_expandos_init();
 	irc_cap_init();
 	sasl_init();
+	irc_keepnick_init();
 
 	settings_check();
 
@@ -137,6 +139,7 @@ void irc_core_deinit(void)
 {
 	signal_emit("chat protocol deinit", 1, chat_protocol_find("IRC"));
 
+	irc_keepnick_deinit();
 	sasl_deinit();
 	irc_cap_deinit();
 	irc_expandos_deinit();
