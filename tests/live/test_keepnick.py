@@ -281,9 +281,11 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         taken once the delay is over"""
         port, tr = ircd("delay", "--nick-rules")
         holder = harness.Client(port, "zed")
+        a = erssi("delay", port, "alice", 'keepnick_auto = "no";')
+        # the delay starts now, after erssi has joined: a slow start must
+        # not use it up before the first check
         holder.send("TESTDELAY zed 13")
         leave(holder)
-        a = erssi("delay", port, "alice", 'keepnick_auto = "no";')
         off = log_size(a)
         start = len(trace(tr))
         a.type("/keepnick zed")
