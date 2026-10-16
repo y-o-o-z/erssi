@@ -145,6 +145,7 @@ def main():
     def t_start():
         st["ircd"] = harness.Ircd(work)
         port = st["ircd"].start()
+        st["port"] = port
         c = harness.Client(port, "bob")
         st["clients"].append(c)
         a = harness.Erssi(st["inst"], work, "alice", harness.config(port, "alice", channels=CHANNELS))
@@ -182,6 +183,33 @@ def main():
         assert sorted(map(sorted, shown)) == sorted(map(sorted, [["#two", "Mentions", "bob"],
                                                                  ["#one", "Notices", "#three"]])), shown
         assert active == "Mentions", active
+        # the left panel's selected row: Mentions, after the window change
+        rows = left_rows()
+        st["selected"] = rows["Mentions"][1]
+        assert [w for w, (_, style) in rows.items() if style == st["selected"]] == ["Mentions"], rows
+
+    def left_rows():
+        """{window: (its number, the style of its row)} of the left panel
+        (its 15 columns, the border in the last one; a row "N. name")"""
+        a = st["alice"]
+        rows, styles = a.screen(0, 14), a.screen_styles(0, 14)
+        out = {}
+        for y, text in enumerate(rows):
+            m = re.match(r"\s*(\d+)\. (\S+)", text)
+            if m:
+                out[m.group(2)] = (int(m.group(1)), styles[y][m.start(1)])
+        return out
+
+    def wait_selected(name, what):
+        """the left panel shows NAME's row, and only that one, in the style
+        of the selected row"""
+        def ok(_):
+            rows = left_rows()
+            return (name in rows and
+                    [w for w, (_, style) in rows.items() if style == st["selected"]] == [name])
+        _, good = st["alice"].wait_screen(ok, WAIT)
+        assert good, f"{what}: {name} is not the one selected row: {left_rows()}"
+        return left_rows()[name][0]
 
     def check(what):
         got = state()
@@ -193,8 +221,15 @@ def main():
         restart()
         check("after a restart")
 
+    def t_selected_after_restart():
+        # the left panel selects the active window after the start (the
+        # restore made it active before the panel was there: row 1 was
+        # selected)
+        wait_selected("Mentions", "after a restart")
+
     def t_save_restart():
-        # the layout in the config file, saved again with /SAVE only
+        # a second restart, from the layout a restored session saved
+        # (check() saved it with /LAYOUT SAVE), with /SAVE once more
         st["alice"].type_and_wait("/save")
         restart()
         check("after /SAVE and a restart")
@@ -206,6 +241,22 @@ def main():
         restart()
         check("the panels off, after a restart")
 
+    def t_selected_after_renumber():
+        # a new query sorts before Mentions: the windows are renumbered,
+        # Mentions has the next number and is still the active window,
+        # and the selected row is still Mentions'
+        a = st["alice"]
+        a.type_and_wait("/set sidepanel_left on", "/set sidepanel_right on")
+        before = wait_selected("Mentions", "the panels on again")
+        c = harness.Client(st["port"], "cid")
+        st["clients"].append(c)
+        c.send("PRIVMSG alice :hello")
+        _, good = a.wait_screen(lambda _: "cid" in left_rows(), WAIT)
+        assert good, f"no window for the query with cid: {left_rows()}"
+        assert wn() == "Mentions"
+        after = wait_selected("Mentions", "after the windows were renumbered")
+        assert after == before + 1, (before, after)
+
     def t_sanitizers():
         reports = st["alice"].sanitizer_reports() if "alice" in st else []
         for p in reports:
@@ -213,8 +264,9 @@ def main():
         assert reports == [], reports
 
     try:
-        harness.main([t_install, t_start, t_build_layout, t_layout_save_restart, t_save_restart,
-                      t_panels_off, t_sanitizers])
+        harness.main([t_install, t_start, t_build_layout, t_layout_save_restart,
+                      t_selected_after_restart, t_save_restart, t_panels_off,
+                      t_selected_after_renumber, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()

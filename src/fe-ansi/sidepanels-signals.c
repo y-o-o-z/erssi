@@ -69,10 +69,11 @@ void initialize_notices_window(void)
 	
 	/* Pick the Notices window without clobbering anyone else's window.
 	 * Scripts loaded at startup (e.g. a "Mentions" or "hilight" window)
-	 * may already sit at refnum 1 after sidepanel sorting; renaming it
-	 * would silently destroy that window's identity. Order:
+	 * may already sit at refnum 1 (this runs before the first renumber,
+	 * at "irssi init finished"); renaming it would silently destroy that
+	 * window's identity. Order:
 	 *   1. an existing window already named "Notices",
-	 *   2. the startup window wherever sorting put it: lowest refnum that is
+	 *   2. the startup window: lowest refnum that is
 	 *      unnamed or the irssi status window "(status)" and holds no
 	 *      channel/query,
 	 *   3. a new window - sidepanel sorting moves "Notices" to the top. */

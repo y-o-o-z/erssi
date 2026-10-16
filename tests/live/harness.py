@@ -33,28 +33,35 @@ class SkipCase(Exception):
     """One test case cannot run here; the rest go on. Reported as SKIP."""
 
 
+# an empty cell of the Screen: a space in the default style
+BLANK = (" ", ())
+
+
 class Screen:
     """What a terminal of COLS x ROWS shows after an output stream: the
     part of xterm that erssi (term-ansi.c) uses - cursor moves, clearing
     the screen and to the end of a line, scroll regions with LF and ESC M,
-    lines and characters inserted or deleted. Colours, modes, OSC and DCS
+    lines and characters inserted or deleted - and the style (SGR: colours,
+    bold, reverse, ...) each character was written in. Modes, OSC and DCS
     strings are read and dropped. A wide character takes two cells, the
-    second one empty."""
+    second one empty. A cell is (character, style)."""
 
     def __init__(self, cols, rows):
         self.cols, self.rows = cols, rows
-        self.cells = [[" "] * cols for _ in range(rows)]
+        self.cells = [[BLANK] * cols for _ in range(rows)]
         self.x = self.y = 0
         self.top, self.bottom = 0, rows - 1
         self.wrap = False
         self.saved = (0, 0)
         self.last = " "
+        self.style = ()
+        self._attrs = {}
         self._dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._rest = ""
 
     def resize(self, cols, rows):
-        self.cells = [(row + [" "] * cols)[:cols] for row in self.cells[:rows]]
-        self.cells += [[" "] * cols for _ in range(rows - len(self.cells))]
+        self.cells = [(row + [BLANK] * cols)[:cols] for row in self.cells[:rows]]
+        self.cells += [[BLANK] * cols for _ in range(rows - len(self.cells))]
         self.cols, self.rows = cols, rows
         self.top, self.bottom = 0, rows - 1
         self.x, self.y = min(self.x, cols - 1), min(self.y, rows - 1)
@@ -64,10 +71,16 @@ class Screen:
     def lines(self, first=0, end=None):
         """Every row as text, columns FIRST to END - 1 (the cells, not the
         characters: a wide character counts two)."""
-        return ["".join(row[first:end]) for row in self.cells]
+        return ["".join(c for c, _ in row[first:end]) for row in self.cells]
+
+    def styles(self, first=0, end=None):
+        """Every row's cells' styles, columns FIRST to END - 1: what the
+        SGR sequences before a cell's character set (see _sgr), () for
+        the terminal's default"""
+        return [[style for _, style in row[first:end]] for row in self.cells]
 
     def _blank(self):
-        return [" "] * self.cols
+        return [BLANK] * self.cols
 
     def _scroll(self, n, top=None):
         """n lines up (n < 0: down) inside the scroll region, or from
@@ -94,13 +107,47 @@ class Screen:
         if self.wrap or self.x + w > self.cols:
             self.x, self.wrap = 0, False
             self._linefeed()
-        self.cells[self.y][self.x] = ch
+        self.cells[self.y][self.x] = (ch, self.style)
         if w == 2 and self.x + 1 < self.cols:
-            self.cells[self.y][self.x + 1] = ""
+            self.cells[self.y][self.x + 1] = ("", self.style)
         self.last = ch
         self.x += w
         if self.x >= self.cols:
             self.x, self.wrap = self.cols - 1, True
+
+    # SGR codes that set one attribute on, and the code that turns it off
+    _ON = {1: ("bold", 22), 2: ("dim", 22), 3: ("italic", 23), 4: ("underline", 24),
+           5: ("blink", 25), 7: ("reverse", 27)}
+
+    def _sgr(self, codes):
+        """The style after SGR CODES: a sorted tuple of (attribute, value),
+        the colours as their codes ("38;5;3", "31")"""
+        attrs = self._attrs
+        i = 0
+        while i < len(codes):
+            c = codes[i]
+            if c == 0:
+                attrs.clear()
+            elif c in self._ON:
+                attrs[self._ON[c][0]] = True
+            elif c in (22, 23, 24, 25, 27):
+                for name, off in self._ON.values():
+                    if off == c:
+                        attrs.pop(name, None)
+            elif 30 <= c <= 37 or 90 <= c <= 97:
+                attrs["fg"] = str(c)
+            elif 40 <= c <= 47 or 100 <= c <= 107:
+                attrs["bg"] = str(c)
+            elif c == 39:
+                attrs.pop("fg", None)
+            elif c == 49:
+                attrs.pop("bg", None)
+            elif c in (38, 48) and i + 1 < len(codes):
+                n = 3 if codes[i + 1] == 5 else 5 if codes[i + 1] == 2 else 1
+                attrs["fg" if c == 38 else "bg"] = ";".join(str(v) for v in codes[i:i + n])
+                i += n - 1
+            i += 1
+        self.style = tuple(sorted(attrs.items()))
 
     def feed(self, data):
         text = self._rest + self._dec.decode(data)
@@ -184,6 +231,9 @@ class Screen:
             if final in "hl" and any(v in (47, 1047, 1049) for v in nums):
                 self.cells = [self._blank() for _ in range(self.rows)]
             return
+        if final == "m":
+            self._sgr([0 if v is None else v for v in nums])
+            return
         if final not in "mb":
             self.wrap = False
         if final in "Hf":
@@ -205,10 +255,10 @@ class Screen:
             mode = arg(0, 0)
             row = self.cells[self.y]
             if mode == 0:
-                row[self.x:] = [" "] * (self.cols - self.x)
+                row[self.x:] = [BLANK] * (self.cols - self.x)
                 rows = range(self.y + 1, self.rows)
             elif mode == 1:
-                row[:self.x + 1] = [" "] * (self.x + 1)
+                row[:self.x + 1] = [BLANK] * (self.x + 1)
                 rows = range(0, self.y)
             else:
                 rows = range(self.rows)
@@ -218,25 +268,25 @@ class Screen:
             mode = arg(0, 0)
             row = self.cells[self.y]
             if mode == 0:
-                row[self.x:] = [" "] * (self.cols - self.x)
+                row[self.x:] = [BLANK] * (self.cols - self.x)
             elif mode == 1:
-                row[:self.x + 1] = [" "] * (self.x + 1)
+                row[:self.x + 1] = [BLANK] * (self.x + 1)
             else:
                 self.cells[self.y] = self._blank()
         elif final == "X":
             row = self.cells[self.y]
             n = min(arg(0), self.cols - self.x)
-            row[self.x:self.x + n] = [" "] * n
+            row[self.x:self.x + n] = [BLANK] * n
         elif final == "@":
             row = self.cells[self.y]
             n = min(arg(0), self.cols - self.x)
-            row[self.x:self.x] = [" "] * n
+            row[self.x:self.x] = [BLANK] * n
             del row[self.cols:]
         elif final == "P":
             row = self.cells[self.y]
             n = min(arg(0), self.cols - self.x)
             del row[self.x:self.x + n]
-            row += [" "] * n
+            row += [BLANK] * n
         elif final in "LM" and self.top <= self.y <= self.bottom:
             n = min(arg(0), self.bottom - self.y + 1)
             self._scroll(n if final == "M" else -n, top=self.y)
@@ -592,6 +642,11 @@ class Erssi:
             self._screen_off = len(self._buf)
         self._screen.feed(data)
         return self._screen.lines(first, end)
+
+    def screen_styles(self, first=0, end=None):
+        """The styles of the cells of the terminal now (Screen.styles)"""
+        self.screen()
+        return self._screen.styles(first, end)
 
     def wait_screen(self, check, timeout, first=0, end=None):
         """Poll the screen (columns FIRST to END - 1) until check(rows) is
