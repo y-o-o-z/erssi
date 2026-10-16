@@ -1,0 +1,26 @@
+
+%9Syntax:%9
+
+@SYNTAX:unkeepnick@
+
+%9Parameters:%9
+
+    The network (chatnet); defaults to the network of the active window's
+    server.
+
+%9Description:%9
+
+    Stops keeping the nick on the given network and removes the network's
+    keepnick option (saved with /SAVE). On a connection that keeps its
+    nick through keepnick_auto, stops that too.
+
+    When nothing is kept on that network, erssi says so. In a window
+    without a network (e.g. Notices) give the network name.
+
+%9Examples:%9
+
+    /UNKEEPNICK
+    /UNKEEPNICK IRCnet
+
+%9See also:%9 KEEPNICK, LISTNICK
+

@@ -1,0 +1,75 @@
+
+%9Syntax:%9
+
+@SYNTAX:keepnick@
+
+%9Parameters:%9
+
+    -network:    The network (chatnet) to keep the nick on; -net,
+                 -chatnet or -ircnet may be used instead. Defaults to the
+                 network of the active window's server.
+
+    The nick to keep; defaults to your current nick.
+
+%9Description:%9
+
+    Keeps a nick on a network - one nick per network: when the nick
+    becomes free, erssi takes it back. Built in; it does what the
+    keepnick.pl script did, with the same commands.
+
+    While you are not on the kept nick, erssi watches it: with MONITOR
+    when the server offers it (MONITOR in the 005 numeric), otherwise
+    with ISON every keepnick_check_time. It also reacts at once when the
+    holder changes nick or quits IRC in a channel you share. After the
+    nick is regained, instead of the usual nick change message you see
+    "Keepnick: Nickstealer left [network], got <nick> back".
+
+    The server's replies to these nick changes are not shown as errors:
+    "nickname in use" and IRCnet's "temporarily unavailable" (nick delay)
+    are tried again later, at most once per keepnick_check_time; an
+    erroneous nick or a restricted connection stops keeping on that
+    network, with one message.
+
+    When you change away from the kept nick yourself with /NICK, keeping
+    on that network is paused until you return to that nick or run
+    /KEEPNICK again. A nick change forced by the server (an IRCnet
+    collision that gives you a nick like 0PNAAAAAA, or SVSNICK) does not
+    pause it: erssi keeps trying.
+
+    Works only with IRC servers assigned to a network (/NETWORK, /SERVER
+    ADD -network). With -network and a nick you can also add a network
+    from the configuration that you are not connected to. The nick is the
+    network's keepnick option in the chatnets block of the config, saved
+    with /SAVE (and settings_autosave); /NETWORK lists it. An unknown
+    option prints "Unknown parameter", but the command still runs.
+
+    Without /KEEPNICK, keepnick_auto keeps the nick a connection asked for
+    (the network's nick, or the nick setting) when the server gave you
+    another one because it was taken (alternate_nick, nick_): for that
+    connection only, nothing is saved. A manual /NICK pauses it too.
+
+    The nicks of keepnick.pl (the file ~/.erssi/keepnick) are imported
+    once into the networks that keep no nick yet; the file is left as it
+    is. While the keepnick.pl script is loaded, the built-in keepnick is
+    off and these commands are the script's.
+
+%9Settings:%9
+
+    keepnick_check_time = 12s
+        How often ISON asks for the kept nick (at least 5s), and the
+        shortest time between two attempts to take it.
+    keepnick_quiet = OFF
+        ON = report a regained nick only once, in the network window,
+        instead of in every channel and query window of that network.
+    keepnick_auto = ON
+        Keep the nick a connection asked for when it was taken at
+        connect. OFF = only the nicks of /KEEPNICK.
+
+%9Examples:%9
+
+    /KEEPNICK
+    /KEEPNICK alice
+    /KEEPNICK -network IRCnet alice
+
+%9See also:%9 LISTNICK, NETWORK, NICK, UNKEEPNICK
+

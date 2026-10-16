@@ -60,6 +60,9 @@ static void sig_chatnet_read(IRC_CHATNET_REC *rec, CONFIG_NODE *node)
 	rec->sasl_password = g_strdup(config_node_get_str(node, "sasl_password", NULL));
 
 	rec->one_window = config_node_get_bool(node, "one_window", FALSE);
+
+	value = config_node_get_str(node, "keepnick", NULL);
+	rec->keepnick = (value != NULL && *value != '\0') ? g_strdup(value) : NULL;
 }
 
 static void sig_chatnet_saved(IRC_CHATNET_REC *rec, CONFIG_NODE *node)
@@ -98,6 +101,9 @@ static void sig_chatnet_saved(IRC_CHATNET_REC *rec, CONFIG_NODE *node)
 
 	if (rec->one_window)
 		iconfig_node_set_bool(node, "one_window", TRUE);
+
+	if (rec->keepnick != NULL)
+		iconfig_node_set_str(node, "keepnick", rec->keepnick);
 }
 
 static void sig_chatnet_destroyed(IRC_CHATNET_REC *rec)
@@ -108,6 +114,7 @@ static void sig_chatnet_destroyed(IRC_CHATNET_REC *rec)
 		g_free(rec->sasl_mechanism);
 		g_free(rec->sasl_username);
 		g_free(rec->sasl_password);
+		g_free(rec->keepnick);
 	}
 }
 
