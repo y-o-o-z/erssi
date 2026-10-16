@@ -338,12 +338,10 @@ static void sig_layout_restore(void)
 	for (band = 0; band < bands; band++) {
 		/* heights[] is from the bottom, starts[] from the top */
 		int top = all_bands - 1 - band;
-		GSList *line, *tmp2;
 		int *widths;
-		int j, n, columns_count;
+		int j, n;
 
 		window = NULL;
-		columns_count = 0;
 		n = MIN(starts[top + 1] - starts[top], max_wins_line);
 		widths = g_new0(int, n);
 		for (j = 0; j < n; j++) {
@@ -359,7 +357,6 @@ static void sig_layout_restore(void)
 			new_win = window_create(NULL, TRUE);
 			window_set_refnum(new_win, rec->refnum);
 			widths[j] = rec->columns;
-			columns_count += rec->columns + (window == NULL ? 0 : 1);
 
 			if (window == NULL)
 				window = new_win;
@@ -370,17 +367,10 @@ static void sig_layout_restore(void)
 			active_mainwin = WINDOW_MAIN(new_win);
 		}
 
-		line = g_slist_reverse(mainwindows_get_line(WINDOW_MAIN(window)));
-		for (j = g_slist_length(line), tmp2 = line; tmp2 != NULL; tmp2 = tmp2->next, j--) {
-			MAIN_WINDOW_REC *rec = tmp2->data;
-			int width;
-
-			if (j > n)
-				continue;
-			width = (int) ((gint64) widths[j - 1] * avail_width / columns_count);
-			mainwindow_set_rsize(rec, MAX(NEW_WINDOW_WIDTH, width));
-		}
-		g_slist_free(line);
+		/* the saved widths for the whole row at once: set one by one,
+		   each window took its columns from the neighbour set just
+		   before, and a row of three or more came back wrong */
+		mainwindows_set_line_widths(WINDOW_MAIN(window), widths, n);
 		g_free(widths);
 
 		if (lower_size > 0)

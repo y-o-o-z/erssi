@@ -285,6 +285,42 @@ def main():
     def t_left_panel_restore_15_rows():
         restored_rows("r15", 15, 3, 200, 50)
 
+    # rows of 2, 3 and 4 side-by-side windows, uneven widths: the restore
+    # set them one by one from the right, each against the neighbour it
+    # had set just before (62 61 60 came back as 62 90 31)
+    SIDE_ROWS = [(1, 15, [67, 117]), (16, 16, [62, 61, 60]), (32, 16, [41, 54, 30, 57])]
+
+    def side_rows_block():
+        wins, n = [], 0
+        for first_line, lines, widths in SIDE_ROWS:
+            col = 0
+            for w in widths:
+                n += 1
+                wins.append(f'{n} = {{ first_line = "{first_line}"; lines = "{lines}"; '
+                            f'first_column = "{col}"; columns = "{w}"; }};')
+                col += w + 1
+        return "mainwindows = { " + " ".join(wins) + " };"
+
+    def row_widths(layout):
+        rows_ = {}
+        for w in layout.values():
+            rows_.setdefault(int(w["first_line"]), []).append((int(w["first_column"]), int(w["columns"])))
+        return [[c for _, c in sorted(rows_[line])] for line in sorted(rows_)]
+
+    def t_left_panel_restore_side_by_side():
+        # where they fit, exactly the saved widths
+        e = new("side234", cfg("side234", True, side_rows_block()))
+        layout = tiles(e, what="rows of 2, 3 and 4 restored")
+        e.quit()
+        assert row_widths(layout) == [w for _, _, w in SIDE_ROWS], layout
+
+    def t_left_panel_restore_side_by_side_100x30():
+        # a narrower terminal: in proportion, every row tiled
+        e = new("side234n", cfg("side234n", True, side_rows_block()), 100, 30)
+        layout = tiles(e, 100, 30, "rows of 2, 3 and 4 restored at 100x30")
+        e.quit()
+        assert [len(r) for r in row_widths(layout)] == [2, 3, 4], layout
+
     def t_left_panel_save_restart_twice_80x24():
         # a layout erssi saves is one it restores: save, restart, save,
         # restart (it saved negative columns, and the next start dropped
@@ -412,7 +448,8 @@ windows = {
                       t_left_panel_width_set, t_left_panel_window_commands, t_left_panel_terminal_resize,
                       t_both_panels_rows_and_side_by_side,
                       t_left_panel_fifteen_rows_set, t_left_panel_restore_7_rows_80x24,
-                      t_left_panel_restore_15_rows, t_left_panel_save_restart_twice_80x24,
+                      t_left_panel_restore_15_rows, t_left_panel_restore_side_by_side,
+                      t_left_panel_restore_side_by_side_100x30, t_left_panel_save_restart_twice_80x24,
                       t_panels_off_split, t_panels_off_side_by_side,
                       t_old_layout_with_panel_columns, t_old_layout_split_panels_off]
                      + [bad_layout(n) for n in BAD] + [bad_windows(n) for n in WINDOWS_BAD]

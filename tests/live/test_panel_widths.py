@@ -278,11 +278,7 @@ def main():
         other()
         restored = save()
         tiles(restored, 15)
-        # the row of two comes back as it was saved; the row of three
-        # with other widths (the restore sets the widths from the right,
-        # each against the neighbour it set just before: not what this
-        # test is about), so the widths kept are those it restored
-        assert restored[0] == saved[0] and len(restored[1]) == 3, f"restored {restored}, saved {saved}"
+        assert restored == saved, f"restored {restored}, saved {saved}"
         right_trips(restored, "after a restored layout")
 
     def t_sanitizers():

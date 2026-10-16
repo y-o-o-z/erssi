@@ -56,9 +56,10 @@ static int screen_collapsed = 0; /* see mainwindows_resize */
 	                 (window)->height - (window)->statusbar_lines);
 
 /* The width of REC was set on purpose (a resize, a balance, a split, a
-   window closed, a restored layout, a new terminal size): the next layout
-   of its row (mainwindows_fit_line) takes the widths the row has then as
-   its reference, instead of scaling the old one. */
+   window closed, a new terminal size): the next layout of its row
+   (mainwindows_fit_line) takes the widths the row has then as its
+   reference, instead of scaling the old one. A restored layout gives the
+   reference itself (mainwindows_set_line_widths). */
 static void mainwindow_widths_set(MAIN_WINDOW_REC *rec)
 {
 	if (rec != NULL)
@@ -780,18 +781,20 @@ static gboolean mainwindows_line_has_ref(GSList *line, int windows)
 	return TRUE;
 }
 
-/* The widths the row LINE has now are its reference. */
-static void mainwindows_line_take_ref(GSList *line, int windows)
+/* The widths the row LINE has now are its reference, or WIDTHS (COUNT
+   of them, from the left) for its first windows when given. */
+static void mainwindows_line_take_ref(GSList *line, int windows, const int *widths, int count)
 {
 	static unsigned int last_row = 0;
 	GSList *tmp;
+	int i;
 
 	if (++last_row == 0)
 		last_row = 1;
-	for (tmp = line; tmp != NULL; tmp = tmp->next) {
+	for (tmp = line, i = 0; tmp != NULL; tmp = tmp->next, i++) {
 		MAIN_WINDOW_REC *rec = tmp->data;
 
-		rec->ref_width = MAX(1, rec->width);
+		rec->ref_width = MAX(1, widths != NULL && i < count ? widths[i] : rec->width);
 		rec->fit_width = rec->width;
 		rec->ref_row = last_row;
 		rec->ref_windows = windows;
@@ -828,15 +831,18 @@ static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 	   edge. The callers never get here: mainwindows_resize() destroys
 	   the windows a row has no room for first (xdiff < 0), it collapses
 	   the screen below MW_MIN_AVAIL_WIDTH and the reserve skips the
-	   layout while collapsed, and the side panels reserve only what
-	   leaves room for the widest row (mainwindows_min_columns). Every
-	   window still keeps first_column <= last_column. */
+	   layout while collapsed, the side panels reserve only what
+	   leaves room for the widest row (mainwindows_min_columns), and a
+	   restored layout (mainwindows_set_line_widths) puts no more
+	   windows in a row than fit NEW_WINDOW_WIDTH wide (max_wins_line
+	   in mainwindows-layout.c). Every window still keeps first_column
+	   <= last_column. */
 	if (avail < windows)
 		avail = windows;
 	minw = avail >= windows * NEW_WINDOW_WIDTH ? NEW_WINDOW_WIDTH : avail / windows;
 
 	if (!mainwindows_line_has_ref(line, windows))
-		mainwindows_line_take_ref(line, windows);
+		mainwindows_line_take_ref(line, windows, NULL, 0);
 
 	widths = g_new0(int, windows);
 	rem = g_new0(gint64, windows);
@@ -901,6 +907,26 @@ static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 	g_free(widths);
 	g_free(rem);
 	g_slist_free(line);
+}
+
+/* Lay the row of WIN out with the widths WIDTHS (COUNT of them, for its
+   first windows from the left; a window past them has its current width
+   as its share): those exactly when they fill the main area, otherwise
+   in proportion, as when the panels change it - the windows past COUNT
+   too, so they keep their widths only when the row fills the area. They
+   are the row's reference from then on (a restored layout). */
+void mainwindows_set_line_widths(MAIN_WINDOW_REC *win, const int *widths, int count)
+{
+	GSList *line;
+
+	g_return_if_fail(win != NULL);
+	g_return_if_fail(widths != NULL || count == 0);
+
+	line = mainwindows_get_line(win);
+	mainwindows_line_take_ref(line, g_slist_length(line), widths, count);
+	g_slist_free(line);
+	mainwindows_fit_line(win);
+	mainwindows_redraw();
 }
 
 /* Every row of main windows laid out again over the main area. */
