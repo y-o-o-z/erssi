@@ -188,28 +188,34 @@ def main():
         st["selected"] = rows["Mentions"][1]
         assert [w for w, (_, style) in rows.items() if style == st["selected"]] == ["Mentions"], rows
 
-    def left_rows():
+    def rows_of(text, styles):
         """{window: (its number, the style of its row)} of the left panel
         (its 15 columns, the border in the last one; a row "N. name")"""
-        a = st["alice"]
-        rows, styles = a.screen(0, 14), a.screen_styles(0, 14)
         out = {}
-        for y, text in enumerate(rows):
-            m = re.match(r"\s*(\d+)\. (\S+)", text)
+        for y, line in enumerate(text):
+            m = re.match(r"\s*(\d+)\. (\S+)", line)
             if m:
                 out[m.group(2)] = (int(m.group(1)), styles[y][m.start(1)])
         return out
 
+    def left_rows():
+        # text and styles from one snapshot of the screen
+        return rows_of(*st["alice"].screen_and_styles(0, 14))
+
+    def selected_only(name, rows):
+        return (name in rows and
+                [w for w, (_, style) in rows.items() if style == st["selected"]] == [name])
+
     def wait_selected(name, what):
         """the left panel shows NAME's row, and only that one, in the style
-        of the selected row"""
-        def ok(_):
+        of the selected row: its number, from the snapshot that showed it"""
+        end = time.time() + WAIT
+        while True:
             rows = left_rows()
-            return (name in rows and
-                    [w for w, (_, style) in rows.items() if style == st["selected"]] == [name])
-        _, good = st["alice"].wait_screen(ok, WAIT)
-        assert good, f"{what}: {name} is not the one selected row: {left_rows()}"
-        return left_rows()[name][0]
+            if selected_only(name, rows):
+                return rows[name][0]
+            assert time.time() < end, f"{what}: {name} is not the one selected row: {rows}"
+            time.sleep(0.1)
 
     def check(what):
         got = state()
@@ -257,6 +263,47 @@ def main():
         after = wait_selected("Mentions", "after the windows were renumbered")
         assert after == before + 1, (before, after)
 
+    def t_selected_without_joins():
+        # the selection after a start that joins nothing (--noconnect): no
+        # join renumbers the windows, so only the panel's own start-up
+        # selects the active window. Row 1 was selected before.
+        a = st["alice"]
+        before = state()
+        assert before[3] == "Mentions", before
+        a.quit()
+        a.config_text = None
+        a.args.append("--noconnect")
+        a.start(200, 50)
+        a.wait_ready()
+        a.type_and_wait("/alias wn echo active=$winname$C$Q refnum=$winref")
+        assert wn() == "Mentions"
+        wait_selected("Mentions", "after a start without joins")
+
+    def t_active_read_as_bool():
+        # `active` of a main window is read as a config boolean: "true"
+        # and "on" count like the "yes" erssi writes (written by hand here,
+        # on a main window that is not the first row)
+        a = st["alice"]
+        for word in ("true", "on"):
+            text = a.save_config("/layout save")
+            wins = windows_of(text)
+            want = "#three"
+            assert wn() != want
+            m = re.search(r"^mainwindows = \{\n(.*?)^\};", text, re.M | re.S)
+            assert m, "no mainwindows block saved"
+            body = re.sub(r'\s*active = "[^"]*";', "", m.group(1))
+            key = next(k for k, w in wins.items() if w == want)
+            body, n = re.subn(rf"^(  {key} = \{{)", rf'\1 active = "{word}";', body, flags=re.M)
+            assert n == 1, (key, body)
+            a.quit()
+            (a.home / "config").write_text(text[:m.start(1)] + body + text[m.end(1):])
+            a.config_text = None
+            a.start(200, 50)
+            a.wait_ready()
+            a.type_and_wait("/alias wn echo active=$winname$C$Q refnum=$winref")
+            assert wn() == want, f'active = "{word}" not read as active: {wn()}'
+            goto("Mentions")  # for the next word
+
     def t_sanitizers():
         reports = st["alice"].sanitizer_reports() if "alice" in st else []
         for p in reports:
@@ -266,7 +313,8 @@ def main():
     try:
         harness.main([t_install, t_start, t_build_layout, t_layout_save_restart,
                       t_selected_after_restart, t_save_restart, t_panels_off,
-                      t_selected_after_renumber, t_sanitizers])
+                      t_selected_after_renumber, t_active_read_as_bool,
+                      t_selected_without_joins, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()
