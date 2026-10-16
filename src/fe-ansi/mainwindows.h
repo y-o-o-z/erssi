@@ -32,6 +32,18 @@ typedef struct {
 	unsigned int dirty : 1;      /* This window needs a redraw */
 	unsigned int size_dirty : 1; /* We'll need to resize the window, but haven't got around
 	                                doing it just yet. */
+
+	/* The width a row of side-by-side windows is laid out from when the
+	   main area changes (mainwindows_fit_line): ref_width is this
+	   window's width when the widths were last set on purpose, ref_row
+	   the row they were taken for (0: none, take them again) and
+	   ref_windows its number of windows; fit_width is the width the last
+	   layout gave it. Laid out from these and not from the last result,
+	   the panels can come and go any number of times without a column
+	   lost to the rounding. */
+	int ref_width, fit_width;
+	unsigned int ref_row;
+	int ref_windows;
 } MAIN_WINDOW_REC;
 
 typedef struct {

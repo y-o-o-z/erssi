@@ -21,6 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
+block = harness.block
+
 WAIT = 10
 PANELS_OFF = '"fe-ansi" = { sidepanel_left = "no"; sidepanel_right = "no"; };'
 
@@ -64,18 +66,6 @@ def tiling(layout, cols, rows, reserved=15):
     if line - 1 != rows - 3:
         bad.append(f"the rows end at line {line - 1}, expected {rows - 3}")
     return bad
-
-
-def block(config_text, name):
-    """{key: {field: value}} of a top level block of a saved config, None
-    when the config has no such block."""
-    m = re.search(r"^" + name + r" = \{\n(.*?)^\};", config_text, re.M | re.S)
-    if m is None:
-        return None
-    out = {}
-    for key, body in re.findall(r"^  (\S+) = \{(.*?)\};", m.group(1), re.M | re.S):
-        out[key] = dict(re.findall(r'(\w+) = "([^"]*)";', body))
-    return out
 
 
 def main():

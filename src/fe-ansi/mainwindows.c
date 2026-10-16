@@ -55,6 +55,16 @@ static int screen_collapsed = 0; /* see mainwindows_resize */
 	                 (window)->width - (window)->statusbar_columns,                            \
 	                 (window)->height - (window)->statusbar_lines);
 
+/* The width of REC was set on purpose (a resize, a balance, a split, a
+   window closed, a restored layout, a new terminal size): the next layout
+   of its row (mainwindows_fit_line) takes the widths the row has then as
+   its reference, instead of scaling the old one. */
+static void mainwindow_widths_set(MAIN_WINDOW_REC *rec)
+{
+	if (rec != NULL)
+		rec->ref_row = 0;
+}
+
 static MAIN_WINDOW_REC *find_window_with_room()
 {
 	MAIN_WINDOW_REC *biggest_rec;
@@ -292,6 +302,7 @@ MAIN_WINDOW_REC *mainwindow_create(int right)
 
 			parent->last_column -= space + 1;
 			mainwindow_resize(parent, -space - 1, 0);
+			mainwindow_widths_set(parent);
 		}
 	}
 
@@ -501,6 +512,7 @@ static void mainwindows_add_space(MAIN_WINDOW_REC *destroy_win)
 	if (rec != NULL) {
 		rec->last_column = destroy_win->last_column;
 		mainwindow_resize(rec, rsize + 1, 0);
+		mainwindow_widths_set(rec);
 		return;
 	}
 
@@ -508,6 +520,7 @@ static void mainwindows_add_space(MAIN_WINDOW_REC *destroy_win)
 	if (rec != NULL) {
 		rec->first_column = destroy_win->first_column;
 		mainwindow_resize(rec, rsize + 1, 0);
+		mainwindow_widths_set(rec);
 		return;
 	}
 
@@ -749,12 +762,54 @@ static void mainwindows_resize_smaller(int ydiff)
 	g_slist_free(sorted);
 }
 
+/* The reference widths of the row LINE (of WINDOWS windows) still hold:
+   they were taken for this row, with the same windows, and no width has
+   changed since but by mainwindows_fit_line() itself. */
+static gboolean mainwindows_line_has_ref(GSList *line, int windows)
+{
+	MAIN_WINDOW_REC *first = line->data;
+	GSList *tmp;
+
+	for (tmp = line; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *rec = tmp->data;
+
+		if (rec->ref_row == 0 || rec->ref_row != first->ref_row ||
+		    rec->ref_windows != windows || rec->width != rec->fit_width)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* The widths the row LINE has now are its reference. */
+static void mainwindows_line_take_ref(GSList *line, int windows)
+{
+	static unsigned int last_row = 0;
+	GSList *tmp;
+
+	if (++last_row == 0)
+		last_row = 1;
+	for (tmp = line; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *rec = tmp->data;
+
+		rec->ref_width = MAX(1, rec->width);
+		rec->fit_width = rec->width;
+		rec->ref_row = last_row;
+		rec->ref_windows = windows;
+	}
+}
+
 /* Lay the row of WIN out over the main area (the columns between the ones
    reserved on the left and on the right), one separator column between
-   two windows: each window keeps its share of the row (its current width,
-   rounded to the largest remainders) and is at least NEW_WINDOW_WIDTH
-   wide when they all fit that way - otherwise they are made as equal as
-   they fit, at least one column each, and never end before they start.
+   two windows: each window keeps its share of the row and is at least
+   NEW_WINDOW_WIDTH wide when they all fit that way - otherwise they are
+   made as equal as they fit, at least one column each, and never end
+   before they start. The share is that of the reference widths (the
+   widths last set on purpose, see mainwindow_widths_set), rounded to the
+   largest remainders: laid out from the last result instead, every time
+   the panels come and go the rounding could move a column, and back with
+   the same panels the windows were not as wide as before. Back at the
+   main area the reference was taken at, a row that filled it gets its
+   reference widths again, column for column.
    Every loop is bounded by the number of windows or of columns. */
 static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 {
@@ -780,13 +835,16 @@ static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 		avail = windows;
 	minw = avail >= windows * NEW_WINDOW_WIDTH ? NEW_WINDOW_WIDTH : avail / windows;
 
+	if (!mainwindows_line_has_ref(line, windows))
+		mainwindows_line_take_ref(line, windows);
+
 	widths = g_new0(int, windows);
 	rem = g_new0(gint64, windows);
 	total = 0;
 	for (tmp = line, i = 0; tmp != NULL; tmp = tmp->next, i++) {
 		MAIN_WINDOW_REC *rec = tmp->data;
 
-		widths[i] = MAX(1, rec->width);
+		widths[i] = rec->ref_width;
 		total += widths[i];
 	}
 	used = 0;
@@ -835,6 +893,7 @@ static void mainwindows_fit_line(MAIN_WINDOW_REC *win)
 		rec->last_column = col + widths[i] - 1;
 		mainwindow_resize(rec, widths[i] - old_width, 0);
 		rec->width = widths[i];
+		rec->fit_width = widths[i];
 		rec->size_dirty = TRUE;
 		col = rec->last_column + 2;
 	}
@@ -851,6 +910,15 @@ static void mainwindows_fit_lines(void)
 
 	for (win = mainwindows_find_lower(NULL); win != NULL; win = mainwindows_find_lower(win))
 		mainwindows_fit_line(win);
+}
+
+/* Every width set on purpose (see mainwindow_widths_set). */
+static void mainwindows_widths_set_all(void)
+{
+	GSList *tmp;
+
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next)
+		mainwindow_widths_set(tmp->data);
 }
 
 void mainwindows_resize(int width, int height)
@@ -950,6 +1018,7 @@ void mainwindows_resize(int width, int height)
 
 			/* Reflow horizontal layout */
 			mainwindows_fit_lines();
+			mainwindows_widths_set_all();
 			irssi_set_dirty();
 
 			/* Skip normal ydiff/xdiff processing since we just rebuilt everything */
@@ -1013,6 +1082,10 @@ void mainwindows_resize(int width, int height)
 		   destroy windows starting from top if no room */
 		mainwindows_resize_smaller(ydiff);
 	}
+
+	/* the widths for the new terminal width are the new reference */
+	if (xdiff != 0)
+		mainwindows_widths_set_all();
 
 	/* if we lost our active mainwin, get a new one */
 	if (active_mainwin == NULL && active_win != NULL && !quitting) {
@@ -1292,6 +1365,8 @@ static void mainwindows_rresize_two(MAIN_WINDOW_REC *grow_win, MAIN_WINDOW_REC *
 
 	mainwindow_resize(grow_win, count, 0);
 	mainwindow_resize(shrink_win, -count, 0);
+	mainwindow_widths_set(grow_win);
+	mainwindow_widths_set(shrink_win);
 	grow_win->dirty = TRUE;
 	shrink_win->dirty = TRUE;
 }
@@ -1729,6 +1804,7 @@ static void window_balance_horizontal(void)
 		}
 
 		mainwindow_resize(win, win->last_column - win->first_column + 1 - old_width, 0);
+		mainwindow_widths_set(win);
 		last_column = win->last_column + 2;
 	}
 	g_slist_free(line);
