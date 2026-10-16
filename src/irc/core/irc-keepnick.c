@@ -84,7 +84,7 @@ typedef struct {
 	char *monitored;	/* the nick in our MONITOR list */
 	char *unmonitored;	/* the nick of our last MONITOR - ... */
 	gint64 unmonitored_until; /* ... and until when its replies are ours */
-	GHashTable *user_monitor; /* the user's own MONITOR targets */
+	GSList *user_monitor;	/* the user's own MONITOR targets (bytes as sent) */
 	char *told_invalid;	/* the invalid nick that was said */
 	guint check_tag;	/* the check every keepnick_check_time */
 	gint64 last_attempt;	/* monotonic time of our last NICK */
@@ -121,7 +121,6 @@ static KEEPNICK_SERVER_REC *state_get(IRC_SERVER_REC *server, gboolean create)
 	if (st == NULL && create) {
 		st = g_new0(KEEPNICK_SERVER_REC, 1);
 		st->server = server;
-		st->user_monitor = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 		g_hash_table_insert(states, server, st);
 	}
 	return st;
@@ -131,7 +130,7 @@ static void state_free(KEEPNICK_SERVER_REC *st)
 {
 	if (st->check_tag != 0)
 		g_source_remove(st->check_tag);
-	g_hash_table_destroy(st->user_monitor);
+	g_slist_free_full(st->user_monitor, g_free);
 	g_free(st->auto_nick);
 	g_free(st->monitored);
 	g_free(st->unmonitored);
@@ -197,7 +196,8 @@ const char *keepnick_nick_invalid(const char *nick, IRC_SERVER_REC *server)
 		return "it starts with :, #, & or -";
 	nicklen = server == NULL || server->isupport == NULL ? NULL :
 	          g_hash_table_lookup(server->isupport, "NICKLEN");
-	if (nicklen != NULL && atoi(nicklen) > 0 && g_utf8_strlen(nick, -1) > atoi(nicklen))
+	/* servers count NICKLEN in bytes */
+	if (nicklen != NULL && atoi(nicklen) > 0 && strlen(nick) > (size_t) atoi(nicklen))
 		return "longer than the server's NICKLEN";
 	return NULL;
 }
@@ -283,13 +283,22 @@ static gboolean use_monitor(IRC_SERVER_REC *server, KEEPNICK_SERVER_REC *st)
 	       g_hash_table_lookup(server->isupport, "MONITOR") != NULL;
 }
 
+/* the user's MONITOR target that is `nick' by the server's casemapping
+   (nick_comp_func: bytes, no UTF-8 needed) */
+static GSList *user_monitor_find(KEEPNICK_SERVER_REC *st, const char *nick)
+{
+	GSList *tmp;
+
+	for (tmp = st->user_monitor; tmp != NULL; tmp = tmp->next) {
+		if (nickcmp(st->server, tmp->data, nick) == 0)
+			return tmp;
+	}
+	return NULL;
+}
+
 static gboolean user_monitors(KEEPNICK_SERVER_REC *st, const char *nick)
 {
-	char *key = g_utf8_casefold(nick, -1);
-	gboolean found = g_hash_table_contains(st->user_monitor, key);
-
-	g_free(key);
-	return found;
+	return user_monitor_find(st, nick) != NULL;
 }
 
 /* our own MONITOR line, not to be taken for the user's */
@@ -540,6 +549,14 @@ static void sig_nick_taken(IRC_SERVER_REC *server)
 		state_get(server, TRUE)->collided = TRUE;
 }
 
+/* network names, as server_find_chatnet() compares them */
+static gboolean same_chatnet(const char *a, const char *b)
+{
+	if (a == NULL || b == NULL || *a == '\0' || *b == '\0')
+		return (a == NULL || *a == '\0') && (b == NULL || *b == '\0');
+	return g_ascii_strcasecmp(a, b) == 0;
+}
+
 /* another connection of ours is on the nick (of the same network) */
 static gboolean own_server_on(IRC_SERVER_REC *server, const char *nick)
 {
@@ -549,7 +566,7 @@ static gboolean own_server_on(IRC_SERVER_REC *server, const char *nick)
 		IRC_SERVER_REC *other = IRC_SERVER(tmp->data);
 
 		if (other == NULL || other == server || other->nick == NULL ||
-		    g_strcmp0(other->connrec->chatnet, server->connrec->chatnet) != 0)
+		    !same_chatnet(other->connrec->chatnet, server->connrec->chatnet))
 			continue;
 		if (nickcmp(server, other->nick, nick) == 0)
 			return TRUE;
@@ -756,8 +773,8 @@ static void sig_redir_refused(IRC_SERVER_REC *server)
 		sig_redir_busy(server);
 }
 
-/* 432/433/437/484 after another client's NICK took our redirect: the
-   reply to our NICK, not to the user's */
+/* 432/433/437 for the kept nick after another client's NICK took our
+   redirect: the reply to our NICK, not to the user's */
 static void sig_late_reply(IRC_SERVER_REC *server, const char *data)
 {
 	KEEPNICK_SERVER_REC *st;
@@ -777,15 +794,16 @@ static void sig_late_reply(IRC_SERVER_REC *server, const char *data)
 	}
 	nick = wanted_nick(server);
 	params = event_get_params(data, 2, NULL, &target);
-	ours = g_strcmp0(numeric, "484") == 0 ||
-	       (nick != NULL && nickcmp(server, target, nick) == 0);
+	/* the reply names the nick; a 484 does not, so it is ours only
+	   inside our redirect (sig_redir_refused) */
+	ours = nick != NULL && nickcmp(server, target, nick) == 0;
 	g_free(params);
 	if (!ours)
 		return;
 
 	signal_stop();
 	st->awaiting = FALSE;
-	if (g_strcmp0(numeric, "432") == 0 || g_strcmp0(numeric, "484") == 0)
+	if (g_strcmp0(numeric, "432") == 0)
 		refused(server, refusal(numeric));
 }
 
@@ -802,20 +820,22 @@ static void sig_server_outgoing(IRC_SERVER_REC *server, GString *data)
 	words = g_strsplit_set(data->str + 8, " \r\n", 3);
 	st = state_get(server, TRUE);
 	if (words[0] != NULL && g_ascii_strcasecmp(words[0], "C") == 0) {
-		g_hash_table_remove_all(st->user_monitor);
+		g_slist_free_full(st->user_monitor, g_free);
+		st->user_monitor = NULL;
 	} else if (words[0] != NULL && words[1] != NULL &&
 	           (strcmp(words[0], "+") == 0 || strcmp(words[0], "-") == 0)) {
 		targets = g_strsplit(words[1] + (*words[1] == ':'), ",", -1);
 		for (tmp = targets; *tmp != NULL; tmp++) {
+			GSList *found;
+
 			if (**tmp == '\0')
 				continue;
-			if (*words[0] == '+')
-				g_hash_table_add(st->user_monitor, g_utf8_casefold(*tmp, -1));
-			else {
-				char *key = g_utf8_casefold(*tmp, -1);
-
-				g_hash_table_remove(st->user_monitor, key);
-				g_free(key);
+			found = user_monitor_find(st, *tmp);
+			if (*words[0] == '+' && found == NULL) {
+				st->user_monitor = g_slist_prepend(st->user_monitor, g_strdup(*tmp));
+			} else if (*words[0] == '-' && found != NULL) {
+				g_free(found->data);
+				st->user_monitor = g_slist_delete_link(st->user_monitor, found);
 			}
 		}
 		g_strfreev(targets);
@@ -938,14 +958,12 @@ static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config, 
 	}
 	if (st != NULL && st->monitored != NULL)
 		config_node_set_str(config, node, "keepnick_monitored", st->monitored);
-	if (st != NULL && g_hash_table_size(st->user_monitor) > 0) {
-		GHashTableIter iter;
+	if (st != NULL && st->user_monitor != NULL) {
 		GString *list = g_string_new(NULL);
-		gpointer key;
+		GSList *tmp;
 
-		g_hash_table_iter_init(&iter, st->user_monitor);
-		while (g_hash_table_iter_next(&iter, &key, NULL))
-			g_string_append_printf(list, "%s%s", list->len > 0 ? "," : "", (char *) key);
+		for (tmp = st->user_monitor; tmp != NULL; tmp = tmp->next)
+			g_string_append_printf(list, "%s%s", list->len > 0 ? "," : "", (char *) tmp->data);
 		config_node_set_str(config, node, "keepnick_user_monitor", list->str);
 		g_string_free(list, TRUE);
 	}
@@ -961,13 +979,14 @@ static void sig_session_restore_server(IRC_SERVER_REC *server, CONFIG_NODE *node
 	if (!IS_IRC_SERVER(server))
 		return;
 	value = config_node_get_str(node, "keepnick_auto_nick", NULL);
-	if (value != NULL && *value != '\0') {
+	if (value != NULL && keepnick_nick_invalid(value, NULL) == NULL) {
 		st = state_get(server, TRUE);
 		st->auto_nick = g_strdup(value);
 		st->auto_paused = config_node_get_bool(node, "keepnick_auto_paused", FALSE);
 	}
 	value = config_node_get_str(node, "keepnick_monitored", NULL);
-	if (value != NULL && *value != '\0') {
+	/* sent again as MONITOR + / -: one IRC word only */
+	if (value != NULL && keepnick_nick_invalid(value, NULL) == NULL) {
 		/* still in the server's list: MONITOR + again tells if it is
 		   on (the answer is ours), and a nick kept no more is
 		   removed */
@@ -981,8 +1000,8 @@ static void sig_session_restore_server(IRC_SERVER_REC *server, CONFIG_NODE *node
 
 		st = state_get(server, TRUE);
 		for (tmp = names; *tmp != NULL; tmp++) {
-			if (**tmp != '\0')
-				g_hash_table_add(st->user_monitor, g_strdup(*tmp));
+			if (**tmp != '\0' && keepnick_nick_invalid(*tmp, NULL) == NULL)
+				st->user_monitor = g_slist_prepend(st->user_monitor, g_strdup(*tmp));
 		}
 		g_strfreev(names);
 	}
@@ -1087,7 +1106,6 @@ void irc_keepnick_init(void)
 	signal_add_first("event 432", (SIGNAL_FUNC) sig_late_reply);
 	signal_add_first("event 433", (SIGNAL_FUNC) sig_late_reply);
 	signal_add_first("event 437", (SIGNAL_FUNC) sig_late_reply);
-	signal_add_first("event 484", (SIGNAL_FUNC) sig_late_reply);
 	signal_add("event connected", (SIGNAL_FUNC) sig_event_connected);
 	signal_add_last("event 376", (SIGNAL_FUNC) sig_end_of_motd);
 	signal_add_last("event 422", (SIGNAL_FUNC) sig_end_of_motd);
@@ -1124,7 +1142,6 @@ void irc_keepnick_deinit(void)
 	signal_remove("event 432", (SIGNAL_FUNC) sig_late_reply);
 	signal_remove("event 433", (SIGNAL_FUNC) sig_late_reply);
 	signal_remove("event 437", (SIGNAL_FUNC) sig_late_reply);
-	signal_remove("event 484", (SIGNAL_FUNC) sig_late_reply);
 	signal_remove("event connected", (SIGNAL_FUNC) sig_event_connected);
 	signal_remove("event 376", (SIGNAL_FUNC) sig_end_of_motd);
 	signal_remove("event 422", (SIGNAL_FUNC) sig_end_of_motd);

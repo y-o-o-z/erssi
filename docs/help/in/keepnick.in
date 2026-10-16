@@ -79,8 +79,10 @@
         connect. OFF = only the nicks of /KEEPNICK.
     keepnick_autosave = ON
         /KEEPNICK and /UNKEEPNICK save the configuration at once (as the
-        script saved its file). OFF = only /SAVE (and settings_autosave)
-        writes it.
+        script saved its file) - the whole file, when irssi's own
+        autosave would: not with settings_autosave OFF, and not when the
+        file was changed outside erssi (then a line says /SAVE writes
+        it). OFF = only /SAVE (and settings_autosave) writes it.
 
 %9Examples:%9
 

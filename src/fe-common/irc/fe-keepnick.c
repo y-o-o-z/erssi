@@ -80,15 +80,28 @@ static const char *server_label(IRC_SERVER_REC *server)
 }
 
 /* keepnick_autosave: /KEEPNICK and /UNKEEPNICK save the config at once,
-   as the script saved its file; not a config read with errors (the part
-   not read would be lost) */
+   as the script saved its file - when irssi's own autosave would write
+   it: settings_autosave ON and the file not changed outside erssi (else
+   the user's edits would be lost); never a config read with errors (the
+   part not read would be lost). Otherwise one line says /SAVE does it. */
 static void autosave(void)
 {
 	char *reason = NULL;
 
-	if (!settings_get_bool("keepnick_autosave") || mainconfig->fname == NULL ||
-	    config_last_error(mainconfig) != NULL)
+	if (!settings_get_bool("keepnick_autosave") || mainconfig->fname == NULL)
 		return;
+	if (!settings_get_bool("settings_autosave")) {
+		crap("settings_autosave is OFF; /SAVE to write the kept nick");
+		return;
+	}
+	if (config_last_error(mainconfig) != NULL) {
+		crap("the config file has errors; /SAVE to write the kept nick");
+		return;
+	}
+	if (irssi_config_is_changed(NULL)) {
+		crap("the config file was changed outside erssi; /SAVE to write the kept nick");
+		return;
+	}
 	if (!shellter_save_at_start(&reason))
 		crap("the configuration could not be saved (%s); /SAVE to try again", reason);
 	g_free(reason);
@@ -239,12 +252,20 @@ static void cmd_listnick(void)
 
 	for (tmp = nets; tmp != NULL; tmp = tmp->next) {
 		IRC_CHATNET_REC *net = tmp->data;
+		const char *why;
+		char *state;
 
+		/* not kept at all: not one IRC word, or too long for the
+		   server that would keep it */
+		why = keepnick_nick_invalid(net->keepnick, IRC_SERVER(server_find_chatnet(net->name)));
+		state = why != NULL ? g_strconcat("refused: ", why, NULL) :
+		        g_strdup(keepnick_is_paused(net->name) ? "inactive" : "active");
 		if (!any)
 			printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_LIST_HEADER);
 		any = TRUE;
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_LIST_LINE, net->keepnick,
-		            net->name, keepnick_is_paused(net->name) ? "inactive" : "active");
+		            net->name, state);
+		g_free(state);
 	}
 	g_slist_free(nets);
 
