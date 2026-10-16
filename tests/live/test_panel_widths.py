@@ -41,14 +41,8 @@ def main():
         row from the top, each row from the left:
         [[(first_column, columns), ...], ...]."""
         e = st["alice"]
-        conf = e.home / "config"
-        before = conf.stat().st_mtime_ns if conf.exists() else 0
-        e.type("/layout save")
-        e.type("/save")
-        end = time.time() + WAIT
-        while conf.stat().st_mtime_ns == before and time.time() < end:
-            time.sleep(0.1)
-        layout = block(conf.read_text(), "mainwindows")
+        e.type_and_wait("/layout save", "/save")
+        layout = block((e.home / "config").read_text(), "mainwindows")
         assert layout, "no mainwindows block saved"
         st["layout"] = layout
         rows = {}
@@ -68,15 +62,8 @@ def main():
     def goto(name):
         e = st["alice"]
         off = e.all_log().stat().st_size
-        e.type(f"/window goto {name}")
-        e.type("/wn")
-        end = time.time() + WAIT
-        while time.time() < end:
-            if f"active={name}" in log_text(off):
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError(f"window {name} did not become active")
+        e.type_and_wait(f"/window goto {name}", "/wn")
+        assert f"active={name}" in log_text(off), f"window {name} did not become active"
 
     def tiles(layout, reserved):
         """Every row fills the main area (the terminal's columns less the
@@ -92,9 +79,9 @@ def main():
     def resize(width, want):
         """/WINDOW GROW|SHRINK -right: the active main window WANT wide"""
         if want > width:
-            st["alice"].type(f"/window grow -right {want - width}")
+            st["alice"].type_and_wait(f"/window grow -right {want - width}")
         elif want < width:
-            st["alice"].type(f"/window shrink -right {width - want}")
+            st["alice"].type_and_wait(f"/window shrink -right {width - want}")
 
     def channel():
         goto("#test")
@@ -104,7 +91,7 @@ def main():
 
     def left(on):
         def step():
-            st["alice"].type(f"/set sidepanel_left {'on' if on else 'off'}")
+            st["alice"].type_and_wait(f"/set sidepanel_left {'on' if on else 'off'}")
         return step
 
     def trips(steps, start, what, seen=None):
@@ -137,7 +124,7 @@ def main():
         while "has joined #test" not in log_text(off):
             assert time.time() < end, "alice never joined #test"
             time.sleep(0.1)
-        a.type("/alias wn echo active=$winname$C")
+        a.type_and_wait("/alias wn echo active=$winname$C")
 
     def t_start():
         st["ircd"] = harness.Ircd(work)
@@ -151,16 +138,16 @@ def main():
         # above it top1 and top2; the panels' columns 15 on the left, 15
         # on the right
         goto("#test")
-        a.type("/window new hide")
-        a.type("/window name aye")
-        a.type("/window new -right")
-        a.type("/window name bee")
-        a.type("/window show -right #test")
+        a.type_and_wait("/window new hide")
+        a.type_and_wait("/window name aye")
+        a.type_and_wait("/window new -right")
+        a.type_and_wait("/window name bee")
+        a.type_and_wait("/window show -right #test")
         goto("aye")
-        a.type("/window new split")
-        a.type("/window name top1")
-        a.type("/window new -right")
-        a.type("/window name top2")
+        a.type_and_wait("/window new split")
+        a.type_and_wait("/window name top1")
+        a.type_and_wait("/window new -right")
+        a.type_and_wait("/window name top2")
         # uneven widths set by hand
         cols = save()
         assert [len(row) for row in cols] == [2, 3], cols
@@ -191,7 +178,7 @@ def main():
         a = st["alice"]
         channel()
         before = save()
-        a.type("/window grow -right 5")
+        a.type_and_wait("/window grow -right 5")
         on = save()
         tiles(on, 30)
         # #test is the rightmost: the columns come from bee, next to it;
@@ -206,7 +193,7 @@ def main():
     def t_balance_is_new_reference():
         a = st["alice"]
         other()
-        a.type("/window balance -right")
+        a.type_and_wait("/window balance -right")
         off = save()
         tiles(off, 15)
         assert max(widths(off)[1]) - min(widths(off)[1]) <= 1, off
@@ -215,8 +202,8 @@ def main():
     def t_split_is_new_reference():
         a = st["alice"]
         other()
-        a.type("/window new -right")
-        a.type("/window name dee")
+        a.type_and_wait("/window new -right")
+        a.type_and_wait("/window name dee")
         other()
         off = save()
         tiles(off, 15)
@@ -226,7 +213,7 @@ def main():
     def t_close_is_new_reference():
         a = st["alice"]
         goto("dee")
-        a.type("/window hide")
+        a.type_and_wait("/window hide")
         other()
         off = save()
         tiles(off, 15)
@@ -238,9 +225,13 @@ def main():
         for cols in (171, 200):
             st["cols"] = cols
             a.resize(cols, 50)
-            time.sleep(1)
-            other()
-            off = save()
+            # erssi has the new size once the rows end at its right edge
+            end = time.time() + WAIT
+            while True:
+                other()
+                off = save()
+                if all(row[-1][0] + row[-1][1] == cols - 15 for row in off) or time.time() > end:
+                    break
             tiles(off, 15)
             assert [len(row) for row in off] == [2, 3], off
             right_trips(off, f"after the terminal resized to {cols} columns")
@@ -257,7 +248,7 @@ def main():
         other()
         before = save()
         want = widths(before)[1][1] + 7
-        a.type(f"/window size -right {want - 1}")
+        a.type_and_wait(f"/window size -right {want - 1}")
         off = save()
         tiles(off, 15)
         assert widths(off)[1][1] == want and off[0] == before[0], (want, off, before)
@@ -265,10 +256,10 @@ def main():
         right_trips(off, "after /window size -right")
         # and without -right the lines, as before
         other()
-        a.type("/window size 10")
+        a.type_and_wait("/window size 10")
         save()
         low = lines()
-        a.type("/window size 13")
+        a.type_and_wait("/window size 13")
         save()
         high = lines()
         assert len(low) == 2 and high[1][1] == low[1][1] + 3 and high[0][1] == low[0][1] - 3, (low, high)
@@ -283,7 +274,6 @@ def main():
         a.quit()
         a.config_text = None  # the config it saved
         a.start(200, 50)
-        time.sleep(2)
         started(off)
         other()
         restored = save()
