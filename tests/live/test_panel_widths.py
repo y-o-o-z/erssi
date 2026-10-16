@@ -291,6 +291,29 @@ def main():
         save()
         assert lines() == low, (low, lines())
 
+    OUT_OF_RANGE = "Not a number of lines or columns from 1 to"
+
+    def t_numbers_out_of_range():
+        # a number past the terminal's size, INT_MIN, a negative one,
+        # 0 and garbage: refused with an error, nothing resized (before,
+        # atoi() overflowed or a negated INT_MIN did)
+        a = st["alice"]
+        other()
+        before = save()
+        for cmd in ("grow", "shrink", "size"):
+            for right in ("", "-right "):
+                for num in ("99999999999", "201", "-- -2147483648", "-- -5", "0", "abc"):
+                    off = a.all_log().stat().st_size
+                    a.type_and_wait(f"/window {cmd} {right}{num}")
+                    out = log_text(off)
+                    assert OUT_OF_RANGE in out, f"/window {cmd} {right}{num}: no error:\n{out}"
+                    assert save() == before, f"/window {cmd} {right}{num} resized"
+        # a number in range still works
+        a.type_and_wait("/window grow -right 2")
+        assert widths(save())[1][1] == widths(before)[1][1] + 2
+        a.type_and_wait("/window shrink -right 2")
+        assert save() == before
+
     def t_restored_layout_is_new_reference():
         # the layout saved (bee active: the right panel off) comes back
         # after a restart, and the panels keep the restored widths
@@ -318,7 +341,8 @@ def main():
         harness.main([t_install, t_start, t_right_panel, t_left_panel, t_both_panels,
                       t_resize_is_new_reference, t_balance_is_new_reference, t_split_is_new_reference,
                       t_close_is_new_reference, t_terminal_resize_is_new_reference,
-                      t_size_is_new_reference, t_grow_shrink_one_column, t_restored_layout_is_new_reference,
+                      t_size_is_new_reference, t_grow_shrink_one_column, t_numbers_out_of_range,
+                      t_restored_layout_is_new_reference,
                       t_sanitizers])
     finally:
         if "alice" in st:

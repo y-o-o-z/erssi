@@ -40,6 +40,7 @@ FORMAT_REC gui_text_formats[] = {
 
 	{ "refnum_not_found", "Window number $0 not found", 1, { 0 } },
 	{ "window_too_small", "Not enough room to resize this window", 0 },
+	{ "window_size_invalid", "Not a number of lines or columns from 1 to $1: $0", 2, { 0, 1 } },
 	{ "cant_hide_last", "You can't hide the last window", 0 },
 	{ "cant_hide_sticky_windows", "You can't hide sticky windows (use /SET autounstick_windows ON)", 0 },
 	{ "cant_show_sticky_windows", "You can't show sticky windows (use /SET autounstick_windows ON)", 0 },
