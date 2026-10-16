@@ -164,9 +164,31 @@ and used when present. For a system-wide install use
 |---|---|
 | **erssi Shellter Edition 2026.10.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (`2026.10.0`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.2`). |
 
 ## What this edition adds
+
+### Nicks, networks and windows (new in 2026.10.1 and 2026.10.2)
+
+- **Keepnick built in** — `/keepnick` keeps your nick on a network and
+  takes it back as soon as it is free: through MONITOR when the server
+  offers it, otherwise ISON every 12 seconds, and at once when the holder
+  quits or changes nick in a channel you share. With `keepnick_auto` (on)
+  erssi also takes back the nick a connection asked for when it had to
+  start on another one. The nick is saved with the network; the nicks of
+  the keepnick.pl script are imported once. `/help keepnick`.
+- **Side panels for split windows** — windows split above each other or
+  side by side keep their columns when the panels hide and show, and every
+  row of windows gets its own part of the nick list. `/window size`,
+  `grow` and `shrink` work in both directions and say when a number is out
+  of range.
+- **Layouts that come back as saved** — after `/layout save` or `/save`
+  and a restart every window returns to its place, with the same active
+  window in each part of the screen.
+- **One connection per network** — `/connect IRCnet` while IRCnet is
+  connected switches to its window instead of opening a second
+  connection; closing a network's last window disconnects it; the network
+  option `one_window` keeps all its queries in the network window.
 
 ### Mentions, notifications and search (new in 2026.10.0)
 
