@@ -50,12 +50,13 @@ cat > "$HOME/.gitconfig" <<EOF
 	defaultBranch = main
 EOF
 
-# stand-ins for the build and test step: meson notes the HOME it was given
-# and, with STUB_MESON_INT=1, interrupts the hook (Ctrl-C during the tests)
+# stand-ins for the build and test step: meson notes the HOME and the GIT_*
+# variables it was given and, with STUB_MESON_INT=1, interrupts the hook (Ctrl-C during the tests)
 printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ninja"
 cat > "$tmp/bin/meson" <<EOF
 #!/bin/sh
 printf '%s\n' "\$HOME" >> "$tmp/meson-homes"
+env | grep '^GIT_' >> "$tmp/meson-gitenv"
 [ "\${STUB_MESON_INT:-}" = 1 ] && kill -INT "\$PPID"
 exit 0
 EOF
@@ -296,11 +297,27 @@ export STUB_MESON_INT=1
 push 'interrupted during the tests' refused -- main
 unset STUB_MESON_INT
 
+# --- a push from a linked worktree: git gives the hook GIT_DIR there -------
+newrepo
+git -C "$r" worktree add -q -b wt "$r.wt" 2>/dev/null
+r="$r.wt"
+mkdir "$r/Build" && : > "$r/Build/build.ninja"
+cm -S -m 'x'
+push 'from a linked worktree' ok -- HEAD:main
+
 # the hook never gave meson the real HOME, only a throwaway one
 if [ -s "$tmp/meson-homes" ] && ! grep -qv "^$TMPDIR/" "$tmp/meson-homes"; then
     pass "meson ran with a throwaway HOME"
 else
     fail "meson ran with a throwaway HOME" "$(tr '\n' ' ' < "$tmp/meson-homes" 2>/dev/null)"
+fi
+
+# nor git's GIT_DIR and the like: a test that runs git (git init, git commit
+# in a scratch directory) would work on the pushing repository instead
+if [ ! -s "$tmp/meson-gitenv" ]; then
+    pass "meson ran without GIT_* variables"
+else
+    fail "meson ran without GIT_* variables" "$(sort -u "$tmp/meson-gitenv" | tr '\n' ' ')"
 fi
 
 exit "$failed"

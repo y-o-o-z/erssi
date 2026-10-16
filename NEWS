@@ -46,6 +46,12 @@ shellter-v2026.10.2 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    number out of range with "Not a number of lines or columns from 1
 	    to N"
 
+	+ Release tools
+	  - utils/pre-push runs the tests without git's GIT_DIR and the like:
+	    pushed from a linked worktree, the version scripts test committed
+	    to the pushing repository and made it bare. That test now clears
+	    its environment, as the other git tests do
+
 	+ Tests
 	  - the live tests wait for erssi instead of fixed times (about 555 s
 	    to 167 s) and can read what the terminal shows
