@@ -105,6 +105,27 @@ def main():
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
+    def t_restart_forgets_previous_run():
+        # a restart of the same object: the output and the all log of the
+        # run before must not satisfy wait_terminal() / wait_ready()
+        w = Path(tempfile.mkdtemp(prefix="restart.", dir=work))
+        with harness.Ircd(w) as ircd, harness.Erssi(inst, w, "alice", None) as alice:
+            alice.config_text = harness.config(ircd.start(), "alice")
+            alice.start()
+            alice.wait_ready()
+            assert b"\x1b[?1049h" in alice.output()
+            old_out = len(alice.output())
+            alice.quit()
+            old_log = alice.all_log().stat().st_size  # with what it wrote on quit
+            assert old_log > 0
+            alice.config_text = None
+            alice.start()
+            assert len(alice.output()) < old_out, "the buffer still holds the previous run"
+            assert alice._log_start == old_log, (alice._log_start, old_log)
+            alice.wait_ready()
+            assert alice.all_log().stat().st_size > old_log
+            alice.quit()
+
     def t_screen():
         # the terminal text of an output stream, no erssi needed
         s = harness.Screen(10, 4)
@@ -144,7 +165,7 @@ def main():
         assert "result: 2 ok, 0 failed, 1 skipped" in r.stdout, r.stdout
 
     try:
-        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke, t_screen, t_skip_case])
+        harness.main([t_install, t_ircd_client, t_hermetic_env, t_smoke, t_restart_forgets_previous_run, t_screen, t_skip_case])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)

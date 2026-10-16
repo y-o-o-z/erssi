@@ -570,6 +570,7 @@ class Erssi:
         self._marks = 0
         self._screen = None
         self._screen_off = 0
+        self._log_start = 0  # size of the all log when this run started
 
     def child_env(self):
         """The environment of the child, built from an allowlist: nothing
@@ -618,6 +619,10 @@ class Erssi:
     def start(self, cols=200, rows=50):
         self._prepare()
         env = self.child_env()
+        try:
+            self._log_start = self.all_log().stat().st_size
+        except OSError:
+            self._log_start = 0
         master, slave = os.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
@@ -635,8 +640,11 @@ class Erssi:
             os.close(slave)
         self.master = master
         with self._lock:
+            # a restart of this object: nothing of the previous run (the
+            # reader of that one was joined in kill()) may match a wait
+            self._buf.clear()
             self._screen = Screen(cols, rows)
-            self._screen_off = len(self._buf)
+            self._screen_off = 0
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
@@ -739,7 +747,7 @@ class Erssi:
 
     def wait_ready(self, timeout=30):
         """After start(): wait until erssi runs what is typed - its all log
-        has its first lines (it is open), then an /echo of a new marker
+        has new lines (it is open), then an /echo of a new marker
         reaches it. The /echo is typed again after 2, 4 and 8 s in case
         the first one came before the log was open: at most four lines,
         never a paste of paste_verify_line_count (5) lines."""
@@ -750,7 +758,7 @@ class Erssi:
 
         def log_open():
             try:
-                return self.proc.poll() is not None or self.all_log().stat().st_size > 0
+                return self.proc.poll() is not None or self.all_log().stat().st_size > self._log_start
             except OSError:
                 return False
         if not wait_until(log_open, timeout) or self.proc.poll() is not None:
