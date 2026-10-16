@@ -86,6 +86,10 @@ int mainwindows_reserve_columns(int left, int right);
 int mainwindows_min_columns(void);
 int mainwindow_set_statusbar_columns(MAIN_WINDOW_REC *window, int left, int right);
 
+/* Lay the row of WIN out with these widths, from the left (a restored
+   layout): exactly when they fill the main area, else in proportion. */
+void mainwindows_set_line_widths(MAIN_WINDOW_REC *win, const int *widths, int count);
+
 GSList *mainwindows_get_sorted(int reverse);
 GSList *mainwindows_get_line(MAIN_WINDOW_REC *rec);
 
