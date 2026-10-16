@@ -34,22 +34,22 @@ def main():
         return st["alice"].all_log().read_bytes()[offset:].decode(errors="replace")
 
     def wait_log_since(offset, text, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if text in log_since(offset):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: text in log_since(offset), timeout))
 
     def wait_log_re(pattern, offset=0, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if re.search(pattern, log_since(offset)):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: re.search(pattern, log_since(offset)), timeout))
+
+    def sync(via="bob"):
+        """Wait until alice has handled everything VIA (a client) sent
+        before: a channel line VIA sends now reaches the all log through
+        both of alice's connections (E2E and Bitlbee, both in #test) - each
+        reads its lines in order. A line without alice's nick is no
+        mention, and no case ignores public lines."""
+        st["syncs"] = st.get("syncs", 0) + 1
+        text = f"sync-{st['syncs']}-{time.time()}"
+        st[via].send(f"PRIVMSG #test :{text}")
+        assert harness.wait_until(lambda: log_since(0).count(text) >= 2, WAIT), \
+            f"the line {text} did not come through both connections"
 
     def ml_text():
         try:
@@ -60,8 +60,10 @@ def main():
     def wait_ml(text):
         return st["alice"].wait_file(st["ML"], text, WAIT)
 
-    def absent_ml(*texts):
-        time.sleep(2)
+    def absent_ml(*texts, via="bob"):
+        """TEXTS are not in the mentions log, once alice has handled what
+        VIA sent (the mentions log is written while a line is handled)."""
+        sync(via)
         content = ml_text()
         for t in texts:
             assert t not in content, f"{t!r} is in the mentions log:\n{content}"
@@ -70,7 +72,7 @@ def main():
         """$winname of the active window, read through an alias (/echo does
         not expand variables)."""
         off = log_size()
-        st["alice"].type("/wn")
+        st["alice"].type_and_wait("/wn")
         assert wait_log_since(off, "active="), "no active= line"
         m = re.findall(r"active=(\S*)", log_since(off))
         return m[-1]
@@ -100,13 +102,13 @@ def main():
         carol.send("JOIN #test")
         assert alice.wait_file(alice.all_log(), "carol [u@127.0.0.1] has joined #test", WAIT), \
             "alice did not see carol join"
-        alice.type("/alias wn echo active=$winname")
-        alice.type("/set mentions_log on")
+        alice.type_and_wait("/alias wn echo active=$winname")
+        alice.type_and_wait("/set mentions_log on")
         assert wait_log_re(r"mentions_log\s+(= )?ON"), "mentions_log not set"
 
     def t_window_created_not_active():
         off = log_size()
-        st["alice"].type("/window list")
+        st["alice"].type_and_wait("/window list")
         assert wait_log_since(off, "Mentions"), "no Mentions window in /window list:\n" + log_since(off)
         name = active_name()
         assert name != "Mentions", "the Mentions window was made active"
@@ -148,11 +150,11 @@ def main():
 
     def t_ignore():
         alice = st["alice"]
-        alice.type("/ignore bob NOTICES ACTIONS")
+        alice.type_and_wait("/ignore bob NOTICES ACTIONS")
         st["bob"].send("NOTICE alice :ignored notice")
         st["bob"].send("PRIVMSG alice :\x01ACTION ignored act\x01")
         absent_ml("ignored notice", "ignored act")
-        alice.type("/unignore bob")
+        alice.type_and_wait("/unignore bob")
         st["bob"].send("NOTICE alice :after unignore")
         assert wait_ml("[E2E] NOTICE <bob> after unignore"), ml_text()
 
@@ -162,16 +164,16 @@ def main():
         alice = st["alice"]
         carol = st["carol"]
         off = log_size()
-        alice.type("/ignore carol MSGS NOTICES ACTIONS NOHILIGHT")
+        alice.type_and_wait("/ignore carol MSGS NOTICES ACTIONS NOHILIGHT")
         assert wait_log_since(off, "Ignoring"), log_since(off)
         carol.send("PRIVMSG alice :nohilight pm")
         carol.send("NOTICE alice :nohilight notice")
         carol.send("PRIVMSG alice :\x01ACTION nohilight act\x01")
         for text in ("nohilight pm", "nohilight notice", "nohilight act"):
             assert alice.wait_file(alice.all_log(), text, WAIT), f"{text!r} not delivered"
-        absent_ml("nohilight pm", "nohilight notice", "nohilight act")
+        absent_ml("nohilight pm", "nohilight notice", "nohilight act", via="carol")
         off = log_size()
-        alice.type("/unignore 1")
+        alice.type_and_wait("/unignore 1")
         assert wait_log_since(off, "Unignored"), log_since(off)
         carol.send("PRIVMSG alice :after nohilight")
         assert wait_ml("[E2E] PM <carol> after nohilight"), ml_text()
@@ -195,14 +197,14 @@ def main():
         # that channel, as erssi does when it prints it
         alice = st["alice"]
         off = log_size()
-        alice.type("/ignore -channels #test bob PUBNOTICES")
+        alice.type_and_wait("/ignore -channels #test bob PUBNOTICES")
         assert wait_log_since(off, "Ignoring"), log_since(off)
         st["bob"].send("NOTICE alice :[#test] cnotice ignored")
         st["bob"].send("NOTICE alice :control after cnotice")
         assert wait_ml("[E2E] NOTICE <bob> control after cnotice"), ml_text()
         absent_ml("cnotice ignored")
         off = log_size()
-        alice.type("/unignore 1")
+        alice.type_and_wait("/unignore 1")
         assert wait_log_since(off, "Unignored"), log_since(off)
         st["bob"].send("NOTICE alice :[#test] cnotice shown")
         assert wait_ml("[E2E] NOTICE <bob> [#test] cnotice shown"), ml_text()
@@ -210,11 +212,11 @@ def main():
     def t_excluded_network():
         alice = st["alice"]
         off = log_size()
-        alice.type("/set mentions_exclude_networks Bitlbee")
+        alice.type_and_wait("/set mentions_exclude_networks Bitlbee")
         assert wait_log_re(r"mentions_exclude_networks\s+(= )?Bitlbee", off), "setting not changed"
         st["carol"].send("PRIVMSG alicebot :relay text")
         assert alice.wait_file(alice.all_log(), "relay text", WAIT), "alicebot did not get it"
-        absent_ml("relay text")
+        absent_ml("relay text", via="carol")
         st["carol"].send("PRIVMSG alice :normal text")
         assert wait_ml("[E2E] PM <carol> normal text"), ml_text()
 
@@ -228,7 +230,7 @@ def main():
         # the nick in the middle of the line (hilight_nick_matches_everywhere)
         alice = st["alice"]
         off = log_size()
-        alice.type("/set hilight_nick_matches_everywhere")
+        alice.type_and_wait("/set hilight_nick_matches_everywhere")
         assert wait_log_re(r"hilight_nick_matches_everywhere\s+(= )?ON", off), \
             "hilight_nick_matches_everywhere is not on:\n" + log_since(off)
         st["bob"].send("PRIVMSG #test :I told alice yesterday")
@@ -244,26 +246,26 @@ def main():
         # matches the own nick only in messages); this one is for actions only
         alice = st["alice"]
         off = log_size()
-        alice.type("/hilight -level ACTIONS alice")
+        alice.type_and_wait("/hilight -level ACTIONS alice")
         assert wait_log_since(off, "alice"), log_since(off)
         st["bob"].send("PRIVMSG #test :\x01ACTION waves at alice\x01")
         assert wait_ml("[E2E] #test <bob> waves at alice"), ml_text()
         assert alice.wait_file(alice.all_log(), "#test * bob waves at alice", WAIT), \
             "no action line in the Mentions window"
-        alice.type("/dehilight alice")  # the rule must not leak into later cases
+        alice.type_and_wait("/dehilight alice")  # the rule must not leak into later cases
 
     def t_hilight_rule():
         alice = st["alice"]
         off = log_size()
-        alice.type("/hilight banana")
+        alice.type_and_wait("/hilight banana")
         assert wait_log_since(off, "banana"), log_since(off)
         st["carol"].send("PRIVMSG #test :I like banana")
         assert wait_ml("[E2E] #test <carol> I like banana"), ml_text()
-        alice.type("/dehilight banana")
+        alice.type_and_wait("/dehilight banana")
 
     def t_own_nick_in_own_line():
         alice = st["alice"]
-        alice.type("/msg -E2E #test alice is me")
+        alice.type_and_wait("/msg -E2E #test alice is me")
         assert st["bob"].expect("PRIVMSG #test :alice is me"), "own line not sent"
         assert alice.wait_file(alice.all_log(), "alice is me", WAIT), "own line not shown"
         absent_ml("alice is me")
@@ -285,7 +287,7 @@ def main():
         alice = st["alice"]
         st["carol"].send("PRIVMSG #test :alicebot: relay hilight")
         assert alice.wait_file(alice.all_log(), "alicebot: relay hilight", WAIT), "not delivered"
-        absent_ml("relay hilight")
+        absent_ml("relay hilight", via="carol")
 
     def t_long_nick():
         # the real nick, not the one cut to the nick column of the theme
@@ -294,7 +296,7 @@ def main():
         assert theme.is_file(), theme
         shutil.copy(theme, alice.home / "shellter.theme")
         off = log_size()
-        alice.type("/set theme shellter")
+        alice.type_and_wait("/set theme shellter")
         assert wait_log_re(r"theme\s+(= )?shellter", off), "theme not set:\n" + log_since(off)
         long = harness.Client(st["port"], "bardzodlugi_nick")
         try:
@@ -317,7 +319,7 @@ def main():
             except OSError:
                 pass
             long.close()
-            alice.type("/set theme default")
+            alice.type_and_wait("/set theme default")
 
     def t_script_stop_and_echo():
         # A script that stops "message public" leaves nothing behind for a
@@ -341,13 +343,13 @@ def main():
             "  Irssi::server_find_tag('E2E')->print('#test', $_[0], MSGLEVEL_PUBLIC | MSGLEVEL_HILIGHT);\n"
             "});\n")
         off = log_size()
-        alice.type("/script load mtest")
+        alice.type_and_wait("/script load mtest")
         try:
             # to the E2E connection only (alicebot gets no copy that could
             # take the place of this one)
             st["bob"].send("TESTRAW alice ::bob!u@127.0.0.1 PRIVMSG #test :stopme alice")
             assert wait_log_since(off, "mtest stopped stopme alice"), "not stopped:\n" + log_since(off)
-            alice.type("/mtestprint alice: stray line")
+            alice.type_and_wait("/mtestprint alice: stray line")
             assert wait_ml("[E2E] #test <?> alice: stray line"), ml_text()
             assert "stopme" not in ml_text(), ml_text()
             # the echo of a message's hilight, and of a hilight printed by
@@ -356,15 +358,17 @@ def main():
             st["bob"].send("PRIVMSG #test :alice echoback")
             assert wait_ml("[E2E] #test <bob> alice echoback"), ml_text()
             assert wait_log_since(off, "echo of alice alice echoback"), "no echo:\n" + log_since(off)
-            alice.type("/mtestprint alice: script echoback")
+            alice.type_and_wait("/mtestprint alice: script echoback")
             assert wait_ml("[E2E] #test <?> alice: script echoback"), ml_text()
             assert wait_log_since(off, "echo of alice alice: script echoback"), "no echo:\n" + log_since(off)
-            time.sleep(1)
+            # an echo recorded again would be printed and recorded again
+            # while the line is handled: done once alice has handled more
+            sync()
             assert alice.proc.poll() is None, "erssi is gone"
             lines = [x for x in ml_text().splitlines() if "echoback" in x]
             assert len(lines) == 2, "\n".join(lines)
         finally:
-            alice.type("/script unload mtest")
+            alice.type_and_wait("/script unload mtest")
 
     def t_webjournal():
         if not st["inst"].has_perl:
@@ -377,8 +381,8 @@ def main():
         shutil.copy(script, alice.home / "scripts" / "webjournal.pl")
         journal = alice.home / "journal"
         off = log_size()
-        alice.type("/script load webjournal")
-        alice.type(f"/set webjournal_dir {journal}")
+        alice.type_and_wait("/script load webjournal")
+        alice.type_and_wait(f"/set webjournal_dir {journal}")
         assert wait_log_re(r"webjournal_dir\s+(= )?" + re.escape(str(journal)), off), log_since(off)
         try:
             st["bob"].send("PRIVMSG alice :to the journal")
@@ -387,20 +391,18 @@ def main():
             lines = [json.loads(x) for x in path.read_text().splitlines() if "to the journal" in x]
             assert any(e.get("hl") == 1 and "bob" in e.get("x", "") for e in lines), lines
         finally:
-            alice.type("/script unload webjournal")
+            alice.type_and_wait("/script unload webjournal")
 
     def t_utf8_bytes():
         st["bob"].send("PRIVMSG alice :zażółć gęślą jaźń")
         want = b"<bob> za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87 g\xc4\x99\xc5\x9bl\xc4\x85 ja\xc5\xba\xc5\x84\n"
-        end = time.time() + WAIT
-        while want not in st["ML"].read_bytes() and time.time() < end:
-            time.sleep(0.1)
+        harness.wait_until(lambda: want in st["ML"].read_bytes(), WAIT)
         assert want in st["ML"].read_bytes(), st["ML"].read_bytes()
 
     def t_log_modes():
         alice = st["alice"]
         path = work / "new" / "sub" / "m.log"
-        alice.type(f"/set mentions_log_file {path}")
+        alice.type_and_wait(f"/set mentions_log_file {path}")
         st["bob"].send("PRIVMSG alice :to the new log")
         assert alice.wait_file(path, "<bob> to the new log", WAIT), "new log file not written"
         assert stat.S_IMODE(path.stat().st_mode) == 0o600, oct(path.stat().st_mode)
@@ -409,23 +411,23 @@ def main():
     def t_log_error_once():
         alice = st["alice"]
         off = log_size()
-        alice.type(f"/set mentions_log_file {work}")
+        alice.type_and_wait(f"/set mentions_log_file {work}")
         st["bob"].send("PRIVMSG alice :log error one")
         st["bob"].send("PRIVMSG alice :log error two")
         assert wait_log_since(off, "PM bob: log error two"), "second PM not in the window"
-        time.sleep(1)
+        sync()
         n = log_since(off).count("Mentions: cannot write")
         assert n == 1, f"{n} error lines:\n" + log_since(off)
         assert f"Mentions: cannot write {work}: Is a directory" in log_since(off), log_since(off)
-        alice.type("/set -default mentions_log_file")
+        alice.type_and_wait("/set -default mentions_log_file")
         st["bob"].send("PRIVMSG alice :log works again")
         assert wait_ml("[E2E] PM <bob> log works again"), ml_text()
         # a successful write resets it: the same bad path is reported again
         off = log_size()
-        alice.type(f"/set mentions_log_file {work}")
+        alice.type_and_wait(f"/set mentions_log_file {work}")
         st["bob"].send("PRIVMSG alice :log error three")
         assert wait_log_since(off, "Mentions: cannot write"), "no error after a good write:\n" + log_since(off)
-        alice.type("/set -default mentions_log_file")
+        alice.type_and_wait("/set -default mentions_log_file")
         st["bob"].send("PRIVMSG alice :log works once more")
         assert wait_ml("[E2E] PM <bob> log works once more"), ml_text()
 
@@ -440,7 +442,7 @@ def main():
         try:
             st["bob"].send(f"PRIVMSG alice :\x01DCC CHAT chat 2130706433 {port}\x01")
             assert alice.wait_file(alice.all_log(), "DCC CHAT from bob", WAIT), "no DCC CHAT request"
-            alice.type("/dcc chat bob")
+            alice.type_and_wait("/dcc chat bob")
             conn, _ = lsock.accept()
             conn.sendall(b"dcc hello\n")
             assert wait_ml("[DCC] DCC <bob> dcc hello"), ml_text()
@@ -465,7 +467,7 @@ def main():
             off = log_size()
             st["carol"].send(f"PRIVMSG alicebot :\x01DCC CHAT chat 2130706433 {port}\x01")
             assert wait_log_since(off, "DCC CHAT from carol"), "no DCC CHAT request:\n" + log_since(off)
-            alice.type("/dcc chat carol")
+            alice.type_and_wait("/dcc chat carol")
             conn, _ = lsock.accept()
             conn.sendall(b"excluded dcc\n")
             assert wait_log_since(off, "excluded dcc"), "DCC text not shown:\n" + log_since(off)
@@ -478,37 +480,38 @@ def main():
 
     def t_command():
         alice = st["alice"]
-        alice.type("/mentions")
+        alice.type_and_wait("/mentions")
         assert active_name() == "Mentions", "/mentions did not go to the window"
         off = log_size()
+        # the Mentions window is active: nothing typed after the clear may
+        # print a line there before its lines are counted (no /echo)
         alice.type("/mentions clear")
-        time.sleep(1)
-        text = log_since(off)
-        assert "Unknown command" not in text and "rror" not in text, text
         if st["inst"].has_perl:
-            off = log_size()
+            count = log_size()
             alice.type('/script exec use Irssi::TextUI; Irssi::print("lines=".'
                        'Irssi::window_find_name("Mentions")->view->{buffer}{lines_count})')
-            assert wait_log_since(off, "lines="), "script exec printed nothing:\n" + log_since(off)
-            assert "lines=0" in log_since(off), log_since(off)
-        alice.type("/window goto 1")
+            assert wait_log_since(count, "lines="), "script exec printed nothing:\n" + log_since(count)
+            assert "lines=0" in log_since(count), log_since(count)
+        else:
+            alice.type_and_wait()
+        text = log_since(off)
+        assert "Unknown command" not in text and "rror" not in text, text
+        alice.type_and_wait("/window goto 1")
 
     def t_immortal_and_recreated():
         alice = st["alice"]
         refused = "Window is immortal"
         off = log_size()
-        alice.type("/window goto Mentions")
-        alice.type("/window close")
+        alice.type_and_wait("/window goto Mentions")
+        alice.type_and_wait("/window close")
         assert wait_log_since(off, refused), "the window is not immortal:\n" + log_since(off)
-        alice.type("/window immortal off")
+        alice.type_and_wait("/window immortal off")
         assert wait_log_since(off, "Window isn't immortal"), log_since(off)
         off = log_size()
-        alice.type("/window close")
-        time.sleep(1)
+        alice.type_and_wait("/window close")
         assert refused not in log_since(off), "the close was refused:\n" + log_since(off)
         off = log_size()
-        alice.type("/window list")
-        time.sleep(1)
+        alice.type_and_wait("/window list")
         assert re.search(r"\bMentions\b", log_since(off)), "not recreated:\n" + log_since(off)
         assert active_name() != "Mentions", "the recreated window was made active"
         st["bob"].send("PRIVMSG alice :after recreate")
@@ -516,79 +519,75 @@ def main():
             "the recreated window gets no entries"
         # only a new window is immortal again after IMMORTAL OFF
         off = log_size()
-        alice.type("/window goto Mentions")
-        alice.type("/window close")
+        alice.type_and_wait("/window goto Mentions")
+        alice.type_and_wait("/window close")
         assert wait_log_since(off, refused), "the recreated window is not immortal:\n" + log_since(off)
-        alice.type("/window goto 1")
+        alice.type_and_wait("/window goto 1")
 
     def t_rename():
         alice = st["alice"]
-        alice.type("/set mentions_window Inbox")
+        alice.type_and_wait("/set mentions_window Inbox")
         off = log_size()
-        alice.type("/window list")
+        alice.type_and_wait("/window list")
         assert wait_log_re(r"\bInbox\b", off), "not renamed:\n" + log_since(off)
         assert not re.search(r"\bMentions\b", log_since(off)), "a second window:\n" + log_since(off)
         st["bob"].send("PRIVMSG alice :renamed window")
         assert wait_ml("[E2E] PM <bob> renamed window"), ml_text()
-        alice.type("/set mentions_window Mentions")
+        alice.type_and_wait("/set mentions_window Mentions")
         off = log_size()
-        alice.type("/window list")
+        alice.type_and_wait("/window list")
         assert wait_log_re(r"\bMentions\b", off), "not renamed back:\n" + log_since(off)
         assert not re.search(r"\bInbox\b", log_since(off)), "Inbox left over:\n" + log_since(off)
 
     def t_name_taken():
         # a name another window has is refused: no two windows of one name
         alice = st["alice"]
-        alice.type("/window new hidden")
-        alice.type("/window name Other")
-        alice.type("/window goto 1")
+        alice.type_and_wait("/window new hidden")
+        alice.type_and_wait("/window name Other")
+        alice.type_and_wait("/window goto 1")
         off = log_size()
-        alice.type("/set mentions_window Other")
+        alice.type_and_wait("/set mentions_window Other")
         assert wait_log_since(off, "Mentions: there is a window named Other already"), log_since(off)
         assert wait_log_re(r"mentions_window\s+(= )?Mentions", off), "the old name was not kept"
         off = log_size()
-        alice.type("/window list")
-        time.sleep(1)
+        alice.type_and_wait("/window list")
         listing = log_since(off)
         assert len(re.findall(r"\bOther\b", listing)) == 1, listing
         assert re.search(r"\bMentions\b", listing), listing
         st["bob"].send("PRIVMSG alice :name kept")
         assert alice.wait_file(alice.all_log(), "PM bob: name kept", WAIT), "the window stopped working"
-        alice.type("/window goto Other")
-        alice.type("/window close")
-        alice.type("/window goto 1")
+        alice.type_and_wait("/window goto Other")
+        alice.type_and_wait("/window close")
+        alice.type_and_wait("/window goto 1")
 
     def t_window_off():
         alice = st["alice"]
-        alice.type("/set -clear mentions_window")
+        alice.type_and_wait("/set -clear mentions_window")
         # the window exists now: the "closes and stays closed" checks below
         # would pass vacuously if /window goto failed to find it
         off = log_size()
-        alice.type("/window list")
+        alice.type_and_wait("/window list")
         assert wait_log_since(off, "Mentions"), "no Mentions window before the check:\n" + log_since(off)
         off = log_size()
-        alice.type("/mentions")
+        alice.type_and_wait("/mentions")
         assert wait_log_since(off, "The Mentions window is off"), log_since(off)
         st["bob"].send("PRIVMSG alice :window is off")
         assert wait_ml("[E2E] PM <bob> window is off"), ml_text()
-        time.sleep(1)
+        sync()
         assert "PM bob: window is off" not in log_since(off), "printed to a window that is off"
         # the old window is an ordinary one now: it closes and stays closed
         off = log_size()
-        alice.type("/window goto Mentions")
-        alice.type("/window close")
-        time.sleep(1)
+        alice.type_and_wait("/window goto Mentions", "/window close")
         assert "Window is immortal" not in log_since(off), "still immortal:\n" + log_since(off)
         off = log_size()
-        alice.type("/window list")
-        time.sleep(1)
+        alice.type_and_wait("/window list")
         assert not re.search(r"\bMentions\b", log_since(off)), "made again:\n" + log_since(off)
 
     def t_help():
         alice = st["alice"]
-        alice.type(f"/set help_path {st['inst'].helpdir}")
+        alice.type_and_wait(f"/set help_path {st['inst'].helpdir}")
         off = log_size()
-        alice.type("/help mentions")
+        alice.type_and_wait("/help mentions")
         assert wait_log_since(off, "MENTIONS CLEAR"), "/help mentions:\n" + log_since(off)
         # the built-in help, not the one of mentions.pl
         assert wait_log_since(off, "mentions_exclude_networks"), "/help mentions:\n" + log_since(off)
@@ -599,7 +598,7 @@ def main():
         fresh = harness.Erssi(st["inst"], work, "fresh", None, args=("--noconnect",))
         try:
             fresh.start()
-            time.sleep(3)
+            fresh.wait_terminal()
             m = fresh.mark()
             fresh.type("/set mentions_log")
             end = time.time() + WAIT

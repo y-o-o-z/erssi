@@ -28,13 +28,7 @@ def main():
             return ""
 
     def wait_log(pattern, timeout=WAIT, count=1):
-        end = time.time() + timeout
-        while True:
-            if len(re.findall(pattern, log_text())) >= count:
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: len(re.findall(pattern, log_text())) >= count, timeout))
 
     def file_text(path):
         try:
@@ -67,7 +61,7 @@ def main():
         (autorun / "mentions.pl").symlink_to(fixture)
         alice.start()
         assert alice.wait_file(alice.all_log(), "has joined #test", 15), "alice never joined #test"
-        alice.type("/alias wn echo active=$winname")
+        alice.type_and_wait("/alias wn echo active=$winname")
         st["bob"] = bob = harness.Client(port, "bob")
         bob.send("JOIN #test")
         assert alice.wait_file(alice.all_log(), "bob [u@127.0.0.1] has joined #test", WAIT)
@@ -88,8 +82,7 @@ def main():
     def t_unloaded():
         assert wait_log(r"Unloaded script mentions"), "the script was not unloaded:\n" + log_text()
         alice = st["alice"]
-        alice.type("/mentions")
-        time.sleep(0.5)
+        alice.type_and_wait("/mentions")
         alice.type("/wn")
         assert wait_log(r"active=\S+"), log_text()
         assert re.findall(r"active=(\S*)", log_text())[-1] == "Mentions", log_text()
@@ -100,9 +93,9 @@ def main():
         st["bob"].send("PRIVMSG alice :moved hello")
         assert alice.wait_file(st["old_log"], "<bob>", WAIT), "no entry in the log file of the script"
         assert "moved hello" in file_text(st["old_log"])
-        alice.type("/set mentions_log")
+        alice.type_and_wait("/set mentions_log")
         assert wait_log(r"mentions_log\s+(= )?ON"), "mentions_log is not ON:\n" + log_text()
-        alice.type("/save")
+        alice.type_and_wait("/save")
         cfg = alice.home / "config"
         assert alice.wait_file(cfg, "mentions_log_file", WAIT)
         text = file_text(cfg)
@@ -114,12 +107,15 @@ def main():
     def t_no_duplicates():
         st["bob"].send("PRIVMSG alice :only once")
         assert st["alice"].wait_file(st["old_log"], "only once", WAIT)
-        time.sleep(1.5)
+        # a second entry would be written while the line is handled: done
+        # once a channel line bob sends after it is in the all log
+        st["bob"].send("PRIVMSG #test :sync after only once")
+        assert st["alice"].wait_file(st["alice"].all_log(), "sync after only once", WAIT)
         assert file_text(st["old_log"]).count("only once") == 1, file_text(st["old_log"])
 
     def t_stub():
         alice = st["alice"]
-        alice.type(f"/script load {st['inst'].scriptdir}/mentions.pl")
+        alice.type_and_wait(f"/script load {st['inst'].scriptdir}/mentions.pl")
         assert wait_log(re.escape(NOTICE), count=2), "the stub was not unloaded:\n" + log_text()
 
     def t_broken_script():
@@ -141,15 +137,16 @@ def main():
         dave.start()
         assert dave.wait_file(dave.all_log(), "has joined #test", 15), "dave never joined #test"
         ran = dave.home_dir / "broken.ran"
-        end = time.time() + WAIT
-        while not ran.exists() and time.time() < end:
-            time.sleep(0.1)
+        harness.wait_until(ran.exists, WAIT)
         assert ran.exists(), "the broken script did not run"
+        # a negative check: the idle job that would print the notice runs
+        # when erssi is idle, not at a point a test can wait for - a short
+        # bounded wait
         time.sleep(1.5)
         text = dave.all_log().read_bytes().decode(errors="replace")
         assert NOTICE not in text, text
         assert "not loaded" not in text, text
-        dave.type("/save")
+        dave.type_and_wait("/save")
         assert dave.wait_file(dave.home / "config", "mentions_log_file", WAIT)
         cfgtext = file_text(dave.home / "config")
         assert "NEWVALUE" in cfgtext and "OLDVALUE" not in cfgtext, cfgtext
@@ -184,9 +181,9 @@ def main():
         assert before.endswith(b'truncated = { key = "never closed'), before
         erin.start()
         assert erin.wait_file(erin.all_log(), "has joined #test", 15), "erin never joined #test"
-        erin.type("/set mentions_log_file")
+        erin.type_and_wait("/set mentions_log_file")
         assert erin.wait_file(erin.all_log(), "OLDVALUE", WAIT), "the migrated value does not apply for the run"
-        time.sleep(1)
+        time.sleep(1)  # a negative check: a rewrite from an idle job - a short bounded wait
         erin.quit()
         after = (erin.home / "config").read_bytes()
         assert after == before, "the partly read config was rewritten:\n" + after.decode(errors="replace")

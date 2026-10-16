@@ -62,26 +62,26 @@ def main():
         alice = harness.Erssi(st["inst"], work, "alice", harness.config(1, "alice"), args=("--noconnect",))
         st["alice"] = alice
         alice.start()
-        time.sleep(2)
+        alice.wait_ready()
         for name in KEYS:
             off = log_size()
-            alice.type(f"/bind {name} command echo key-{name} pressed")
+            alice.type_and_wait(f"/bind {name} command echo key-{name} pressed")
             assert wait_log_since(off, f"key-{name} pressed"), f"/bind {name}:\n" + log_since(off)
 
     def type_keys(text):
         """text one key at a time: keys, not a paste (a paste does not go
-        through the escape sequence parser)."""
+        through the escape sequence parser). The gaps between the keys are
+        the point: they stay."""
         for ch in text:
             st["alice"].write_raw(ch.encode())
             time.sleep(0.03)
-        time.sleep(0.3)
 
     def line_after(seq, n):
         """The keys typed after seq are not swallowed: ^U clears whatever
         an unbound sequence left in the input line, then a /echo."""
         off = log_size()
         st["alice"].write_raw(seq)
-        time.sleep(0.3)
+        time.sleep(0.3)  # read apart from what follows (a lone ESC times out)
         type_keys(f"\x15/echo after key {n}\r")
         return off, wait_log_since(off, f"after key {n}")
 
@@ -108,13 +108,13 @@ def main():
         alice = st["alice"]
         off = log_size()
         alice.write_raw(b"\x1b[<0;120;20M\x1b[<0;120;20m")
-        time.sleep(0.5)
+        time.sleep(0.5)  # read apart from the keys: typed at once they are a paste
         type_keys("/echo after mouse\r")
         assert wait_log_since(off, "after mouse"), "the line after the click was lost:\n" + log_since(off)
         assert "<0;" not in log_since(off) and "120;20" not in log_since(off), log_since(off)
         off = log_size()
         alice.write_raw(b"\x1b[200~/echo pasted line\x1b[201~")
-        time.sleep(0.5)
+        time.sleep(0.5)  # the paste read apart from the Enter after it
         alice.write_raw(b"\r")
         assert wait_log_since(off, "pasted line"), "the pasted line was not sent:\n" + log_since(off)
         text = log_since(off)

@@ -40,13 +40,22 @@ def main():
     st = {"instances": []}
 
     def wait_since(e, mark, pattern, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if pattern in e.output_since(mark):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: pattern in e.output_since(mark), timeout))
+
+    def throttle():
+        """wait until the notification throttle (3 s) since the last
+        notification is over - a time erssi counts, so the test waits for
+        it, but only what is left of it"""
+        left = st.get("notified", 0) + THROTTLE - time.time()
+        if left > 0:
+            time.sleep(left)
+
+    def notified(e, mark, want):
+        """WANT (a notification) is written after MARK; it starts the
+        throttle"""
+        found = wait_since(e, mark, want)
+        st["notified"] = time.time()
+        return found
 
     def start(name, env):
         """An erssi with term_notify auto in the environment env (on top of
@@ -77,12 +86,18 @@ def main():
 
     def bind_pgup(e):
         """PgUp (the key "prior"; ESC [ I is one of its sequences) prints a line."""
-        e.type("/bind prior command echo pgup key pressed")
-        time.sleep(0.5)
+        e.type_and_wait("/bind prior command echo pgup key pressed")
 
-    def focus(e, data):
+    def focus(e, data, reporting=True):
+        """a focus report, read by erssi before the PM that follows
+        arrives: with reporting on, a line typed after it is run after it.
+        With reporting off ESC [ O starts a key sequence that would take
+        that line: then a short fixed wait."""
         e.write_raw(data)
-        time.sleep(0.5)  # read by erssi before the PM that follows arrives
+        if reporting:
+            e.type_and_wait()
+        else:
+            time.sleep(0.5)
 
     def t_install():
         st["inst"] = harness.install(build, work)
@@ -100,14 +115,14 @@ def main():
         # focused (the state when reporting starts): nothing is sent
         m = alice.mark()
         pm(alice, "hi while focused")
-        time.sleep(2)
+        alice.sync_output()
         assert OSC777 not in alice.output_since(m), seqs(alice.output_since(m))
         # not focused: the notification
         focus(alice, FOCUS_OUT)
         m = alice.mark()
         pm(alice, "hello there")
         want = b"\x1b]777;notify;erssi;PM bob: hello there\x07"
-        assert wait_since(alice, m, want), seqs(alice.output_since(m))
+        assert notified(alice, m, want), seqs(alice.output_since(m))
         # focused again (and past the throttle): nothing. The reports are
         # not keys: ESC [ I is not PgUp, and ESC [ O would start a key
         # sequence and eat the "/"
@@ -118,21 +133,21 @@ def main():
         assert alice.wait_file(alice.all_log(), "input after focus reports", WAIT), \
             "the focus reports reached the input line"
         assert "pgup key pressed" not in log_since(alice, off), "ESC [ I was taken as PgUp"
-        time.sleep(THROTTLE)
+        throttle()
         m = alice.mark()
         pm(alice, "back")
-        time.sleep(2)
+        alice.sync_output()
         assert OSC777 not in alice.output_since(m), seqs(alice.output_since(m))
 
     def t_throttle():
         alice = st["alice"]
         focus(alice, FOCUS_OUT)
-        time.sleep(THROTTLE)
+        throttle()
         m = alice.mark()
         pm(alice, "first of two")
-        time.sleep(0.5)
+        st["notified"] = time.time()
         pm(alice, "second of two")
-        time.sleep(1)
+        alice.sync_output()
         out = alice.output_since(m)
         assert out.count(OSC777) == 1, seqs(out)
         assert b"\x1b]777;notify;erssi;PM bob: first of two\x07" in out, seqs(out)
@@ -141,25 +156,26 @@ def main():
         # remote text with its own OSC 52 (clipboard write): ESC and BEL are
         # dropped and ';' becomes ',' inside the OSC 777 fields
         alice = st["alice"]
-        time.sleep(THROTTLE)
+        throttle()
         m = alice.mark()
         pm(alice, "evil\x1b]52;c;Zm9v\x07end")
         want = b"\x1b]777;notify;erssi;PM bob: evil]52,c,Zm9vend\x07"
-        assert wait_since(alice, m, want), seqs(alice.output_since(m))
+        assert notified(alice, m, want), seqs(alice.output_since(m))
         assert b"\x1b]52" not in alice.output(), "an OSC 52 reached the terminal"
 
     def t_text_off():
         alice = st["alice"]
-        alice.type("/set term_notify_text off")
-        time.sleep(THROTTLE)
+        alice.type_and_wait("/set term_notify_text off")
+        throttle()
         m = alice.mark()
         pm(alice, "secret words")
         want = b"\x1b]777;notify;erssi;PM bob\x07"
-        assert wait_since(alice, m, want), seqs(alice.output_since(m))
+        assert notified(alice, m, want), seqs(alice.output_since(m))
+        alice.sync_output()
         out = alice.output_since(m)
         assert out.count(OSC777) == 1, seqs(out)
         assert b"secret" not in out.split(OSC777, 1)[1].split(b"\x07", 1)[0], seqs(out)
-        alice.type("/set term_notify_text on")
+        alice.type_and_wait("/set term_notify_text on")
 
     def t_suspend():
         # ^Z (term_stop) switches reporting off for the shell and on again
@@ -176,47 +192,46 @@ def main():
         out = alice.output_since(m)
         assert resumed and FOCUS_OFF in out, seqs(out)
         assert out.index(FOCUS_OFF) < out.rindex(FOCUS_ON), seqs(out)
-        time.sleep(THROTTLE)
+        throttle()
         m = alice.mark()
         pm(alice, "after resume")
-        time.sleep(2)
+        alice.sync_output()
         assert OSC777 not in alice.output_since(m), seqs(alice.output_since(m))
 
     def t_off():
         alice = st["alice"]
         m = alice.mark()
-        alice.type("/set term_notify off")
+        alice.type_and_wait("/set term_notify off")
         assert wait_since(alice, m, FOCUS_OFF), "focus reporting was not switched off"
         # on again: reporting comes back, the terminal counts as focused
         m = alice.mark()
-        alice.type("/set term_notify auto")
+        alice.type_and_wait("/set term_notify auto")
         assert wait_since(alice, m, FOCUS_ON), "focus reporting was not switched on again"
-        time.sleep(THROTTLE)
+        throttle()
         m = alice.mark()
         pm(alice, "focused after auto")
-        time.sleep(2)
+        alice.sync_output()
         assert OSC777 not in alice.output_since(m), seqs(alice.output_since(m))
         # another setting does not send the mode again
         m = alice.mark()
-        alice.type("/set term_notify_text on")
-        time.sleep(1)
+        alice.type_and_wait("/set term_notify_text on")
+        alice.sync_output()
         assert seqs(alice.output_since(m)) == [], seqs(alice.output_since(m))
         m = alice.mark()
-        alice.type("/set term_notify off")
+        alice.type_and_wait("/set term_notify off")
         assert wait_since(alice, m, FOCUS_OFF), "focus reporting was not switched off"
         # off: a focus report is an ordinary key sequence now, nothing is sent
-        focus(alice, FOCUS_OUT)
+        focus(alice, FOCUS_OUT, reporting=False)
         m = alice.mark()
         pm(alice, "while off")
-        time.sleep(2)
-        out = alice.output_since(m)
-        assert OSC777 not in out and OSC9 not in out, seqs(out)
         # ESC [ O was a key sequence (meta2 waiting for its key): Enter ends
         # it, and the typed line arrives whole. On again for t_sanitizers.
         alice.write_raw(b"\r")
-        time.sleep(0.5)
+        alice.sync_output()
+        out = alice.output_since(m)
+        assert OSC777 not in out and OSC9 not in out, seqs(out)
         m = alice.mark()
-        alice.type("/set term_notify auto")
+        alice.type_and_wait("/set term_notify auto")
         assert wait_since(alice, m, FOCUS_ON), "focus reporting was not switched on again"
 
     def t_tmux_iterm():
@@ -230,22 +245,23 @@ def main():
 
     def t_unknown_terminal():
         e = start("aliceu", {"TERM": "xterm-256color"})
-        time.sleep(5)
+        e.sync_output()
         assert FOCUS_ON not in e.output(), "focus reporting switched on for an unknown terminal"
         # ESC [ I goes to the key handling as before: it is PgUp, not a
         # focus report (t_wezterm has the opposite with reporting on)
         bind_pgup(e)
         off = log_size(e)
         e.write_raw(FOCUS_IN)
-        time.sleep(0.5)
+        time.sleep(0.5)  # the key sequence read apart from the line after it
         e.type("/echo after pgup")
         assert e.wait_file(e.all_log(), "after pgup", WAIT), "/echo after ESC [ I not shown"
         assert "pgup key pressed" in log_since(e, off), "ESC [ I is not PgUp:\n" + log_since(e, off)
         assert e.proc.poll() is None, "erssi is gone"
-        focus(e, FOCUS_OUT)
+        focus(e, FOCUS_OUT, reporting=False)
         m = e.mark()
         pm(e, "unknown terminal")
-        time.sleep(2)
+        e.write_raw(b"\r")  # end the key sequence ESC [ O started
+        e.sync_output()
         out = e.output_since(m)
         assert OSC9 not in out and OSC777 not in out, seqs(out)
         assert e.proc.poll() is None, "erssi is gone"
@@ -255,13 +271,13 @@ def main():
         # only ASCII is sent, as UTF-8 continuation bytes would be C1
         # controls there (C3 9B is "A~" + CSI)
         e = start("alicea", {"LANG": "C", "LC_ALL": "C"})
-        time.sleep(2)
+        e.sync_output()
         assert FOCUS_ON not in e.output(), "focus reporting switched on for an unknown terminal"
         # recode off: the remote UTF-8 bytes are kept as they came, so
         # they would reach the terminal unchanged
-        e.type("/set recode off")
+        e.type_and_wait("/set recode off")
         m = e.mark()
-        e.type("/set term_notify osc777")
+        e.type_and_wait("/set term_notify osc777")
         assert wait_since(e, m, FOCUS_ON), "focus reporting was not switched on"
         focus(e, FOCUS_OUT)
         m = e.mark()
@@ -279,7 +295,9 @@ def main():
                               env={"TERM_PROGRAM": "WezTerm"})
         st["instances"].append(fresh)
         fresh.start()
-        time.sleep(3)
+        # no config, no log to wait on: focus reporting is switched on
+        # when the terminal is set up (asserted below)
+        fresh.wait_output(FOCUS_ON, WAIT)
         m = fresh.mark()
         fresh.type("/set term_notify")
         end = time.time() + WAIT

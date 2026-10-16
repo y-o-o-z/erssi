@@ -38,13 +38,15 @@ def main():
         return harness.Erssi(st["inst"], w, name, config_text, args=args)
 
     def wait_since(e, mark, pattern, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if pattern in e.output_since(mark):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: pattern in e.output_since(mark), timeout))
+
+    def not_asked(e, what):
+        """erssi starts its UI without asking: the setup asks before the
+        terminal is set up (the alternate screen), so once that is on the
+        screen nothing was asked. Without a UI after WAIT s (TERM=dumb may
+        never set one up) it was not asked in that time either."""
+        e.wait_output(b"\x1b[?1049h", WAIT)
+        assert ASK not in e.output(), what
 
     def answer(e, prompt, text):
         assert e.wait_output(prompt, WAIT), f"no {prompt!r}:\n{e.text()[-2000:]}"
@@ -87,13 +89,13 @@ def main():
             answer(e, ASK, b"n\r")
             assert e.wait_output(b"Skipped.", WAIT), e.text()[-2000:]
             assert b"erssi --setup asks again." in e.output()
-            time.sleep(1)
+            e.wait_terminal()  # the UI after the setup
             finish(e)
             assert (e.home / "config").is_file(), "skip did not save the config"
         again = harness.Erssi(st["inst"], e.work, "bob")
         with again:
             again.start()
-            assert not again.wait_output(ASK, 5), "asked again after a skip"
+            not_asked(again, "asked again after a skip")
             finish(again)
 
     def t_eof():
@@ -101,7 +103,7 @@ def main():
             e.start()
             answer(e, ASK, b"\x04")
             assert e.wait_output(b"Skipped.", WAIT), e.text()[-2000:]
-            time.sleep(1)
+            e.wait_terminal()  # the UI after the setup
             finish(e)
 
     def t_no_tty():
@@ -130,14 +132,14 @@ def main():
                           env={"TERM": "dumb"})
         with e:
             e.start()
-            assert not e.wait_output(ASK, 5), "asked with TERM=dumb"
+            not_asked(e, "asked with TERM=dumb")
             e.kill()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
 
     def t_noconnect():
         with fresh("erin", args=("--noconnect",)) as e:
             e.start()
-            assert not e.wait_output(ASK, 5), "asked with --noconnect"
+            not_asked(e, "asked with --noconnect")
             finish(e)
 
     def t_setup_forced():
@@ -173,7 +175,7 @@ def main():
             assert e.wait_output(b"fix it first", WAIT), e.text()[-2000:]
             assert ASK not in e.output(), "the setup asked on a broken config"
             e.write_raw(b"n\r")
-            time.sleep(1)
+            e.wait_terminal()  # the UI after the answer
             finish(e)
             after = (e.home / "config").read_bytes()
             assert after == before, "the broken config was rewritten:\n" + after.decode(errors="replace")
