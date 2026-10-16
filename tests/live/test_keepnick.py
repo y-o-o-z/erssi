@@ -55,8 +55,11 @@ def main():
                 if re.match(r"^\S+ in ", ln) and re.search(pattern, ln)]
 
     def erssi(name, port, nick, settings="", channels=("#test",), args=(), join=True, before=None,
-              script_settings=None):
+              script_settings=None, net_extra=""):
         cfg = harness.config(port, nick, channels=channels)
+        if net_extra:
+            assert 'E2E = { type = "IRC"; };' in cfg, cfg
+            cfg = cfg.replace('E2E = { type = "IRC"; };', 'E2E = { type = "IRC"; %s };' % net_extra)
         if script_settings is not None:
             cfg = cfg.replace('"perl/core" = {', '"perl/core/scripts" = { %s };\n  "perl/core" = {'
                               % script_settings, 1)
@@ -118,6 +121,29 @@ def main():
             pass
         c.close()
 
+    # keepnick.pl as far as these tests need it: /keepnick <nick> takes the
+    # nick through the script's own redirect and names, the regain line of
+    # its own (keepnick.pl's change_nick and sig_redir_keepnick_nick)
+    FAKE_SCRIPT = r"""use Irssi; use Irssi::Irc;
+sub own { my ($server, $new) = @_; Irssi::signal_stop(); Irssi::print("fake keepnick.pl got $new back"); }
+sub redir { Irssi::signal_add_first('message own_nick', \&own); Irssi::signal_emit('event nick', @_);
+            Irssi::signal_remove('message own_nick', \&own); }
+Irssi::command_bind("keepnick", sub {
+    my ($data, $server) = @_;
+    Irssi::print("fake keepnick.pl: $data");
+    return unless $server && $data;
+    $server->redirect_event('keepnick nick', 1, ":$data", -1, '',
+                            { "event nick" => "redir keepnick nick", "" => "event empty" });
+    $server->send_raw("NICK :$data");
+});
+Irssi::signal_add('redir keepnick nick', \&redir);
+Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
+    { "event nick" => 0, "event 432" => -1, "event 433" => -1, "event 437" => -1, "event 484" => -1 }, undef);
+"""
+
+    def config_has(e, nick):
+        return re.search(r'E2E = \{[^}]*keepnick = "%s";' % re.escape(nick), (e.home / "config").read_text())
+
     def got_back(nick, net="E2E"):
         return f"Keepnick: Nickstealer left [{net}], got {nick} back"
 
@@ -137,6 +163,8 @@ def main():
         start = len(trace(tr))
         a.type("/keepnick zed")
         assert wait_log(a, off, "Keepnick: Now keeping zed on [E2E]"), log_since(a, off)
+        # keepnick_autosave (ON): in the file at once, no /SAVE
+        assert config_has(a, "zed"), (a.home / "config").read_text()
         assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON for zed:\n" + trace(tr)[start:]
         time.sleep(1)
         assert not sent(tr, r" NICK :?zed$", start), "NICK zed sent while zed is on"
@@ -158,6 +186,7 @@ def main():
         assert "Keepnick: Keeping zed in [E2E] (active)" in out, out
         out = run(a, "/unkeepnick")
         assert "Keepnick: Stopped trying to keep zed on [E2E]" in out, out
+        assert 'keepnick = "' not in (a.home / "config").read_text()  # saved at once
         out = run(a, "/listnick")
         assert "Keepnick: No nicks in keep list" in out, out
         out = run(a, "/unkeepnick E2E")
@@ -217,8 +246,30 @@ def main():
         assert out.count(got_back("zed")) == 1, out
         chan = (a.home / "logs" / "E2E" / "#test.log").read_text(errors="replace")
         assert got_back("zed") not in chan, chan
-        # the 730/731 of the nick are not printed as unknown numerics
+        # the 730/731 of the nick are not printed as unknown numerics,
+        # also not the 730 for our new nick that crosses our MONITOR -
+        time.sleep(1)
+        out = log_since(a, off)
         assert "730" not in out and "731" not in out, out
+        assert "zed!" not in out.split(got_back("zed"))[-1], out
+        finish(a)
+
+    def t_monitor_user():
+        """the user's own MONITOR: its replies printed, our MONITOR - does
+        not remove its entry"""
+        port, tr = ircd("monuser", "--nick-rules", "--monitor")
+        holder = harness.Client(port, "zed")
+        a = erssi("monuser", port, "alice", 'keepnick_auto = "no";')
+        off = log_size(a)
+        start = len(trace(tr))
+        a.type("/quote MONITOR + zed,bob")
+        assert wait_log(a, off, "bob"), "the user's 731 for bob not printed:\n" + log_since(a, off)
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice MONITOR \+ :?zed$", start), trace(tr)[start:]
+        leave(holder)
+        assert wait_log(a, off, got_back("zed"), 4), log_since(a, off)
+        time.sleep(1)
+        assert not sent(tr, r" MONITOR - ", start), sent(tr, r" MONITOR ", start)
         finish(a)
 
     def t_nick_delay():
@@ -245,7 +296,7 @@ def main():
         """432 (erroneous nickname): one message, keeping paused, nothing
         more sent, the 432 not printed as an error"""
         port, tr = ircd("refused", "--nick-rules")
-        a = erssi("refused", port, "alice", 'keepnick_auto = "no";')
+        a = erssi("refused", port, "alice", 'keepnick_auto = "no"; keepnick_autosave = "no";')
         with harness.Client(port, "ctl") as ctl:
             ctl.send("TESTREFUSE bad")
             ctl.send("PING sync")
@@ -262,6 +313,25 @@ def main():
         assert out.count("Keepnick:") == 2 and "Erroneous" not in out, out
         out = run(a, "/listnick")
         assert "Keepnick: Keeping bad in [E2E] (inactive)" in out, out
+        # keepnick_autosave OFF: only /SAVE writes it
+        assert not config_has(a, "bad"), (a.home / "config").read_text()
+        finish(a)
+
+    def t_invalid():
+        """nicks that are not one IRC word, or longer than NICKLEN, are not
+        kept: from /KEEPNICK and from the config, said once, nothing sent"""
+        port, tr = ircd("invalid", "--nick-rules")
+        a = erssi("invalid", port, "alice", 'keepnick_auto = "no";', net_extra='keepnick = "x,y";')
+        assert wait_log(a, 0, "Keepnick: x,y cannot be kept on E2E"), log_since(a, 0)
+        start = len(trace(tr))
+        off = log_size(a)
+        for bad in ("bad,nick", ":colon", "#chan", "averyverylongnick"):
+            out = run(a, f"/keepnick {bad}")
+            assert f"Keepnick: {bad} cannot be kept on E2E" in out, out
+            assert "Now keeping" not in out, out
+        time.sleep(CHECK + 1)
+        assert not sent(tr, r" (ISON|NICK|MONITOR) ", start), sent(tr, r" (ISON|NICK) ", start)
+        assert log_since(a, 0).count("x,y cannot be kept") == 1, log_since(a, 0)
         finish(a)
 
     def t_manual_pause_forced_not():
@@ -334,11 +404,12 @@ def main():
         The script's keepnick_quiet comes along"""
         def old_file(e):
             e.home.mkdir(parents=True, exist_ok=True)
-            (e.home / "keepnick").write_text("e2e\tzed\nnosuchnet\tfoo\n")
+            (e.home / "keepnick").write_text("e2e\tzold\nnosuchnet\tfoo\nE2E  zed\r\n")
 
         a = erssi("migrate", 1, "alice", args=("--noconnect",), join=False, before=old_file,
                   script_settings='keepnick_quiet = "yes";')
         assert a.wait_file(a.all_log(), "Keepnick: imported 1 nick", WAIT), a.all_log().read_text()
+        assert "does not read the file again" in a.all_log().read_text()
         out = run(a, "/listnick")
         assert "Keepnick: Keeping zed in [E2E] (active)" in out, out
         cfg = (a.home / "config").read_text()
@@ -359,33 +430,223 @@ def main():
         finish(a)
 
     def t_script_loaded():
-        """a Perl script named keepnick: the built-in steps back (its
-        commands are the script's) and comes back when it is unloaded"""
+        """the Perl script keepnick: the built-in steps back (its commands
+        are the script's), a regain by the script through its own redirect
+        is processed and said once; loaded again: nothing said or sent;
+        another script whose name starts with keepnick does not count;
+        unloaded: the built-in is back"""
         if not st["inst"].has_perl:
             raise harness.SkipCase("no Perl in this build")
         port, tr = ircd("script", "--nick-rules")
         holder = harness.Client(port, "zed")
         a = erssi("script", port, "alice", 'keepnick_auto = "no";')
         script = a.home / "scripts" / "keepnick.pl"
-        script.write_text('use Irssi;\n'
-                          'Irssi::command_bind("keepnick", sub { Irssi::print("fake keepnick.pl: $_[0]"); });\n')
+        script.write_text(FAKE_SCRIPT)
+        helper = a.home / "scripts" / "keepnick_helper.pl"
+        helper.write_text("use Irssi;\n")
         off = log_size(a)
+        start = len(trace(tr))
+        run(a, f"/script load {helper}")
+        time.sleep(0.5)
+        assert "built-in keepnick is off" not in log_since(a, off), log_since(a, off)
         a.type(f"/script load {script}")
         assert wait_log(a, off, "built-in keepnick is off until it is unloaded"), log_since(a, off)
-        start = len(trace(tr))
-        out = run(a, "/keepnick zed")
-        assert "fake keepnick.pl: zed" in out, out
-        assert "Now keeping" not in out, out
+        run(a, f"/script load {script}")  # again: unloaded and loaded
         time.sleep(1)
-        assert not sent(tr, r" (ISON|MONITOR|NICK) ", start), sent(tr, r" (ISON|NICK) ", start)
+        out = log_since(a, off)
+        assert out.count("built-in keepnick is off") == 1 and "on again" not in out, out
+        assert not sent(tr, r" (ISON|MONITOR|NICK) ", start), sent(tr, r" (ISON|MONITOR|NICK) ", start)
+        leave(holder)
+        off = log_size(a)
+        a.type("/keepnick zed")
+        assert wait_log(a, off, "fake keepnick.pl got zed back"), log_since(a, off)
+        time.sleep(1)
+        out = log_since(a, off)
+        assert out.count("fake keepnick.pl got zed back") == 1, out
+        assert "Nickstealer" not in out and "now known as" not in out, out
+        assert len(sent(tr, r" NICK :?zed$", start)) == 1, sent(tr, r" NICK ", start)
         off = log_size(a)
         a.type("/script unload keepnick")
         assert wait_log(a, off, "built-in keepnick is on again"), log_since(a, off)
+        a.type("/nick alice")
+        assert wait_log(a, off, "now known as alice"), log_since(a, off)
         out = run(a, "/keepnick zed")
         assert "Keepnick: Now keeping zed on [E2E]" in out, out
-        assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON after the unload"
+        assert wait_log(a, off, got_back("zed"), CHECK + 4), log_since(a, off)
+        time.sleep(0.5)
+        assert log_since(a, off).count(got_back("zed")) == 1, log_since(a, off)
+        finish(a)
+
+    def t_auto_script():
+        """keepnick_auto does nothing while the script is loaded, and does
+        not start later when it is unloaded"""
+        if not st["inst"].has_perl:
+            raise harness.SkipCase("no Perl in this build")
+        port, tr = ircd("autoscript", "--nick-rules")
+        holder = harness.Client(port, "alice")
+
+        def autorun(e):
+            (e.home / "scripts" / "autorun").mkdir(parents=True, exist_ok=True)
+            (e.home / "scripts" / "autorun" / "keepnick.pl").write_text(FAKE_SCRIPT)
+
+        a = erssi("autoscript", port, "alice", before=autorun)
+        assert wait_log(a, 0, "built-in keepnick is off"), log_since(a, 0)
+        assert "is in use on" not in log_since(a, 0), log_since(a, 0)
+        start = len(trace(tr))
+        leave(holder)
+        off = log_size(a)
+        a.type("/script unload keepnick")
+        assert wait_log(a, off, "built-in keepnick is on again"), log_since(a, off)
+        time.sleep(CHECK + 1)
+        assert not sent(tr, r" (ISON|NICK) ", start), sent(tr, r" (ISON|NICK) ", start)
+        finish(a)
+
+    def t_holder_flips():
+        """a holder that flips nicks quickly: at most one NICK per check
+        interval, the 433s never printed"""
+        port, tr = ircd("flip", "--nick-rules")
+        holder = harness.Client(port, "zed")
+        holder.send("JOIN #test")
+        holder.expect(" 366 ")
+        a = erssi("flip", port, "alice", 'keepnick_auto = "no"; keepnick_check_time = "60s";')
+        off = log_size(a)
+        start = len(trace(tr))
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON"
+        time.sleep(0.5)
+        for _ in range(4):
+            holder.sock.sendall(b"NICK zed2\r\nNICK zed\r\n")  # one write: the server takes both first
+            time.sleep(0.7)
+        time.sleep(1)
+        nicks = sent(tr, r" NICK :?zed$", start)
+        assert len([n for n in nicks if " in alice " in n]) == 1, nicks
+        assert "already in use" not in log_since(a, off), log_since(a, off)
         holder.close()
         finish(a)
+
+    def t_late_reply():
+        """another client's NICK onto the nick comes between our NICK and
+        its 433: the 433 is still ours, not printed"""
+        port, tr = ircd("late", "--nick-rules")
+        holder = harness.Client(port, "zed")
+        holder.send("JOIN #test")
+        holder.expect(" 366 ")
+        grab = harness.Client(port, "grab")
+        grab.send("JOIN #test")
+        grab.expect(" 366 ")
+        a = erssi("late", port, "alice", 'keepnick_auto = "no"; keepnick_check_time = "60s";')
+        off = log_size(a)
+        start = len(trace(tr))
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON"
+        time.sleep(0.5)
+        holder.sock.sendall(b"NICK zed2\r\n")
+        grab.sock.sendall(b"NICK zed\r\n")
+        assert wait_trace(tr, r" out alice :\S+ 433 alice zed ", start), trace(tr)[start:]
+        time.sleep(1)
+        out = log_since(a, off)
+        assert "grab is now known as zed" in out, out
+        assert "already in use" not in out, out
+        holder.close()
+        grab.close()
+        finish(a)
+
+    def t_two_servers():
+        """two connections of one network: the second does not keep the
+        first one's nick for itself (keepnick_auto), and takes over the
+        network's kept nick when the first goes"""
+        port, tr = ircd("twoserv", "--nick-rules")
+        holder = harness.Client(port, "zed")
+        a = erssi("twoserv", port, "alice")
+        off = log_size(a)
+        a.type(f"/connect -network E2E 127.0.0.1 {port}")
+        assert wait_trace(tr, r" in alice_ ", 0, 15), trace(tr)[-2000:]
+        assert wait_log(a, off, "Welcome alice_"), log_since(a, off)
+        time.sleep(1)
+        assert "is in use on" not in log_since(a, off), log_since(a, off)
+        start = len(trace(tr))
+        out = run(a, "/keepnick -net E2E zed")
+        assert "Keepnick: Now keeping zed on [E2E]" in out, out
+        assert wait_trace(tr, r" in alice ISON :?zed$", start), trace(tr)[start:]
+        assert not sent(tr, r" in alice_ ISON ", start)
+        start = len(trace(tr))
+        with harness.Client(port, "ctl") as ctl:
+            ctl.send("TESTDROP alice")
+            ctl.send("PING sync")
+            ctl.expect("PONG")
+        assert wait_trace(tr, r" in alice_ ISON :?zed$", start, CHECK + 4), trace(tr)[start:]
+        leave(holder)
+        assert wait_log(a, off, got_back("zed"), CHECK + 4), log_since(a, off)
+        assert wait_trace(tr, r" in alice_ NICK :?zed$", start), trace(tr)[start:]
+        finish(a)
+
+    def t_upgrade():
+        """/UPGRADE: MONITOR + again (its reply not printed), the nick still
+        taken back; a pause stays paused"""
+        port, tr = ircd("upgrade", "--nick-rules", "--monitor")
+        holder = harness.Client(port, "zed")
+        a = erssi("upgrade", port, "alice", 'keepnick_auto = "no";')
+        off = log_size(a)
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice MONITOR \+ :?zed$", 0), trace(tr)[-2000:]
+        start = len(trace(tr))
+        a.type("/upgrade")
+        assert wait_trace(tr, r" in alice MONITOR \+ :?zed$", start, 15), "no MONITOR + after /UPGRADE"
+        time.sleep(1)
+        out = run(a, "/listnick")
+        assert "Keepnick: Keeping zed in [E2E] (active)" in out, out
+        leave(holder)
+        assert wait_log(a, off, got_back("zed"), 5), log_since(a, off)
+        assert "zed!" not in log_since(a, off), log_since(a, off)
+        a.type("/nick bob")
+        assert wait_log(a, off, "Nickkeeping deactivated on [E2E]"), log_since(a, off)
+        start = len(trace(tr))
+        a.type("/upgrade")
+        time.sleep(3)
+        out = run(a, "/listnick")
+        assert "Keepnick: Keeping zed in [E2E] (inactive)" in out, out
+        time.sleep(CHECK + 1)
+        assert not sent(tr, r" (ISON|NICK|MONITOR \+) ", start), sent(tr, r" (ISON|NICK|MONITOR) ", start)
+        finish(a)
+
+    def t_auto_pause():
+        """keepnick_auto and a manual /NICK: paused (nothing sent), /NICK
+        back reactivates"""
+        port, tr = ircd("autopause", "--nick-rules")
+        holder = harness.Client(port, "alice")
+        a = erssi("autopause", port, "alice")
+        assert wait_log(a, 0, "Keepnick: alice is in use on [E2E]"), log_since(a, 0)
+        off = log_size(a)
+        a.type("/nick bob")
+        assert wait_log(a, off, "Keepnick: Nickkeeping deactivated on [E2E]"), log_since(a, off)
+        out = run(a, "/listnick")
+        assert "Keeping alice in [E2E] (inactive, this connection)" in out, out
+        start = len(trace(tr))
+        leave(holder)
+        time.sleep(CHECK + 1)
+        assert not sent(tr, r" (ISON|NICK) ", start), sent(tr, r" (ISON|NICK) ", start)
+        a.type("/nick alice")
+        assert wait_log(a, off, "Keepnick: Nickkeeping reactivated on [E2E]"), log_since(a, off)
+        finish(a)
+
+    def t_casemapping():
+        """CASEMAPPING=rfc1459: {zed} holds [zed] - in the ISON and 730/731
+        replies it is the same nick"""
+        for mode in ("ison", "monitor"):
+            flags = ["--nick-rules", "--casemapping", "rfc1459"] + (["--monitor"] if mode == "monitor" else [])
+            port, tr = ircd("case-" + mode, *flags)
+            holder = harness.Client(port, "{zed}")
+            a = erssi("case-" + mode, port, "alice", 'keepnick_auto = "no";')
+            off = log_size(a)
+            start = len(trace(tr))
+            a.type("/keepnick [zed]")
+            assert wait_trace(tr, r" in alice (ISON :?|MONITOR \+ )\[zed\]$", start), trace(tr)[start:]
+            time.sleep(1.5)
+            assert not sent(tr, r" NICK ", start), (mode, sent(tr, r" NICK ", start))
+            assert "{zed}" not in log_since(a, off), (mode, log_since(a, off))
+            leave(holder)
+            assert wait_log(a, off, got_back("[zed]"), CHECK + 4), (mode, log_since(a, off))
+            finish(a)
 
     def cleanup():
         for e in st["erssis"]:
@@ -394,8 +655,10 @@ def main():
             s.stop()
 
     try:
-        harness.main([t_install, t_ison_quit_save_list, t_holder_nick_change, t_monitor, t_nick_delay, t_refused,
-                      t_manual_pause_forced_not, t_auto, t_auto_off, t_migrate, t_script_loaded])
+        harness.main([t_install, t_ison_quit_save_list, t_holder_nick_change, t_holder_flips, t_late_reply,
+                      t_monitor, t_monitor_user, t_nick_delay, t_refused, t_invalid,
+                      t_manual_pause_forced_not, t_auto, t_auto_pause, t_auto_off, t_two_servers,
+                      t_casemapping, t_upgrade, t_migrate, t_script_loaded, t_auto_script])
     finally:
         cleanup()
         if not harness.keep_work():

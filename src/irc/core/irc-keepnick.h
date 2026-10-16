@@ -21,6 +21,11 @@ const char *keepnick_auto_nick(IRC_SERVER_REC *server, gboolean *paused);
 /* Stops keeping that nick; TRUE if there was one */
 gboolean keepnick_auto_stop(IRC_SERVER_REC *server);
 
+/* Why `nick' cannot be kept (not one IRC word: a space, comma, ! or @,
+   a line break, a leading :, #, & or -; longer than the NICKLEN of
+   `server' when that is not NULL), NULL if it can. */
+const char *keepnick_nick_invalid(const char *nick, IRC_SERVER_REC *server);
+
 /* A Perl script named keepnick (keepnick.pl) is loaded: the built-in one
    does nothing, its commands are the script's. */
 gboolean keepnick_script_loaded(void);

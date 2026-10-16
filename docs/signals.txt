@@ -129,6 +129,7 @@ irc-keepnick.c:
  "keepnick paused", SERVER_REC, char *nick, char *network
  "keepnick resumed", SERVER_REC, char *nick, char *network
  "keepnick refused", SERVER_REC, char *nick, char *network, char *reason
+ "keepnick invalid", SERVER_REC, char *nick, char *network, char *reason
  "keepnick script", int loaded
 
 irc-nicklist.c:
