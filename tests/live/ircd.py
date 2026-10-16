@@ -20,7 +20,7 @@ TESTRAW <nick> :<raw line> (sent by any client) writes <raw line> to that nick.
 TESTDROP <nick> closes that nick's connection without a word, as a link that
 dies does.
 ISON is answered (303) with the nicks that are on.
---nick-rules: a nick in use gets 433 (at registration too: 001 waits for
+--nick-rules: NICKLEN=9 in 005; a nick in use gets 433 (at registration too: 001 waits for
 a nick that is free), QUIT is sent to the clients that share a channel, and
 TESTDELAY <nick> <seconds> makes a free nick unavailable for that long
 (437, as IRCnet's nick delay); TESTREFUSE <nick> makes NICK <nick> an
@@ -153,7 +153,8 @@ def welcome(me):
         me.send(f":{SRV} {num} {me.nick} :{msg}")
     cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING and not HIDE_CASEMAPPING else ""
     mon = " MONITOR=100" if MONITOR else ""
-    me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm}{mon} :are supported")
+    nl = " NICKLEN=9" if NICK_RULES else ""
+    me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm}{mon}{nl} :are supported")
     me.send(f":{SRV} 376 {me.nick} :End of MOTD")
     nick_online(me)
 

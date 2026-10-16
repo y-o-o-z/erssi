@@ -22,7 +22,9 @@
  script's own file, ~/.erssi/keepnick (lines "<network> <nick>"), is
  imported once into the networks' keepnick option (the marker is
  erssi.keepnick_imported in the config) and then left alone, and the
- script's keepnick_quiet with it. While the
+ script's keepnick_quiet and keepnick_autosave with it. keepnick_autosave
+ (ON, as the script) saves the config at once after /KEEPNICK and
+ /UNKEEPNICK. While the
  script is loaded, these commands do nothing: the script answers them.
 */
 
@@ -47,6 +49,8 @@
 
 static char *import_note;	/* printed once the windows are there */
 static guint import_note_tag;
+static gboolean script_note;	/* the script is loaded (the note to print) */
+static guint script_note_tag;
 
 static void crap(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
 static void crap(const char *fmt, ...)
@@ -75,6 +79,21 @@ static const char *server_label(IRC_SERVER_REC *server)
 	return net != NULL ? net->name : server->tag;
 }
 
+/* keepnick_autosave: /KEEPNICK and /UNKEEPNICK save the config at once,
+   as the script saved its file; not a config read with errors (the part
+   not read would be lost) */
+static void autosave(void)
+{
+	char *reason = NULL;
+
+	if (!settings_get_bool("keepnick_autosave") || mainconfig->fname == NULL ||
+	    config_last_error(mainconfig) != NULL)
+		return;
+	if (!shellter_save_at_start(&reason))
+		crap("the configuration could not be saved (%s); /SAVE to try again", reason);
+	g_free(reason);
+}
+
 static gboolean is_net_option(const char *arg)
 {
 	return g_ascii_strcasecmp(arg, "-net") == 0 || g_ascii_strcasecmp(arg, "-network") == 0 ||
@@ -87,7 +106,7 @@ static void cmd_keepnick(const char *data, SERVER_REC *server)
 	IRC_SERVER_REC *irc;
 	IRC_CHATNET_REC *net = NULL;
 	char **args, **arg;
-	const char *chatnet = NULL, *nick = NULL;
+	const char *chatnet = NULL, *nick = NULL, *why;
 
 	if (keepnick_script_loaded())
 		return;	/* the script's command */
@@ -133,10 +152,17 @@ static void cmd_keepnick(const char *data, SERVER_REC *server)
 		goto out;
 	}
 
+	why = keepnick_nick_invalid(nick, irc);
+	if (why != NULL) {
+		crap("%s cannot be kept on %s: %s", nick, net->name, why);
+		goto out;
+	}
+
 	if (keepnick_resume(net->name))
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_UNHOLD, nick, net->name);
 	printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_ADD, nick, net->name);
 	keepnick_set(net, nick);
+	autosave();
 out:
 	g_strfreev(args);
 }
@@ -179,6 +205,7 @@ static void cmd_unkeepnick(const char *data, SERVER_REC *server)
 	if (net != NULL && net->keepnick != NULL) {
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_REMOVE, net->keepnick, name);
 		keepnick_set(net, NULL);
+		autosave();
 	} else if (irc != NULL && (nick = keepnick_auto_nick(irc, NULL)) != NULL) {
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_REMOVE, nick, name);
 		keepnick_auto_stop(irc);
@@ -314,17 +341,39 @@ static void sig_keepnick_refused(SERVER_REC *server, const char *nick, const cha
 	printformat(server, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_REFUSED, nick, network, reason);
 }
 
+static void sig_keepnick_invalid(SERVER_REC *server, const char *nick, const char *network,
+                                 const char *reason)
+{
+	TEXT_DEST_REC dest;
+	char *text = g_strdup_printf("%s cannot be kept on %s: %s", nick, network, reason);
+
+	format_create_dest(&dest, server, NULL, MSGLEVEL_CLIENTCRAP, NULL);
+	printformat_dest(&dest, IRCTXT_KEEPNICK_CRAP, text);
+	g_free(text);
+}
+
 static void sig_keepnick_auto(SERVER_REC *server, const char *nick, const char *network)
 {
 	printformat(server, NULL, MSGLEVEL_CLIENTCRAP, IRCTXT_KEEPNICK_AUTO, nick, network);
 }
 
-static void sig_keepnick_script(gpointer loaded)
+static gboolean print_script_note(gpointer data)
 {
-	if (GPOINTER_TO_INT(loaded))
+	script_note_tag = 0;
+	if (script_note)
 		crap("the keepnick.pl script is loaded; built-in keepnick is off until it is unloaded");
 	else
 		crap("keepnick.pl is unloaded; built-in keepnick is on again");
+	return FALSE;
+}
+
+/* said from the main loop: a script of autorun is loaded while erssi
+   starts, before the windows and logs are there */
+static void sig_keepnick_script(gpointer loaded)
+{
+	script_note = GPOINTER_TO_INT(loaded);
+	if (script_note_tag == 0)
+		script_note_tag = g_idle_add(print_script_note, NULL);
 }
 
 /* ---- ~/.erssi/keepnick ---- */
@@ -339,29 +388,33 @@ static gboolean print_import_note(gpointer data)
 	return FALSE;
 }
 
-/* the script's keepnick_quiet (perl/core/scripts) for the built-in one,
-   unless that is set; the script's own entry stays for the script */
-static void import_script_quiet(void)
+/* the script's settings (perl/core/scripts) for the built-in ones,
+   unless those are set; the script's own entries stay for the script */
+static void import_script_setting(const char *key)
 {
 	CONFIG_NODE *settings, *old, *new;
 
 	settings = iconfig_node_traverse("settings", FALSE);
 	old = settings == NULL ? NULL : iconfig_node_section(settings, "perl/core/scripts", -1);
 	new = settings == NULL ? NULL : iconfig_node_section(settings, "irc/core", -1);
-	if (old == NULL || config_node_find(old, "keepnick_quiet") == NULL ||
-	    (new != NULL && config_node_find(new, "keepnick_quiet") != NULL))
+	if (old == NULL || config_node_find(old, key) == NULL ||
+	    (new != NULL && config_node_find(new, key) != NULL))
 		return;
-	settings_set_bool("keepnick_quiet", config_node_get_bool(old, "keepnick_quiet", FALSE));
+	settings_set_bool(key, config_node_get_bool(old, key, FALSE));
 }
 
 /* The script's file, read as the script does (split on white space: the
-   network, then the nick), into the networks that keep no nick yet. Once:
-   the config gets erssi.keepnick_imported; the file stays as it is. */
+   network, then the nick; a network listed again: the last line wins),
+   into the networks that keep no nick yet. Once: the config gets
+   erssi.keepnick_imported; the file stays as it is. */
 static void import_script_file(void)
 {
 	CONFIG_NODE *marker;
-	GString *skipped;
-	char *path, *text, **lines, **line;
+	GHashTable *entries;
+	GHashTableIter iter;
+	GString *skipped, *invalid;
+	char *path, *text, **lines, **line, *reason = NULL;
+	gpointer key, value;
 	int imported = 0, counter;
 
 	marker = iconfig_node_traverse("erssi", FALSE);
@@ -375,13 +428,15 @@ static void import_script_file(void)
 	}
 
 	counter = mainconfig->modifycounter;
-	import_script_quiet();
-	skipped = g_string_new(NULL);
+	import_script_setting("keepnick_quiet");
+	import_script_setting("keepnick_autosave");
+
+	/* lowercase network -> nick, as the script's hash */
+	entries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	lines = g_strsplit(text, "\n", -1);
 	for (line = lines; *line != NULL; line++) {
-		char **words = g_strsplit_set(g_strstrip(*line), " \t", -1);
+		char **words = g_strsplit_set(*line, " \t\r\f\v", -1);
 		const char *name = NULL, *nick = NULL;
-		IRC_CHATNET_REC *net;
 		char **w;
 
 		for (w = words; *w != NULL && nick == NULL; w++) {
@@ -392,42 +447,58 @@ static void import_script_file(void)
 			else
 				nick = *w;
 		}
-		if (nick != NULL) {
-			net = IRC_CHATNET(chatnet_find(name));
-			if (net == NULL)
-				g_string_append_printf(skipped, "%s%s", skipped->len > 0 ? ", " : "", name);
-			else if (net->keepnick == NULL) {
-				keepnick_set(net, nick);
-				imported++;
-			}
-		}
+		if (nick != NULL)
+			g_hash_table_replace(entries, g_ascii_strdown(name, -1), g_strdup(nick));
 		g_strfreev(words);
 	}
 	g_strfreev(lines);
 	g_free(text);
 
+	skipped = g_string_new(NULL);
+	invalid = g_string_new(NULL);
+	g_hash_table_iter_init(&iter, entries);
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		IRC_CHATNET_REC *net = IRC_CHATNET(chatnet_find(key));
+
+		if (net == NULL)
+			g_string_append_printf(skipped, "%s%s", skipped->len > 0 ? ", " : "", (char *) key);
+		else if (keepnick_nick_invalid(value, NULL) != NULL)
+			g_string_append_printf(invalid, "%s%s", invalid->len > 0 ? ", " : "", (char *) value);
+		else if (net->keepnick == NULL) {
+			keepnick_set(net, value);
+			imported++;
+		}
+	}
+	g_hash_table_destroy(entries);
+
 	marker = iconfig_node_traverse("erssi", TRUE);
 	iconfig_node_set_bool(marker, "keepnick_imported", TRUE);
 
+	if (mainconfig->modifycounter != counter) {
+		if (config_last_error(mainconfig) != NULL) {
+			/* a config read only in part is not written over */
+			mainconfig->modifycounter = counter;
+			reason = g_strdup("the config has errors");
+		} else if (mainconfig->fname != NULL &&
+		           g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR)) {
+			/* saved at once, as the other start-time migrations */
+			shellter_save_at_start(&reason);
+		}
+	}
+
 	import_note = g_strdup_printf("imported %d nick%s from %s into the networks' keepnick "
-	                              "option (/LISTNICK); the file is no longer read%s%s",
+	                              "option (/LISTNICK); the built-in keepnick does not read "
+	                              "the file again%s%s%s%s%s%s",
 	                              imported, imported == 1 ? "" : "s", path,
-	                              skipped->len > 0 ? " - not imported, no such network: " : "",
-	                              skipped->str);
+	                              skipped->len > 0 ? " - no such network: " : "", skipped->str,
+	                              invalid->len > 0 ? " - not a nick: " : "", invalid->str,
+	                              reason != NULL ? " - not saved yet (/SAVE): " : "",
+	                              reason != NULL ? reason : "");
 	import_note_tag = g_idle_add(print_import_note, NULL);
 	g_string_free(skipped, TRUE);
+	g_string_free(invalid, TRUE);
+	g_free(reason);
 	g_free(path);
-
-	if (mainconfig->modifycounter == counter)
-		return;
-	if (config_last_error(mainconfig) != NULL) {
-		/* a config read only in part is not written over */
-		mainconfig->modifycounter = counter;
-	} else if (mainconfig->fname != NULL &&
-	           g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR)) {
-		/* saved at once, as the other start-time migrations */
-		shellter_save_at_start(NULL);
-	}
 }
 
 void fe_keepnick_init(void)
@@ -442,6 +513,7 @@ void fe_keepnick_init(void)
 	signal_add("keepnick resumed", (SIGNAL_FUNC) sig_keepnick_resumed);
 	signal_add("keepnick refused", (SIGNAL_FUNC) sig_keepnick_refused);
 	signal_add("keepnick auto", (SIGNAL_FUNC) sig_keepnick_auto);
+	signal_add("keepnick invalid", (SIGNAL_FUNC) sig_keepnick_invalid);
 	signal_add("keepnick script", (SIGNAL_FUNC) sig_keepnick_script);
 
 	import_script_file();
@@ -458,11 +530,16 @@ void fe_keepnick_deinit(void)
 	signal_remove("keepnick resumed", (SIGNAL_FUNC) sig_keepnick_resumed);
 	signal_remove("keepnick refused", (SIGNAL_FUNC) sig_keepnick_refused);
 	signal_remove("keepnick auto", (SIGNAL_FUNC) sig_keepnick_auto);
+	signal_remove("keepnick invalid", (SIGNAL_FUNC) sig_keepnick_invalid);
 	signal_remove("keepnick script", (SIGNAL_FUNC) sig_keepnick_script);
 
 	if (import_note_tag != 0) {
 		g_source_remove(import_note_tag);
 		import_note_tag = 0;
+	}
+	if (script_note_tag != 0) {
+		g_source_remove(script_note_tag);
+		script_note_tag = 0;
 	}
 	g_free(import_note);
 	import_note = NULL;
