@@ -190,6 +190,22 @@ FORMAT_REC fecommon_irc_formats[] = {
 	{ "mentions_notice", "%_NOTICE%_ {nick $1}%n: $2", 3, { 0, 0, 0 } },
 	{ "mentions_dcc", "%_DCC%_ {nick $1}%n: $2", 3, { 0, 0, 0 } },
 
+	/* ---- */
+	{ NULL, "Keepnick", 0 },
+
+	{ "keepnick_crap", "{line_start}{hilight Keepnick:} $0", 1, { 0 } },
+	{ "keepnick_add", "{line_start}{hilight Keepnick:} Now keeping {nick $0} on [$1]", 2, { 0, 0 } },
+	{ "keepnick_remove", "{line_start}{hilight Keepnick:} Stopped trying to keep {nick $0} on [$1]", 2, { 0, 0 } },
+	{ "keepnick_hold", "{line_start}{hilight Keepnick:} Nickkeeping deactivated on [$1]", 2, { 0, 0 } },
+	{ "keepnick_unhold", "{line_start}{hilight Keepnick:} Nickkeeping reactivated on [$1]", 2, { 0, 0 } },
+	{ "keepnick_list_empty", "{line_start}{hilight Keepnick:} No nicks in keep list", 0 },
+	{ "keepnick_list_header", "", 0 },
+	{ "keepnick_list_line", "{line_start}{hilight Keepnick:} Keeping {nick $0} in [$1] ($2)", 3, { 0, 0, 0 } },
+	{ "keepnick_list_footer", "", 0 },
+	{ "keepnick_got_nick", "{hilight Keepnick:} Nickstealer left [$1], got {nick $0} back", 2, { 0, 0 } },
+	{ "keepnick_refused", "{line_start}{hilight Keepnick:} The server refused {nick $0} on [$1] ($2), nickkeeping deactivated on [$1]", 3, { 0, 0, 0 } },
+	{ "keepnick_auto", "{line_start}{hilight Keepnick:} {nick $0} is in use on [$1]; taking it back when it is free, for this connection (keepnick_auto)", 2, { 0, 0 } },
+
 	{ NULL, NULL, 0 }
 };
 /* clang-format on */

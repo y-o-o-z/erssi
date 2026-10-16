@@ -83,6 +83,8 @@ static void cmd_network_list(void)
 			g_string_append_printf(str, "max_whois: %d, ", rec->max_whois);
 		if (rec->one_window)
 			g_string_append(str, "one_window, ");
+		if (rec->keepnick != NULL)
+			g_string_append_printf(str, "keepnick: %s, ", rec->keepnick);
 
 		if (str->len > 1) g_string_truncate(str, str->len-2);
 		printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP,
