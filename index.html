@@ -130,7 +130,7 @@ header.top nav a:hover { color: var(--text); }
 .install {
   display: flex;
   align-items: stretch;
-  max-width: 53rem;
+  max-width: 60rem;
   border: 1px solid var(--line);
   background: var(--surface);
   border-radius: 6px;
@@ -139,7 +139,9 @@ header.top nav a:hover { color: var(--text); }
 .install pre {
   margin: 0;
   padding: 0.95rem 1.1rem;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
   flex: 1;
   color: var(--text);
   font-size: 0.875rem;
@@ -312,6 +314,7 @@ footer a { color: var(--muted); }
   header.top nav .wide { display: none; }
   .hero { padding-top: 2rem; }
   .copy { min-width: 4.5rem; padding: 0 0.8rem; }
+  .install pre { font-size: 0.8125rem; padding: 0.85rem 0.9rem; }
   .screen { font-size: 0.6875rem; }
   .screen .panes { grid-template-columns: minmax(0, 1fr); height: auto; }
   .screen .main { padding-bottom: 0.75rem; }
@@ -347,7 +350,7 @@ footer a { color: var(--muted); }
       <h1 id="title">IRC in your shell, made for IRCnet.</h1>
       <p class="lede">erssi Shellter Edition is the modern irssi with what an IRCnet user sets up by hand already built in: it keeps your nick, gathers your mentions, encrypts what you ask it to and updates itself from signed releases.</p>
       <div class="install">
-        <pre id="cmd"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
+        <pre id="cmd"><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/<wbr>y-o-o-z/erssi/main/<wbr>shellter-install.sh | sh</pre>
         <button class="copy" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh" aria-label="Copy the install command">copy</button>
       </div>
       <p class="facts">No root needed: about two minutes on a shell box, Linux or FreeBSD. It installs to <code>~/.local/opt/erssi</code> and keeps its settings in <code>~/.erssi</code>, so it runs next to irssi.</p>
