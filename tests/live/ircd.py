@@ -19,6 +19,15 @@ connecting that long.
 TESTRAW <nick> :<raw line> (sent by any client) writes <raw line> to that nick.
 TESTDROP <nick> closes that nick's connection without a word, as a link that
 dies does.
+ISON is answered (303) with the nicks that are on.
+--nick-rules: a nick in use gets 433 (at registration too: 001 waits for
+a nick that is free), QUIT is sent to the clients that share a channel, and
+TESTDELAY <nick> <seconds> makes a free nick unavailable for that long
+(437, as IRCnet's nick delay); TESTREFUSE <nick> makes NICK <nick> an
+erroneous nickname (432); TESTNICK <nick> <new> renames a client from the
+server side, as a collision or SVSNICK does.
+--monitor: MONITOR=100 in 005; MONITOR + / - / C answered with 730/731,
+and the watchers get 730/731 when a monitored nick comes or goes.
 """
 import argparse
 import asyncio
@@ -30,6 +39,11 @@ NETWORK = "E2ETest"
 CASEMAPPING = None
 HIDE_CASEMAPPING = False
 REGISTER_DELAY = 0  # --register-delay: seconds before the reply to USER
+NICK_RULES = False  # --nick-rules: 433, QUIT to channels, TESTDELAY, TESTNICK
+MONITOR = False     # --monitor: MONITOR=100 and 730/731
+delayed = {}   # nick (folded) -> time until it is free again (437)
+erroneous = set()  # nicks (folded) that are erroneous (432)
+watchers = {}  # nick (folded) -> set of Client with it in their MONITOR list
 TRACE = None   # --trace file: every line in and out, with the time
 clients = {}   # nick (folded) -> Client
 channels = {}  # channel (folded) -> set(nick folded)
@@ -57,6 +71,8 @@ class Client:
         self.writer = writer
         self.nick = "*"
         self.user = "u"
+        self.waits_for_nick = False  # USER seen, 001 waits for a free nick
+        self.monitor = set()
 
     @property
     def prefix(self):
@@ -77,6 +93,71 @@ def members(chan):
     return [clients[n] for n in channels.get(fold(chan), ()) if n in clients]
 
 
+def neighbours(me):
+    """the other clients that share a channel with me"""
+    seen = set()
+    for nicks in channels.values():
+        if fold(me.nick) in nicks:
+            seen.update(clients[n] for n in nicks if n in clients)
+    seen.discard(me)
+    return seen
+
+
+def nick_online(client):
+    if MONITOR:
+        for w in watchers.get(fold(client.nick), ()):
+            w.send(f":{SRV} 730 {w.nick} :{client.prefix}")
+
+
+def nick_offline(nick):
+    if MONITOR:
+        for w in watchers.get(fold(nick), ()):
+            w.send(f":{SRV} 731 {w.nick} :{nick}")
+
+
+def nick_refused(me, new):
+    """the numeric that refuses NEW for me, or None"""
+    if not NICK_RULES:
+        return None
+    if fold(new) in erroneous:
+        return f":{SRV} 432 {me.nick} {new} :Erroneous Nickname"
+    holder = clients.get(fold(new))
+    if holder is not None and holder is not me:
+        return f":{SRV} 433 {me.nick} {new} :Nickname is already in use"
+    if delayed.get(fold(new), 0) > time.time() and (holder is None or holder is not me):
+        return f":{SRV} 437 {me.nick} {new} :Nick/channel is temporarily unavailable"
+    return None
+
+
+def rename(me, new):
+    """me is new from now on: told to me and to the clients in its channels"""
+    old = me.nick
+    out = f":{me.prefix} NICK :{new}"
+    for c in neighbours(me) | {me}:
+        c.send(out)
+    for nicks in channels.values():
+        if fold(old) in nicks:
+            nicks.discard(fold(old))
+            nicks.add(fold(new))
+    clients.pop(fold(old), None)
+    me.nick = new
+    clients[fold(new)] = me
+    if fold(old) != fold(new):
+        nick_offline(old)
+        nick_online(me)
+
+
+def welcome(me):
+    for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
+                     ("004", f"{SRV} e2e io biklmnopstv")):
+        me.send(f":{SRV} {num} {me.nick} :{msg}")
+    cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING and not HIDE_CASEMAPPING else ""
+    mon = " MONITOR=100" if MONITOR else ""
+    me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm}{mon} :are supported")
+    me.send(f":{SRV} 376 {me.nick} :End of MOTD")
+    nick_online(me)
+
+
 async def handle(reader, writer, wire_path, times_path):
     me = Client(writer)
     try:
@@ -92,29 +173,25 @@ async def handle(reader, writer, wire_path, times_path):
                 me.send(f":{SRV} CAP * LS :")
             elif cmd == "NICK":
                 new = args[0].lstrip(":")
-                if me.nick != "*":
-                    seen = {me}
-                    for chan, nicks in channels.items():
-                        if fold(me.nick) in nicks:
-                            nicks.discard(fold(me.nick))
-                            nicks.add(fold(new))
-                            for other in [clients[n] for n in nicks if n in clients]:
-                                seen.add(other)
-                    for c in seen:
-                        c.send(f":{me.prefix} NICK :{new}")
-                    clients.pop(fold(me.nick), None)
-                me.nick = new
-                clients[fold(me.nick)] = me
+                refused = nick_refused(me, new)
+                if refused:
+                    me.send(refused)
+                elif me.nick != "*" and not me.waits_for_nick:
+                    rename(me, new)
+                else:
+                    me.nick = new
+                    clients[fold(me.nick)] = me
+                    if me.waits_for_nick:
+                        me.waits_for_nick = False
+                        welcome(me)
             elif cmd == "USER":
                 me.user = args[0]
                 if REGISTER_DELAY:
                     await asyncio.sleep(REGISTER_DELAY)
-                for num, msg in (("001", f"Welcome {me.nick}"), ("002", f"Your host is {SRV}"), ("003", "today"),
-                                 ("004", f"{SRV} e2e io biklmnopstv")):
-                    me.send(f":{SRV} {num} {me.nick} :{msg}")
-                cm = f" CASEMAPPING={CASEMAPPING}" if CASEMAPPING and not HIDE_CASEMAPPING else ""
-                me.send(f":{SRV} 005 {me.nick} CHANTYPES=# PREFIX=(ov)@+ NETWORK={NETWORK}{cm} :are supported")
-                me.send(f":{SRV} 376 {me.nick} :End of MOTD")
+                if NICK_RULES and me.nick == "*":
+                    me.waits_for_nick = True  # its NICK was refused: 001 once one is free
+                else:
+                    welcome(me)
             elif cmd == "PING":
                 me.send(f":{SRV} PONG {SRV} :{args[0].lstrip(':') if args else ''}")
             elif cmd == "JOIN":
@@ -175,17 +252,57 @@ async def handle(reader, writer, wire_path, times_path):
                 target = clients.get(fold(args[0]))
                 if target:
                     target.writer.close()
+            elif cmd == "TESTDELAY" and len(args) >= 2 and NICK_RULES:
+                delayed[fold(args[0])] = time.time() + float(args[1])
+            elif cmd == "TESTREFUSE" and args and NICK_RULES:
+                erroneous.add(fold(args[0]))
+            elif cmd == "TESTNICK" and len(args) >= 2 and NICK_RULES:
+                target = clients.get(fold(args[0]))
+                if target:
+                    rename(target, args[1])
+            elif cmd == "ISON":
+                on = [clients[fold(n)].nick for n in " ".join(args).lstrip(":").split() if fold(n) in clients]
+                me.send(f":{SRV} 303 {me.nick} :{' '.join(on)}")
+            elif cmd == "MONITOR" and MONITOR and args:
+                op = args[0]
+                targets = [t for t in (args[1].lstrip(":").split(",") if len(args) > 1 else []) if t]
+                if op == "+":
+                    for t in targets:
+                        me.monitor.add(fold(t))
+                        watchers.setdefault(fold(t), set()).add(me)
+                    on = [clients[fold(t)].prefix for t in targets if fold(t) in clients]
+                    off = [t for t in targets if fold(t) not in clients]
+                    if on:
+                        me.send(f":{SRV} 730 {me.nick} :{','.join(on)}")
+                    if off:
+                        me.send(f":{SRV} 731 {me.nick} :{','.join(off)}")
+                elif op == "-":
+                    for t in targets:
+                        me.monitor.discard(fold(t))
+                        watchers.get(fold(t), set()).discard(me)
+                elif op.upper() == "C":
+                    for t in me.monitor:
+                        watchers.get(t, set()).discard(me)
+                    me.monitor.clear()
             elif cmd == "QUIT":
+                if NICK_RULES:
+                    for c in neighbours(me):
+                        c.send(f":{me.prefix} QUIT :{trailing if args else ''}")
                 break
-            elif cmd not in ("CAP", "PONG", "USERHOST", "ISON", "AWAY", "MODE", "TOPIC"):
+            elif cmd not in ("CAP", "PONG", "USERHOST", "AWAY", "MODE", "TOPIC"):
                 me.send(f":{SRV} 421 {me.nick} {cmd} :Unknown command")
             await writer.drain()
     except ConnectionError:
         pass  # the client reset its connection: it is gone, as with QUIT
     finally:
+        gone = clients.get(fold(me.nick)) is me
         clients.pop(fold(me.nick), None)
         for chan in channels.values():
             chan.discard(fold(me.nick))
+        for t in me.monitor:
+            watchers.get(t, set()).discard(me)
+        if gone:
+            nick_offline(me.nick)
         writer.close()
 
 
@@ -201,9 +318,14 @@ async def main():
                         help="fold as --casemapping says, but name no CASEMAPPING in 005")
     parser.add_argument("--register-delay", type=float, default=0,
                         help="wait this many seconds before answering USER (a slow registration)")
+    parser.add_argument("--nick-rules", action="store_true",
+                        help="433 for a nick in use, QUIT to the channels, TESTDELAY (437), TESTNICK")
+    parser.add_argument("--monitor", action="store_true", help="MONITOR=100 in 005, 730/731")
     args = parser.parse_args()
-    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING, TRACE, REGISTER_DELAY
+    global NETWORK, CASEMAPPING, HIDE_CASEMAPPING, TRACE, REGISTER_DELAY, NICK_RULES, MONITOR
     REGISTER_DELAY = args.register_delay
+    NICK_RULES = args.nick_rules
+    MONITOR = args.monitor
     TRACE = args.trace
     NETWORK = args.network
     CASEMAPPING = args.casemapping
