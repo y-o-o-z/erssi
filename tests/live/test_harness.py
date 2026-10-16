@@ -119,8 +119,13 @@ def main():
         assert s.lines(2, 5) == ["   ", "a  ", "   ", "\u5b57 "], s.lines(2, 5)
         s.feed(b"\x1b[r\x1b[1;1H\x1b[2J")
         assert s.lines() == [" " * 10] * 4, s.lines()
+        # the style each character was written in
+        s.feed(b"\x1b[1;1Ha\x1b[1;38;5;3mb\x1b[22mc\x1b[0;7md\x1b[me\x1b[1;6H\x1b[K")
+        assert s.lines()[0] == "abcde     ", s.lines()
+        assert s.styles()[0][:6] == [(), (("bold", True), ("fg", "38;5;3")), (("fg", "38;5;3"),),
+                                     (("reverse", True),), (), ()], s.styles()[0]
         # a cursor saved before the screen got smaller comes back inside it
-        s.feed(b"\x1b[4;10H\x1b7\x1b[1;1H")
+        s.feed(b"\x1b[2J\x1b[4;10H\x1b7\x1b[1;1H")
         s.resize(5, 2)
         s.feed(b"\x1b8z")
         assert s.lines() == ["     ", "    z"], s.lines()

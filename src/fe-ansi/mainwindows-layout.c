@@ -181,7 +181,6 @@ static GArray *layout_read(CONFIG_NODE *node)
 	seen = g_hash_table_new(g_direct_hash, g_direct_equal);
 	for (tmp = config_node_first(node->value); ok && tmp != NULL; tmp = config_node_next(tmp)) {
 		CONFIG_NODE *wnode = tmp->data;
-		CONFIG_NODE *value;
 		LAYOUT_WINDOW_REC rec;
 		char *end;
 		long refnum;
@@ -205,10 +204,8 @@ static GArray *layout_read(CONFIG_NODE *node)
 		     layout_get_num(wnode, "lines", -1, 1, &rec.lines) &&
 		     layout_get_num(wnode, "first_column", 0, 0, &rec.first_column) &&
 		     layout_get_num(wnode, "columns", NEW_WINDOW_WIDTH, 1, &rec.columns);
-		/* not there (saved before) or no "yes": not the active one */
-		value = config_node_find(wnode, "active");
-		rec.active = value != NULL && value->type == NODE_TYPE_KEY && value->value != NULL &&
-		             g_ascii_strcasecmp(value->value, "yes") == 0;
+		/* not there (saved before): not the active one */
+		rec.active = config_node_get_bool(wnode, "active", FALSE);
 		if (ok)
 			g_array_append_val(wins, rec);
 	}

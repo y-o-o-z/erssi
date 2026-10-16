@@ -411,10 +411,12 @@ void apply_and_redraw(void)
 /* The window numbers follow the window list (Alt+N is the Nth window in
  * the left panel, and the panel's selection is the active window's
  * number). Not before "irssi init finished": the saved layout is restored
- * then, and it names its windows by their saved numbers - each window it
- * creates renumbered the others, so the numbers it went on with named
- * other windows, and windows came back in other main windows. They are
- * renumbered once when the start is over (sig_irssi_init_finished). */
+ * before it, and it names its windows by their saved numbers - each
+ * window it created renumbered the others, so the numbers it went on
+ * with named other windows, and windows came back in other main windows.
+ * They are renumbered once when the start is over
+ * (sig_irssi_init_finished). The left panel's selection follows the
+ * active window's new number. */
 static gboolean renumber_started = FALSE;
 
 void renumber_windows_start(void)
@@ -446,6 +448,9 @@ void renumber_windows_by_position(void)
 
 	/* Clean up */
 	free_sorted_window_list(sort_list);
+	/* the active window may have another number now, without a window
+	   change: the selection is that number */
+	update_left_selection_to_active();
 }
 
 /* The borders between the panels and the main windows, along the panels;

@@ -197,8 +197,11 @@ static void sig_irssi_init_finished(void)
 	   complete now) */
 	renumber_windows_start();
 	renumber_windows_by_position();
-	/* the panels from now on, laid out over the restored main windows */
+	/* the panels from now on, laid out over the restored main windows;
+	   the selection is the active window (the restore made it active
+	   before the panels were there) */
 	sp_get_ctx(TRUE);
+	update_left_selection_to_active();
 	apply_reservations_all();
 	apply_and_redraw();
 }

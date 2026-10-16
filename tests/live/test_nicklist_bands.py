@@ -232,6 +232,27 @@ def main():
         st["names"][lower] = sorted(st["names"][lower] + ["erin"])
         bands(f"erin joined {lower}, {st['upper']} active")
 
+    def t_other_band_untouched():
+        # a window change in the upper row draws the upper band again, not
+        # the lower one: none of the nicks only the lower band shows is
+        # written to the terminal (the screen is the same either way, so
+        # this reads what erssi wrote)
+        a = st["alice"]
+        upper, lower = st["upper"], st["lower"]
+        only_lower = set(st["names"][lower]) - set(st["names"][upper])
+        assert only_lower, st["names"]
+        goto(upper)
+        bands("before the window changes")
+        mark = a.mark()
+        a.type_and_wait("/window new hide", "/window name tmp")
+        assert wn()[0] == "tmp"
+        wait_bands({rows_of(upper): [], rows_of(lower): st["names"][lower]}, "tmp in the upper row")
+        goto(upper)
+        bands("the upper channel back")
+        written = a.output_since(mark).decode(errors="replace")
+        drawn = [n for n in only_lower if n in written]
+        assert not drawn, f"the lower band was drawn again: {drawn}"
+
     def t_wheel_lower():
         # the wheel over the lower band scrolls that band only
         goto(st["upper"])
@@ -350,8 +371,9 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_one_window, t_two_rows, t_statusbar_gap, t_active_moves,
-                      t_join_lower, t_wheel_lower, t_click_lower, t_side_by_side, t_upper_no_channel,
-                      t_window_close, t_close_upper, t_sanitizers])
+                      t_join_lower, t_other_band_untouched, t_wheel_lower, t_click_lower,
+                      t_side_by_side, t_upper_no_channel, t_window_close, t_close_upper,
+                      t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()
