@@ -1,3 +1,55 @@
+shellter-v2026.10.2 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.2
+
+	+ Keepnick is built in
+	  - /KEEPNICK [-network <network>] [<nick>], /UNKEEPNICK [<network>]
+	    and /LISTNICK do what the keepnick.pl script did, with the same
+	    commands: when the kept nick becomes free, erssi takes it back
+	    ("Keepnick: Nickstealer left [network], got <nick> back"). It
+	    watches with MONITOR when the server offers it, otherwise with ISON
+	    every keepnick_check_time (12s), and at once when the holder changes
+	    nick or quits in a channel you share. At most one attempt per
+	    check; the server's "nickname in use" and nick delay replies are
+	    not shown as errors
+	  - the nick is the network's keepnick option in the chatnets block of
+	    the config (/NETWORK lists it); the nicks of ~/.erssi/keepnick are
+	    imported once, and the file is left as it is. /NICK away from the
+	    kept nick pauses it until you go back or run /KEEPNICK again; a
+	    nick the server forces on you (an IRCnet collision) does not
+	  - new setting keepnick_auto (ON): when a connection had to take
+	    another nick because its own was taken, erssi takes the wanted nick
+	    back when it becomes free, for that connection only. Also
+	    keepnick_quiet and keepnick_autosave, as in the script
+	  - while the keepnick.pl script is loaded, the built-in keepnick is
+	    off and the commands are the script's; /SCRIPT UNLOAD keepnick
+	    turns it on
+
+	+ Side panels and layouts
+	  - every row of main windows has its own part of the right panel,
+	    with the nicks of that row's channel (the active main window's, or
+	    the one nearest to the panel). With sidepanel_right_auto_hide the
+	    panel shows when any row has a channel. A click or the mouse wheel
+	    acts on the row's channel; a window change redraws only its row
+	  - a restored layout (/LAYOUT SAVE, or /SAVE, and a restart) puts
+	    every window back in its main window, in the same order, with the
+	    same active window in each and the same active main window (new
+	    active key in the mainwindows block); side-by-side windows get
+	    their saved widths. A channel that never rejoins keeps an empty
+	    window, which sorts last, so the numbers after it differ in that
+	    session
+	  - the left panel selects the active window after a start and after
+	    windows are renumbered
+	  - side-by-side windows keep their widths when the panels hide and
+	    show, instead of drifting by a column
+	  - /WINDOW SIZE -right N works; /WINDOW GROW and SHRINK -right without
+	    a number change one column; /WINDOW GROW, SHRINK and SIZE refuse a
+	    number out of range with "Not a number of lines or columns from 1
+	    to N"
+
+	+ Tests
+	  - the live tests wait for erssi instead of fixed times (about 555 s
+	    to 167 s) and can read what the terminal shows
+
 shellter-v2026.10.1 2026-10-15  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.1
 
