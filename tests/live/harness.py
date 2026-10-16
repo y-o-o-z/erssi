@@ -278,6 +278,7 @@ class Erssi:
         self._buf = bytearray()
         self._lock = threading.Lock()
         self._thread = None
+        self._marks = 0
 
     def child_env(self):
         """The environment of the child, built from an allowlist: nothing
@@ -402,6 +403,22 @@ class Erssi:
 
     def write_raw(self, data):
         os.write(self.master, data)
+
+    def type_and_wait(self, *lines, timeout=10):
+        """Type LINES and wait (no fixed time) until erssi has run them
+        all: an /echo of a new marker typed after them reaches the all log
+        (the config must log level ALL to all.log, as config() does).
+        Lines read at once are a paste, run as typed below
+        paste_verify_line_count (5): at most 3 lines and the marker."""
+        if len(lines) > 3:
+            raise ValueError("type_and_wait: at most 3 lines at a time")
+        self._marks += 1
+        mark = f"type-and-wait-{self.name}-{self._marks}-{time.time()}"
+        for line in lines + (f"/echo {mark}",):
+            self.write_raw(line.encode() + b"\r")
+        if not self.wait_file(self.all_log(), mark, timeout):
+            raise AssertionError(f"{self.name}: erssi did not run {lines!r} in {timeout} s"
+                                 f" (exited: {self.proc.poll()})")
 
     def output(self):
         with self._lock:
