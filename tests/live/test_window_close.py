@@ -38,22 +38,10 @@ def main():
             return ""
 
     def wait_log_since(offset, text, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if text in log_since(offset):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: text in log_since(offset), timeout))
 
     def wait_log_re(pattern, offset, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if re.search(pattern, log_since(offset)):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: re.search(pattern, log_since(offset)), timeout))
 
     def trace(name):
         try:
@@ -62,18 +50,22 @@ def main():
             return ""
 
     def wait_trace(name, pattern, start=0, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if re.search(pattern, trace(name)[start:], re.M):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: re.search(pattern, trace(name)[start:], re.M), timeout))
+
+    def sent_all(tag):
+        """Wait until the server of network TAG has got everything alice
+        sent it so far: a WHOIS alice sends it now reaches it (one
+        connection, in order). For a check that she sent no QUIT."""
+        st["pings"] = st.get("pings", 0) + 1
+        token = f"sync{st['pings']}"
+        st["alice"].type_and_wait(f"/whois -{tag} {token}")
+        assert wait_trace(tag.lower(), rf" in \S+ WHOIS (?:\S+ )?:?{token}$"), \
+            f"{tag} did not get the WHOIS:\n" + trace(tag.lower())[-2000:]
 
     def servers():
         """The /SERVER list: connected, connecting and waiting to reconnect"""
         off = log_size()
-        st["alice"].type("/sl")
+        st["alice"].write_raw(b"/sl\r")
         assert wait_log_since(off, "sl-done"), "no /SERVER output:\n" + log_since(off)
         return log_since(off)
 
@@ -90,21 +82,19 @@ def main():
 
     def windows():
         off = log_size()
-        st["alice"].type("/window list")
-        st["alice"].type("/echo wl-done")
+        st["alice"].write_raw(b"/window list\r/echo wl-done\r")
         assert wait_log_since(off, "wl-done"), "no /WINDOW LIST output"
         return log_since(off)
 
     def close_window(name):
         """go to the window named NAME and close it; returns the output mark"""
         a = st["alice"]
-        a.type(f"/window goto {name}")
-        a.type("/alias wn echo active=$winname")
+        a.type_and_wait(f"/window goto {name}", "/alias wn echo active=$winname")
         off = log_size()
-        a.type("/wn")
+        a.type_and_wait("/wn")
         assert wait_log_since(off, f"active={name}"), f"window {name} not active:\n" + log_since(off)
         mark = a.mark()
-        a.type("/window close")
+        a.type_and_wait("/window close")
         return mark
 
     def t_install():
@@ -126,7 +116,7 @@ def main():
         st["alice"] = a
         a.start()
         assert a.wait_file(a.all_log(), "has joined #test", 15), "alice never joined #test"
-        a.type("/alias sl server;echo sl-done")
+        a.type_and_wait("/alias sl server;echo sl-done")
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
         wl = windows()
@@ -140,11 +130,11 @@ def main():
         start_e2e = len(trace("e2e"))
         # an empty window without a level whose active server is Talk shows
         # nothing of Talk (the Mentions window is such a window too)
-        a.type("/window new hidden")
-        a.type("/window name spare")
-        a.type("/window server Talk")
+        a.type_and_wait("/window new hidden")
+        a.type_and_wait("/window name spare")
+        a.type_and_wait("/window server Talk")
         off = log_size()
-        a.type("/window")
+        a.type_and_wait("/window")
         assert wait_log_since(off, "Server  : Talk"), "spare window not on Talk:\n" + log_since(off)
         mark = close_window("Talk")
         assert wait_trace("talk", rf" in alice QUIT :{QUIT_MSG}$"), \
@@ -157,7 +147,7 @@ def main():
         assert "QUIT" not in trace("e2e")[start_e2e:], "E2E was disconnected too"
         assert not re.search(r"RECON-\d+", servers()), "a reconnect is left"
         off = log_size()
-        a.type("/connect Talk")
+        a.type_and_wait("/connect Talk")
         assert wait_log_since(off, "Connection to 127.0.0.1 established"), "no new connection"
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
@@ -171,7 +161,7 @@ def main():
         a = st["alice"]
         start = len(trace("e2e"))
         mark = close_window("E2E")
-        time.sleep(2)
+        sent_all("E2E")
         assert "QUIT" not in trace("e2e")[start:], "E2E was disconnected:\n" + trace("e2e")[start:]
         assert NOTICE not in a.text(mark), a.text(mark)[-2000:]
         assert sorted(tags()) == ["E2E", "Talk"], tags()
@@ -195,7 +185,7 @@ def main():
         assert not re.search(r" in alice NICK ", trace("talk")[start:]), \
             "erssi reconnected:\n" + trace("talk")[start:]
         assert sorted(tags()) == ["E2E"], tags()
-        a.type("/connect Talk")
+        a.type_and_wait("/connect Talk")
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
 
@@ -204,8 +194,8 @@ def main():
         """/WINDOW CLOSE <first> <last> over Talk's network window and its
         channel window: one disconnect, one line"""
         a = st["alice"]
-        a.type("/window goto Talk")
-        a.type("/join #range")
+        a.type_and_wait("/window goto Talk")
+        a.type_and_wait("/join #range")
         assert a.wait_file(a.all_log(), "has joined #range", WAIT), "no #range"
         wl = windows()
         net = re.search(r"^\S+ (\d+)\s+Talk\s", wl, re.M)
@@ -217,14 +207,14 @@ def main():
         start = len(trace("talk"))
         mark = a.mark()
         off = log_size()
-        a.type(f"/window close {first} {last}")
+        a.type_and_wait(f"/window close {first} {last}")
         assert wait_trace("talk", rf" in alice QUIT :{QUIT_MSG}$", start), trace("talk")[start:]
-        time.sleep(1)
+        a.type_and_wait()  # the close is over: all of its lines are written
         assert log_since(off).count(NOTICE) == 1, log_since(off)
         assert len(re.findall(r" in alice QUIT ", trace("talk")[start:])) == 1
         assert a.wait_output(NOTICE.encode(), WAIT), a.text(mark)[-2000:]
         assert sorted(tags()) == ["E2E"], tags()
-        a.type("/connect Talk")
+        a.type_and_wait("/connect Talk")
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
 
@@ -237,7 +227,7 @@ def main():
         before = set(tags())
         # by a name of no setup server (127.0.0.1 would match Talk's setup and
         # join its network)
-        a.type(f"/connect -4 localhost {port}")
+        a.type_and_wait(f"/connect -4 localhost {port}")
         end = time.time() + WAIT
         while len(set(tags()) - before) != 1 and time.time() < end:
             time.sleep(0.3)
@@ -259,15 +249,15 @@ def main():
         stays; /CONNECT Talk then says it is connected (no Talk2)"""
         a = st["alice"]
         off = log_size()
-        a.type("/set window_close_disconnects off")
+        a.type_and_wait("/set window_close_disconnects off")
         assert wait_log_re(r"window_close_disconnects\s+(= )?OFF", off), \
             "setting not changed:\n" + log_since(off)
         start = len(trace("talk"))
         close_window("Talk")
-        time.sleep(2)
+        sent_all("Talk")
         assert "QUIT" not in trace("talk")[start:], "Talk was disconnected with the setting off"
         off = log_size()
-        a.type("/connect Talk")
+        a.type_and_wait("/connect Talk")
         # no window to switch to: the line says so and names /DISCONNECT
         assert wait_log_since(off, "Already connected to Talk, but no window shows it"), log_since(off)
         assert "/DISCONNECT Talk" in log_since(off), log_since(off)
@@ -291,10 +281,8 @@ def main():
         c = harness.Erssi(st["inst"], w, "carol", cfg)
         st["alice"] = c
         c.start()
-        end = time.time() + 15
-        while log_since(0).count("has joined #classic") < 2 and time.time() < end:
-            time.sleep(0.2)
-        c.type("/alias sl server;echo sl-done")
+        harness.wait_until(lambda: log_since(0).count("has joined #classic") >= 2, 15)
+        c.type_and_wait("/alias sl server;echo sl-done")
         got = wait_tags(["E2E", "Talk"])
         assert got == ["E2E", "Talk"], got
         wl = windows()
@@ -307,10 +295,10 @@ def main():
         ref = re.search(r"^\S+ (\d+)\s", chan[0]).group(1)
         name = other.lower()
         start = len(trace(name))
-        c.type(f"/window {ref}")
-        c.type("/window close")  # what the /WC alias of the shipped config runs
+        c.type_and_wait(f"/window {ref}")
+        c.type_and_wait("/window close")  # what the /WC alias of the shipped config runs
         assert wait_trace(name, r" in carol PART #classic", start), trace(name)[start:]
-        time.sleep(2)
+        sent_all(other)
         assert "QUIT" not in trace(name)[start:], f"{other} was disconnected:\n" + trace(name)[start:]
         assert sorted(tags()) == ["E2E", "Talk"], tags()
 

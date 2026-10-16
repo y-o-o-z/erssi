@@ -15,7 +15,6 @@ import re
 import shutil
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -79,27 +78,16 @@ def main():
     def started(e):
         """erssi is running and its input line works: a /echo reaches the log."""
         assert e.proc.poll() is None, f"{e.name}: erssi exited at start ({e.proc.returncode})"
-        mark = f"layout-alive-{e.name}-{time.time()}"
-        e.type(f"/echo {mark}")
-        assert e.wait_file(e.all_log(), mark, WAIT), \
-            f"{e.name}: erssi does not answer (exited: {e.proc.poll()})"
+        e.wait_ready()
 
     def save(e):
         """/LAYOUT SAVE + /SAVE; the saved config text."""
-        conf = e.home / "config"
-        before = conf.stat().st_mtime_ns if conf.exists() else 0
-        e.type("/layout save")
-        e.type("/save")
-        end = time.time() + WAIT
-        while conf.stat().st_mtime_ns == before and time.time() < end:
-            time.sleep(0.1)
-        return conf.read_text()
+        return e.save_config("/layout save")
 
     def new(name, text, cols=200, rows=50):
         e = harness.Erssi(st["inst"], work, name, text, args=("--noconnect",))
         st["all"].append(e)
         e.start(cols, rows)
-        time.sleep(2)
         started(e)
         return e
 
@@ -107,7 +95,6 @@ def main():
         e.quit()
         e.config_text = None  # the config it saved
         e.start(cols, rows)
-        time.sleep(2)
         started(e)
 
     def tiles(e, cols=200, rows=50, what="", reserved=15):
@@ -123,7 +110,7 @@ def main():
         again after the restart)."""
         e = new(name, text)
         for c in cmds:
-            e.type(c)
+            e.type_and_wait(c)
         saved = save(e)
         assert block(saved, "mainwindows"), f"no mainwindows block saved:\n{saved}"
         restart(e)
@@ -183,19 +170,19 @@ def main():
     # columns are not reserved a second time.
     def t_left_panel_three_rows_set():
         e = new("rows3", cfg("rows3"))
-        e.type("/window new split")
-        e.type("/window new split")
+        e.type_and_wait("/window new split")
+        e.type_and_wait("/window new split")
         tiles(e, what="three rows")
-        e.type("/set mouse_scroll_chat off")
-        e.type("/set sidepanel_left_width 15")
+        e.type_and_wait("/set mouse_scroll_chat off")
+        e.type_and_wait("/set sidepanel_left_width 15")
         layout = tiles(e, what="three rows after /set")
         assert len(layout) == 3, layout
         e.quit()
 
     def t_left_panel_side_by_side_set():
         e = new("side2", cfg("side2"))
-        e.type("/window new -right")
-        e.type("/set mouse_scroll_chat off")
+        e.type_and_wait("/window new -right")
+        e.type_and_wait("/set mouse_scroll_chat off")
         layout = tiles(e, what="side by side after /set")
         assert len(layout) == 2 and len(rows(layout)) == 1, layout
         # one left panel: the two windows and their separator share the
@@ -207,14 +194,14 @@ def main():
         # a new panel width: the old columns are given back, the new
         # ones reserved, for every row
         e = new("width", cfg("width"))
-        e.type("/window new split")
-        e.type("/window new -right")
-        e.type("/set sidepanel_left_width 25")
+        e.type_and_wait("/window new split")
+        e.type_and_wait("/window new -right")
+        e.type_and_wait("/set sidepanel_left_width 25")
         tiles(e, what="width 25", reserved=25)
-        e.type("/set sidepanel_left off")
+        e.type_and_wait("/set sidepanel_left off")
         tiles(e, what="panel off", reserved=0)
-        e.type("/set sidepanel_left on")
-        e.type("/set sidepanel_left_width 15")
+        e.type_and_wait("/set sidepanel_left on")
+        e.type_and_wait("/set sidepanel_left_width 15")
         tiles(e, what="panel back")
         e.quit()
 
@@ -224,20 +211,23 @@ def main():
                   "/window shrink 1", "/window grow -right 5", "/window hide", "/set mouse_scroll_chat off",
                   "/window show 2", "/window shrink -right 3", "/window balance",
                   "/set mouse_scroll_chat on"]:
-            e.type(c)
+            e.type_and_wait(c)
             tiles(e, what=c)
         e.quit()
 
     def t_left_panel_terminal_resize():
         e = new("resize", cfg("resize"))
-        e.type("/window new split")
-        e.type("/window new -right")
+        e.type_and_wait("/window new split")
+        e.type_and_wait("/window new -right")
         # 30 columns: no room for the panel (it goes, its columns come back)
         for cols, rows_, reserved in ((120, 40, 15), (200, 50, 15), (90, 30, 15), (30, 20, 0),
                                       (200, 50, 15)):
             e.resize(cols, rows_)
-            time.sleep(1)
             started(e)
+            # erssi lays the windows out for the new size when it reads the
+            # SIGWINCH: the layout it saves tiles the new size from then on
+            harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, cols, rows_,
+                                                  reserved), WAIT, interval=0.2)
             tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
         e.quit()
 
@@ -248,9 +238,9 @@ def main():
         e = new("both2", text)
         for c in ["/window new split", "/window new split", "/window new -right",
                   "/set mouse_scroll_chat off"]:
-            e.type(c)
+            e.type_and_wait(c)
             tiles(e, what=c, reserved=30)
-        e.type("/set sidepanel_right off")
+        e.type_and_wait("/set sidepanel_right off")
         tiles(e, what="right panel off", reserved=15)
         e.quit()
 
@@ -259,8 +249,8 @@ def main():
         # 15 times over one row: its last column before its first one)
         e = new("rows15", cfg("rows15"))
         for _ in range(14):
-            e.type("/window new split")
-        e.type("/set mouse_scroll_chat off")
+            e.type_and_wait("/window new split")
+        e.type_and_wait("/set mouse_scroll_chat off")
         started(e)
         layout = tiles(e, what="15 rows")
         assert len(layout) == 15, layout
@@ -329,7 +319,7 @@ def main():
         # layout stays the same.
         e = new("twice", cfg("twice"), 80, 24)
         for _ in range(6):
-            e.type("/window new split")
+            e.type_and_wait("/window new split")
         layouts = [tiles(e, 80, 24, "six splits")]
         for i in range(2):
             restart(e, 80, 24)

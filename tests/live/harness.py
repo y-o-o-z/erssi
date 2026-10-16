@@ -381,6 +381,18 @@ def install(build, work):
     return Inst(dest)
 
 
+def wait_until(check, timeout, interval=0.05):
+    """Call check() until it returns something true or TIMEOUT seconds
+    have passed (it is called once more at the end); its last value. For
+    waiting on a condition instead of a fixed time."""
+    end = time.time() + timeout
+    while True:
+        value = check()
+        if value or time.time() >= end:
+            return value
+        time.sleep(interval)
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -708,13 +720,75 @@ class Erssi:
                 self._buf += data
 
     def type(self, line):
+        """Type LINE and give erssi 0.3 s: for a line that cannot be
+        followed by type_and_wait's /echo (no all log, a prompt that would
+        take the /echo as its answer). Prefer type_and_wait."""
         self.write_raw(line.encode() + b"\r")
         time.sleep(0.3)
 
     def write_raw(self, data):
         os.write(self.master, data)
 
-    def type_and_wait(self, *lines, timeout=10):
+    def wait_terminal(self, timeout=30):
+        """After start(): wait until erssi has set the terminal up (raw
+        mode, then the alternate screen): what is typed from then on is
+        read as keys. For an erssi without an all log (no config)."""
+        if not self.wait_output(b"\x1b[?1049h", timeout):
+            raise AssertionError(f"{self.name}: the terminal was not set up in {timeout} s"
+                                 f" (exited: {self.proc.poll()})")
+
+    def wait_ready(self, timeout=30):
+        """After start(): wait until erssi runs what is typed - its all log
+        has its first lines (it is open), then an /echo of a new marker
+        reaches it. The /echo is typed again after 2, 4 and 8 s in case
+        the first one came before the log was open: at most four lines,
+        never a paste of paste_verify_line_count (5) lines."""
+        def fail(what):
+            return AssertionError(f"{self.name}: {what} in {timeout} s (exited: {self.proc.poll()})")
+        end = time.time() + timeout
+        self.wait_terminal(timeout)
+
+        def log_open():
+            try:
+                return self.proc.poll() is not None or self.all_log().stat().st_size > 0
+            except OSError:
+                return False
+        if not wait_until(log_open, timeout) or self.proc.poll() is not None:
+            raise fail("no all log")
+        wait = 2
+        while True:
+            self._marks += 1
+            mark = f"ready-{self.name}-{self._marks}-{time.time()}"
+            self.write_raw(f"/echo {mark}\r".encode())
+            if self.wait_file(self.all_log(), mark, min(wait, max(0.1, end - time.time()))):
+                return
+            if self.proc.poll() is not None or time.time() >= end:
+                raise fail("erssi does not answer")
+            wait *= 2
+
+    def sync_output(self, timeout=20):
+        """Wait until erssi has written to the terminal everything it was
+        going to for what it read so far: an /echo of a new marker typed
+        now shows up in its output (one stream, in order). For a check
+        that something was NOT written, instead of a fixed time. The line
+        must reach a command (no prompt or half key sequence waiting)."""
+        self._marks += 1
+        mark = f"sync{self._marks}x{int(time.time() * 1000) % 100000}"
+        self.write_raw(f"/echo {mark}\r".encode())
+        if not self.wait_output(mark.encode(), timeout):
+            raise AssertionError(f"{self.name}: the /echo {mark} was not drawn in {timeout} s"
+                                 f" (exited: {self.proc.poll()})")
+
+    def save_config(self, *lines, timeout=20):
+        """Type LINES (e.g. "/layout save") and /SAVE, wait until erssi has
+        run them; the config file's text then. /SAVE writes the file before
+        it returns, so once the /echo typed after it is in the log the file
+        is complete - a better sign than its mtime or contents, which can
+        stay the same (the same layout saved again, in the same tick)."""
+        self.type_and_wait(*lines, "/save", timeout=timeout)
+        return (self.home / "config").read_text()
+
+    def type_and_wait(self, *lines, timeout=20):
         """Type LINES and wait (no fixed time) until erssi has run them
         all: an /echo of a new marker typed after them reaches the all log
         (the config must log level ALL to all.log, as config() does).
@@ -753,35 +827,26 @@ class Erssi:
             return pattern in self._buf
 
     def wait_output(self, pattern, timeout):
-        end = time.time() + timeout
-        while time.time() < end:
-            if self._has(pattern):
-                return True
-            time.sleep(0.1)
-        return self._has(pattern)
+        return bool(wait_until(lambda: self._has(pattern), timeout))
 
     def all_log(self):
         return self.home / "all.log"
 
     def wait_file(self, path, text, timeout):
-        end = time.time() + timeout
-        while True:
+        def found():
             try:
-                if text in Path(path).read_text(errors="replace"):
-                    return True
+                return text in Path(path).read_text(errors="replace")
             except OSError:
-                pass
-            if time.time() >= end:
                 return False
-            time.sleep(0.1)
+        return bool(wait_until(found, timeout))
 
     def quit(self):
         if not self.proc:
             return
         if self.proc.poll() is None:
             try:
-                self.type("/quit")
-                self.proc.wait(5)
+                self.write_raw(b"/quit\r")
+                self.proc.wait(10)
             except (subprocess.TimeoutExpired, OSError):
                 pass
         self.kill()

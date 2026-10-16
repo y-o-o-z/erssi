@@ -36,20 +36,14 @@ def main():
         return st["alice"].all_log().read_bytes()[offset:].decode(errors="replace")
 
     def wait_log_since(offset, text, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if text in log_since(offset):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: text in log_since(offset), timeout))
 
     def search(args, done="Search for "):
         """Runs /search ARGS; returns the log text it added once DONE is in it."""
         off = log_size()
-        st["alice"].type("/search " + args)
+        st["alice"].type_and_wait("/search " + args)
         assert wait_log_since(off, done), f"/search {args}: no {done!r}:\n" + log_since(off)
-        time.sleep(0.3)
+        st["alice"].type_and_wait()  # all of what came with DONE is written
         return log_since(off)
 
     def processes():
@@ -132,7 +126,7 @@ def main():
         chan_log = alice.home / "logs" / "E2E" / "#test.log"
         assert alice.wait_file(chan_log, "other", WAIT), "bob's lines are not in the autolog"
         st["chan_log"] = chan_log
-        alice.type("/window goto #test")
+        alice.type_and_wait("/window goto #test")
 
     def t_basic():
         out = search("needle")
@@ -147,24 +141,24 @@ def main():
         # one that is active when they arrive
         alice = st["alice"]
         home = alice.home
-        alice.type("/window new")
-        alice.type("/window name srch")
-        alice.type(f"/window log on {home}/win-srch.log")
-        alice.type("/window goto #test")
-        alice.type(f"/window log on {home}/win-test.log")
+        alice.type_and_wait("/window new")
+        alice.type_and_wait("/window name srch")
+        alice.type_and_wait(f"/window log on {home}/win-srch.log")
+        alice.type_and_wait("/window goto #test")
+        alice.type_and_wait(f"/window log on {home}/win-test.log")
         off = log_size()
         alice.write_raw(b"/window goto srch\r/search -target #test needle two\r/window goto #test\r")
         assert wait_log_since(off, "Search for needle two: 1 hits"), log_since(off)
-        time.sleep(0.5)
+        alice.type_and_wait()  # the window logs are written with it
         srch = (home / "win-srch.log").read_text(errors="replace")
         test = (home / "win-test.log").read_text(errors="replace") \
             if (home / "win-test.log").exists() else ""
         assert "Search for needle two: 1 hits" in srch, srch
         assert "Search for needle two" not in test, test
-        alice.type("/window goto srch")
-        alice.type("/window log off")
-        alice.type("/window close")
-        alice.type("/window goto #test")
+        alice.type_and_wait("/window goto srch")
+        alice.type_and_wait("/window log off")
+        alice.type_and_wait("/window close")
+        alice.type_and_wait("/window goto #test")
         st["win_test_log"] = home / "win-test.log"
 
     def t_bad_scope():
@@ -197,7 +191,7 @@ def main():
         assert "Search for NEEDLE: 3 hits" in out, out
         # a bad regular expression: an error, nothing is started
         off = log_size()
-        st["alice"].type("/search -regexp needle(")
+        st["alice"].type_and_wait("/search -regexp needle(")
         assert wait_log_since(off, "SEARCH:"), log_since(off)
         assert "Search for" not in log_since(off), log_since(off)
 
@@ -215,13 +209,13 @@ def main():
 
     def t_no_item():
         alice = st["alice"]
-        alice.type("/window goto Notices")
+        alice.type_and_wait("/window goto Notices")
         try:
             out = search("needle", done="SEARCH:")
             assert "SEARCH: no channel or query here - use -target, -network or -all" in out, out
             assert "Search for" not in out, out
         finally:
-            alice.type("/window goto #test")
+            alice.type_and_wait("/window goto #test")
 
     def t_stop_idle():
         out = search("-stop", done="Search: nothing is running")
@@ -239,12 +233,12 @@ def main():
                 f.write(chunk)
             f.write(b"12:01 <bob> bigneedle\n")
         alice = st["alice"]
-        alice.type("/set search_max_size 10M")
+        alice.type_and_wait("/set search_max_size 10M")
         off = log_size()
         # both lines in one read: /echo runs while the search goes on
         alice.write_raw(b"/search -target #big bigneedle\r/echo alive\r")
         assert wait_log_since(off, "Search for bigneedle", 60), log_since(off)
-        time.sleep(0.3)
+        alice.type_and_wait()
         out = log_since(off)
         assert "alive" in out, out
         assert out.index("alive") < out.index("Search for bigneedle"), out
@@ -256,14 +250,14 @@ def main():
 
     def t_busy():
         alice = st["alice"]
-        alice.type("/set search_max_size 1G")
+        alice.type_and_wait("/set search_max_size 1G")
         # a search that runs for minutes: a backtracking pattern on every line
         slow = b"/search -target #big -regexp (x+x+)+y\r"
         off = log_size()
         alice.write_raw(slow)
         kids = wait_children()
         assert kids, "no search process"
-        time.sleep(1.2)
+        time.sleep(1.2)  # it runs for longer than that: a time is what is checked
         assert children() == kids, f"the search ended by itself: {children()} {log_since(off)}"
         alice.write_raw(b"/search x\r")
         assert wait_log_since(off, "Search: one is running - /SEARCH -stop first"), log_since(off)
@@ -281,6 +275,8 @@ def main():
             assert "Search: one is running - /SEARCH -stop first" in out, out
             assert out.index("one is running") < out.index("Search stopped"), out
             assert no_children(2), f"the search process is still there: {children()}"
+        # a negative check: no late summary of a stopped search (one would
+        # come from a child that is gone already) - a short bounded wait
         time.sleep(1)
         assert "Search for" not in log_since(off), log_since(off)
         # a new one runs to the end; the window it was started in is closed
@@ -288,7 +284,7 @@ def main():
         off = log_size()
         alice.write_raw(b"/window new\r/search -max 1 -target #big bigneedle\r/window close\r")
         assert wait_log_since(off, "Search for bigneedle: 1 hits in 1 files", 60), log_since(off)
-        time.sleep(0.3)
+        alice.type_and_wait()
         out = log_since(off)
         assert "stopped at" not in out, out
         assert alice.proc.poll() is None, "erssi is gone"
@@ -303,7 +299,7 @@ def main():
         alice.write_raw(b"/search -target #big -regexp (x+x+)+y\r")
         kids = wait_children()
         assert kids, "no search process"
-        time.sleep(0.5)
+        time.sleep(0.5)  # the child past its start: it dies while it searches
         for k in kids:
             os.kill(int(k), signal.SIGKILL)
         assert wait_log_since(off, "failed: the search process ended without a result"), \
@@ -313,9 +309,9 @@ def main():
 
     def t_help():
         alice = st["alice"]
-        alice.type(f"/set help_path {st['inst'].helpdir}")
+        alice.type_and_wait(f"/set help_path {st['inst'].helpdir}")
         off = log_size()
-        alice.type("/help search")
+        alice.type_and_wait("/help search")
         assert wait_log_since(off, "Searches the autolog files"), log_since(off)
         out = log_since(off)
         assert "SEARCH -stop" in out, out
@@ -326,7 +322,7 @@ def main():
         alice.write_raw(b"/search -target #big -regexp (x+x+)+y\r")
         kids = wait_children()
         assert kids, "no search process"
-        time.sleep(0.5)
+        time.sleep(0.5)  # the child past its start: /quit comes while it searches
         alice.quit()
         assert all(gone(k, 2) for k in kids), f"the search process outlived erssi: {kids}"
         st["big"].unlink()

@@ -37,13 +37,7 @@ def main():
             return ""
 
     def wait_log_since(offset, text, timeout=WAIT):
-        end = time.time() + timeout
-        while True:
-            if text in log_since(offset):
-                return True
-            if time.time() >= end:
-                return False
-            time.sleep(0.1)
+        return bool(harness.wait_until(lambda: text in log_since(offset), timeout))
 
     def trace(name):
         try:
@@ -57,7 +51,7 @@ def main():
 
     def servers():
         off = log_size()
-        st["alice"].type("/sl")
+        st["alice"].write_raw(b"/sl\r")
         assert wait_log_since(off, "sl-done"), "no /SERVER output:\n" + log_since(off)
         return log_since(off).split("sl-done")[0]
 
@@ -74,7 +68,7 @@ def main():
 
     def active():
         off = log_size()
-        st["alice"].type("/wn")
+        st["alice"].write_raw(b"/wn\r")
         assert wait_log_since(off, "active=["), "no /wn output"
         return re.findall(r"active=\[([^\]]*)\]", log_since(off))[-1]
 
@@ -82,11 +76,11 @@ def main():
         """/CONNECT NAME from the Notices window; NOTICE is in the line that
         answers it. Returns the output mark"""
         a = st["alice"]
-        a.type("/window goto Notices")
+        a.type_and_wait("/window goto Notices")
         assert active() == "Notices"
         off = log_size()
         mark = a.mark()
-        a.type(f"/connect {name}")
+        a.type_and_wait(f"/connect {name}")
         assert wait_log_since(off, notice), "no notice:\n" + log_since(off)
         line = [x for x in log_since(off).splitlines() if notice in x]
         assert name in line[0], line
@@ -109,8 +103,9 @@ def main():
         a = harness.Erssi(st["inst"], work, "alice", cfg)
         st["alice"] = a
         a.start()
-        a.type("/alias sl server;echo sl-done")
-        a.type("/alias wn echo active=[$winname]")
+        a.wait_ready()
+        a.type_and_wait("/alias sl server;echo sl-done")
+        a.type_and_wait("/alias wn echo active=[$winname]")
         got = wait_tags(["Talk"], 15)
         assert got == ["Talk"], got
 
@@ -119,6 +114,8 @@ def main():
         so, and connects nothing"""
         connect_again("Talk")
         assert active() == "Talk", active()
+        # a negative check: a connection would be opened after a lookup in
+        # the background - a short bounded wait
         time.sleep(2)
         assert tags() == ["Talk"], tags()
         assert registrations("talk") == 1, trace("talk")
@@ -126,13 +123,13 @@ def main():
     def t_connecting():
         """Slow is still registering: a second /CONNECT Slow waits for it"""
         a = st["alice"]
-        a.type("/connect Slow")
+        a.type_and_wait("/connect Slow")
         assert st["alice"].wait_file(a.all_log(), "Waiting for CAP LS response", WAIT)
-        time.sleep(0.5)
+        time.sleep(0.5)  # well into the registration (the server delays it)
         connect_again("Slow")
         got = wait_tags(["Slow", "Talk"], SLOW + WAIT)
         assert got == ["Slow", "Talk"], got
-        time.sleep(1)
+        time.sleep(1)  # a negative check: no second registration comes late
         assert registrations("slow") == 1, trace("slow")
         assert "Slow2" not in servers()
 
@@ -149,11 +146,11 @@ def main():
         # waiting to reconnect: the line points to /RECONNECT, not /CONNECT <address>
         connect_again("Talk", f"waiting to reconnect - use /RECONNECT {recon}")
         assert active() == "Talk", active()  # its window, by its own name
-        time.sleep(2)
+        time.sleep(2)  # a negative check: no new connection (see t_connected)
         assert registrations("talk") == before, trace("talk")
         # with the reconnect removed, /CONNECT Talk connects again as Talk
-        a.type("/rmreconns")
-        a.type("/connect Talk")
+        a.type_and_wait("/rmreconns")
+        a.type_and_wait("/connect Talk")
         got = wait_tags(["Slow", "Talk"])
         assert got == ["Slow", "Talk"], got
 
@@ -161,14 +158,10 @@ def main():
         """/CONNECT <address> <port> opens a second connection, as before"""
         a = st["alice"]
         before = registrations("talk")
-        a.type(f"/connect 127.0.0.1 {st['talk_port']} - alice2")
-        end = time.time() + WAIT
-        while registrations("talk") == before and time.time() < end:
-            time.sleep(0.2)
+        a.type_and_wait(f"/connect 127.0.0.1 {st['talk_port']} - alice2")
+        harness.wait_until(lambda: registrations("talk") != before, WAIT)
         assert registrations("talk") == before + 1, trace("talk")
-        end = time.time() + WAIT
-        while len(tags()) != 3 and time.time() < end:
-            time.sleep(0.3)
+        harness.wait_until(lambda: len(tags()) == 3, WAIT, interval=0.3)
         assert len(tags()) == 3, tags()
 
     def t_quit():

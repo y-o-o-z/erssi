@@ -39,16 +39,17 @@ def main():
         w = Path(tempfile.mkdtemp(prefix="help.", dir=work))
         with harness.Erssi(inst, w, "alice", harness.config(1, "alice"), args=("--noconnect",)) as alice:
             alice.start()
+            alice.wait_ready()
             log = alice.all_log()
             # the compiled-in help path is the real prefix, not this install
-            alice.type(f"/set help_path {inst.helpdir}")
+            alice.type_and_wait(f"/set help_path {inst.helpdir}")
             assert alice.wait_file(log, str(inst.helpdir), 10), "help_path not set"
             for topic, line in TOPICS.items():
-                alice.type(f"/help {topic}")
+                alice.type_and_wait(f"/help {topic}")
                 assert alice.wait_file(log, line, 10), f"/help {topic}: no '{line}'"
-            alice.type("/help $nickmode")
+            alice.type_and_wait("/help $nickmode")
             assert alice.wait_file(log, "$nickmode in a message format", 10), "/help $nickmode"
-            alice.type("/help nosuchtopic_x")
+            alice.type_and_wait("/help nosuchtopic_x")
             assert alice.wait_file(log, "No help for nosuchtopic_x", 10), "unknown topic"
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()

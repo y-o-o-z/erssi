@@ -96,9 +96,9 @@ def main():
                     "channel message not logged"
                 # /echo does not expand variables, an alias does: the line must
                 # hold the name the active window was just given
-                alice.type("/window name livewin")
-                alice.type("/alias wn echo active=$winname")
-                alice.type("/wn")
+                alice.type_and_wait("/window name livewin")
+                alice.type_and_wait("/alias wn echo active=$winname")
+                alice.type_and_wait("/wn")
                 assert alice.wait_file(alice.all_log(), "active=livewin", 5), "$winname not expanded"
                 bob.send("TESTRAW alice ::e2e.test NOTICE alice :raw works")
                 assert alice.wait_file(alice.all_log(), "raw works", 5), "TESTRAW line not delivered"
