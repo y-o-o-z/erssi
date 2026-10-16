@@ -3,7 +3,7 @@
 **Your shell, your shelter — on IRCnet.**
 
 [![CI](https://img.shields.io/github/checks-status/y-o-o-z/erssi/main?label=CI)](https://github.com/y-o-o-z/erssi/commits/main)
-[![Release](https://img.shields.io/badge/release-2026.10.1-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-2026.10.2-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -89,7 +89,7 @@ Releases are signed with an SSH key (ED25519,
 `SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`, public key in
 [`utils/allowed_signers`](utils/allowed_signers)). To check a release by
 hand, in a clone:
-`git -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.1`.
+`git -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.2`.
 
 erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
 irssi. Start it inside tmux so the session survives logging out.
@@ -103,10 +103,10 @@ where the new version is. The sha256 of what erssi installed is kept in
 
 ### Upgrading from 1.3.x
 
-`erssi --update` on 1.3.10 or 2026.10.0 finds 2026.10.1. 1.3.9 and older
-have no `--update`: run the install command above again (with the same
-`--prefix` and `--src` if you gave any), which builds the new release in
-the same places. Your `~/.erssi/config` is kept; at the first start erssi adds what
+`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.2. 1.3.9
+and older have no `--update`: run the install command above again (with
+the same `--prefix` and `--src` if you gave any), which builds the new
+release in the same places. Your `~/.erssi/config` is kept; at the first start erssi adds what
 changed, once:
 
 - **The Shellter look stays.** Up to 1.3.10 it was built into erssi; now it
@@ -162,7 +162,7 @@ and used when present. For a system-wide install use
 
 | Component | Version |
 |---|---|
-| **erssi Shellter Edition 2026.10.1** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 2026.10.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
 | **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (`2026.10.0`). |
 
