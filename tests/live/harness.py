@@ -246,6 +246,18 @@ settings = {{
 """
 
 
+def block(config_text, name):
+    """{key: {field: value}} of a top level block of a saved config, None
+    when the config has no such block."""
+    m = re.search(r"^" + name + r" = \{\n(.*?)^\};", config_text, re.M | re.S)
+    if m is None:
+        return None
+    out = {}
+    for key, body in re.findall(r"^  (\S+) = \{(.*?)\};", m.group(1), re.M | re.S):
+        out[key] = dict(re.findall(r'(\w+) = "([^"]*)";', body))
+    return out
+
+
 class Erssi:
     """One erssi in a pty. HOME is work/home-<name>, --home is its .erssi."""
 
