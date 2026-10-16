@@ -41,7 +41,7 @@
     When you change away from the kept nick yourself with /NICK, keeping
     on that network is paused until you return to that nick or run
     /KEEPNICK again. A nick change forced by the server (an IRCnet
-    collision that gives you a nick like 0PNAAAAAA, or SVSNICK) does not
+    collision that gives you a nick like 000AAAAAB, or SVSNICK) does not
     pause it: erssi keeps trying.
 
     Works only with IRC servers assigned to a network (/NETWORK, /SERVER

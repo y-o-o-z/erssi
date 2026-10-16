@@ -466,8 +466,8 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         # the server renames us (a collision, SVSNICK): kept trying
         off = log_size(a)
         with harness.Client(port, "ctl") as ctl:
-            ctl.send("TESTNICK alice 0PNAAAAAA")
-            assert wait_log(a, off, "0PNAAAAAA"), log_since(a, off)
+            ctl.send("TESTNICK alice 000AAAAAB")
+            assert wait_log(a, off, "000AAAAAB"), log_since(a, off)
             assert wait_log(a, off, got_back("alice"), CHECK + 4), log_since(a, off)
         assert "deactivated" not in log_since(a, off), log_since(a, off)
         finish(a)
