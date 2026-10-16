@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Side-by-side main windows keep their columns when the side panels come
 and go. With sidepanel_right_auto_hide on (the default) the right panel
-is shown only while the active window is a channel, so it appears and
-goes at every switch between a channel and another window; the left one
+is shown only while a row of main windows shows a channel (here only
+#test, in the lower row), so it appears and goes at every switch between
+#test and another window of that row; the left one
 goes and comes back with /SET sidepanel_left. Each time every row of
 side-by-side windows is laid out again over the new main area; before,
 it was laid out from the widths the last time left (already rounded), so
@@ -148,7 +149,9 @@ def main():
         a.type_and_wait("/window name top1")
         a.type_and_wait("/window new -right")
         a.type_and_wait("/window name top2")
-        # uneven widths set by hand
+        # uneven widths set by hand, the right panel off (with top1
+        # active it shows the lower row's #test)
+        a.type_and_wait("/set sidepanel_right off")
         cols = save()
         assert [len(row) for row in cols] == [2, 3], cols
         goto("top1")
@@ -157,6 +160,8 @@ def main():
         resize(save()[1][0][1], TARGET[1][0])
         goto("bee")
         resize(save()[1][1][1], TARGET[1][1])
+        # bee active: no row shows a channel, the panel stays hidden
+        a.type_and_wait("/set sidepanel_right on")
         st["off"] = save()
         tiles(st["off"], 15)
         assert widths(st["off"]) == TARGET, st["off"]
@@ -315,21 +320,31 @@ def main():
         assert save() == before
 
     def t_restored_layout_is_new_reference():
-        # the layout saved (bee active: the right panel off) comes back
-        # after a restart, and the panels keep the restored widths
+        # the layout saved (the right panel off) comes back after a
+        # restart, and the panels keep the restored widths. The panel is
+        # switched off, not auto-hidden: the restart does not put every
+        # window back in its main window, and the panel shows while a
+        # row shows a channel
         a = st["alice"]
         other()
+        a.type_and_wait("/set sidepanel_right off")
         saved = save()
         off = a.all_log().stat().st_size
         a.quit()
         a.config_text = None  # the config it saved
         a.start(200, 50)
         started(off)
-        other()
         restored = save()
         tiles(restored, 15)
         assert restored == saved, f"restored {restored}, saved {saved}"
-        right_trips(restored, "after a restored layout")
+
+        def panel_on():
+            a.type_and_wait("/set sidepanel_right on")
+            channel()
+
+        def panel_off():
+            a.type_and_wait("/set sidepanel_right off")
+        trips([(panel_on, 30), (panel_off, 15)], restored, "after a restored layout")
 
     def t_sanitizers():
         reports = st["alice"].sanitizer_reports() if "alice" in st else []

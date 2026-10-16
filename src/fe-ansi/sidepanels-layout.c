@@ -108,6 +108,79 @@ static gboolean panel_rows(int *y, int *h)
 	return TRUE;
 }
 
+static int band_rows_cmp(gconstpointer a, gconstpointer b)
+{
+	const SP_BAND_ROWS *ra = a, *rb = b;
+
+	return ra->y < rb->y ? -1 : ra->y > rb->y;
+}
+
+/* The bands of the right panel, top down: one for every row of main
+ * windows (those with the same first and last line; stacked ones are rows
+ * of their own), over the text rows of that row. Each shows the nicks of
+ * one main window of its row: the active main window if it is there,
+ * else the one next to the panel (the largest last column). A GArray of
+ * SP_BAND_ROWS, for g_array_free(). */
+GArray *sp_right_band_rows(void)
+{
+	GArray *bands = g_array_new(FALSE, FALSE, sizeof(SP_BAND_ROWS));
+	GSList *tmp;
+	guint i;
+
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *mw = tmp->data;
+		int first = mw->first_line + mw->statusbar_lines_top;
+		int last = mw->last_line - mw->statusbar_lines_bottom;
+		SP_BAND_ROWS *band = NULL;
+
+		for (i = 0; i < bands->len && band == NULL; i++) {
+			SP_BAND_ROWS *b = &g_array_index(bands, SP_BAND_ROWS, i);
+			if (b->first_line == mw->first_line && b->last_line == mw->last_line)
+				band = b;
+		}
+		if (band == NULL) {
+			SP_BAND_ROWS rec;
+
+			rec.first_line = mw->first_line;
+			rec.last_line = mw->last_line;
+			rec.y = first;
+			rec.bottom = last;
+			rec.mw = mw;
+			g_array_append_val(bands, rec);
+			continue;
+		}
+		/* side by side: the text rows of all of them */
+		band->y = MIN(band->y, first);
+		band->bottom = MAX(band->bottom, last);
+		if (band->mw != active_mainwin &&
+		    (mw == active_mainwin || mw->last_column > band->mw->last_column))
+			band->mw = mw;
+	}
+	/* a row too low for any text has no band */
+	for (i = bands->len; i > 0; i--) {
+		SP_BAND_ROWS *b = &g_array_index(bands, SP_BAND_ROWS, i - 1);
+		if (b->bottom < b->y)
+			g_array_remove_index(bands, i - 1);
+	}
+	g_array_sort(bands, band_rows_cmp);
+	return bands;
+}
+
+/* TRUE when a band of the right panel would show a channel's nicks */
+static gboolean right_bands_have_channel(void)
+{
+	GArray *bands = sp_right_band_rows();
+	gboolean found = FALSE;
+	guint i;
+
+	for (i = 0; i < bands->len && !found; i++) {
+		WINDOW_REC *win = g_array_index(bands, SP_BAND_ROWS, i).mw->active;
+		found = win != NULL && win->active != NULL && IS_CHANNEL(win->active);
+	}
+	g_array_free(bands, TRUE);
+	return found;
+}
+
 /* Remove a panel and give back exactly the columns it reserved. */
 static void destroy_left_panel(SP_MAINWIN_CTX *ctx)
 {
@@ -130,8 +203,7 @@ static void destroy_right_panel(SP_MAINWIN_CTX *ctx)
 	mainwindows_reserve_columns(0, -ctx->right_reserved);
 	ctx->right_reserved = 0;
 	/* when the panel comes back the cache must not claim its old lines */
-	if (ctx->right_cache)
-		sp_cache_clear(ctx->right_cache);
+	sp_right_caches_clear(ctx);
 }
 
 static void create_left_panel(SP_MAINWIN_CTX *ctx, int width)
@@ -152,8 +224,7 @@ static void create_right_panel(SP_MAINWIN_CTX *ctx, int width)
 	ctx->right_reserved = width;
 	ctx->right_tw = term_window_create_right_panel(width);
 	ctx->right_h = 0;
-	if (ctx->right_cache)
-		sp_cache_clear(ctx->right_cache);
+	sp_right_caches_clear(ctx);
 }
 
 /* Put the existing panels over the rows of the main windows. Creates,
@@ -180,7 +251,7 @@ void sp_move_panels(void)
 	if (ctx->right_tw != NULL) {
 		x = MAX(0, term_width - ctx->right_reserved);
 		if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h)
-			sp_cache_clear(ctx->right_cache);
+			sp_right_caches_clear(ctx);
 		term_window_move(ctx->right_tw, x, y, ctx->right_reserved, h);
 		ctx->right_x = x;
 		ctx->right_y = y;
@@ -222,7 +293,6 @@ gboolean sp_layout_busy(void)
  * widest row of main windows; the right panel goes first. */
 static void layout_panels_once(SP_MAINWIN_CTX *ctx)
 {
-	WINDOW_REC *aw;
 	int left_w, right_w, base, need, y, h;
 	gboolean rows, want_left, want_right, show_left, show_right, changed, destroyed;
 	GSList *tmp;
@@ -239,11 +309,11 @@ static void layout_panels_once(SP_MAINWIN_CTX *ctx)
 	want_left = rows && left_w > 0;
 	show_left = want_left && base - left_w >= need;
 
-	/* the right panel shows the nicks of the active main window's channel */
-	aw = active_mainwin != NULL ? active_mainwin->active : NULL;
+	/* the right panel shows the nicks of a channel in every row of main
+	   windows: auto-hidden, it goes only when no row has a channel */
 	want_right = rows && right_w > 0;
 	if (want_right && get_sp_auto_hide_right())
-		want_right = aw != NULL && aw->active != NULL && IS_CHANNEL(aw->active);
+		want_right = right_bands_have_channel();
 	show_right = want_right && base - (show_left ? left_w : 0) - right_w >= need;
 
 	/* a panel that goes or has a new width gives its columns back first */
@@ -283,7 +353,7 @@ static void layout_panels_once(SP_MAINWIN_CTX *ctx)
 		for (tmp = mainwindows; tmp != NULL; tmp = tmp->next)
 			signal_emit("mainwindow resized", 1, tmp->data);
 		sp_cache_clear(ctx->left_cache);
-		sp_cache_clear(ctx->right_cache);
+		sp_right_caches_clear(ctx);
 		if (ctx->left_tw && ctx->left_h > 0)
 			draw_left_contents(ctx);
 		if (ctx->right_tw && ctx->right_h > 0)
