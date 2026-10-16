@@ -1730,7 +1730,7 @@ static void cmd_window_grow(const char *data)
 	                    "window grow", &optlist, &args))
 		return;
 
-	count = *data == '\0' ? 1 : atoi(args);
+	count = *args == '\0' ? 1 : atoi(args);
 
 	if (g_hash_table_lookup(optlist, "right") != NULL) {
 		mainwindow_grow_right_int(count);
@@ -1753,7 +1753,7 @@ static void cmd_window_shrink(const char *data)
 	                    "window shrink", &optlist, &args))
 		return;
 
-	count = *data == '\0' ? 1 : atoi(args);
+	count = *args == '\0' ? 1 : atoi(args);
 	if (count < -INT_MAX)
 		count = -INT_MAX;
 
