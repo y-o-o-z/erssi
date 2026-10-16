@@ -668,6 +668,12 @@ class Erssi:
         self.screen()
         return self._screen.styles(first, end)
 
+    def screen_and_styles(self, first=0, end=None):
+        """(screen(), screen_styles()) of ONE snapshot: two calls would
+        feed the output that came between them"""
+        rows = self.screen(first, end)
+        return rows, self._screen.styles(first, end)
+
     def wait_screen(self, check, timeout, first=0, end=None):
         """Poll the screen (columns FIRST to END - 1) until check(rows) is
         true; the last rows read, and whether it was."""
