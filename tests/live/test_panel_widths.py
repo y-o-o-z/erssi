@@ -319,6 +319,24 @@ def main():
         a.type_and_wait("/window shrink -right 2")
         assert save() == before
 
+    def t_trailing_space_and_missing_size():
+        # "/window grow -right 2 " (an alias that ends in a space) is the
+        # number 2 again, and /window size without a number says so
+        a = st["alice"]
+        other()
+        before = save()
+        a.type_and_wait("/window grow -right 2 ")
+        assert widths(save())[1][1] == widths(before)[1][1] + 2, "trailing space refused"
+        a.type_and_wait("/window shrink -right 2  ")
+        assert save() == before
+        for right in ("", "-right "):
+            for tail in ("", " "):
+                off = a.all_log().stat().st_size
+                a.type_and_wait(f"/window size {right}{tail}")
+                out = log_text(off)
+                assert "Give the number of lines or columns" in out, f"no clear error:\n{out}"
+                assert OUT_OF_RANGE not in out and save() == before, out
+
     def t_restored_layout_is_new_reference():
         # the layout saved (the right panel off) comes back after a
         # restart, and the panels keep the restored widths. The panel is
@@ -356,7 +374,7 @@ def main():
         harness.main([t_install, t_start, t_right_panel, t_left_panel, t_both_panels,
                       t_resize_is_new_reference, t_balance_is_new_reference, t_split_is_new_reference,
                       t_close_is_new_reference, t_terminal_resize_is_new_reference,
-                      t_size_is_new_reference, t_grow_shrink_one_column, t_numbers_out_of_range,
+                      t_size_is_new_reference, t_grow_shrink_one_column, t_numbers_out_of_range, t_trailing_space_and_missing_size,
                       t_restored_layout_is_new_reference,
                       t_sanitizers])
     finally:
