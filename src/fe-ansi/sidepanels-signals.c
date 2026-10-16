@@ -242,8 +242,7 @@ void sig_window_changed(WINDOW_REC *old, WINDOW_REC *new)
 	 * between channels with same dimensions wouldn't trigger a redraw.
 	 * This ensures the nicklist is properly refreshed on window change. */
 	ctx = sp_get_ctx(FALSE);
-	if (ctx && ctx->right_cache)
-		sp_cache_clear(ctx->right_cache);
+	sp_right_caches_clear(ctx);
 
 	update_left_selection_to_active();
 	redraw_both_panels_only("window_changed"); /* Window change affects both activity (left) and nicklist (right) */
@@ -269,6 +268,7 @@ void sig_window_destroyed(WINDOW_REC *window)
 	if (window && window_priorities) {
 		g_hash_table_remove(window_priorities, window);
 	}
+	sp_right_bands_forget_window(window);
 	renumber_windows_by_position();
 	redraw_both_panels_only("window_destroyed"); /* Window destruction affects both panels */
 }
@@ -509,10 +509,8 @@ void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 			sp_cache_clear(ctx->left_cache);
 			resize_debug_cache("CLEAR", "left", mw_id);
 		}
-		if (ctx->right_cache) {
-			sp_cache_clear(ctx->right_cache);
-			resize_debug_cache("CLEAR", "right", mw_id);
-		}
+		sp_right_caches_clear(ctx);
+		resize_debug_cache("CLEAR", "right", mw_id);
 
 		/* Move the panels over the main windows' rows and redraw their
 		 * CONTENTS only - do NOT lay them out here: sp_layout_panels()
@@ -551,10 +549,8 @@ static void sig_terminal_resized(void)
 			sp_cache_clear(ctx->left_cache);
 			resize_debug_cache("CLEAR_ALL", "left", -1);
 		}
-		if (ctx->right_cache) {
-			sp_cache_clear(ctx->right_cache);
-			resize_debug_cache("CLEAR_ALL", "right", -1);
-		}
+		sp_right_caches_clear(ctx);
+		resize_debug_cache("CLEAR_ALL", "right", -1);
 	}
 
 	/* Recalculate the sidepanel geometry (once, for the screen): the

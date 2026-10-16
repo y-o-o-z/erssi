@@ -39,6 +39,8 @@ SP_MAINWIN_CTX *sp_get_ctx(gboolean create);
 void sp_layout_panels(void);
 gboolean sp_layout_busy(void);
 void sp_move_panels(void);
+/* the rows of the right panel's bands, one per row of main windows */
+GArray *sp_right_band_rows(void);
 void apply_reservations_all(void);
 void apply_and_redraw(void);
 

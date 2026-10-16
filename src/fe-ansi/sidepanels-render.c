@@ -25,6 +25,7 @@
 #include <irssi/src/fe-ansi/mainwindows.h>
 #include <irssi/src/fe-ansi/sidepanels.h>
 #include <irssi/src/fe-ansi/sidepanels-render.h>
+#include <irssi/src/fe-ansi/sidepanels-layout.h>
 #include <irssi/src/fe-ansi/sidepanels-text.h>
 #include <irssi/src/fe-ansi/sidepanels-activity.h>
 #include <irssi/src/core/servers.h>
@@ -56,8 +57,9 @@ gboolean batch_mode_active = FALSE;
 /* External functions we need */
 extern void sp_logf(const char *fmt, ...);
 
-/* The window whose theme the panels are drawn with, and whose channel's
-   nicks the right panel shows: the active one of the active main window. */
+/* The window whose theme the left panel is drawn with: the active one of
+   the active main window. (Each band of the right panel is drawn with the
+   theme of the window it shows.) */
 static WINDOW_REC *panel_window(void)
 {
 	return active_mainwin != NULL ? active_mainwin->active : active_win;
@@ -105,6 +107,7 @@ void sp_cache_clear(SP_PANEL_CACHE *cache)
 		sp_cache_line_free(&cache->lines[i]);
 	}
 	cache->count = 0;
+	cache->blank = FALSE;
 }
 
 /* Free a panel cache completely */
@@ -473,11 +476,12 @@ static void sp_cache_update_markers(SP_PANEL_CACHE *cache, int height,
 	cache->marker_below_row = height - 1;
 }
 
-/* Arrows marking more entries above/below the visible part of a panel,
- * in the theme's sidepanel_scroll_arrow format ($0 is the arrow; the format
- * must stay one cell wide - colours only, no text around $0) on the
- * panel background. Returns the number of cells drawn. */
-static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int height,
+/* Arrows marking more entries above/below the visible part of a panel
+ * (or of a band of the right panel: rows top .. top + height - 1), in the
+ * theme's sidepanel_scroll_arrow format ($0 is the arrow; the format must
+ * stay one cell wide - colours only, no text around $0) on the panel
+ * background. Returns the number of cells drawn. */
+static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int top, int height,
                                gboolean more_above, gboolean more_below)
 {
 	/* ASCII outside UTF-8: a non-UTF-8 terminal would get a C1 control
@@ -489,12 +493,12 @@ static int draw_scroll_markers(TERM_WINDOW *tw, WINDOW_REC *wctx, int x, int hei
 		return 0;
 
 	if (more_above && height > 0) {
-		draw_str_themed(tw, x, 0, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
+		draw_str_themed(tw, x, top, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
 		                utf8 ? "\xe2\x86\x91" : "^", 1); /* up arrow */
 		drawn++;
 	}
 	if (more_below && height > 1) {
-		draw_str_themed(tw, x, height - 1, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
+		draw_str_themed(tw, x, top + height - 1, wctx, TXT_SIDEPANEL_SCROLL_ARROW,
 		                utf8 ? "\xe2\x86\x93" : "v", 1); /* down arrow */
 		drawn++;
 	}
@@ -662,7 +666,7 @@ void draw_left_contents(SP_MAINWIN_CTX *ctx)
 	draw_border_vertical(tw, width, height, 1);
 
 	/* Scroll markers in the column next to the border */
-	lines_changed += draw_scroll_markers(tw, wctx, width - 2, height, has_more_above,
+	lines_changed += draw_scroll_markers(tw, wctx, width - 2, 0, height, has_more_above,
 	                                     has_more_below);
 
 	/* Only mark dirty if something changed */
@@ -716,16 +720,162 @@ static void get_nick_format_and_prefix(NICK_REC *nick, int *format, const char *
 	}
 }
 
-void draw_right_contents(SP_MAINWIN_CTX *ctx)
+static SP_RIGHT_BAND *right_band_new(void)
 {
-	TERM_WINDOW *tw;
-	WINDOW_REC *aw;
+	SP_RIGHT_BAND *band = g_new0(SP_RIGHT_BAND, 1);
+
+	band->cache = sp_cache_create();
+	return band;
+}
+
+static void right_band_free(SP_RIGHT_BAND *band)
+{
+	if (band == NULL)
+		return;
+	g_slist_free(band->order);
+	sp_cache_free(band->cache);
+	g_free(band);
+}
+
+void sp_right_bands_free(SP_MAINWIN_CTX *ctx)
+{
+	guint i;
+
+	if (ctx == NULL || ctx->right_bands == NULL)
+		return;
+	for (i = 0; i < ctx->right_bands->len; i++)
+		right_band_free(ctx->right_bands->pdata[i]);
+	g_ptr_array_free(ctx->right_bands, TRUE);
+	ctx->right_bands = NULL;
+}
+
+/* Forget every line the right panel's bands drew (and the rows between
+   them): they are drawn again in full the next time. */
+void sp_right_caches_clear(SP_MAINWIN_CTX *ctx)
+{
+	guint i;
+
+	if (ctx == NULL)
+		return;
+	for (i = 0; ctx->right_bands != NULL && i < ctx->right_bands->len; i++) {
+		SP_RIGHT_BAND *band = ctx->right_bands->pdata[i];
+		sp_cache_clear(band->cache);
+	}
+	ctx->right_gaps_dirty = TRUE;
+}
+
+/* A window that is gone is shown by no band (a click there must not reach
+   it before the next draw). */
+void sp_right_bands_forget_window(WINDOW_REC *window)
+{
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
+	guint i;
+
+	for (i = 0; ctx != NULL && ctx->right_bands != NULL && i < ctx->right_bands->len; i++) {
+		SP_RIGHT_BAND *band = ctx->right_bands->pdata[i];
+		if (band->window == window) {
+			band->window = NULL;
+			band->item = NULL;
+			sp_cache_clear(band->cache);
+		}
+	}
+}
+
+/* The band over row ROW of the right panel (0 = its top row), NULL for a
+   row between two bands. */
+SP_RIGHT_BAND *sp_right_band_at(SP_MAINWIN_CTX *ctx, int row)
+{
+	guint i;
+
+	for (i = 0; ctx != NULL && ctx->right_bands != NULL && i < ctx->right_bands->len; i++) {
+		SP_RIGHT_BAND *band = ctx->right_bands->pdata[i];
+		if (row >= band->y && row < band->y + band->h)
+			return band;
+	}
+	return NULL;
+}
+
+/* The bands for the main windows as they are now. A band keeps its scroll
+   position with the window it showed (or, as many bands as before, the
+   band at the same place - one main window keeps it whatever it shows, as
+   before the bands); its cached lines only with the same rows, window
+   and item: the cache does not know whose nicks it holds. */
+static void sync_right_bands(SP_MAINWIN_CTX *ctx)
+{
+	GArray *rows = sp_right_band_rows();
+	GPtrArray *old = ctx->right_bands;
+	GPtrArray *bands = g_ptr_array_new();
+	gboolean moved;
+	guint i, j;
+
+	moved = old == NULL || old->len != rows->len;
+	for (i = 0; i < rows->len; i++) {
+		SP_BAND_ROWS *r = &g_array_index(rows, SP_BAND_ROWS, i);
+		WINDOW_REC *win = r->mw->active;
+		WI_ITEM_REC *item = win != NULL ? win->active : NULL;
+		SP_RIGHT_BAND *band = NULL;
+		int y = r->y - ctx->right_y;
+		int h = r->bottom - r->y + 1;
+
+		/* inside the panel (they are, it covers all of them) */
+		if (y < 0) {
+			h += y;
+			y = 0;
+		}
+		if (y + h > ctx->right_h)
+			h = ctx->right_h - y;
+		if (h <= 0)
+			continue;
+
+		for (j = 0; old != NULL && j < old->len && band == NULL && win != NULL; j++) {
+			SP_RIGHT_BAND *b = old->pdata[j];
+			if (b != NULL && b->window == win) {
+				band = b;
+				old->pdata[j] = NULL;
+			}
+		}
+		if (band == NULL && old != NULL && old->len == rows->len && old->pdata[i] != NULL) {
+			band = old->pdata[i];
+			old->pdata[i] = NULL;
+		}
+		if (band == NULL) {
+			band = right_band_new();
+			moved = TRUE;
+		}
+		if (band->y != y || band->h != h)
+			moved = TRUE;
+		if (band->y != y || band->h != h || band->window != win || band->item != item)
+			sp_cache_clear(band->cache);
+		band->y = y;
+		band->h = h;
+		band->window = win;
+		band->item = item;
+		g_ptr_array_add(bands, band);
+	}
+	if (old != NULL) {
+		for (j = 0; j < old->len; j++)
+			right_band_free(old->pdata[j]);
+		g_ptr_array_free(old, TRUE);
+	}
+	ctx->right_bands = bands;
+	if (moved)
+		ctx->right_gaps_dirty = TRUE;
+	g_array_free(rows, TRUE);
+}
+
+/* Draw one band: the nicks of its window's channel from its first row,
+   the rest of its rows empty; all of it empty when the window is no
+   channel. Returns the number of rows (and markers) drawn. */
+static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
+{
+	TERM_WINDOW *tw = ctx->right_tw;
+	WINDOW_REC *aw = band->window;
+	SP_PANEL_CACHE *cache = band->cache;
+	int top = band->y;
 	int height;
-	int width;
 	int skip = 0;
 	int index;
 	int row;
-	SP_PANEL_CACHE *cache = NULL;
 	gboolean full_redraw;
 	int new_count;
 	int lines_changed = 0;
@@ -734,32 +884,16 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 	gboolean has_more_above = FALSE;
 	gboolean has_more_below = FALSE;
 
-	if (!ctx)
-		return;
-	tw = ctx->right_tw;
-	if (!tw)
-		return;
-
-	height = ctx->right_h;
 	/* the row cache has a fixed size: rows below it stay empty */
-	if (height > SP_CACHE_MAX_LINES)
-		height = SP_CACHE_MAX_LINES;
-	width = ctx->right_w;
-	aw = panel_window();
+	height = MIN(band->h, SP_CACHE_MAX_LINES);
 	index = 0;
 	row = 0;
 	new_count = 0;
 	total_items = 0;
 
-	/* Ensure cache exists */
-	if (!ctx->right_cache) {
-		ctx->right_cache = sp_cache_create();
-	}
-	cache = ctx->right_cache;
-
-	/* DEBUG: Log what we see when entering draw_right_contents */
-	sp_logf("DEBUG draw_right_contents: aw=%p, aw->active=%p, name='%s', IS_CHANNEL=%d, cache->count=%d",
-	        (void*)aw,
+	/* DEBUG: Log what we see when entering draw_right_band */
+	sp_logf("DEBUG draw_right_band: y=%d h=%d aw=%p, aw->active=%p, name='%s', IS_CHANNEL=%d, cache->count=%d",
+	        top, height, (void*)aw,
 	        aw ? (void*)aw->active : NULL,
 	        aw && aw->active ? aw->active->visible_name : "NULL",
 	        aw && aw->active ? IS_CHANNEL(aw->active) : -1,
@@ -768,36 +902,38 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 	/* Check if we need full redraw (dimensions or scroll changed) */
 	full_redraw = sp_cache_needs_full_redraw(cache, height, width, skip);
 
-	/* Free previous right_order list */
-	if (ctx->right_order) {
-		g_slist_free(ctx->right_order);
-		ctx->right_order = NULL;
+	/* Free previous order list */
+	if (band->order) {
+		g_slist_free(band->order);
+		band->order = NULL;
 	}
 
-	/* If no channel active, clear panel and draw border */
+	/* No channel = no nicks: every row of the band empty (they may hold
+	   the nicks of the window that was there before), once */
 	if (!aw || !aw->active || !aw->active->visible_name ||
-	    !IS_CHANNEL(aw->active)) {
-		/* No channel = no nicks */
-		ctx->right_total_items = 0;
-		ctx->right_scroll_offset = 0;
-		/* Clear any cached lines */
-		if (cache->count > 0) {
-			int i;
-			for (i = 0; i < cache->count && i < height; i++) {
-				sp_clear_line(tw, i, width);
-				sp_cache_line_free(&cache->lines[i]);
-			}
-			cache->count = 0;
-			lines_changed = 1;
-		}
-		draw_border_vertical(tw, width, height, 0);
-		if (lines_changed > 0) {
-			irssi_set_dirty();
-		}
-		return;
-	}
+	    !IS_CHANNEL(aw->active) || CHANNEL(aw->active)->server == NULL) {
+		int i;
 
-	if (IS_CHANNEL(aw->active)) {
+		band->scroll_offset = 0;
+		if (!cache->blank || cache->panel_height != height ||
+		    cache->panel_width != width) {
+			for (i = 0; i < height; i++)
+				sp_clear_line(tw, top + i, width);
+			lines_changed = height;
+		}
+		for (i = 0; i < cache->count; i++)
+			sp_cache_line_free(&cache->lines[i]);
+		cache->count = 0;
+		cache->scroll_offset = 0;
+		cache->panel_height = height;
+		cache->panel_width = width;
+		cache->marker_above = cache->marker_below = FALSE;
+		cache->blank = TRUE;
+		return lines_changed;
+	}
+	cache->blank = FALSE;
+
+	{
 		CHANNEL_REC *ch = CHANNEL(aw->active);
 		SERVER_REC *server = ch->server;
 		GSList *nicks = nicklist_getnicks(ch);
@@ -813,23 +949,6 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 		 * before the status) - 1 (outer column, for the scroll markers) */
 		int nick_max_width = MAX(1, width - 4);
 
-		/* Safety check for server */
-		if (!server) {
-			g_slist_free(nicks);
-			/* Clear any cached lines */
-			if (cache->count > 0) {
-				int i;
-				for (i = 0; i < cache->count && i < height; i++) {
-					sp_clear_line(tw, i, width);
-					sp_cache_line_free(&cache->lines[i]);
-				}
-				cache->count = 0;
-			}
-			draw_border_vertical(tw, width, height, 0);
-			irssi_set_dirty();
-			return;
-		}
-
 		/* Get nick prefix order from server (from ISUPPORT PREFIX) */
 		nick_prefix = server->get_nick_flags ? server->get_nick_flags(server) : NULL;
 		if (!nick_prefix || *nick_prefix == '\0')
@@ -844,7 +963,6 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 
 		/* Count total nicks and clamp scroll offset */
 		total_items = g_slist_length(sorted_nicks);
-		ctx->right_total_items = total_items;
 
 		/* DEBUG: Log nick count and cache state */
 		sp_logf("DEBUG draw_right CHANNEL: total_nicks=%d, cache->count=%d, full_redraw=%d, height=%d",
@@ -854,10 +972,10 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 		max_scroll = MAX(0, total_items - 1);
 
 		/* Clamp scroll offset */
-		if (ctx->right_scroll_offset > max_scroll)
-			ctx->right_scroll_offset = max_scroll;
+		if (band->scroll_offset > max_scroll)
+			band->scroll_offset = max_scroll;
 
-		skip = ctx->right_scroll_offset;
+		skip = band->scroll_offset;
 
 		/* Force full redraw if cache was cleared (e.g., after switching from non-channel window)
 		 * This fixes the bug where nicklist stays empty when returning from DCC chat */
@@ -881,7 +999,7 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 				continue;
 
 			/* Use prepend (O(1)) instead of append (O(n)) - will reverse at end */
-			ctx->right_order = g_slist_prepend(ctx->right_order, nick);
+			band->order = g_slist_prepend(band->order, nick);
 
 			if (index++ < skip)
 				continue;
@@ -905,11 +1023,11 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 			if (line_changed) {
 				/* Clear line first with clrtoeol (no full panel clear!) */
 				term_set_color(tw, ATTR_RESET);
-				term_move(tw, 0, row);
+				term_move(tw, 0, top + row);
 				term_clrtoeol(tw);
 
 				/* Draw the new content */
-				draw_str_themed_2params(tw, 1, row, aw, format,
+				draw_str_themed_2params(tw, 1, top + row, aw, format,
 				                        prefix_str, truncated_nick, width - 1);
 
 				/* Update cache */
@@ -924,7 +1042,7 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 		}
 
 		/* Reverse to get correct order (we used prepend for performance) */
-		ctx->right_order = g_slist_reverse(ctx->right_order);
+		band->order = g_slist_reverse(band->order);
 
 		g_slist_free(sorted_nicks);
 	}
@@ -938,7 +1056,7 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 				sp_cache_line_free(&cache->lines[i]);
 			}
 			/* Always clear the line on screen */
-			sp_clear_line(tw, i, width);
+			sp_clear_line(tw, top + i, width);
 			lines_changed++;
 		}
 	}
@@ -949,13 +1067,51 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 	cache->panel_height = height;
 	cache->panel_width = width;
 
-	draw_border_vertical(tw, width, height, 0);
-
 	/* Scroll markers in the outer (right) column: column 1, right after the
 	 * border, is the nick's mode prefix - a marker there read as part of the
 	 * nick (e.g. "vKnut") */
-	lines_changed += draw_scroll_markers(tw, aw, width - 1, height, has_more_above,
+	lines_changed += draw_scroll_markers(tw, aw, width - 1, top, height, has_more_above,
 	                                     has_more_below);
+	return lines_changed;
+}
+
+/* The right panel: a band for every row of main windows (with one main
+ * window, one band over all the panel's rows), the rows between bands -
+ * the statusbars of the rows above - empty, the border along all of it. */
+void draw_right_contents(SP_MAINWIN_CTX *ctx)
+{
+	TERM_WINDOW *tw;
+	int height;
+	int width;
+	int lines_changed = 0;
+	guint i;
+
+	if (!ctx)
+		return;
+	tw = ctx->right_tw;
+	if (!tw)
+		return;
+
+	height = MIN(ctx->right_h, SP_CACHE_MAX_LINES);
+	width = ctx->right_w;
+
+	sync_right_bands(ctx);
+	for (i = 0; i < ctx->right_bands->len; i++)
+		lines_changed += draw_right_band(ctx, ctx->right_bands->pdata[i], width);
+
+	if (ctx->right_gaps_dirty) {
+		int y;
+
+		for (y = 0; y < height; y++) {
+			if (sp_right_band_at(ctx, y) == NULL) {
+				sp_clear_line(tw, y, width);
+				lines_changed++;
+			}
+		}
+		ctx->right_gaps_dirty = FALSE;
+	}
+
+	draw_border_vertical(tw, width, height, 0);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
@@ -1048,7 +1204,7 @@ void sidepanels_invalidate_caches(void)
 	if (ctx == NULL)
 		return;
 	sp_cache_clear(ctx->left_cache);
-	sp_cache_clear(ctx->right_cache);
+	sp_right_caches_clear(ctx);
 }
 
 void redraw_both_panels_only(const char *event_name)

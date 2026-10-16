@@ -27,9 +27,32 @@
 #include <irssi/src/fe-ansi/term.h>
 #include <irssi/src/fe-common/core/fe-windows.h>
 #include <irssi/src/core/servers.h>
+#include <irssi/src/fe-ansi/mainwindows.h>
 
 /* Forward declaration for cache structures */
 typedef struct _SP_PANEL_CACHE SP_PANEL_CACHE;
+
+/* The rows of one band of the right panel (sp_right_band_rows): a row of
+   main windows - those with the same first and last line - and the main
+   window of it whose channel's nicks the band shows. */
+typedef struct {
+	int first_line, last_line; /* the row's main windows */
+	int y, bottom;             /* the screen rows of their text */
+	MAIN_WINDOW_REC *mw;
+} SP_BAND_ROWS;
+
+/* One band of the right panel: the nicks of one row of main windows'
+   channel, over the text rows of that row (stacked rows have a band
+   each). Its state is its own: scrolled, clicked and cached apart from
+   the others. */
+typedef struct {
+	int y, h;               /* its rows, from the panel's top row */
+	WINDOW_REC *window;     /* the window whose channel it shows */
+	WI_ITEM_REC *item;      /* that window's item, when it was drawn */
+	int scroll_offset;
+	GSList *order;          /* nick pointers in the order drawn */
+	SP_PANEL_CACHE *cache;  /* its lines, row 0 = its first row */
+} SP_RIGHT_BAND;
 
 /* SP_MAINWIN_CTX structure definition - shared across all modules. There is
    one, for the whole screen: the panels are not per main window. */
@@ -46,9 +69,6 @@ typedef struct {
 	int left_selected_index;
 	int left_scroll_offset;
 	int left_total_items;      /* Total items in left panel (for scroll limits) */
-	int right_selected_index;
-	int right_scroll_offset;
-	int right_total_items;     /* Total items in right panel (for scroll limits) */
 	/* cached geometry for hit-test and drawing */
 	int left_x;
 	int left_y;
@@ -56,11 +76,13 @@ typedef struct {
 	int right_x;
 	int right_y;
 	int right_h;
-	/* ordered nick pointers matching rendered order */
-	GSList *right_order;
 	/* differential rendering cache */
 	SP_PANEL_CACHE *left_cache;
-	SP_PANEL_CACHE *right_cache;
+	/* the right panel's bands (SP_RIGHT_BAND), top down, as last drawn */
+	GPtrArray *right_bands;
+	/* the rows between the bands (statusbars of the rows above) are to
+	   be cleared: the panel moved, or a band has other rows */
+	gboolean right_gaps_dirty;
 } SP_MAINWIN_CTX;
 
 /* Window Priority State - Simpler approach */
@@ -107,6 +129,9 @@ struct _SP_PANEL_CACHE {
 	int panel_height;    /* Cached panel height */
 	int panel_width;     /* Cached panel width */
 	gboolean initialized;
+	/* every row was cleared for an empty band of this height and width
+	 * (no channel): nothing to draw until that changes */
+	gboolean blank;
 	/* scroll markers drawn last time, so rows whose marker went away are
 	 * redrawn (the row text itself did not change) */
 	gboolean marker_above;

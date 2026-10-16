@@ -129,19 +129,12 @@ static void destroy_ctx(void)
 		term_window_destroy(ctx->right_tw);
 		ctx->right_tw = NULL;
 	}
-	if (ctx->right_order) {
-		g_slist_free(ctx->right_order);
-		ctx->right_order = NULL;
-	}
 	/* Free differential rendering caches */
 	if (ctx->left_cache) {
 		sp_cache_free(ctx->left_cache);
 		ctx->left_cache = NULL;
 	}
-	if (ctx->right_cache) {
-		sp_cache_free(ctx->right_cache);
-		ctx->right_cache = NULL;
-	}
+	sp_right_bands_free(ctx);
 	g_free(ctx);
 	sp_ctx = NULL;
 }
@@ -389,23 +382,24 @@ static gboolean handle_click_at(int x, int y, int button)
 			int px = ctx->right_x, py = ctx->right_y, pw = ctx->right_w,
 			    ph = ctx->right_h;
 			if (x >= px && x < px + pw && y >= py && y < py + ph) {
-				int row = y - py;
-				WINDOW_REC *aw = active_mainwin != NULL ? active_mainwin->active : NULL;
+				/* a click in a band: a nick of that band's channel */
+				SP_RIGHT_BAND *band = sp_right_band_at(ctx, y - py);
+				WINDOW_REC *aw = band != NULL ? band->window : NULL;
 				if (aw && IS_CHANNEL(aw->active)) {
 					CHANNEL_REC *ch = CHANNEL(aw->active);
-					int target_index = ctx->right_scroll_offset + row;
-					int count = g_slist_length(ctx->right_order);
+					int target_index = band->scroll_offset + (y - py - band->y);
+					int count = g_slist_length(band->order);
 					if (target_index >= 0 && target_index < count) {
-						NICK_REC *nick = g_slist_nth_data(ctx->right_order,
+						NICK_REC *nick = g_slist_nth_data(band->order,
 						                                  target_index);
 						GSList *current = nicklist_getnicks(ch);
 
 						/* the order is rebuilt a moment after a part or
-						 * quit: the nick may be gone already */
+						 * quit (or another channel in the band): the
+						 * nick may not be in this channel */
 						if (g_slist_find(current, nick) == NULL)
 							nick = NULL;
 						g_slist_free(current);
-						ctx->right_selected_index = target_index;
 						if (nick && nick->nick)
 							signal_emit("command query", 3, nick->nick,
 							            ch->server, ch);
@@ -482,9 +476,14 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 				ph = ctx->right_h;
 				if (event->x >= px && event->x < px + pw &&
 				    event->y >= py && event->y < py + ph) {
-					ctx->right_scroll_offset = MAX(0, ctx->right_scroll_offset + delta);
-					redraw_all();
-					irssi_set_dirty();
+					/* the band under the wheel scrolls, alone */
+					SP_RIGHT_BAND *band = sp_right_band_at(ctx, event->y - py);
+
+					if (band != NULL) {
+						band->scroll_offset = MAX(0, band->scroll_offset + delta);
+						redraw_all();
+						irssi_set_dirty();
+					}
 					return TRUE;
 				}
 			}

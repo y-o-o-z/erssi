@@ -53,6 +53,14 @@ char *truncate_nick_for_sidepanel(const char *nick, int max_width);
 void draw_left_contents(SP_MAINWIN_CTX *ctx);
 void draw_right_contents(SP_MAINWIN_CTX *ctx);
 
+/* The right panel's bands: the one over a row of the panel (NULL between
+   bands), their cached lines forgotten, a window no band may show any
+   more, all of them freed */
+SP_RIGHT_BAND *sp_right_band_at(SP_MAINWIN_CTX *ctx, int row);
+void sp_right_caches_clear(SP_MAINWIN_CTX *ctx);
+void sp_right_bands_forget_window(WINDOW_REC *window);
+void sp_right_bands_free(SP_MAINWIN_CTX *ctx);
+
 /* Redraw functions */
 void redraw_all(void);
 void redraw_right_panels_only(const char *event_name);
