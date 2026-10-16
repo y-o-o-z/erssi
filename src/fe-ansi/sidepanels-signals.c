@@ -225,8 +225,6 @@ void sig_server_connected(SERVER_REC *server)
 
 void sig_window_changed(WINDOW_REC *old, WINDOW_REC *new)
 {
-	SP_MAINWIN_CTX *ctx;
-
 	(void) old;
 
 	/* Reset priority when user opens/switches to window */
@@ -237,13 +235,9 @@ void sig_window_changed(WINDOW_REC *old, WINDOW_REC *new)
 		reset_window_priority(new);
 	}
 
-	/* Clear the right panel cache when switching windows.
-	 * The cache doesn't track which channel it belongs to, so switching
-	 * between channels with same dimensions wouldn't trigger a redraw.
-	 * This ensures the nicklist is properly refreshed on window change. */
-	ctx = sp_get_ctx(FALSE);
-	sp_right_caches_clear(ctx);
-
+	/* The right panel's caches are left alone: drawing the bands drops
+	 * the cache of the band whose window or item changed, and only
+	 * that one (sync_right_bands). */
 	update_left_selection_to_active();
 	redraw_both_panels_only("window_changed"); /* Window change affects both activity (left) and nicklist (right) */
 }

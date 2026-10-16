@@ -4,8 +4,9 @@ every row of main windows, each over the text rows of its own row, with
 the nicks of that row's channel (the active main window's window, or else
 the one next to the panel). A row whose window is no channel has an empty
 band, and with sidepanel_right_auto_hide the panel stays while one band
-shows a channel. A nick that joins shows up in its own band only; a click
-or the wheel in a band acts on that band's channel. With one main window
+shows a channel; a band whose window is closed shows the next one. A
+nick that joins shows up in its own band only; a click or the wheel in
+a band acts on that band's channel. With one main window
 the panel is what it was: the active channel's nicks over all its rows.
 Before, the panel showed the active main window's channel over all the
 main windows, and went away when that window was no channel.
@@ -296,6 +297,39 @@ def main():
         goto("aye")
         wait_bands(want, "aye in the upper row, active again")
 
+    def t_window_close():
+        # /WINDOW CLOSE of the window a band shows: the window is gone,
+        # its main window shows another one and the band that one's nicks
+        # (a click and the wheel there never reach the closed window)
+        a = st["alice"]
+        lower = st["lower"]
+        c = harness.Client(st["port"], "gus")
+        st["clients"].append(c)
+        c.send("JOIN #three")
+        c.expect(" JOIN #three")
+        goto(lower)
+        a.type_and_wait("/window new hide", "/join -window #three")
+        end = time.time() + WAIT
+        while wn()[0] != "#three":
+            assert time.time() < end, "#three did not open in the lower row"
+            time.sleep(0.1)
+        upper, low = rows_of(st["upper"]), rows_of(lower)
+        wait_bands({upper: [], low: ["alice", "gus"]}, "#three in the lower row")
+        a.type_and_wait("/window close")
+        shown = wn()[0]
+        assert shown != "#three", shown
+        want = {upper: [], low: st["names"].get(shown, [])}
+        wait_bands(want, f"#three closed, {shown} in the lower row")
+        first, lines = low
+        click(PANEL + 5, first + lines - 2)
+        wheel(PANEL + 5, first + 1, True)
+        wheel(PANEL + 5, first + 1, False)
+        wait_bands(want, "a click and the wheel in the lower band")
+        assert a.proc.poll() is None, "erssi exited"
+        # the lower channel back in the lower row
+        goto(lower)
+        wait_bands({upper: [], low: st["names"][lower]}, f"{lower} back in the lower row")
+
     def t_close_upper():
         # the upper main window goes: one band over the whole main window,
         # nothing left of the empty band or of the statusbar row
@@ -317,7 +351,7 @@ def main():
     try:
         harness.main([t_install, t_start, t_one_window, t_two_rows, t_statusbar_gap, t_active_moves,
                       t_join_lower, t_wheel_lower, t_click_lower, t_side_by_side, t_upper_no_channel,
-                      t_close_upper, t_sanitizers])
+                      t_window_close, t_close_upper, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()

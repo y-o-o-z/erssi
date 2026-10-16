@@ -58,6 +58,7 @@ class Screen:
         self.cols, self.rows = cols, rows
         self.top, self.bottom = 0, rows - 1
         self.x, self.y = min(self.x, cols - 1), min(self.y, rows - 1)
+        self.saved = (min(self.saved[0], cols - 1), min(self.saved[1], rows - 1))
         self.wrap = False
 
     def lines(self, first=0, end=None):

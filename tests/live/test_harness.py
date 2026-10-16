@@ -119,6 +119,11 @@ def main():
         assert s.lines(2, 5) == ["   ", "a  ", "   ", "\u5b57 "], s.lines(2, 5)
         s.feed(b"\x1b[r\x1b[1;1H\x1b[2J")
         assert s.lines() == [" " * 10] * 4, s.lines()
+        # a cursor saved before the screen got smaller comes back inside it
+        s.feed(b"\x1b[4;10H\x1b7\x1b[1;1H")
+        s.resize(5, 2)
+        s.feed(b"\x1b8z")
+        assert s.lines() == ["     ", "    z"], s.lines()
 
     def t_skip_case():
         # a case that raises SkipCase is reported as SKIP, the others still run
