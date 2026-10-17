@@ -36,11 +36,18 @@
 #    tab are comments; every other line is a pattern, "#chan" too.
 #    Without the file, or with no pattern in it, the push is refused;
 #    PREPUSH_NO_PATTERNS=1 git push pushes once without this check.
+# What the remote has: what it reports for each pushed ref and our copies of
+# its branches (refs/remotes/<remote>/*; a push to a URL uses the remote of
+# that URL, if there is one). Push to a remote that has been fetched: to a
+# new remote the whole history counts as new, except the branches of the
+# upstream projects' remotes - the remotes named in git config
+# prepush.upstream (a list of names; "upstream irssi" when it is not set),
+# whose commits are theirs and not checked.
 # The hook's temporary files live in one directory, removed on exit and on
 # HUP, INT and TERM.
 # Skip in an emergency with: git push --no-verify - it skips every check
-# above, so prefer PREPUSH_NO_PATTERNS or PREPUSH_RETAG where one of them
-# fits.
+# above, so prefer PREPUSH_NO_PATTERNS, PREPUSH_RETAG or prepush.upstream
+# where one of them fits.
 set -u
 ROOT=$(git rev-parse --show-toplevel)
 EMAIL='136268860+y-o-o-z@users.noreply.github.com'
@@ -49,12 +56,29 @@ ZERO=0000000000000000000000000000000000000000
 REMOTE=${1:-}                                   # its name, or the URL
 fail=0
 # what this remote is known to have: its remote-tracking branches, when it
-# is a remote of this repository (not a URL). Those of other remotes do not
-# count - a commit on staging is not on GitHub.
-tracking=""
+# is a remote of this repository - by name, or by a URL that one of the
+# remotes has. Those of other remotes do not count - a commit on staging is
+# not on GitHub.
+remote_name=""
 if [ -n "$REMOTE" ] && git config --get "remote.$REMOTE.url" >/dev/null 2>&1; then
-    tracking="refs/remotes/$REMOTE/"
+    remote_name=$REMOTE
+elif [ -n "$REMOTE" ]; then
+    remote_name=$(git config --get-regexp '^remote\..*\.(push)?url$' 2>/dev/null |
+        awk -v u="$REMOTE" '$2 == u { sub(/^remote\./, "", $1); sub(/\.(push)?url$/, "", $1); print $1; exit }')
 fi
+tracking=""
+[ -z "$remote_name" ] || tracking="refs/remotes/$remote_name/"
+# the branches of the upstream projects' remotes, as rev-list arguments
+# (remote names without blanks or glob characters only; expanded with
+# set -f)
+up_names=$(git config --get-all prepush.upstream 2>/dev/null) || up_names="upstream irssi"
+UPSTREAM=""
+for u in $up_names; do
+    case "$u" in *[!A-Za-z0-9._-]*) continue ;; esac
+    git config --get "remote.$u.url" >/dev/null 2>&1 || continue
+    [ "$u" != "$remote_name" ] || continue
+    UPSTREAM="$UPSTREAM --glob=refs/remotes/$u/*"
+done
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
 warn() { printf 'pre-push: warning: %s\n' "$*" >&2; }
 # a release tag the one-time re-signing names (PREPUSH_RETAG)
@@ -161,9 +185,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # this ref or from our copies of its branches; when the tip is unknown
     # here (force push without fetching), from those copies only
     if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
-        range=$(git rev-list "$tip" --not "$remote_sha" ${tracking:+--glob="$tracking*"}) || range=FAIL
+        # shellcheck disable=SC2086 # $UPSTREAM: words, globbing off
+        range=$(set -f; git rev-list "$tip" --not "$remote_sha" ${tracking:+--glob="$tracking*"} $UPSTREAM) || range=FAIL
     else
-        range=$(git rev-list "$tip" ${tracking:+--not --glob="$tracking*"}) || range=FAIL
+        # shellcheck disable=SC2086
+        range=$(set -f; git rev-list "$tip" --not ${tracking:+--glob="$tracking*"} $UPSTREAM) || range=FAIL
     fi
     [ "$range" = FAIL ] && { bad "$local_ref: cannot list the pushed commits"; continue; }
     for c in $range; do
@@ -191,9 +217,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
             base=$remote_sha
         else
-            base=$(git rev-parse -q --verify "refs/remotes/$REMOTE/main^{commit}" 2>/dev/null) || base=
+            base=$(git rev-parse -q --verify "${tracking:-refs/remotes/$REMOTE/}main^{commit}" 2>/dev/null) || base=
         fi
-        main_range=$(git rev-list "$tip" --not ${base:+"$base"}) ||
+        # shellcheck disable=SC2086 # $UPSTREAM: words, globbing off
+        main_range=$(set -f; git rev-list "$tip" --not ${base:+"$base"} $UPSTREAM) ||
             { bad "$remote_ref: cannot list the commits new to main"; main_range=; }
         unsigned=0
         for c in $main_range; do

@@ -195,11 +195,42 @@ push 'a commit to another branch, before its pattern' ok -- HEAD:refs/heads/dev/
 printf 'secret-box\n' > "$PATTERNS"
 push 'the same commit, then to main of the same remote' ok -- HEAD:main
 
-# a push to a URL instead of a remote name
+# a push to a URL instead of a remote name: that remote's branches count
 newrepo
 cm -S -m 'x'
 to=$r.git
 push 'signed commit to main by URL' ok -- HEAD:main
+to=origin
+cm -S --author='someone <someone@example.invalid>' -m 'theirs'
+push 'foreign author to a branch, --no-verify' ok -- --no-verify HEAD:refs/heads/dev/f
+to=$r.git
+push 'a new branch by URL over what the remote has' ok -- HEAD:refs/heads/dev/g
+to=origin
+
+# commits of the upstream projects (irssi, erssi-org) are theirs: on a
+# remote that does not have them yet they are not checked
+upstream_repo() {   # a repository with one commit by someone else, as remote $1
+    git init -q "$r.up" &&
+        echo up > "$r.up/u" && git -C "$r.up" add u &&
+        git -C "$r.up" -c user.name=up -c user.email=up@example.invalid commit -q -m 'upstream' &&
+        git -C "$r" remote add "$1" "$r.up" && git -C "$r" fetch -q "$1" 2>/dev/null &&
+        git -C "$r" merge -q -S --allow-unrelated-histories -m 'merge upstream' "$1/main" >/dev/null
+}
+newrepo
+upstream_repo upstream
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+to=fresh
+push 'upstream history to a new remote' ok -- main
+push 'upstream history as a new branch' ok -- HEAD:refs/heads/dev/u
+to=origin
+
+newrepo
+upstream_repo theirs
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+to=fresh
+push 'upstream history from a remote not named as upstream' refused 'author/committer' -- main
+git -C "$r" config prepush.upstream 'erssi-org theirs'
+push 'the same with prepush.upstream naming it' ok -- main
 to=origin
 
 # main created on an empty remote: everything it gets is new to it
