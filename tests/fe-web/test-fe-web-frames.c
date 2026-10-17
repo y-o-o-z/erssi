@@ -294,7 +294,7 @@ static void test_masked_text_answered(void)
 	fe_web_fuzz_client_free(c);
 }
 
-/* one read holds an unmasked frame and then masked ones;
+/* One read holds an unmasked frame and then masked ones;
  * nothing after the refusal is handled (no pong, no answer) */
 static void test_nothing_after_refusal(void)
 {
@@ -394,6 +394,164 @@ static void test_no_frames_before_handshake(void)
 	fe_web_fuzz_client_free(c);
 }
 
+/* Does data end with the bytes 'what' */
+static gboolean ends_with(const GByteArray *data, const void *what, gsize len)
+{
+	return data->len >= len && memcmp(data->data + data->len - len, what, len) == 0;
+}
+
+/* RFC 6455 4.1: a client may send frames as soon as its request is sent.
+ * A frame in the same read as the end of the request is handled once the
+ * login is done, after the 101 and auth_ok. */
+static void test_frame_in_same_read_as_request(void)
+{
+	static const guchar pong[] = { 0x8A, 0x03, 'a', 'b', 'c' };
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", FALSE, FALSE);
+	GByteArray *all = g_byte_array_new();
+	GByteArray *ping = test_frame(WS_OPCODE_PING, "abc", 3, TRUE);
+	char *request = test_request(FE_WEB_FUZZ_PASSWORD);
+
+	g_byte_array_append(all, (const guchar *) request, strlen(request));
+	g_byte_array_append(all, ping->data, ping->len);
+	fe_web_fuzz_client_send(c, all->data, all->len);
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_true(c->authenticated);
+	g_assert_true(test_starts_with(fe_web_fuzz_received(), "HTTP/1.1 101 "));
+	g_assert_true(ends_with(fe_web_fuzz_received(), pong, sizeof(pong)));
+	g_assert_cmpuint(c->input_buffer->len, ==, 0);
+	g_free(request);
+	g_byte_array_unref(ping);
+	g_byte_array_unref(all);
+	fe_web_fuzz_client_free(c);
+}
+
+/* The same with the frame cut: its first part comes with the request, the
+ * rest in the next read */
+static void test_frame_split_after_request(void)
+{
+	static const guchar pong[] = { 0x8A, 0x03, 'a', 'b', 'c' };
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", FALSE, FALSE);
+	GByteArray *all = g_byte_array_new();
+	GByteArray *ping = test_frame(WS_OPCODE_PING, "abc", 3, TRUE);
+	char *request = test_request(FE_WEB_FUZZ_PASSWORD);
+	gsize before;
+
+	g_byte_array_append(all, (const guchar *) request, strlen(request));
+	g_byte_array_append(all, ping->data, 3);
+	fe_web_fuzz_client_send(c, all->data, all->len);
+	g_assert_true(c->authenticated);
+	g_assert_cmpuint(c->input_buffer->len, ==, 3);
+	before = fe_web_fuzz_received()->len;
+	fe_web_fuzz_client_send(c, ping->data + 3, ping->len - 3);
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_cmpuint(fe_web_fuzz_received()->len, ==, before + sizeof(pong));
+	g_assert_true(ends_with(fe_web_fuzz_received(), pong, sizeof(pong)));
+	g_free(request);
+	g_byte_array_unref(ping);
+	g_byte_array_unref(all);
+	fe_web_fuzz_client_free(c);
+}
+
+/* An unmasked frame right after the request is refused like any other */
+static void test_unmasked_frame_after_request(void)
+{
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", FALSE, FALSE);
+	GByteArray *all = g_byte_array_new();
+	GByteArray *ping = test_frame(WS_OPCODE_PING, "abc", 3, FALSE);
+	char *request = test_request(FE_WEB_FUZZ_PASSWORD);
+
+	g_byte_array_append(all, (const guchar *) request, strlen(request));
+	g_byte_array_append(all, ping->data, ping->len);
+	fe_web_fuzz_client_send(c, all->data, all->len);
+	g_assert_false(fe_web_fuzz_client_alive(c));
+	g_assert_true(test_starts_with(fe_web_fuzz_received(), "HTTP/1.1 101 "));
+	g_assert_true(ends_with(fe_web_fuzz_received(), refused, sizeof(refused)));
+	g_free(request);
+	g_byte_array_unref(ping);
+	g_byte_array_unref(all);
+	fe_web_fuzz_client_free(c);
+}
+
+/* Only the request itself is read as the request: a header line in the
+ * bytes after its end does not complete it */
+static void test_header_after_request_not_read(void)
+{
+	static const char request[] = "GET / HTTP/1.1\r\n"
+	                              "Host: 127.0.0.1:9001\r\n"
+	                              "Upgrade: websocket\r\n"
+	                              "Connection: Upgrade\r\n"
+	                              "Authorization: Bearer " FE_WEB_FUZZ_PASSWORD "\r\n"
+	                              "\r\n"
+	                              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", FALSE, FALSE);
+
+	fe_web_fuzz_client_send(c, (const guchar *) request, strlen(request));
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_false(c->handshake_done);
+	g_assert_cmpuint(fe_web_fuzz_received()->len, ==, 0);
+	fe_web_fuzz_client_free(c);
+}
+
+/* The answer to a masked close frame with this payload */
+static GByteArray *close_answer(const void *payload, gsize len)
+{
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, FALSE);
+	GByteArray *got = g_byte_array_new();
+
+	send_frame(c, WS_OPCODE_CLOSE, payload, len, TRUE);
+	g_assert_false(fe_web_fuzz_client_alive(c));
+	g_byte_array_append(got, fe_web_fuzz_received()->data, fe_web_fuzz_received()->len);
+	fe_web_fuzz_client_free(c);
+	return got;
+}
+
+static void assert_close_answer(int code, int want)
+{
+	guchar payload[2] = { code >> 8, code & 0xff };
+	guchar answer[4] = { 0x88, 0x02, want >> 8, want & 0xff };
+	GByteArray *got = close_answer(payload, sizeof(payload));
+
+	if (got->len != sizeof(answer) || memcmp(got->data, answer, sizeof(answer)) != 0)
+		g_error("close %d: answered with %u bytes, not close %d", code, got->len, want);
+	g_byte_array_unref(got);
+}
+
+/* RFC 6455 5.5.1 and 7.4: the status of a client's close is echoed when it
+ * is one an endpoint may send; 1005, 1006 and 1015 must never be in a close
+ * frame, and codes that are not defined, or a status cut to one byte, are
+ * a protocol error (1002) */
+static void test_close_status_echoed_when_valid(void)
+{
+	static const int valid[] = { 1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011,
+		                     3000, 3999, 4000, 4999 };
+	static const int invalid[] = { 0, 999, 1004, 1005, 1006, 1012, 1013, 1014, 1015,
+		                       1016, 1100, 2000, 2999, 5000, 65535 };
+	static const guchar normal[] = { 0x88, 0x02, 0x03, 0xE8 };
+	GByteArray *got;
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS(valid); i++)
+		assert_close_answer(valid[i], valid[i]);
+	for (i = 0; i < G_N_ELEMENTS(invalid); i++)
+		assert_close_answer(invalid[i], 1002);
+
+	/* a status with a reason: the status is echoed */
+	got = close_answer("\x03\xe9" "bye", 5);
+	g_assert_cmpuint(got->len, ==, 4);
+	g_assert_cmpmem(got->data, 4, "\x88\x02\x03\xe9", 4);
+	g_byte_array_unref(got);
+
+	/* no status: a normal close */
+	got = close_answer("", 0);
+	g_assert_cmpmem(got->data, got->len, normal, sizeof(normal));
+	g_byte_array_unref(got);
+
+	/* one byte is no status */
+	got = close_answer("\x03", 1);
+	g_assert_cmpmem(got->data, got->len, refused, sizeof(refused));
+	g_byte_array_unref(got);
+}
+
 int main(int argc, char **argv)
 {
 	test_init(&argc, &argv);
@@ -424,6 +582,16 @@ int main(int argc, char **argv)
 	                test_refusal_after_queued_output);
 	g_test_add_func("/fe-web/frames/no-frames-before-handshake",
 	                test_no_frames_before_handshake);
+	g_test_add_func("/fe-web/frames/frame-in-same-read-as-request",
+	                test_frame_in_same_read_as_request);
+	g_test_add_func("/fe-web/frames/frame-split-after-request",
+	                test_frame_split_after_request);
+	g_test_add_func("/fe-web/frames/unmasked-frame-after-request",
+	                test_unmasked_frame_after_request);
+	g_test_add_func("/fe-web/frames/header-after-request-not-read",
+	                test_header_after_request_not_read);
+	g_test_add_func("/fe-web/frames/close-status-echoed-when-valid",
+	                test_close_status_echoed_when_valid);
 
 	return g_test_run();
 }

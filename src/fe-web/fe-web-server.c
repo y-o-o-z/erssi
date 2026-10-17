@@ -359,16 +359,60 @@ static void fe_web_close_client_flushed(WEB_CLIENT_REC *client)
 	output_watch_update(client);
 }
 
-/* Verify password from handshake request
- * Password MUST be provided in query parameter: GET /?password=secret HTTP/1.1
- */
+/* The "password" parameter of the query in the request line, percent-
+ * decoded; NULL when there is none, when it has a broken %-escape or an
+ * escaped NUL, or when the target has a '#' (a request target has no
+ * fragment, RFC 9112 3.2). '+' stays a plus (RFC 3986 gives it no meaning in a query,
+ * and clients that did not encode the password sent it as a plus). */
+static char *query_password(const char *data)
+{
+	const char *line_end, *target, *target_end, *p;
+
+	line_end = strstr(data, "\r\n");
+	if (line_end == NULL)
+		return NULL;
+	target = memchr(data, ' ', line_end - data);
+	if (target == NULL)
+		return NULL;
+	target++;
+	target_end = memchr(target, ' ', line_end - target);
+	if (target_end == NULL)
+		target_end = line_end;
+	if (memchr(target, '#', target_end - target) != NULL)
+		return NULL;
+	p = memchr(target, '?', target_end - target);
+	if (p == NULL)
+		return NULL;
+
+	for (p++; p < target_end;) {
+		const char *param_end = memchr(p, '&', target_end - p);
+
+		if (param_end == NULL)
+			param_end = target_end;
+		if (param_end - p >= 9 && memcmp(p, "password=", 9) == 0)
+			return g_uri_unescape_segment(p + 9, param_end, NULL);
+		p = param_end + 1;
+	}
+	return NULL;
+}
+
+/* Check the password of an upgrade request (NUL-terminated, the request
+ * line and headers). It is accepted in two places:
+ *  - an "Authorization: Bearer <password>" header, the way to send it:
+ *    it stays out of the URL and so out of anything that logs URLs;
+ *  - when the request has no Authorization header at all (one without a
+ *    Bearer password is a wrong password), the "password" parameter of
+ *    the query (GET /?password=<percent-encoded password>), because
+ *    NexusIRC as published (kofany/nexus, server/feWebClient/feWebSocket.ts)
+ *    still sends it there. A URL can end up in the logs of proxies and
+ *    tunnels.
+ * One password per request, compared in time independent of its value. */
 static int fe_web_verify_password(const char *data)
 {
 	const char *configured_password;
-	char *password_param;
-	char *password_start;
-	char *password_end;
 	char *password = NULL;
+	gboolean from_header = FALSE;
+	gboolean have_header = FALSE;
 	int result = 0;
 
 	configured_password = settings_get_str("fe_web_password");
@@ -386,7 +430,8 @@ static int fe_web_verify_password(const char *data)
 		const char *headers = strstr(data, "\r\n");
 		const char *h = headers;
 
-		while (h != NULL && password == NULL) {
+		/* the first Authorization header is the one read */
+		while (h != NULL && !have_header) {
 			h += 2;
 			if (strncmp(h, "\r\n", 2) == 0)
 				break;  /* end of headers */
@@ -394,35 +439,45 @@ static int fe_web_verify_password(const char *data)
 				const char *v = h + 14;
 				const char *end = strstr(v, "\r\n");
 
+				have_header = TRUE;
+
 				while (*v == ' ' || *v == '\t')
 					v++;
-				if (g_ascii_strncasecmp(v, "Bearer ", 7) == 0 && end != NULL && end > v + 7)
-					password = g_strndup(v + 7, end - (v + 7));
+				if (g_ascii_strncasecmp(v, "Bearer ", 7) == 0 && end != NULL) {
+					/* RFC 9110 5.5: whitespace at the end of a field
+					 * value is not part of it (a proxy may add some) */
+					while (end > v + 7 && (end[-1] == ' ' || end[-1] == '\t'))
+						end--;
+					if (end > v + 7) {
+						password = g_strndup(v + 7, end - (v + 7));
+						from_header = TRUE;
+					}
+				}
 			}
 			h = strstr(h, "\r\n");
 		}
 	}
 
-	/* Otherwise the query parameter (?password=...), as older web clients send */
-	password_param = password != NULL ? NULL : strstr(data, "?password=");
-	if (password_param != NULL) {
-		password_start = password_param + strlen("?password=");
-		password_end = strpbrk(password_start, " &\r\n");
-		if (password_end != NULL) {
-			password = g_strndup(password_start, password_end - password_start);
-		} else {
-			password = g_strdup(password_start);
-		}
-	}
+	/* without one, the query of the request line */
+	if (!have_header)
+		password = query_password(data);
 
 	/* Verify password: compare digests, in time independent of where
 	 * the first difference is */
 	if (password != NULL) {
 		char *want, *got;
 		unsigned char diff = 0;
+		gsize want_len = strlen(configured_password);
 		int i;
 
-		want = g_compute_checksum_for_string(G_CHECKSUM_SHA256, configured_password, -1);
+		/* a header cannot carry whitespace at the end of the password
+		 * (see above): such a password is compared without it */
+		while (from_header && want_len > 0 &&
+		       (configured_password[want_len - 1] == ' ' ||
+		        configured_password[want_len - 1] == '\t'))
+			want_len--;
+		want = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+		                                   (const guchar *) configured_password, want_len);
 		got = g_compute_checksum_for_string(G_CHECKSUM_SHA256, password, -1);
 		for (i = 0; want[i] != '\0'; i++)
 			diff |= want[i] ^ got[i];
@@ -478,6 +533,21 @@ static const char *client_peer(WEB_CLIENT_REC *client)
 	return client->peer_key != NULL ? client->peer_key : "unknown";
 }
 
+/* How many web clients are logged in */
+static int logged_in_clients(void)
+{
+	GSList *tmp;
+	int n = 0;
+
+	for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (c->authenticated)
+			n++;
+	}
+	return n;
+}
+
 /* Handle WebSocket handshake (RFC 6455) */
 static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 {
@@ -523,6 +593,18 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		                           "Content-Length: 0\r\n\r\n";
 		fe_web_client_send_raw(client, busy, sizeof(busy) - 1);
 		log_refused(client, "too many wrong passwords, logins paced");
+		return -1;
+	}
+
+	/* The client limit again: it is checked when a connection is
+	 * accepted, but the connections accepted while fewer clients were
+	 * logged in would take the count past it. Refused before the
+	 * password is checked: no guess is made, none is counted. */
+	if (logged_in_clients() >= FE_WEB_MAX_CLIENTS) {
+		static const char full[] = "HTTP/1.1 503 Service Unavailable\r\n"
+		                           "Content-Length: 0\r\n\r\n";
+		fe_web_client_send_raw(client, full, sizeof(full) - 1);
+		log_refused(client, "too many web clients logged in");
 		return -1;
 	}
 
@@ -711,14 +793,30 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			/* RFC 6455 5.5.1: answer with a Close frame (echoing the
 			 * status code), then close - the client then sees an orderly
 			 * close instead of waiting for its timeout. A client's close
-			 * payload is masked; only the 2-byte status code is echoed. */
+			 * payload is masked; only the 2-byte status code is echoed,
+			 * and only a code an endpoint may send (7.4): 1005, 1006 and
+			 * 1015 never go in a close frame, and an undefined code or a
+			 * status cut to one byte is answered as a protocol error. */
 			guchar status[2] = { 0x03, 0xE8 }; /* 1000 normal closure */
 			guchar *close_frame;
 			gsize close_len;
 
 			if (payload_len >= 2) {
-				status[0] = payload[0] ^ mask_key[0];
-				status[1] = payload[1] ^ mask_key[1];
+				int code = ((payload[0] ^ mask_key[0]) << 8) |
+				           (payload[1] ^ mask_key[1]);
+
+				if ((code >= 1000 && code <= 1003) ||
+				    (code >= 1007 && code <= 1011) ||
+				    (code >= 3000 && code <= 4999)) {
+					status[0] = code >> 8;
+					status[1] = code & 0xff;
+				} else {
+					status[0] = 0x03;
+					status[1] = 0xEA; /* 1002 protocol error */
+				}
+			} else if (payload_len == 1) {
+				status[0] = 0x03;
+				status[1] = 0xEA;
 			}
 			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
 			fe_web_client_send_raw(client, close_frame, close_len);
@@ -845,10 +943,25 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 	/* Handle handshake first */
 	if (!client->handshake_done) {
-		/* Null-terminate for string operations */
-		g_byte_array_append(client->input_buffer, (guchar *)"\0", 1);
+		const guchar *data = client->input_buffer->data;
+		const guchar *end;
+		gsize request_len = 0;
+		char *request;
 
-		ret = fe_web_handle_handshake(client, (const char *)client->input_buffer->data);
+		/* The request is what comes up to the empty line; RFC 6455 4.1
+		 * lets the client send frames right after it, and those may be
+		 * in this read too */
+		end = memmem(data, client->input_buffer->len, "\r\n\r\n", 4);
+		if (end != NULL)
+			request_len = end - data + 4;
+		ret = 0;
+		if (request_len > 0 && request_len <= FE_WEB_MAX_REQUEST) {
+			request = g_strndup((const char *) data, request_len);
+			ret = fe_web_handle_handshake(client, request);
+			/* the password is in there */
+			memset(request, 0, strlen(request));
+			g_free(request);
+		}
 		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
 			/* wrong password (after the 401 or 429 is written), failed
 			 * write or an endless request */
@@ -876,11 +989,13 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			    strcmp(client_peer(client), own_peer_key) != 0)
 				fe_web_pacing_succeeded(login_pacing, client_peer(client));
 
-			/* Clear input buffer */
-			g_byte_array_set_size(client->input_buffer, 0);
-		} else {
-			/* Remove null terminator */
-			g_byte_array_set_size(client->input_buffer, client->input_buffer->len - 1);
+			/* the request is done with; what came after it are
+			 * frames */
+			memset(client->input_buffer->data, 0, request_len);
+			g_byte_array_remove_range(client->input_buffer, 0, request_len);
+			if (client->input_buffer->len > 0 && !client->closing &&
+			    !client->output_failed)
+				fe_web_handle_websocket_data(client);
 		}
 		return;
 	}
@@ -1058,15 +1173,8 @@ static void sig_listen(void)
 
 	{
 		WEB_CLIENT_REC *victim;
-		int logged_in = 0;
-		GSList *tmp;
 
-		for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
-			WEB_CLIENT_REC *c = tmp->data;
-			if (c->authenticated)
-				logged_in++;
-		}
-		if (logged_in >= FE_WEB_MAX_CLIENTS) {
+		if (logged_in_clients() >= FE_WEB_MAX_CLIENTS) {
 			log_refused_addr(addr, "too many web clients logged in");
 			g_free(addr);
 			g_free(peer_key);
@@ -1582,8 +1690,8 @@ static void server_listen_unix(const char *value)
 	          "socket 0600, only your own processes");
 }
 
-/* Initialize server */
-void fe_web_server_init(void)
+/* Start the server; TRUE when it listens (also when it already did) */
+gboolean fe_web_server_init(void)
 {
 	IPADDR *bind_ip;
 	const char *bind_addr;
@@ -1593,7 +1701,7 @@ void fe_web_server_init(void)
 
 	/* Check if already running */
 	if (listen_channel != NULL) {
-		return;
+		return TRUE;
 	}
 
 	/* SECURITY: Verify password is set */
@@ -1605,7 +1713,7 @@ void fe_web_server_init(void)
 		          "fe-web: Please set password: /SET fe_web_password <strong-password>");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Use a long random secret, e.g. the output of: openssl rand -base64 32");
-		return;
+		return FALSE;
 	}
 
 	/* SECURITY: TLS context (key and certificate made at the first start;
@@ -1615,7 +1723,7 @@ void fe_web_server_init(void)
 		          "fe-web: FATAL: SSL/TLS not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: SSL certificate generation failed. Check OpenSSL installation.");
-		return;
+		return FALSE;
 	}
 
 	/* SECURITY: Verify encryption is initialized */
@@ -1624,14 +1732,14 @@ void fe_web_server_init(void)
 		          "fe-web: FATAL: Encryption not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Encryption key derivation failed. Check password setting.");
-		return;
+		return FALSE;
 	}
 
 	/* A Unix socket instead of TCP */
 	socket_path = settings_get_str("fe_web_socket");
 	if (socket_path != NULL && *socket_path != '\0') {
 		server_listen_unix(socket_path);
-		return;
+		return listen_channel != NULL;
 	}
 
 	/* Get settings */
@@ -1644,7 +1752,7 @@ void fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Invalid bind address: %s", bind_addr);
 		g_free(bind_ip);
-		return;
+		return FALSE;
 	}
 
 	/* Create listening socket */
@@ -1657,7 +1765,7 @@ void fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Failed to bind to %s:%d: %s",
 		          bind_addr, port, strerror(errno));
-		return;
+		return FALSE;
 	}
 
 	listen_port = port;
@@ -1671,6 +1779,7 @@ void fe_web_server_init(void)
 	          bind_addr, port);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled");
+	return TRUE;
 }
 
 /* Deinitialize server */
@@ -1678,6 +1787,7 @@ void fe_web_server_deinit(void)
 {
 	GSList *tmp;
 	GSList *next;
+	gboolean was_listening = listen_channel != NULL;
 
 	/* Close all clients */
 	for (tmp = web_clients; tmp != NULL; tmp = next) {
@@ -1715,6 +1825,8 @@ void fe_web_server_deinit(void)
 	g_free(own_peer_key);
 	own_peer_key = NULL;
 
-	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server stopped");
+	/* not for a server that could not start */
+	if (was_listening)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web: WebSocket server stopped");
 }

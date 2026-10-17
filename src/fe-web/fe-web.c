@@ -43,6 +43,15 @@ static int applied_port = -1;
 static char *applied_bind = NULL;
 static char *applied_socket = NULL;
 static char *applied_password = NULL;
+/* whether the server listens since the settings were last applied: one
+ * that could not start (no password, a socket directory others can
+ * write to, a port in use) is tried again by a /SET of an fe_web_
+ * setting, even one that leaves the value as it was. retry_wanted is set
+ * only while such a /SET or /TOGGLE runs; retry_now is a retry its
+ * "setup changed" asked for, done by the deferred restart. */
+static gboolean applied_listening = FALSE;
+static gboolean retry_wanted = FALSE;
+static gboolean retry_now = FALSE;
 
 static gboolean fe_web_settings_differ(void)
 {
@@ -79,11 +88,12 @@ static void fe_web_apply_settings(void)
 	applied_socket = g_strdup(settings_get_str("fe_web_socket"));
 	applied_password = g_strdup(settings_get_str("fe_web_password"));
 
+	applied_listening = FALSE;
 	if (applied_enabled) {
 		/* key derived from the (possibly new) password */
 		fe_web_crypto_deinit();
 		fe_web_crypto_init();
-		fe_web_server_init();
+		applied_listening = fe_web_server_init();
 	}
 }
 
@@ -92,8 +102,9 @@ static guint apply_tag = 0;
 static gboolean fe_web_apply_idle(gpointer data)
 {
 	apply_tag = 0;
-	if (fe_web_settings_differ())
+	if (fe_web_settings_differ() || retry_now)
 		fe_web_apply_settings();
+	retry_now = FALSE;
 	return FALSE;
 }
 
@@ -101,8 +112,42 @@ static gboolean fe_web_apply_idle(gpointer data)
  * is still running - so the restart waits until that command is done. */
 static void fe_web_setup_changed(void)
 {
-	if (apply_tag == 0 && fe_web_settings_differ())
+	if (retry_wanted && applied_enabled && !applied_listening)
+		retry_now = TRUE;
+	if (apply_tag == 0 && (fe_web_settings_differ() || retry_now))
 		apply_tag = g_idle_add(fe_web_apply_idle, NULL);
+}
+
+/* /SET and /TOGGLE, before they run: is it an fe_web_ setting ("setup
+ * changed" does not say which one changed). The flag lasts until the
+ * command is done (sig_command_set_done) or fails (sig_command_error):
+ * one that changed nothing (no value, a name that does not exist) asks
+ * for no retry later. */
+static void sig_command_set(const char *data)
+{
+	const char *p = data;
+
+	/* -clear, -default, -section */
+	for (;;) {
+		while (*p == ' ')
+			p++;
+		if (*p != '-')
+			break;
+		while (*p != '\0' && *p != ' ')
+			p++;
+	}
+	retry_wanted = g_ascii_strncasecmp(p, "fe_web_", 7) == 0;
+}
+
+static void sig_command_set_done(void)
+{
+	retry_wanted = FALSE;
+}
+
+/* a command that fails stops its signal: the last handler does not run */
+static void sig_command_error(void)
+{
+	retry_wanted = FALSE;
 }
 
 /* SYNTAX: FE_WEB STATUS */
@@ -182,6 +227,11 @@ void fe_web_init(void)
 
 	/* Watch for settings changes */
 	signal_add_first("setup changed", (SIGNAL_FUNC) fe_web_setup_changed);
+	signal_add_first("command set", (SIGNAL_FUNC) sig_command_set);
+	signal_add_first("command toggle", (SIGNAL_FUNC) sig_command_set);
+	signal_add_last("command set", (SIGNAL_FUNC) sig_command_set_done);
+	signal_add_last("command toggle", (SIGNAL_FUNC) sig_command_set_done);
+	signal_add("error command", (SIGNAL_FUNC) sig_command_error);
 
 	/* Start server if enabled */
 	if (settings_get_bool("fe_web_enabled"))
@@ -195,6 +245,11 @@ void fe_web_deinit(void)
 {
 	/* Cleanup */
 	signal_remove("setup changed", (SIGNAL_FUNC) fe_web_setup_changed);
+	signal_remove("command set", (SIGNAL_FUNC) sig_command_set);
+	signal_remove("command toggle", (SIGNAL_FUNC) sig_command_set);
+	signal_remove("command set", (SIGNAL_FUNC) sig_command_set_done);
+	signal_remove("command toggle", (SIGNAL_FUNC) sig_command_set_done);
+	signal_remove("error command", (SIGNAL_FUNC) sig_command_error);
 	if (apply_tag != 0) {
 		g_source_remove(apply_tag);
 		apply_tag = 0;

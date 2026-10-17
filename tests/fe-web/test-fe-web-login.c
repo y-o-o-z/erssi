@@ -34,6 +34,7 @@
 static const char HTTP_401[] = "HTTP/1.1 401 Unauthorized\r\n";
 static const char HTTP_429[] = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\n";
 static const char HTTP_101[] = "HTTP/1.1 101 Switching Protocols\r\n";
+static const char HTTP_503[] = "HTTP/1.1 503 Service Unavailable\r\n";
 
 static char guesser[32], other[32], third[32], fourth[32], own[32];
 
@@ -848,6 +849,41 @@ static void test_tcp_loopback_sources_share_key(void)
 #endif
 }
 
+/* At most 16 web clients are logged in. The limit is checked when a
+ * connection is accepted, and again at its login: up to 8 connections
+ * accepted while fewer were logged in must not take the count past 16. */
+static void test_client_limit_at_login(void)
+{
+	WEB_CLIENT_REC *others[16];
+	char *printed;
+	int i;
+
+	setup();
+	for (i = 0; i < 16; i++) {
+		others[i] = fe_web_client_create(-1, "other:0");
+		others[i]->handshake_done = TRUE;
+		others[i]->authenticated = TRUE;
+	}
+	g_assert_true(test_starts_with(attempt(other, TEST_PASSWORD), HTTP_503));
+	printed = fe_web_fuzz_take_printed();
+	if (strstr(printed, "too many web clients logged in") == NULL)
+		g_error("expected the refusal in the output:\n%s", printed);
+	g_free(printed);
+
+	/* the password is not checked then: no guess, nothing counted */
+	for (i = 0; i < 6; i++)
+		g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_503));
+	g_free(fe_web_fuzz_take_printed());
+
+	/* a place free again: logins go on */
+	fe_web_client_destroy(others[15]);
+	g_assert_true(test_starts_with(attempt(other, TEST_PASSWORD), HTTP_101));
+	g_assert_true(test_starts_with(attempt(guesser, "wrong"), HTTP_401));
+	for (i = 0; i < 15; i++)
+		fe_web_client_destroy(others[i]);
+	g_free(fe_web_fuzz_take_printed());
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -875,6 +911,7 @@ int main(int argc, char **argv)
 	                test_refused_log_backward_clock);
 	g_test_add_func("/fe-web/login/owner-takes-no-trusted-slot",
 	                test_owner_takes_no_trusted_slot);
+	g_test_add_func("/fe-web/login/client-limit-at-login", test_client_limit_at_login);
 	g_test_add_func("/fe-web/login/tcp-loopback-key-is-uid", test_tcp_loopback_key_is_uid);
 	g_test_add_func("/fe-web/login/tcp6-loopback-key-is-uid", test_tcp6_loopback_key_is_uid);
 	g_test_add_func("/fe-web/login/tcp-dual-stack-key-is-uid", test_tcp_dual_stack_key_is_uid);

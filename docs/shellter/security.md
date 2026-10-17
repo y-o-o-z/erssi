@@ -9,8 +9,12 @@ sanitizers.
 
 Built for a shared shell box.
 
-- **Password** — the password travels in an `Authorization` header, never
-  in a URL; one guess per connection, compared in constant time.
+- **Password** — a web client sends it in an `Authorization: Bearer`
+  header. `?password=` in the URL (percent-encoded) is still accepted when
+  the request has no `Authorization` header at all, because NexusIRC as
+  published sends it there; a URL can end up in the logs of proxies and
+  tunnels, so prefer a client that uses the header. One guess per
+  connection, compared in constant time.
 - **Wrong passwords** — after 5 wrong passwords from one peer, that peer
   gets one check every 2 s. A peer is a uid on the Unix socket (and on a
   loopback port on Linux), otherwise an address; your own uid is never
