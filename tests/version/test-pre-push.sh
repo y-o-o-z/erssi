@@ -167,6 +167,41 @@ push 'unsigned commit to a second remote' ok -- HEAD:refs/heads/dev/y
 to=origin
 push 'the same unsigned commit, then to main of the first' refused 'not signed by the release key' -- HEAD:main
 
+# the author, AI-trailer and private-data checks cover every commit the
+# remote pushed to does not have, also one already on another remote: a
+# pattern added after the commit went to staging ...
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+LINE='host secret-box.example.lan'; cm -S -m 'x'; LINE=
+to=staging
+push 'a commit to a second remote, before its pattern' ok -- HEAD:main
+printf 'secret-box\n' > "$PATTERNS"
+to=origin
+push 'the same commit, then to the first, with the pattern' refused 'private data in the diff' -- HEAD:main
+
+# ... or a push to staging that skipped the hook
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S --author='someone <someone@example.invalid>' -m 'x'
+to=staging
+push 'foreign author to a second remote, --no-verify' ok -- --no-verify HEAD:main
+to=origin
+push 'the same commit, then to the first' refused 'author/committer' -- HEAD:main
+
+# a commit the remote has on another branch is not new to it
+newrepo
+LINE='host secret-box.example.lan'; cm -S -m 'x'; LINE=
+push 'a commit to another branch, before its pattern' ok -- HEAD:refs/heads/dev/z
+printf 'secret-box\n' > "$PATTERNS"
+push 'the same commit, then to main of the same remote' ok -- HEAD:main
+
+# a push to a URL instead of a remote name
+newrepo
+cm -S -m 'x'
+to=$r.git
+push 'signed commit to main by URL' ok -- HEAD:main
+to=origin
+
 # main created on an empty remote: everything it gets is new to it
 newrepo
 git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"

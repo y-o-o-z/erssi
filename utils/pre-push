@@ -3,8 +3,10 @@
 #   ln -sf ../../utils/pre-push .git/hooks/pre-push
 #
 # 1. the build works and `meson test` passes (when Build/ exists)
-# 2. every pushed commit (branches and tags) is authored and committed by
-#    y-o-o-z (noreply address) and carries no AI attribution trailer;
+# 2. every pushed commit (branches and tags) that the remote pushed to does
+#    not have yet - also one already pushed to another remote, e.g.
+#    staging - is authored and committed by y-o-o-z (noreply address) and
+#    carries no AI attribution trailer;
 #    every commit that a push to main adds to the remote's main - also one
 #    already pushed to another branch or remote, e.g. staging - carries a
 #    valid SSH signature by the key in utils/allowed_signers (pushes to
@@ -19,8 +21,9 @@
 # 3. nothing that the push publishes matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line, case
 #    insensitive; the file stays on your machine, so the patterns themselves
-#    are never published): lines added by the pushed commits, their commit
-#    messages and file paths, annotated tag messages and the ref names.
+#    are never published): lines added by the pushed commits (the same
+#    commits as in 2.), their commit messages and file paths, annotated tag
+#    messages and the ref names.
 #    Blank lines, a lone "#" and lines that start with "#" and a space or
 #    tab are comments; every other line is a pattern, "#chan" too.
 #    Without the file, or with no pattern in it, the push is refused;
@@ -35,6 +38,13 @@ PATTERNS="$HOME/.config/git-private-patterns"
 ZERO=0000000000000000000000000000000000000000
 REMOTE=${1:-}                                   # its name, or the URL
 fail=0
+# what this remote is known to have: its remote-tracking branches, when it
+# is a remote of this repository (not a URL). Those of other remotes do not
+# count - a commit on staging is not on GitHub.
+tracking=""
+if [ -n "$REMOTE" ] && git config --get "remote.$REMOTE.url" >/dev/null 2>&1; then
+    tracking="refs/remotes/$REMOTE/"
+fi
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
 # git with SSH signatures checked against utils/allowed_signers only (no gpg
 # or gpgsm, whatever the git config says)
@@ -95,12 +105,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
     pushed="$pushed $tip"
-    # what GitHub does not have yet; when the remote tip is unknown here
-    # (force push without fetching), everything not on a known remote
+    # what this remote does not have yet: not reachable from its tip for
+    # this ref or from our copies of its branches; when the tip is unknown
+    # here (force push without fetching), from those copies only
     if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
-        range=$(git rev-list "$tip" --not "$remote_sha" --remotes) || range=FAIL
+        range=$(git rev-list "$tip" --not "$remote_sha" ${tracking:+--glob="$tracking*"}) || range=FAIL
     else
-        range=$(git rev-list "$tip" --not --remotes) || range=FAIL
+        range=$(git rev-list "$tip" ${tracking:+--not --glob="$tracking*"}) || range=FAIL
     fi
     [ "$range" = FAIL ] && { bad "$local_ref: cannot list the pushed commits"; continue; }
     for c in $range; do
@@ -120,9 +131,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     done
     # the box builds main only from commits signed by the release key: every
     # commit that the remote's main does not have yet, including those already
-    # on another branch or remote (the range above leaves them out). The base
-    # is what the remote reports for main; when it is unknown here (main is
-    # created, or a force push without fetching), our last copy of that
+    # on another branch of the remote (the range above leaves them out). The
+    # base is what the remote reports for main; when it is unknown here (main
+    # is created, or a force push without fetching), our last copy of that
     # remote's main, and without one the whole history.
     if [ "$remote_ref" = refs/heads/main ]; then
         if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
