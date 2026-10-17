@@ -704,7 +704,7 @@ static void test_tls_inherited_socket_closed(void)
 
 /* --- hardening --- */
 
-/* M1: after the resync of an older session file the server rejects
+/* after the resync of an older session file the server rejects
    CAP LIST (410): the negotiation stays over, no second CAP END, and a
    later unsolicited ACK ends nothing either */
 static void test_resync_410_ends_nothing(void)
@@ -728,7 +728,7 @@ static void test_resync_410_ends_nothing(void)
 	finish(server);
 }
 
-/* M2: a session file with a single value where a list or a block belongs
+/* a session file with a single value where a list or a block belongs
    restores without a crash; the bad values are left out */
 static void test_corrupt_sections_ignored(void)
 {
@@ -786,7 +786,7 @@ static void test_corrupt_entries_ignored(void)
 	finish(server);
 }
 
-/* M3: a long cap_active list restores in linear time, in its order */
+/* a long cap_active list restores in linear time, in its order */
 static void test_long_cap_active_restores_fast(void)
 {
 	IRC_SERVER_REC *server;
@@ -827,7 +827,7 @@ static void test_long_cap_active_restores_fast(void)
 	finish(server);
 }
 
-/* M4: a server cannot grow the CAP lists without end; one warning */
+/* a server cannot grow the CAP lists without end; one warning */
 static void test_cap_lists_capped(void)
 {
 	IRC_SERVER_REC *server = restore(REGISTERED CAPS "connected = \"yes\"; "

@@ -2568,7 +2568,7 @@ static void test_live_loopback_v6(void)
 	assert_live_own_uid("::1", AF_INET6, "::1");
 }
 
-/* Review Focus: a dual-stack listener (::) and a client on 127.0.0.1. The
+/* a dual-stack listener (::) and a client on 127.0.0.1. The
  * accepted peer is ::ffff:127.0.0.1, the client's socket is in tcp as
  * 127.0.0.1. */
 static void test_proc_net_tcp_v4_mapped(void)
