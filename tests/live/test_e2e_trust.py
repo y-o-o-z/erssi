@@ -10,6 +10,7 @@ accepts it; after /e2e reverify <new address> his next message is read.
 Nothing of it crosses the server in clear text.
 Usage: test_e2e_trust.py <build dir> [<source dir>]"""
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -140,6 +141,31 @@ def main():
         out = log_since(a, off)
         assert out.count("blocked: bob (bob2@127.0.0.1) on E2E:#test") >= 2, out
 
+    def t_shellter_column():
+        """in the shellter theme the module's lines are in the column,
+        "e2e │ ...", and a long one wraps under its text, not to column 0"""
+        a = st["alice"]
+        if len(sys.argv) < 3:
+            raise harness.SkipCase("no source dir: the shellter theme is not at hand")
+        shutil.copy(Path(sys.argv[2]) / "themes" / "shellter.theme", a.home / "shellter.theme")
+        a.resize(120, 50)  # the line is longer than the window
+        a.type_and_wait("/set theme shellter", "/window goto #test", "/e2e list")
+
+        def found(rows):
+            return any("e2e │   blocked: bob (bob2@127.0.0.1)" in r for r in rows)
+        rows, ok = a.wait_screen(found, WAIT)
+        assert ok, "\n".join(rows)
+        i = max(n for n, r in enumerate(rows) if "e2e │   blocked: bob" in r)
+        # one column: erssi's own label does not come first
+        assert "erssi │" not in rows[i], rows[i]
+        text_col = rows[i].index("e2e │ ") + len("e2e │ ")
+        # the line starts with its time; the next row continues it, from
+        # the window's first column to the text's blank (side panels aside)
+        start = re.search(r"\d\d:\d\d", rows[i]).start()
+        follow = rows[i + 1]
+        assert follow[start:text_col].strip() == "" and follow[text_col] != " ", (rows[i], follow)
+        a.type_and_wait("/set theme default")
+
     def t_reverify():
         """/e2e reverify <new address> moves the key there and asks for it
         again: bob's next message is read"""
@@ -176,7 +202,8 @@ def main():
             st["ircd"].stop()
 
     try:
-        harness.main([t_install, t_first_contact, t_new_address, t_reverify, t_wire])
+        harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
+                      t_wire])
     finally:
         cleanup()
         if not harness.keep_work():
