@@ -1,5 +1,11 @@
+# the release order, in this installer and in that of shellter-v1.3.10
+# (skipped without that tag here)
 test('installer versions test', find_program('sh'),
-  args : [files('test-installer-versions.sh'), meson.current_source_dir() / '..' / '..'])
+  args : [files('test-installer-versions.sh'), meson.current_source_dir() / '..' / '..', 'cur'],
+  protocol : 'tap')
+test('installer versions test (shellter-v1.3.10)', find_program('sh'),
+  args : [files('test-installer-versions.sh'), meson.current_source_dir() / '..' / '..', 'old'],
+  protocol : 'tap')
 
 # shellter-install.sh with stand-in tools, a local repository and a temporary
 # HOME (test-shellter-install.sh SOURCE_ROOT CASE)
