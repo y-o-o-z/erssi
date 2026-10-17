@@ -127,7 +127,14 @@ static CREDENTIAL_REC *credential_find(const char *network, CredentialContext co
 
 /* A value in the encrypted form of versions before 2026.10.3, which has no
  * tag, encrypted again in the current form; NULL when it is not in that
- * form or cannot be decrypted with the master password. */
+ * form or cannot be decrypted with the master password.
+ *
+ * This is done by credential_set() and the config write hook only. The
+ * external credentials file, which cannot be turned on in this version,
+ * is left as it is: credential_external_load() keeps what it reads
+ * (decrypted when it can be) and credential_external_save() writes the
+ * values back unchanged, so an old encrypted value that stays encrypted
+ * in that file is not rewritten in the current form there. */
 static char *credential_upgrade_legacy(const char *value)
 {
 	char *plain, *upgraded;
