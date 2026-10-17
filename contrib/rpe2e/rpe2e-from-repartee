@@ -16,9 +16,14 @@ tool prepares that keyring:
     inconsistent data aborts the run,
   * builds keyring.json in the layout of erssi's e2e module: the identity (same
     fingerprint, so peers do not see a "new key"), trusted peers, channel
-    sessions; when a channel exists in several variants (repartee: "#chan"
-    and "IRCnet\\x1f#chan") the newest session wins - erssi's keyring does
-    not distinguish networks,
+    sessions and the REKEY nonces already taken; when a channel exists in
+    several variants (repartee: "#chan" and "IRCnet\\x1f#chan") the newest
+    session wins. The contexts are written without a network (as rpe2e.pl
+    keeps them): erssi uses them as they are while it uses one network, and
+    on several networks each needs /e2e adopt in its window - or, with
+    --network LABEL, they are written as that network's
+    ("LABEL\\x1f#chan", LABEL being erssi's chatnet name, as /e2e status
+    shows it),
   * writes atomically with mode 0600; an existing keyring only with --force
     (a copy keyring.json.bak-<time> is made first) - erssi's e2e module
     creates an identity at its first start, so a keyring usually exists:
@@ -27,7 +32,8 @@ tool prepares that keyring:
     encryption starts only after /e2e on in the channel window.
 
 Usage:
-  rpe2e-from-repartee [--db FILE] [--env FILE] [--out FILE] [--channels-off] [--force] [--dry-run]
+  rpe2e-from-repartee [--db FILE] [--env FILE] [--out FILE] [--network LABEL]
+                      [--channels-off] [--force] [--dry-run]
 
 Secrets are never printed - only fingerprints, channels and counts.
 """
@@ -70,7 +76,7 @@ def load_sodium():
 
 
 def aes_gcm_decrypt(sodium, key, blob):
-    """Format repartee (storage::crypto::encrypt_bytes): wersja | nonce(12) | szyfrogram+tag."""
+    """repartee's format (storage::crypto::encrypt_bytes): version | nonce(12) | ciphertext+tag."""
     if len(blob) < 1 + 12 + 16:
         raise MigrationError("encrypted secret is too short")
     if blob[0] != SECRET_BLOB_VERSION:
@@ -89,7 +95,7 @@ def aes_gcm_decrypt(sodium, key, blob):
 
 
 def secret(sodium, key, blob, size, what):
-    """Jak Keyring::decode_secret: dlugosc docelowa = surowe bajty, inaczej szyfrogram."""
+    """As Keyring::decode_secret: a blob of the target length is the raw secret, else ciphertext."""
     if blob is None:
         raise MigrationError(f"missing secret: {what}")
     data = bytes(blob) if len(blob) == size else aes_gcm_decrypt(sodium, key, bytes(blob))
@@ -151,8 +157,8 @@ def newest(rows, key, warnings, stamp="created_at"):
     """Of several variants of the same context the newest one stays (by the
     `stamp` column, created_at by default); on a tie the network-scoped
     variant wins (repartee always picks it, the old unscoped row is only a
-    fallback). erssi's keyring does not tell networks apart, so the same context
-    from two different networks is reported with a warning."""
+    fallback). The network is dropped (or replaced by --network), so the same
+    context from two different networks is reported with a warning."""
     best = {}
     nets = {}
     for row in rows:
@@ -180,8 +186,13 @@ def table_rows(db, table, columns="*"):
         raise
 
 
-def build_keyring(db_path, env_path, channels_off=False, warnings=None):
+def build_keyring(db_path, env_path, channels_off=False, warnings=None, network=None):
     warnings = [] if warnings is None else warnings
+
+    def scope(ctx):
+        """the context as erssi stores it: bare, or of the --network"""
+        return f"{network}{SCOPE_SEP}{ctx}" if network else ctx
+
     sodium = load_sodium()
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
@@ -215,6 +226,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
         "outgoing_recipients": {},
         "pending_inbound": {},
         "pending_trust_change": [],
+        "seen_rekeys": {},
     }
 
     for row in table_rows(db, "e2e_peers"):
@@ -237,7 +249,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
     out_rows = table_rows(db, "e2e_outgoing_sessions")
     for ctx, row in newest(out_rows, lambda r: unscoped(r["channel"]), warnings).items():
         need_key(row["sk"], 32)
-        keyring["outgoing"][ctx] = {
+        keyring["outgoing"][scope(ctx)] = {
             "sk": b64(secret(sodium, key, row["sk"], 32, f"outgoing key {ctx}")),
             "created_at": row["created_at"],
             "pending_rotation": 1 if row["pending_rotation"] else 0,
@@ -249,7 +261,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
         if peer_fp not in keyring["peers"]:
             raise MigrationError(f"session {handle} on {ctx} points to an unknown peer {peer_fp}")
         need_key(row["sk"], 32)
-        keyring["incoming"][f"{handle}|{ctx}"] = {
+        keyring["incoming"][f"{handle}|{scope(ctx)}"] = {
             "fp": peer_fp,
             "sk": b64(secret(sodium, key, row["sk"], 32, f"incoming key {handle} {ctx}")),
             "status": row["status"],
@@ -258,7 +270,7 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
 
     cfg_rows = table_rows(db, "e2e_channel_config", "channel, enabled, mode")
     for row in cfg_rows:
-        ctx = unscoped(row["channel"])
+        ctx = scope(unscoped(row["channel"]))
         current = keyring["channels"].get(ctx)
         enabled = 1 if row["enabled"] and not channels_off else 0
         # enabled in any variant = enabled
@@ -269,8 +281,8 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
     # the newest first_sent_at wins, not whichever row came last
     for (ctx, _handle), row in newest(rec_rows, lambda r: (unscoped(r["channel"]), r["handle"]), [],
                                       "first_sent_at").items():
-        keyring["outgoing_recipients"][f"{ctx}|{row['handle']}"] = {
-            "channel": ctx,
+        keyring["outgoing_recipients"][f"{scope(ctx)}|{row['handle']}"] = {
+            "channel": scope(ctx),
             "handle": row["handle"],
             "fingerprint": bytes(row["fingerprint"]).hex() if isinstance(row["fingerprint"], (bytes, memoryview)) else row["fingerprint"],
             "first_sent_at": row["first_sent_at"],
@@ -278,6 +290,12 @@ def build_keyring(db_path, env_path, channels_off=False, warnings=None):
 
     for row in table_rows(db, "e2e_autotrust", "scope, handle_pattern"):
         keyring["autotrust"].append({"scope": row["scope"], "handle_pattern": row["handle_pattern"]})
+
+    # the REKEY nonces repartee took: a recorded REKEY is not taken again
+    for row in table_rows(db, "e2e_seen_rekeys", "fingerprint, channel, nonce, seen_at"):
+        fp_hex = bytes(row["fingerprint"]).hex()
+        seen = keyring["seen_rekeys"].setdefault(f"{fp_hex}|{scope(unscoped(row['channel']))}", {})
+        seen[b64(bytes(row["nonce"]))] = row["seen_at"]
 
     db.close()
     return keyring
@@ -345,6 +363,8 @@ def main(argv=None):
     parser.add_argument("--db", default=os.path.join(home, ".repartee", "logs", "messages.db"))
     parser.add_argument("--env", default=os.path.join(home, ".repartee", ".env"))
     parser.add_argument("--out", default=os.path.join(home, ".erssi", "rpe2e", "keyring.json"))
+    parser.add_argument("--network", metavar="LABEL",
+                        help="store the contexts as this network's (erssi's chatnet name) instead of without a network")
     parser.add_argument("--channels-off", action="store_true", help="leave channels off - /e2e on turns them on")
     parser.add_argument("--force", action="store_true", help="replace an existing keyring (keeps a backup)")
     parser.add_argument("--dry-run", action="store_true", help="only check and print a summary")
@@ -353,7 +373,9 @@ def main(argv=None):
         if not os.path.exists(args.db):
             raise MigrationError(f"repartee database not found: {args.db}")
         warnings = []
-        keyring = build_keyring(args.db, args.env, args.channels_off, warnings)
+        if args.network is not None and (args.network == "" or SCOPE_SEP in args.network):
+            raise MigrationError("--network needs a name without the control character 0x1F")
+        keyring = build_keyring(args.db, args.env, args.channels_off, warnings, args.network)
         print(summary(keyring))
         for warning in warnings:
             print(f"warning: {warning}")

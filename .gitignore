@@ -119,3 +119,5 @@ notcurses-rebuild.md
 prompt.md
 RESIZE_ANALYSIS.md
 .worktrees/
+__pycache__/
+*.pyc
