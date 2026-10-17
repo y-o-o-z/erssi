@@ -3831,8 +3831,21 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 			[E2E_IN_ASK_BUSY] = " - not requested now: many key requests at once (their next message asks)"
 		};
 
-		out = g_strdup_printf("[E2E: encrypted message not read - no key from %s (%s) yet%s]",
-		                      who, addr, asked[res->ask]);
+		/* the nick had a key at another address: most likely the same
+		   person back from another host - their answer will then be
+		   blocked as a new address, which /e2e reverify settles */
+		const char *known = nick != NULL && handle != NULL ? e2e_find_handle_by_nick(kr, nick) : NULL;
+
+		if (known != NULL && *known != '\0' && strcmp(known, handle) != 0) {
+			char *was = e2e_text_display(known);
+
+			out = g_strdup_printf("[E2E: encrypted message not read - no key from %s at this address (%s) yet%s; %s had a key at %s: if it is the same, the new address blocks it - /e2e reverify %s]",
+			                      who, addr, asked[res->ask], who, was, addr);
+			g_free(was);
+		} else {
+			out = g_strdup_printf("[E2E: encrypted message not read - no key from %s (%s) yet%s]",
+			                      who, addr, asked[res->ask]);
+		}
 		break;
 	}
 	case E2E_IN_WHY_TRUST: {

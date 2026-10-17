@@ -126,8 +126,10 @@ def main():
         up(k)
         assert wait_log(a, off, "bob2@127.0.0.1"), "alice did not see bob back"
         say(k, "secret one")
-        assert wait_chan(a, "[E2E: encrypted message not read - no key from bob "
-                            "(bob2@127.0.0.1) yet - key requested]", start), chan_log(a)[start:]
+        assert wait_chan(a, "[E2E: encrypted message not read - no key from bob at this address "
+                            "(bob2@127.0.0.1) yet - key requested; bob had a key at bob@127.0.0.1: "
+                            "if it is the same, the new address blocks it - /e2e reverify "
+                            "bob2@127.0.0.1]", start), chan_log(a)[start:]
         assert wait_chan(a, "Notice: the known key", start), chan_log(a)[start:]
         log = chan_log(a)[start:]
         assert "of bob (before at bob@127.0.0.1) now comes from bob at bob2@127.0.0.1" in log, log

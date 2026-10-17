@@ -5822,6 +5822,8 @@ static void test_trust_change_notices(void)
 	g_assert_cmpint(r.why, ==, E2E_IN_WHY_NO_SESSION);
 	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
 	g_assert_nonnull(r.keyreq);
+	/* the first line already says what will block it */
+	assert_placeholder(&b, &a, &r, "no key from alice at this address (" ALICE2 ") yet - key requested; alice had a key at " ALICE ": if it is the same, the new address blocks it - /e2e reverify " ALICE2 "]");
 	/* ... her answer is blocked as a handle change, and recorded */
 	g_hash_table_remove_all(a.stamps);
 	deliver_keyreq(&a, &b, r.keyreq, ALICE2, &rsp, &recip);
