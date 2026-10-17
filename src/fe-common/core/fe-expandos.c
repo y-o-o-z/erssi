@@ -33,6 +33,8 @@
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/commands.h>
+#include <irssi/src/core/recode.h>
+#include <irssi/src/core/utf8.h>
 #include <time.h>
 
 /* Nick column context variables */
@@ -74,103 +76,102 @@ static char *expando_winname(SERVER_REC *server, void *item, int *free_ret)
 	return active_win->name;
 }
 
-/* Count only valid nick characters (ignore color codes) */
-static int count_nick_chars(const char *str)
+/* One character of a nick and the cells it takes, as the text view draws
+ * it (textbuffer_read_unichar() in fe-ansi): in a UTF-8 terminal a
+ * character with its combining marks, of its width (2 for CJK), and a byte
+ * that is not UTF-8 as one cell (the view shows U+FFFD); in another
+ * terminal one byte, one cell. Moves *p past it. */
+static int nick_advance(const char **p, gboolean utf8)
 {
-	int count = 0;
-	if (!str)
-		return 0;
+	if (utf8 && (g_utf8_get_char_validated(*p, -1) & 0x80000000) == 0)
+		return string_advance(p, TREAT_STRING_AS_UTF8);
+	(*p)++;
+	return 1;
+}
 
-	for (const char *p = str; *p; p++) {
-		/* Alfanumeryczne */
-		if (isalnum(*p)) {
-			count++;
-		}
-		/* Specjalne znaki nicka - zgodnie z RFC 2812 i isnickchar z fe-messages.c */
-		else if (*p == '`' || *p == '-' || *p == '_' || *p == '[' || *p == ']' ||
-		         *p == '{' || *p == '}' || *p == '|' || *p == '\\' || *p == '^' || *p == '~') {
-			count++;
-		}
-		/* Ignoruje kody kolorów %B %N %Y %n itp. */
+static int nick_cells(const char *str, gboolean utf8)
+{
+	int cells = 0;
+
+	while (*str != '\0')
+		cells += nick_advance(&str, utf8);
+	return cells;
+}
+
+/* The cells of the mode before the nick: one even without a mode, as
+ * $nickmode gives a space then. */
+static int nick_mode_cells(void)
+{
+	int cells;
+
+	cells = current_mode == NULL ? 0 : nick_cells(current_mode, is_utf8());
+	return cells > 0 ? cells : 1;
+}
+
+/* The nick as the nick column shows it: when the mode and the nick are
+ * wider than nick_column_width, the nick is cut to what fits with a "+"
+ * after it. Widths are terminal cells and the cut never splits a
+ * character, so a wide character that does not fit is left out whole and
+ * the column is one cell narrower (*cells says so, $nickalign pads it).
+ * Returns NULL when the nick fits as it is. */
+static char *nick_column_cut(int *cells)
+{
+	gboolean utf8 = is_utf8();
+	const char *p, *next;
+	int room, used, w;
+
+	*cells = nick_cells(current_nick, utf8);
+	room = settings_get_int("nick_column_width") - nick_mode_cells();
+	if (*cells <= room)
+		return NULL;
+
+	room--; /* for the "+" */
+	used = 0;
+	for (p = current_nick; *p != '\0'; p = next) {
+		next = p;
+		w = nick_advance(&next, utf8);
+		if (used + w > room)
+			break;
+		used += w;
 	}
-	return count;
+	*cells = used + 1;
+	return g_strdup_printf("%.*s+", (int) (p - current_nick), current_nick);
 }
 
 /* Nick column align - returns only padding spaces */
 static char *expando_nickalign(SERVER_REC *server, void *item, int *free_ret)
 {
-	int width, mode_chars, nick_chars, total_chars, padding;
-	const char *mode;
+	int padding, cells;
 
-	/* Gdy wyłączone - zwróć pusty string */
-	if (!settings_get_bool("nick_column_enabled")) {
+	if (!settings_get_bool("nick_column_enabled") || !nick_context_valid ||
+	    current_nick == NULL)
 		return "";
-	}
 
-	if (!nick_context_valid || !current_nick) {
+	g_free(nick_column_cut(&cells));
+	padding = settings_get_int("nick_column_width") - nick_mode_cells() - cells;
+	if (padding <= 0)
 		return "";
-	}
-
-	width = settings_get_int("nick_column_width");
-	mode = current_mode ? current_mode : "";
-
-	/* Zawsze 1 miejsce na mode (nawet spacja) */
-	mode_chars = strlen(mode) > 0 ? strlen(mode) : 1;
-	nick_chars = count_nick_chars(current_nick);
-	total_chars = mode_chars + nick_chars;
-
-	if (total_chars > width) {
-		padding = 0;
-	} else {
-		padding = width - total_chars;
-	}
 
 	*free_ret = TRUE;
 	return g_strnfill(padding, ' ');
 }
 
-/* Nick truncated - returns truncated nick with >> indicator */
+/* The nick of the message, cut to the nick column when it is on */
 static char *expando_nicktrunc(SERVER_REC *server, void *item, int *free_ret)
 {
-	int width, mode_chars, nick_chars, total_chars;
-	const char *mode;
-	char *result;
+	char *cut;
+	int cells;
 
-	/* Gdy wyłączone - zwróć oryginalny nick */
-	if (!settings_get_bool("nick_column_enabled")) {
-		return current_nick ? current_nick : "";
-	}
-
-	if (!nick_context_valid || !current_nick) {
-		return current_nick ? current_nick : "";
-	}
-
-	width = settings_get_int("nick_column_width");
-	mode = current_mode ? current_mode : "";
-
-	/* Zawsze 1 miejsce na mode (nawet spacja) */
-	mode_chars = strlen(mode) > 0 ? strlen(mode) : 1;
-	nick_chars = count_nick_chars(current_nick);
-	total_chars = mode_chars + nick_chars;
-
-	if (total_chars > width) {
-		/* Nick za długi - przytnij z + */
-		int available_for_nick = width - mode_chars - 1; /* -1 dla + */
-		if (available_for_nick > 0) {
-			/* Przytnij nick i dodaj + */
-			result = g_strdup_printf("%.*s+", available_for_nick, current_nick);
-
-		} else {
-			/* Mode sam za długi */
-			result = g_strdup("+");
-		}
-		*free_ret = TRUE;
-		return result;
-	} else {
-		/* Nick się zmieści - zwróć oryginalny */
-
+	if (!nick_context_valid || current_nick == NULL)
+		return "";
+	if (!settings_get_bool("nick_column_enabled"))
 		return current_nick;
-	}
+
+	cut = nick_column_cut(&cells);
+	if (cut == NULL)
+		return current_nick;
+	*free_ret = TRUE;
+	return cut;
 }
 
 /* Update nick context for expandos */
