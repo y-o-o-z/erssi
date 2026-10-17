@@ -198,7 +198,13 @@ else
 endif
 if not glib_dep.found()
   glib_internal = true
-  meson_cmd = find_program('meson')
+  # the bundled GLib (subprojects/glib.wrap, 2.90) needs meson 1.4 for its
+  # own setup, which runs only at build time: say so now, not deep in ninja
+  glib_internal_meson = '>=1.4.0'
+  if not meson.version().version_compare(glib_internal_meson)
+    error('-Dinstall-glib builds the bundled GLib (' + glib_internal_version + '), which needs meson ' + glib_internal_meson + '; this is meson ' + meson.version() + '. Install a newer meson (pip install meson) or your distribution\'s GLib (libglib2.0-dev).')
+  endif
+  meson_cmd = find_program('meson', version : glib_internal_meson)
   ninja = find_program('ninja')
 
   glib_internal_download_t = custom_target('glib-internal-download',

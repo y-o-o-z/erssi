@@ -5,6 +5,7 @@
 To compile Irssi you need:
 
 - meson-0.53 build system with ninja-1.8 or greater
+  (meson-1.4 or greater with -Dinstall-glib, which builds the bundled GLib)
 - pkg-config (or compatible)
 - glib-2.32 or greater
 - openssl (for ssl support)
