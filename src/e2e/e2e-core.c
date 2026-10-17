@@ -1122,11 +1122,130 @@ static gboolean own_line_take(const char *line)
 	return TRUE;
 }
 
-static void gate_refuse(SERVER_REC *server, GString *str, const char *item, const char *msg)
+/* Lines the gate refused just now. irssi shows a line it sends right
+   after sending it (the echo comes after the gate when the line leaves
+   at once, before it when it waited in the flood queue): the echo of
+   such a line, when it comes, is marked "[NOT SENT]", and the warning is
+   printed when the main loop is idle - after it either way. */
+typedef struct {
+	SERVER_REC *server;
+	char *target, *body, *warning;
+} REFUSED_LINE;
+
+static GSList *refused_lines;
+static guint refused_idle_id;
+
+static void refused_line_free(REFUSED_LINE *rec)
 {
-	/* irssi already showed the line: say that it was not delivered */
-	e2e_print_warning(e2e_notice_item(server, item, item),
-	                  "%s — the message shown above was NOT delivered", msg);
+	e2e_wipe(rec->body, strlen(rec->body));
+	g_free(rec->body);
+	g_free(rec->target);
+	g_free(rec->warning);
+	g_free(rec);
+}
+
+static gboolean refused_idle(gpointer data)
+{
+	GSList *list = g_slist_reverse(refused_lines), *tmp;
+
+	refused_lines = NULL;
+	refused_idle_id = 0;
+	for (tmp = list; tmp != NULL; tmp = tmp->next) {
+		REFUSED_LINE *rec = tmp->data;
+
+		if (g_slist_find(servers, rec->server) != NULL)
+			e2e_print_warning(e2e_notice_item(rec->server, rec->target, rec->target), "%s",
+			                  rec->warning);
+		else
+			e2e_print_warning(NULL, "%s", rec->warning);
+		refused_line_free(rec);
+	}
+	g_slist_free(list);
+	return FALSE;
+}
+
+/* the echo of a line the gate refused: marked, and taken off the list */
+static gboolean refused_echo(SERVER_REC *server, const char *target, const char *msg,
+                             gboolean action)
+{
+	GSList *tmp;
+
+	for (tmp = refused_lines; tmp != NULL; tmp = tmp->next) {
+		REFUSED_LINE *rec = tmp->data;
+		const char *body = rec->body;
+		gboolean same;
+
+		if (rec->server != server || g_strcmp0(rec->target, target) != 0)
+			continue;
+		if (action) {
+			/* "\001ACTION text\001": the echo has the text */
+			size_t len = strlen(body), mlen = strlen(msg);
+
+			if (len > 8 && body[len - 1] == '\001')
+				len--;
+			same = g_ascii_strncasecmp(body, "\001ACTION ", 8) == 0 && len - 8 == mlen &&
+			       strncmp(body + 8, msg, mlen) == 0;
+		} else {
+			same = strcmp(body, msg) == 0;
+		}
+		if (same) {
+			/* the warning still comes; only the echo is matched once */
+			e2e_wipe(rec->body, strlen(rec->body));
+			g_free(rec->body);
+			rec->body = g_strdup("\001");
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static void sig_own_public(SERVER_REC *server, const char *msg, const char *target)
+{
+	char *marked;
+
+	if (msg == NULL || !refused_echo(server, target, msg, FALSE))
+		return;
+	marked = g_strconcat("\00304[NOT SENT]\017 ", msg, NULL);
+	signal_continue(3, server, marked, target);
+	g_free(marked);
+}
+
+static void sig_own_private(SERVER_REC *server, const char *msg, const char *target,
+                            const char *orig_target)
+{
+	char *marked;
+
+	if (msg == NULL || !refused_echo(server, target, msg, FALSE))
+		return;
+	marked = g_strconcat("\00304[NOT SENT]\017 ", msg, NULL);
+	signal_continue(4, server, marked, target, orig_target);
+	g_free(marked);
+}
+
+static void sig_own_action(SERVER_REC *server, const char *msg, const char *target)
+{
+	char *marked;
+
+	if (msg == NULL || !refused_echo(server, target, msg, TRUE))
+		return;
+	marked = g_strconcat("\00304[NOT SENT]\017 ", msg, NULL);
+	signal_continue(3, server, marked, target);
+	g_free(marked);
+}
+
+static void gate_refuse(SERVER_REC *server, GString *str, const char *item, const char *body,
+                        const char *msg)
+{
+	REFUSED_LINE *rec = g_new0(REFUSED_LINE, 1);
+
+	rec->server = server;
+	rec->target = g_strdup(item);
+	rec->body = g_strdup(body != NULL ? body : "");
+	rec->warning = g_strdup_printf("%s — your message to %s (marked [NOT SENT] where it is shown) was NOT delivered",
+	                               msg, item);
+	refused_lines = g_slist_prepend(refused_lines, rec);
+	if (refused_idle_id == 0)
+		refused_idle_id = g_idle_add(refused_idle, NULL);
 	e2e_wipe(str->str, str->len);
 	g_string_truncate(str, 0);
 	signal_stop();
@@ -1479,7 +1598,7 @@ static void native_gate(SERVER_REC *server, GString *str)
 			e2e_print_warning(e2e_notice_item(server, target, target), "%s", res.message);
 		break;
 	case E2E_GATE_REFUSE:
-		gate_refuse(server, str, target, res.message);
+		gate_refuse(server, str, target, body, res.message);
 		break;
 	case E2E_GATE_CIPHER:
 		if (res.save_needed)
@@ -2239,6 +2358,9 @@ void e2e_core_init(void)
 	signal_add("server connect failed", (SIGNAL_FUNC) sig_server_gone);
 	signal_add("server destroyed", (SIGNAL_FUNC) sig_server_gone);
 	signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
+	signal_add_first("message own_public", (SIGNAL_FUNC) sig_own_public);
+	signal_add_first("message own_private", (SIGNAL_FUNC) sig_own_private);
+	signal_add_first("message irc own_action", (SIGNAL_FUNC) sig_own_action);
 	signal_add_first("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);
 	signal_add("event 001", (SIGNAL_FUNC) sig_event_001);
 	signal_add("event 311", (SIGNAL_FUNC) sig_event_311);
@@ -2309,6 +2431,13 @@ void e2e_core_deinit(void)
 	signal_remove("server connect failed", (SIGNAL_FUNC) sig_server_gone);
 	signal_remove("server destroyed", (SIGNAL_FUNC) sig_server_gone);
 	signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
+	signal_remove("message own_public", (SIGNAL_FUNC) sig_own_public);
+	signal_remove("message own_private", (SIGNAL_FUNC) sig_own_private);
+	signal_remove("message irc own_action", (SIGNAL_FUNC) sig_own_action);
+	if (refused_idle_id != 0) {
+		g_source_remove(refused_idle_id);
+		refused_idle(NULL);
+	}
 	signal_remove("ctcp reply", (SIGNAL_FUNC) sig_ctcp_reply);
 	signal_remove("event 001", (SIGNAL_FUNC) sig_event_001);
 	signal_remove("event 311", (SIGNAL_FUNC) sig_event_311);

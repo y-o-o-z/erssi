@@ -244,6 +244,24 @@ def main():
         assert seen, chan_log(a)[start:]
         assert "/e2e on" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_corrupt_keyring():
+        """/load e2e on a corrupt keyring says so at once; a line typed
+        then is shown marked [NOT SENT], the warning after it"""
+        a = st["alice"]
+        a.type_and_wait("/unload e2e")
+        (a.home / "rpe2e" / "keyring.json").write_text("{ not json")
+        off = log_size(a)
+        a.type_and_wait("/load e2e")
+        out = log_since(a, off)
+        assert "moved aside" in out or "corrupt" in out, out
+        start = len(chan_log(a))
+        a.type_and_wait("/window goto #test", "refused while lost")
+        assert harness.wait_until(lambda: "was NOT delivered" in chan_log(a)[start:], WAIT), chan_log(a)[start:]
+        log = chan_log(a)[start:]
+        assert "[NOT SENT] refused while lost" in log, log
+        assert log.index("[NOT SENT] refused while lost") < log.index("was NOT delivered"), log
+        assert "refused while lost" not in (work / "wire.log").read_text(errors="replace")
+
     def t_wire():
         """nothing of it went over the server in clear text; no sanitizer
         reports"""
@@ -264,7 +282,7 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_wire])
+                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():
