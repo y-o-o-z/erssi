@@ -121,7 +121,7 @@
  joins: a server that keeps #a[b and #a{b apart can deliver the
  sender's #a[b line as #a{b, so a line opened under a name that is not
  the target's to every server of the CASEMAPPING is shown with
- "(E2E key of <name>)" (R-E22).
+ "(E2E key of <name>)".
  Not addressed (known limitations, /help e2e):
  NOTICEs, non-ACTION CTCPs, bot commands (only with e2e_bot_bypass,
  off by default: repartee has no such exception) and IRCv3 tags stay
@@ -402,7 +402,7 @@ gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *c
 	const char *fp;
 	char *k;
 
-	/* never someone accepted for another person's query (R-E34) */
+	/* never someone accepted for another person's query */
 	if (e2e_dm_row_foreign(handle, ctx))
 		return FALSE;
 	k = pipe_key(handle, ctx);
@@ -589,7 +589,7 @@ gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex)
 		const char *key = g_ptr_array_index(keys, i);
 		char *h, *c;
 
-		/* a damaged row (accepted for another person's query, R-E34)
+		/* a damaged row (accepted for another person's query)
 		   is no acceptance of anybody */
 		if (split_pipe(key, &h, &c)) {
 			gboolean foreign = e2e_dm_row_foreign(h, c);
@@ -818,7 +818,7 @@ gboolean e2e_ctx_enabled(const E2E_JSON *kr, const char *ctx)
 /* the keyring's cache of nick: the last_handle of the peer last seen as
    nick (ASCII case only), the newest last_seen first (null or missing:
    0), on a tie the smallest fingerprint key in byte order - the order
-   e2e_json_keys() gives, the same in rpe2e.pl (R-E31). *tie (if not
+   e2e_json_keys() gives, the same in rpe2e.pl. *tie (if not
    NULL): peers of another last_handle share that newest last_seen. */
 static const char *find_handle_by_nick(const E2E_JSON *kr, const char *nick, gboolean *tie)
 {
@@ -2454,8 +2454,8 @@ GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const c
 		g_ptr_array_add(out, g_strconcat("@", live, NULL));
 		return out;
 	}
-	/* the nick of this query, not every nick the fold may take for it
-	   (R-E24): what turns E2E off is never wider than the server's rule */
+	/* the nick of this query, not every nick the fold may take for it:
+	   what turns E2E off is never wider than the server's rule */
 	mine = dm_configs(kr, net, nick, TRUE);
 	if (mine->len == 1)
 		g_ptr_array_add(out, g_strconcat("@", (char *) g_ptr_array_index(mine, 0), NULL));
@@ -2515,7 +2515,7 @@ static void distribute_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const char *c
 			continue;
 		fp = e2e_json_get_string(row, "fingerprint");
 		handle = e2e_json_get_string(row, "handle");
-		/* someone else than the query's own address (R-E33, R-E34): told
+		/* someone else than the query's own address: told
 		   once, then no recipient any more; gets nothing */
 		if (handle != NULL && e2e_dm_row_foreign(handle, ctx)) {
 			char *where = e2e_ctx_display(ctx), *who = e2e_text_display(handle);
@@ -2600,7 +2600,7 @@ typedef enum {
    takes both for the same channel (its CASEMAPPING, e2e_casefold), so
    the line must not go out in clear text. The bare name of the config
    found (also an IRCnet "!XXXXXchan" for a "!chan"). When none is found,
-   *undecided (R-E11, R-E23, R-E24): a reading or the name of a channel
+   *undecided: a reading or the name of a channel
    config with E2E on cannot be folded as the server folds it (not UTF-8
    or an unassigned code point on a Unicode CASEMAPPING, a non-ASCII name
    on an unknown one) - *bad that name, *other the config's (a reading
@@ -2631,7 +2631,7 @@ static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **r
 					continue;
 			} else {
 				/* rpe2e.pl's own rows: it encrypts from them whatever
-				   the module's config of the name says (R-E26) */
+				   the module's config of the name says */
 				if (strchr(key, E2E_SCOPE_SEP) != NULL)
 					continue;
 				wire = key;
@@ -2640,14 +2640,14 @@ static char *enabled_other_case(const E2E_JSON *kr, const E2E_NET *net, char **r
 				    g_strv_contains((const char *const *) readings, wire))
 					continue;
 			}
-			/* channels only: a DM config is no channel name (R-E24) */
+			/* channels only: a DM config is no channel name */
 			if (!e2e_ctx_enabled(kr, key) || !e2e_is_channel(wire))
 				continue;
 			have = e2e_casefold_ex(wire, map, &have_exact);
 			/* an unknown CASEMAPPING decides no non-ASCII name, but a
 			   byte code page keeps ASCII names apart from the others:
 			   for an ASCII reading only what the superset fold cannot
-			   decide counts (R-E23) */
+			   decide counts */
 			if (!have_exact && want_exact && map == E2E_CASEMAP_UNKNOWN)
 				g_free(e2e_casefold_ex(wire, E2E_CASEMAP_UNICODE, &have_exact));
 			if (strcmp(have, want) == 0 || ircnet_short_name(wire, want, map) ||
@@ -2777,7 +2777,7 @@ static gboolean nick_enabled(const E2E_JSON *kr, const E2E_NET *net, const char 
    nick (its CASEMAPPING) whose "@<handle>" is BLOCKED on net (old rows on
    several networks, or another network's), or NULL: what the gate
    refuses when the keyring's cache names that peer exactly, also for the
-   other spellings (R-E30) */
+   other spellings */
 static const char *folded_peer_blocked(const E2E_JSON *kr, const E2E_NET *net, const char *nick)
 {
 	E2E_JSON *peers = e2e_json_get(kr, "peers");
@@ -2988,7 +2988,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			res->action = E2E_GATE_REFUSE;
 			res->message = g_strdup_printf(REFUSE_CASE, other, target, other);
 		} else if (undecided) {
-			/* R-E11: may be the same channel, never "not encrypted" */
+			/* may be the same channel, never "not encrypted" */
 			res->action = E2E_GATE_REFUSE;
 			res->message = g_strdup_printf(REFUSE_UNDECIDED, bad, target, config);
 		} else if (other != NULL) {
@@ -3039,7 +3039,7 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	}
 	res->ctx = g_strdup(ctx);
 	res->save_needed = adopted;
-	/* another address accepted for this query may hold our key (R-E34):
+	/* another address accepted for this query may hold our key:
 	   it rotates now, the new one reaches only the query's peer */
 	damaged = e2e_rotate_for_damaged(kr, ctx);
 	for (i = 0; i + 1 < damaged->len; i += 2) {
@@ -3233,7 +3233,7 @@ static gboolean try_decrypt(const E2E_WIRE *w, const E2E_JSON *row, const char *
 }
 
 /* the storage context of wire on the network of p, an old one where it
-   is (a message never takes old rows over: R-E18); NULL for an old
+   is (a message never takes old rows over); NULL for an old
    context of unknown network, which is treated as E2E off */
 static char *in_ctx(const E2E_JSON *kr, const E2E_IN_PARAMS *p, const char *wire)
 {
@@ -3296,7 +3296,7 @@ static gboolean surely_same_channel(const char *wire, const E2E_IN_PARAMS *p, E2
    that the server moved from such a channel to the target (the AAD is
    that channel's name): where the two names are not one channel to
    every server of the CASEMAPPING, res->via names the session's channel
-   for the display (R-E22). TRUE when one opened it. */
+   for the display. TRUE when one opened it. */
 static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, const E2E_WIRE *w,
                                    E2E_IN_RESULT *res)
 {
@@ -3344,8 +3344,8 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 			res->ctx = ctx;
 			done = TRUE;
 			/* a name only the superset fold takes for the target's:
-			   the server may keep them apart and have moved the line
-			   (R-E22) - say whose key opened it */
+			   the server may keep them apart and have moved the line -
+			   say whose key opened it */
 			if (!surely_same_channel(wire, p, map))
 				res->via = g_strdup(wire);
 		} else {
@@ -4056,7 +4056,7 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
    with E2E on that the nick piece of a target list may be: its address
    now (resolve), or the config's "nick", or a peer last seen as that nick
    under the config's handle; or an old bare-nick row of that nick with
-   E2E on (R-E29, nick_enabled() for the module) - nicks folded by the
+   E2E on (nick_enabled() for the module) - nicks folded by the
    map. Its bare name, or NULL. single: piece is the only target, which
    the script looks up itself - an old bare-nick row only when the fold
    alone joins them (the script refuses the name as it is stored).
@@ -4117,7 +4117,7 @@ static gboolean ascii_only(const char *s)
 
 /* addresses of several peers tie for nick in the keyring's cache: an
    rpe2e.pl before erssi/y-o-o-z (14) picks one by Perl's hash order, which
-   changes from process to process (R-E31) */
+   changes from process to process */
 static gboolean cache_tied(const E2E_JSON *kr, const char *nick)
 {
 	gboolean tie;
@@ -4131,8 +4131,8 @@ static gboolean cache_tied(const E2E_JSON *kr, const char *nick)
  module does - live (an open query, a common channel), then the keyring's
  last_nick by lc(), which matches the module's ASCII case only for an
  ASCII nick (on a non-ASCII one it may compare another form of the
- stored name, R-E30), and picks among peers tied on last_seen by its hash
- order (R-E31) - and with no address looks an old bare-nick row up
+ stored name), and picks among peers tied on last_seen by its hash
+ order - and with no address looks an old bare-nick row up
  exactly. A cache-only address of a non-ASCII nick, or of a tie, counts
  as none. The refusal, or NULL:
   - an address the script has as well, its "@<handle>" config off, and E2E
@@ -4189,12 +4189,12 @@ static char *script_single_nick(const E2E_JSON *kr, const E2E_NET *net, const ch
 /* rpe2e.pl compares channel names exactly, and looks "#a,#b" up as one
    name: a channel E2E is on for in its own (bare) rows that the server
    may take for to under another name, or for a piece of a target list,
-   and a query with E2E on that a nick in such a list may be (R-E24,
-   R-E26, R-E28), gets clear text from the script. The refusal, or NULL.
+   and a query with E2E on that a nick in such a list may be, gets clear
+   text from the script. The refusal, or NULL.
    The script's escape hatches (non-ACTION CTCP) stay. dms_only: the line
    is a bot command to a channel (the module and the script send it in
-   clear text, whatever the case of the name), but DMs never bypass
-   (R-E29): only the nick pieces of a list are looked at. */
+   clear text, whatever the case of the name), but DMs never bypass:
+   only the nick pieces of a list are looked at. */
 static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const char *to,
                                const char *body, gboolean dms_only, E2E_RESOLVE_FUNC resolve,
                                void *resolve_data)
@@ -4213,8 +4213,7 @@ static char *script_other_case(const E2E_JSON *kr, const E2E_NET *net, const cha
 			other = enabled_other_case(kr, net, readings, list ? OTHER_SCRIPT_ALL : OTHER_SCRIPT,
 			                           &undecided, &bad, &config);
 		else if (readings[0] == NULL && list && *pieces[i] != '\0')
-			/* a nick in a list: the script resolves no query for it
-			   (R-E28) */
+			/* a nick in a list: the script resolves no query for it */
 			other = list_query_on(kr, net, pieces[i], resolve, resolve_data, FALSE, NULL);
 		else if (readings[0] == NULL && *pieces[i] != '\0')
 			/* the only target, a nick (never a bot command) */
@@ -4311,7 +4310,7 @@ E2E_GATE_ACTION e2e_script_guard(const E2E_JSON *kr, gboolean kr_ok, gboolean lo
 			                                         res.action == E2E_GATE_BYPASS, resolve,
 			                                         resolve_data)) != NULL) {
 				/* several lines: the whole keyring was decided above;
-				   a bot command: DMs never bypass (R-E29) */
+				   a bot command: DMs never bypass */
 				g_free(*message);
 				*message = case_msg;
 				g_free(*target);

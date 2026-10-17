@@ -638,7 +638,7 @@ static const char *session_label(const E2E_JSON *kr, const char *handle, const c
 }
 
 /* the damaged entries of a query context (of ctx; NULL: of all): rows of
-   another address than the query's own (R-E33, R-E34) - a request
+   another address than the query's own - a request
    rpe2e.pl kept, its acceptance, a session or recipient row. They get no
    key; listed once per address and context. How many. */
 static guint print_damaged(WI_ITEM_REC *item, const E2E_JSON *kr, const char *ctx)
@@ -700,7 +700,7 @@ static guint print_damaged(WI_ITEM_REC *item, const E2E_JSON *kr, const char *ct
 }
 
 /* damaged entries that may hold our key (ctx; NULL: all) make it rotate:
-   saved, told once (R-E34) */
+   saved, told once */
 static void rotate_damaged(WI_ITEM_REC *item, E2E_JSON *kr, const char *ctx)
 {
 	GPtrArray *found = e2e_rotate_for_damaged(kr, ctx);
@@ -1287,7 +1287,7 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 	}
 	kr = e2e_load();
 	/* in a query, an address with damaged entries there (another
-	   address's request or acceptance for this query, R-E33/R-E34):
+	   address's request or acceptance for this query):
 	   those go */
 	if (who != NULL && strchr(who, '@') != NULL && query_nick(item) != NULL &&
 	    (ctx = window_ctx_quiet(kr, item)) != NULL && e2e_dm_row_foreign(who, ctx))

@@ -252,7 +252,7 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
                          const char *buf, gsize len,
                          E2E_RESOLVE_FUNC resolve, void *resolve_data);
 /*
- While rpe2e.pl is loaded (R-E19): the outgoing buffer buf, which the
+ While rpe2e.pl is loaded: the outgoing buffer buf, which the
  script let pass unchanged, decided as the module would decide it with a
  dry gate: kr is never changed, nothing is adopted, no key is made.
   - One line: decided on the rows rpe2e.pl cannot see - a copy of kr
@@ -262,7 +262,7 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
     another name (CASEMAPPING): the script compares names exactly and
     would send it in clear (E2E_SCRIPT_REFUSE_CASE), and for a single
     nick with no address the script finds (a non-ASCII nick: none but a
-    live one, R-E30) an old bare-nick row of another spelling or an old
+    live one) an old bare-nick row of another spelling or an old
     query of that nick (its "nick", or a peer last seen as it)
     (E2E_SCRIPT_REFUSE_NICK, _NICK_UNKNOWN), or, at an address whose old
     config is off, a query of that nick with E2E on elsewhere
@@ -371,7 +371,7 @@ typedef struct {
 	char *debug;		/* why it was dropped */
 	gboolean save_needed;	/* a KEYREQ of ours is pending, or old rows taken over */
 	char *via;		/* PLAIN under the session of another channel, which the
-				   server may keep apart from the wire's (R-E22): that
+				   server may keep apart from the wire's: that
 				   channel's name, for the display (e2e_plain_with_via) */
 } E2E_IN_RESULT;
 

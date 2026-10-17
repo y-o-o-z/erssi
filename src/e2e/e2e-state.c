@@ -8,8 +8,8 @@
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
- Read only: nothing here changes the keyring (no old row is taken over,
- R-E18), so the statusbar and fe-web can ask as often as they like.
+ Read only: nothing here changes the keyring (no old row is taken over),
+ so the statusbar and fe-web can ask as often as they like.
 */
 
 #include <string.h>

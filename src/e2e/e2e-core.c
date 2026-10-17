@@ -539,7 +539,7 @@ void e2e_server_net(SERVER_REC *server, E2E_NET *net)
 	if (IS_IRC_SERVER(server) && IRC_SERVER(server)->isupport != NULL)
 		casemapping = g_hash_table_lookup(IRC_SERVER(server)->isupport, "CASEMAPPING");
 	/* until the server named its CASEMAPPING (in any 005 line) or ended
-	   its MOTD without one, nothing is known: the widest (R-E24, R-E26).
+	   its MOTD without one, nothing is known: the widest.
 	   Both are kept over /upgrade (isupport, motd_got) */
 	if (IS_IRC_SERVER(server))
 		motd_done = IRC_SERVER(server)->motd_got;
@@ -1177,7 +1177,7 @@ static int pump_emission;
    that line: a script of rpe2e.pl's name that dies in its gate is
    unloaded at once, and the module, inactive when its gate ran, is
    active by the time the guard runs; a handler between the two may have
-   rewritten what the gate let pass (R-E24) */
+   rewritten what the gate let pass */
 static GPtrArray *gated_emissions;
 
 static void gated_line_free(gpointer data)
@@ -1523,7 +1523,7 @@ static void sig_server_outgoing(SERVER_REC *server, GString *str, int crlf)
 	native_gate(server, str);
 }
 
-/* R-E19: while rpe2e.pl is loaded, after the script's gate (last, so
+/* while rpe2e.pl is loaded, after the script's gate (last, so
    it sees only what the script let pass unchanged): a PRIVMSG that the
    module's per-network entries - which the script cannot see - would
    encrypt or refuse is not sent in clear text either. Decided on those
@@ -1872,7 +1872,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			break;
 		}
 		/* opened with the key of a channel the server may keep apart
-		   from this one (R-E22): shown with that channel's name */
+		   from this one: shown with that channel's name */
 		if (res.via != NULL) {
 			char *marked = e2e_plain_with_via(res.plain, res.via);
 
@@ -2120,7 +2120,7 @@ void e2e_core_init(void)
 		   before /e2e reset */
 		if (!lost && e2e_ensure_identity(kr, &id))
 			e2e_identity_wipe(&id);
-		/* entries a bug of before wrote may hold a key: rotated (R-E34) */
+		/* entries a bug of before wrote may hold a key: rotated */
 		if (!lost) {
 			GPtrArray *found = e2e_rotate_for_damaged(kr, NULL);
 

@@ -477,7 +477,7 @@ else
     pass "server: only bare contexts on the wire"
 fi
 
-# ---- mallory: an outsider gets no key without /e2e accept (review C1) ----
+# ---- mallory: an outsider gets no key without /e2e accept ----
 say alice "/join -E2E $CHAN"
 say mallory "/window goto $CHAN"
 say mallory "/e2e mode auto"
@@ -525,7 +525,7 @@ else
     pass "mallory cannot read alice's channel messages"
 fi
 
-# ---- a script that binds /e2e is not rpe2e.pl (review M3) ----
+# ---- a script that binds /e2e is not rpe2e.pl ----
 cat > "$WORK/alice/scripts/e2ealias.pl" <<'PERL'
 use strict;
 use Irssi;
@@ -538,7 +538,7 @@ sleep 2
 check "$WORK/bob/logs/E2E/$CHAN.log" "after another script bound e2e"
 say alice "/script unload e2ealias"
 
-# ---- a PRIVMSG from a rawlog hook while ciphertext goes out (review M4) ----
+# ---- a PRIVMSG from a rawlog hook while ciphertext goes out ----
 cat > "$WORK/alice/scripts/e2erawlog.pl" <<'PERL'
 use strict;
 use Irssi;
@@ -558,13 +558,13 @@ sleep 2
 check "$WORK/bob/logs/E2E/$CHAN.log" "sent from a rawlog hook"
 say alice "/script unload e2erawlog"
 
-# ---- a raw line with CR LF in it (review I2) ----
+# ---- a raw line with CR LF in it ----
 say alice "/script exec Irssi::active_server->send_raw('PRIVMSG #pub :hello'.chr(13).chr(10).'PRIVMSG $CHAN :raw line with CRLF')"
 sleep 1
 say alice "/script exec Irssi::active_server->send_raw('PRIVMSG #pub :hello'.chr(13).'PRIVMSG $CHAN :raw line with CR')"
 sleep 2
 
-python3 - "$WORK/wire.log" <<'PY' && pass "server: the review checks sent no plain text" || bad "server: plain text from the review checks"
+python3 - "$WORK/wire.log" <<'PY' && pass "server: the checks above sent no plain text" || bad "server: plain text from the checks above"
 import sys
 bad = 0
 for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
@@ -576,7 +576,7 @@ for l in open(sys.argv[1], encoding="utf-8", errors="replace"):
 sys.exit(1 if bad else 0)
 PY
 
-# ---- E2E on in a query, the nick's address no longer known (review 2, I3) ----
+# ---- E2E on in a query, the nick's address no longer known ----
 say alice "/query carol"
 say alice "/e2e on"
 say alice "/window close"
@@ -699,7 +699,7 @@ if grep -aq "^alice PRIVMSG #żaba :+RPE2E01 " "$WORK/wire2.log" &&
 else
     bad "utf8 CASEMAPPING: #żaba itself is not encrypted"
 fi
-# R-E11: a name that is not UTF-8 cannot be folded as a utf8 server does
+# a name that is not UTF-8 cannot be folded as a utf8 server does
 say alice "/script exec Irssi::server_find_tag('E2E2')->command('msg #a'.chr(255).' not utf8 secret')"
 sleep 1
 if grep -aqF "not utf8 secret" "$WORK/wire2.log" "$WORK/wire.log"; then
@@ -821,7 +821,7 @@ check "$WORK/bob/logs/E2E/alice.log" "dm after adopt"
 check "$WORK/alice/logs/E2E/bob.log" "dm back after adopt"
 say alice "/window close"
 # a target list with a query E2E is on for: one line cannot be
-# encrypted for several (R-E28) - irssi sends such a list in one line
+# encrypted for several - irssi sends such a list in one line
 # when the server's TARGMAX allows it
 say alice "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG bob,carol :native list dm secret')"
 sleep 1
@@ -1097,7 +1097,7 @@ for word in pacedlong secondlong "short after long" "nested from a rawlog" rotat
 done
 [ $leak = 0 ] && pass "flood queue: no plain text crossed the server"
 
-# ---- /upgrade with PRIVMSGs in the flood queue (review I1) ----
+# ---- /upgrade with PRIVMSGs in the flood queue ----
 # and with the chunks of long messages waiting in the module's queue
 # (both cases in one /upgrade, it takes a while): on E2E2 with nothing in irssi's flood
 # queue (one PRIVMSG, /quote: irssi does not split it) - its chunks are
@@ -1180,7 +1180,7 @@ fi
 cp "$WORK/bob/rpe2e/keyring.json" "$WORK/bob-keyring.json"
 cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
-# R-E19: rpe2e.pl on a keyring whose #test is set up only in the module's
+# rpe2e.pl on a keyring whose #test is set up only in the module's
 # per-network entries ("E2E\x1f#test"): the script would send in clear
 # text, the inactive module stops it; a bot command too, unless
 # e2e_bot_bypass is on: then it goes out, with the warning
@@ -1235,7 +1235,7 @@ else
     pass "rpe2e.pl loaded: a second line of a raw buffer is not sent in plain text"
 fi
 # rpe2e.pl compares names exactly: #MULTI is #multi to this (ascii)
-# server, and E2E is on for #multi in the script's own entry (R-E24)
+# server, and E2E is on for #multi in the script's own entry
 say bob "/msg #MULTI other case to multi"
 sleep 1
 if grep -aqF "other case to multi" "$WORK/wire.log"; then
@@ -1248,7 +1248,7 @@ if wait_for "$WORK/bob/all.log" "rpe2e.pl compares names exactly" 5; then
 else
     bad "bob is not told why #MULTI was not sent"
 fi
-# a target list: the script looks "#x,#multi" up as one name (R-E26)
+# a target list: the script looks "#x,#multi" up as one name
 say bob "/quote PRIVMSG #x,#multi :list piece to multi"
 sleep 1
 if grep -aqF "list piece to multi" "$WORK/wire.log"; then
@@ -1256,7 +1256,7 @@ if grep -aqF "list piece to multi" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: #x,#multi (E2E on for #multi in its entry) is not sent in plain text"
 fi
-# the script resolves no query for a nick in a list either (R-E28)
+# the script resolves no query for a nick in a list either
 say bob "/query alice"
 say bob "/e2e on"
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG alice,carol :script list dm secret')"
@@ -1291,13 +1291,13 @@ k = json.load(open(p, encoding="utf-8"))
 del k["channels"]["zed"]
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
-# R-E30: a non-ASCII nick the module finds only in the keyring's cache:
+# a non-ASCII nick the module finds only in the keyring's cache:
 # rpe2e.pl before erssi/y-o-o-z (13) compared last_nick by lc() on the
 # decoded string and did not find it (kótek) - not sent in clear, by any
 # copy of the script. And a nick
 # whose newest address has E2E off while a query of that nick has it on
 # (DM moved): refused as the module refuses it
-python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E30 checks failed"
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the nick cache checks failed"
 import json, sys
 p = sys.argv[1]
 k = json.load(open(p, encoding="utf-8"))
@@ -1334,7 +1334,7 @@ elif wait_for "$WORK/bob/all.log" "yan is now other@h2" 5; then
 else
     bad "rpe2e.pl loaded: yan was not sent, but bob is not told why"
 fi
-python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E30 checks failed"
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the nick cache checks failed"
 import json, sys
 p = sys.argv[1]
 k = json.load(open(p, encoding="utf-8"))
@@ -1344,11 +1344,11 @@ for f in ("9" * 32, "1" * 32, "2" * 32):
     del k["peers"][f]
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
-# R-E31: two addresses tie for a nick in the keyring (no last_seen): the
+# two addresses tie for a nick in the keyring (no last_seen): the
 # script of erssi/y-o-o-z (14) takes the smallest fingerprint, as the
 # module does, and encrypts to the query E2E is on for; an older one
 # takes either by Perl's hash order, and the module refuses the line
-python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E31 check failed"
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the nick tie check failed"
 import json, sys
 p = sys.argv[1]
 k = json.load(open(p, encoding="utf-8"))
@@ -1367,7 +1367,7 @@ elif grep -aqF "bob PRIVMSG tia :+RPE2E01 " "$WORK/wire.log" ||
 else
     bad "rpe2e.pl loaded: tia was neither encrypted nor refused with a reason"
 fi
-python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the R-E31 check failed"
+python3 - "$WORK/bob/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the nick tie check failed"
 import json, sys
 p = sys.argv[1]
 k = json.load(open(p, encoding="utf-8"))
@@ -1377,7 +1377,7 @@ for f in ("a9", "f2"):
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
 # a bot command bypasses E2E on a channel only; the channel piece of a
-# list does not make the DM piece a bot command (R-E29)
+# list does not make the DM piece a bot command
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG #x,alice :!help script bypass secret')"
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG alice,#x :.net script bypass secret')"
 sleep 1
@@ -1558,7 +1558,7 @@ say alice "/set -default cmds_max_at_once"
 say alice "/set -default cmd_queue_speed"
 
 # ---- a handler rewrites a line after the module's gate let it pass ----
-# (R-E24) the module's last hook sees another line than its gate did:
+# the module's last hook sees another line than its gate did:
 # it decides that one too
 cat > "$WORK/alice/scripts/e2erewrite.pl" <<'PERL'
 use strict;
@@ -1777,7 +1777,7 @@ else
 fi
 
 # ---- a damaged entry: another address accepted for bob's query ----
-# (R-E34: what rpe2e.pl's request for another person's query left behind)
+# (what rpe2e.pl's request for another person's query left behind)
 # it gets no REKEY of the query, is listed as damaged, and /e2e decline
 # removes it
 python3 - "$WORK/alice/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for the damaged-entry check failed"

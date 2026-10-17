@@ -57,7 +57,7 @@ static void test_casemap_parse(void)
 	g_assert_cmpint(e2e_casemap_parse("rfc8265"), ==, E2E_CASEMAP_UNICODE);
 	g_assert_cmpint(e2e_casemap_parse("utf8"), ==, E2E_CASEMAP_UNICODE);
 	g_assert_cmpint(e2e_casemap_parse("UTF8"), ==, E2E_CASEMAP_UNICODE);
-	/* anything else is unknown (R-E23): the superset fold, and no
+	/* anything else is unknown: the superset fold, and no
 	   non-ASCII name is decided (a byte code page such as cp1251) */
 	g_assert_cmpint(e2e_casemap_parse("future-thing"), ==, E2E_CASEMAP_UNKNOWN);
 	g_assert_cmpint(e2e_casemap_parse("cp1251"), ==, E2E_CASEMAP_UNKNOWN);
@@ -68,7 +68,7 @@ static void test_casemap_parse(void)
 	g_assert_cmpint(e2e_casemap_parse("ascii2"), ==, E2E_CASEMAP_UNKNOWN);
 	g_assert_cmpint(e2e_casemap_parse("utf8x"), ==, E2E_CASEMAP_UNKNOWN);
 
-	/* R-E24 M1, R-E26: until the server named its CASEMAPPING, or ended
+	/* until the server named its CASEMAPPING, or ended
 	   its MOTD without one (it sends none: rfc1459), the widest */
 	g_assert_cmpint(e2e_casemap_of_server(NULL, FALSE), ==, E2E_CASEMAP_UNICODE);
 	g_assert_cmpint(e2e_casemap_of_server("ascii", FALSE), ==, E2E_CASEMAP_ASCII);
@@ -113,7 +113,7 @@ static void test_casefold(void)
 	SAME("#a]", "#a}", E2E_CASEMAP_STRICT_RFC1459);
 	SAME("#a\\", "#a|", E2E_CASEMAP_STRICT_RFC1459);
 	SAME("#a~", "#a^", E2E_CASEMAP_RFC1459);
-	/* R-E23: the exact maps also fold Latin-1 C0-DE to E0-FE (not D7), as
+	/* the exact maps also fold Latin-1 C0-DE to E0-FE (not D7), as
 	   the ircu family does; continuation bytes 80-BF stay, so two names
 	   in valid UTF-8 never meet that way */
 	DIFF("#\xc3\x80", "#\xc3\xa0", E2E_CASEMAP_RFC1459);
@@ -293,7 +293,7 @@ static void test_casefold_ignorables(void)
 	SAME("#\xc3\x81\xcd\x8f", "#a\xcc\x81", E2E_CASEMAP_UNICODE);
 }
 
-/* R-E22, R-E26: what every server of the map takes for one name, at
+/* what every server of the map takes for one name, at
    least: two names e2e_casefold_narrow() keeps apart may be two channels */
 static void assert_narrow(const char *a, const char *b, E2E_CASEMAP map, gboolean same)
 {
@@ -315,7 +315,7 @@ static void test_casefold_narrow(void)
 	   with case folding (the PRECIS / utf8 servers) must both agree */
 	assert_narrow("#\xc5\xbb" "aba", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);  /* Ż / ż */
 	assert_narrow("#ABC", "#abc", E2E_CASEMAP_UNICODE, TRUE);
-	/* R-E28: and whole-string lower case (Final_Sigma), and upper case
+	/* and whole-string lower case (Final_Sigma), and upper case
 	   (servers that compare in upper case) */
 	assert_narrow("#\xc5\xbb" "ABA", "#\xc5\xbc" "aba", E2E_CASEMAP_UNICODE, TRUE);
 	assert_narrow("#k", "#\xe2\x84\xaa", E2E_CASEMAP_UNICODE, FALSE);                /* Kelvin sign: K / U+212A in upper case */
@@ -325,7 +325,7 @@ static void test_casefold_narrow(void)
 	assert_narrow("#\xce\xb8", "#\xcf\xb4", E2E_CASEMAP_UNICODE, FALSE);             /* θ / ϴ */
 	assert_narrow("#\xcf\x89", "#\xe2\x84\xa6", E2E_CASEMAP_UNICODE, FALSE);        /* ω / Ohm sign */
 	assert_narrow("#\xce\xa9", "#\xcf\x89", E2E_CASEMAP_UNICODE, TRUE);              /* Ω / ω */
-	/* R-E29: and Unicode's own Final_Sigma (a cased letter before, case
+	/* and Unicode's own Final_Sigma (a cased letter before, case
 	   ignorables skipped both ways, no cased letter after); GLib's rule
 	   ("the next character is not a letter") takes a final Σ before a
 	   letter without case for σ */
@@ -413,7 +413,7 @@ static void test_casefold_ex(void)
 	g_assert_cmpstr(s, ==, "#a~");
 	g_free(s);
 
-	/* R-E24 M4: an unassigned code point may be anything to a server with
+	/* an unassigned code point may be anything to a server with
 	   newer tables: not decided (the fold is still given) */
 	exact = TRUE;
 	s = e2e_casefold_ex("#a\xe2\x81\xa5" "b", E2E_CASEMAP_UNICODE, &exact);
@@ -424,7 +424,7 @@ static void test_casefold_ex(void)
 	s = e2e_casefold_ex("#\xf3\xb0\x80\x80", E2E_CASEMAP_UNICODE, &exact); /* U+F0000 private use: assigned */
 	g_assert_true(exact);
 	g_free(s);
-	/* R-E23: an unknown CASEMAPPING decides ASCII names only */
+	/* an unknown CASEMAPPING decides ASCII names only */
 	exact = FALSE;
 	s = e2e_casefold_ex("#A[b", E2E_CASEMAP_UNKNOWN, &exact);
 	g_assert_true(exact);
@@ -1644,7 +1644,7 @@ static void test_legacy_autotrust_old_rule(void)
 	e2e_json_free(kr);
 }
 
-/* ---- rpe2e.pl loaded (R-E19): what the module still stops ---- */
+/* ---- rpe2e.pl loaded: what the module still stops ---- */
 
 static char *guard_resolve(const char *nick, const E2E_JSON *kr, void *data)
 {
@@ -1897,7 +1897,7 @@ static void test_legacy_script_guard_lost(void)
 	e2e_json_free(kr);
 }
 
-/* ---- the review's regression scenarios (Task 3) ---- */
+/* ---- regression scenarios of the network scope ---- */
 
 static E2E_NET rv_a = { (char *) "A", E2E_CASEMAP_RFC1459, FALSE };
 static E2E_NET rv_b = { (char *) "B", E2E_CASEMAP_RFC1459, FALSE };
@@ -2022,7 +2022,7 @@ static void test_regress_autotrust_scope(void)
 	e2e_json_free(kr);
 }
 
-/* the premise of R-E19: a channel only the module set up has no row
+/* the premise of the rpe2e.pl guard: a channel only the module set up has no row
    rpe2e.pl reads, while the module itself never lets it out in clear;
    the dry decisions leave the keyring alone */
 static void test_regress_r_e19_premise(void)

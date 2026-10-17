@@ -860,7 +860,7 @@ static void test_export_import(void)
 	peer_free(&b);
 }
 
-/* ---- the findings of the security review ---- */
+/* ---- hardening beyond rpe2e.pl and repartee ---- */
 
 #define MAL   "mallory@127.0.0.1"
 #define THIRD "@bob@b.host"
@@ -939,7 +939,7 @@ static void exchange(PEER *to, PEER *from, const char *ctx)
 }
 
 /* C1: a session we asked for is no permission to give our key away */
-static void test_review_c1(void)
+static void test_keyrsp_is_no_acceptance(void)
 {
 	PEER a, m;
 	E2E_IN_RESULT r;
@@ -1002,7 +1002,7 @@ static void test_review_c1(void)
 
 /* C2: a REKEY replaces a trusted session of that handle and context, it
    never creates one; a DM request names its sender */
-static void test_review_c2(void)
+static void test_rekey_needs_session(void)
 {
 	static const char *const ctxs[] = { "#secret", THIRD, NULL };
 	PEER a, m, b;
@@ -1096,7 +1096,7 @@ static void test_review_c2(void)
 }
 
 /* M7: a REKEY is used once */
-static void test_review_m7(void)
+static void test_rekey_replay(void)
 {
 	PEER a, b;
 	unsigned char k1[32], k2[32], got[32];
@@ -1149,8 +1149,8 @@ static char *fixed_resolve(const char *nick, const E2E_JSON *kr, void *data)
 	return g_strdup(data);
 }
 
-/* I3: E2E is on for a nick's old ident@host: refused, not clear text */
-static void test_review_i3(void)
+/* E2E is on for a nick's old ident@host: refused, not clear text */
+static void test_dm_handle_changed(void)
 {
 	E2E_JSON *kr = e2e_keyring_new(), *peer;
 	E2E_GATE_RESULT g;
@@ -1184,8 +1184,8 @@ static void test_review_i3(void)
 	e2e_json_free(kr);
 }
 
-/* I5: a session row without a real key is never trusted, never used */
-static void test_review_i5(void)
+/* a session row without a real key is never trusted, never used */
+static void test_no_key_no_trust(void)
 {
 	PEER a, m;
 	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
@@ -1246,7 +1246,7 @@ static void test_review_i5(void)
 }
 
 /* M1: no line breaks or NUL out of a decrypted message */
-static void test_review_m1(void)
+static void test_control_characters(void)
 {
 	PEER a, b;
 	E2E_WIRE w;
@@ -1287,7 +1287,7 @@ static void test_review_m1(void)
 
 /* M6: a KEYRSP answers our request to that handle, and only one that
    opens counts */
-static void test_review_m6(void)
+static void test_keyrsp_binding(void)
 {
 	PEER a, b, m;
 	unsigned char eph[32], eph_sk[32];
@@ -1331,7 +1331,7 @@ static void test_review_m6(void)
 
 /* M8: what strangers can make us store is bounded, the handshakes are
    rate-limited */
-static void test_review_m8(void)
+static void test_limits(void)
 {
 	PEER a;
 	GHashTable *stamps = e2e_stamps_new();
@@ -1385,7 +1385,7 @@ static void test_review_m8(void)
 }
 
 /* M10: timestamps from an imported keyring, rotations, long targets */
-static void test_review_m10(void)
+static void test_robustness(void)
 {
 	PEER a, b;
 	E2E_GATE_RESULT g;
@@ -1452,8 +1452,8 @@ static void test_review_m10(void)
 	peer_free(&b);
 }
 
-/* I2: one outgoing buffer, several IRC lines */
-static void test_review_i2(void)
+/* one outgoing buffer, several IRC lines */
+static void test_multiline_buffer(void)
 {
 	static const char nul_buf[] = "PRIVMSG #pub :a\0PRIVMSG #secret :b";
 	E2E_JSON *kr = e2e_keyring_new();
@@ -1488,12 +1488,12 @@ static void test_review_i2(void)
 	e2e_json_free(kr);
 }
 
-/* ---- second round of the review ---- */
+/* ---- more of the hardening ---- */
 
 #define CAROL "carol@127.0.0.1"
 
-/* I3: E2E on for a nick whose address is not known at all now */
-static void test_review2_i3_unresolved(void)
+/* E2E on for a nick whose address is not known at all now */
+static void test_unresolved_nick(void)
 {
 	E2E_JSON *kr = e2e_keyring_new(), *cfg, *peer;
 	E2E_GATE_RESULT g;
@@ -1522,7 +1522,7 @@ static void test_review2_i3_unresolved(void)
 }
 
 /* M7: replaying an old REKEY after many newer ones */
-static void test_review2_rekey_replay(void)
+static void test_rekey_replay_after_many(void)
 {
 	PEER a, b;
 	unsigned char k1[32], k[32], got[32];
@@ -1567,7 +1567,7 @@ static void test_review2_rekey_replay(void)
 }
 
 /* M8: wires from many handles, half of them answering our KEYREQ */
-static void test_review2_growth(void)
+static void test_growth_from_wires(void)
 {
 	PEER a, b;
 	E2E_IN_RESULT r;
@@ -1634,7 +1634,7 @@ static void test_review2_growth(void)
 }
 
 /* REKEYs go only to recipients that were accepted */
-static void test_review2_rekey_recipients(void)
+static void test_rekey_to_accepted_only(void)
 {
 	PEER a, b, c;
 	E2E_GATE_RESULT g;
@@ -1683,7 +1683,7 @@ static void test_review2_rekey_recipients(void)
 }
 
 /* /e2e reset drops queued PRIVMSGs: every line of a queued buffer counts */
-static void test_review2_buffer_privmsg(void)
+static void test_queued_buffer_privmsg(void)
 {
 	static const char nul_buf[] = "NICK a\0PRIVMSG #s :b";
 
@@ -1697,7 +1697,7 @@ static void test_review2_buffer_privmsg(void)
 }
 
 /* /e2e off in a query turns off the address of that query only */
-static void test_review2_query_off(void)
+static void test_query_off_this_address(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
 	GPtrArray *t;
@@ -2142,7 +2142,7 @@ static void test_scope_rekey_dm_config(void)
 
 static void legacy_bob_real(PEER *a);
 
-/* I1 (fix round 1): a handle may hold '|' and 0x1F; the network of a
+/* a handle may hold '|' and 0x1F; the network of a
    waiting request is its row's, not whatever follows the first '|' */
 static void test_scope_prune_confused_handle(void)
 {
@@ -2334,7 +2334,7 @@ static void test_legacy_dm_reciprocal_in_place(void)
 }
 
 
-/* N1 (fix round 2): the global cap takes from the network holding the
+/* the global cap takes from the network holding the
    most requests, not the oldest of all - a flood on other networks does
    not push a network's real requests out */
 static void test_scope_prune_global_fair(void)
@@ -2379,7 +2379,7 @@ static void test_scope_prune_global_fair(void)
 	peer_free(&a);
 }
 
-/* N2: an export and import keep every member of the config and key rows:
+/* an export and import keep every member of the config and key rows:
    the network that took a name over, the nick of a DM config */
 static void test_legacy_import_keeps_members(void)
 {
@@ -2470,7 +2470,7 @@ static E2E_IN_ACTION dm_decrypt(PEER *to, PEER *from, const E2E_NET *net, const 
 	return action;
 }
 
-/* N3: the user's own DM line to bob takes bob's old DM sessions to us
+/* the user's own DM line to bob takes bob's old DM sessions to us
    ("@<own>") over with "@<bob>", not those of others */
 static void test_legacy_dm_sessions_follow(void)
 {
@@ -2676,7 +2676,7 @@ static void test_legacy_mixed_keyrsp(void)
 	peer_free(&b);
 }
 
-/* N4: the pending notice looks the request up where the handler put it */
+/* the pending notice looks the request up where the handler put it */
 static void test_legacy_pending_notice_key(void)
 {
 	PEER a;
@@ -2734,7 +2734,7 @@ static void test_scope_prune_global_cap(void)
 	peer_free(&a);
 }
 
-/* R-E18 (fix round 1): someone else's traffic never binds old rows to a
+/* someone else's traffic never binds old rows to a
    network; once the user's own line has, another network is refused */
 static void test_legacy_stranger_does_not_adopt(void)
 {
@@ -3348,7 +3348,7 @@ static void test_scope_separator_in_name(void)
 }
 
 
-/* ---- regressions of the reviews (fix round 3) ---- */
+/* ---- regressions ---- */
 
 static E2E_NET net_two_only = { (char *) "E2E2", E2E_CASEMAP_RFC1459, TRUE };
 
@@ -3384,7 +3384,7 @@ static void flood(PEER *a, const char *label, int count, const char *fmt)
 	}
 }
 
-/* N1: floods on every other network, also with handles that read like
+/* floods on every other network, also with handles that read like
    B's, never push B's real requests out */
 static void test_regress_flood_around_b(void)
 {
@@ -3410,7 +3410,7 @@ static void test_regress_flood_around_b(void)
 	peer_free(&a);
 }
 
-/* N1: the global cap shares out evenly among the fullest networks, and a
+/* the global cap shares out evenly among the fullest networks, and a
    smaller one is not touched while others hold more */
 static void test_regress_fair_share(void)
 {
@@ -3442,7 +3442,7 @@ static void test_regress_fair_share(void)
 	peer_free(&a);
 }
 
-/* N2: export and import give back the config and key rows member for
+/* export and import give back the config and key rows member for
    member, and B stays refused */
 static void test_regress_export_import(void)
 {
@@ -3685,7 +3685,7 @@ static void test_regress_replay_across_adoption(void)
 	peer_free(&a);
 }
 
-/* the stranger of R-E18: a signed KEYREQ and a wire for #test on the only
+/* a stranger: a signed KEYREQ and a wire for #test on the only
    network, then a second one - #test there is never clear text */
 static void test_regress_cross_network_stranger(void)
 {
@@ -3872,7 +3872,7 @@ static void test_casemap_other_network_ignored(void)
 	e2e_json_free(kr);
 }
 
-/* R-E11: a target that is not UTF-8 on a Unicode CASEMAPPING cannot be
+/* a target that is not UTF-8 on a Unicode CASEMAPPING cannot be
    compared as the server compares it: refused while E2E is on for a
    channel of this network; nor can a config of such a name */
 static void test_casemap_not_utf8_refused(void)
@@ -3978,7 +3978,7 @@ static void test_casemap_decrypt_folded_target(void)
 	g_assert_cmpint(cm_decrypt(&a, &one, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(plain, ==, "hello");
 	g_free(plain);
-	/* incoming traffic never takes old rows over (R-E18) */
+	/* incoming traffic never takes old rows over */
 	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|" ZABA_LOWER, NULL));
 	g_assert_null(path_get(a.kr, "incoming", BOB "|E2E\x1f" ZABA_LOWER, NULL));
 	peer_free(&a);
@@ -4222,7 +4222,7 @@ static void test_casemap_dm_nick(void)
 	e2e_json_free(kr);
 }
 
-/* ---- CASEMAPPING, fix round 1 (R-E22 .. R-E24) ---- */
+/* ---- CASEMAPPING ---- */
 
 static E2E_NET cm_unknown = { (char *) "E2E", E2E_CASEMAP_UNKNOWN, FALSE };
 
@@ -4262,7 +4262,7 @@ static E2E_IN_ACTION cm_moved(const E2E_NET *net, const char *session_ctx, const
 	return action;
 }
 
-/* R-E22 (I1): the superset fold also opens bob's #a[b line delivered as
+/* the superset fold also opens bob's #a[b line delivered as
    #a{b - a channel a Unicode server keeps apart. The AEAD does not
    reject it (the AAD is the session's name): the line is marked with
    the channel whose key opened it. */
@@ -4296,7 +4296,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpint(cm_moved(&cm_unicode, ZABA_LOWER, "#\xc5\xbb" "ABA", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
-	/* R-E26: names a per code point server (towlower, Go) or a PRECIS
+	/* names a per code point server (towlower, Go) or a PRECIS
 	   one keeps apart: marked */
 	{
 		static const struct { const char *session, *target; } apart[] = {
@@ -4313,7 +4313,7 @@ static void test_casemap_decrypt_marked(void)
 			g_free(via);
 		}
 	}
-	/* R-E28: a server comparing in upper case keeps the Kelvin sign
+	/* a server comparing in upper case keeps the Kelvin sign
 	   apart from k, and Final_Sigma makes #ΑΣ #ας: marked */
 	g_assert_cmpint(cm_moved(&cm_unicode, "#k", "#\xe2\x84\xaa", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, "#k");
@@ -4324,7 +4324,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpstr(via, ==, "#\xce\xb1\xcf\x83");
 	g_free(plain);
 	g_free(via);
-	/* R-E26: an unknown CASEMAPPING (cp1250, cp1251) may keep any
+	/* an unknown CASEMAPPING (cp1250, cp1251) may keep any
 	   non-ASCII spelling apart: marked */
 	g_assert_cmpint(cm_moved(&cm_unknown, ZABA_LOWER, ZABA_UPPER, &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, ZABA_LOWER);
@@ -4341,7 +4341,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpint(cm_moved(&cm_rfc1459, "#a[b", "#A{B", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
-	/* ... but their Latin-1 bytes (R-E23) are not every server's */
+	/* ... but their Latin-1 bytes are not every server's */
 	g_assert_cmpint(cm_moved(&cm_rfc1459, "#\xe9", "#\xc9", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, "#\xe9");
 	g_free(plain);
@@ -4361,14 +4361,14 @@ static void test_casemap_decrypt_marked(void)
 	plain = e2e_plain_with_via("x", "#a\003" "4b");
 	g_assert_cmpstr(plain, ==, "x\017 (E2E key of #a?4b)");
 	g_free(plain);
-	/* R-E26: formatting left on by the text (black on black) is reset
+	/* formatting left on by the text (black on black) is reset
 	   before the mark */
 	plain = e2e_plain_with_via("x\00301,01", "#a[b");
 	g_assert_cmpstr(plain, ==, "x\00301,01\017 (E2E key of #a[b)");
 	g_free(plain);
 }
 
-/* R-E23 (I2a): servers of the ircu family fold Latin-1 bytes */
+/* servers of the ircu family fold Latin-1 bytes */
 static void test_casemap_latin1_bytes(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4385,7 +4385,7 @@ static void test_casemap_latin1_bytes(void)
 	e2e_json_free(kr);
 }
 
-/* R-E23 (I2b): an unknown CASEMAPPING may be a byte code page */
+/* an unknown CASEMAPPING may be a byte code page */
 static void test_casemap_unknown_codepage(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4406,7 +4406,7 @@ static void test_casemap_unknown_codepage(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M1: before 005, the widest map */
+/* before 005, the widest map */
 static void test_casemap_before_005(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4420,7 +4420,7 @@ static void test_casemap_before_005(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M2: only channel configs count for R-E11 */
+/* only channel configs count for a name that cannot be decided */
 static void test_casemap_r_e11_channels_only(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4432,7 +4432,7 @@ static void test_casemap_r_e11_channels_only(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M3: /e2e off in a query names its nick exactly */
+/* /e2e off in a query names its nick exactly */
 static void test_casemap_off_exact(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4454,7 +4454,7 @@ static void test_casemap_off_exact(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M4: an unassigned code point is not decided */
+/* an unassigned code point is not decided */
 static void test_casemap_unassigned(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4466,7 +4466,7 @@ static void test_casemap_unassigned(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M6: with rpe2e.pl loaded, a name the server takes for the
+/* with rpe2e.pl loaded, a name the server takes for the
    script's own (bare) entry but which the script, comparing exactly,
    does not know */
 static void test_casemap_guard_bare_rows(void)
@@ -4521,7 +4521,7 @@ static void test_casemap_guard_bare_rows(void)
 	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
 	g_free(m);
 	g_free(t);
-	/* R-E26: rpe2e.pl does not split "#x,#y": a piece the server takes
+	/* rpe2e.pl does not split "#x,#y": a piece the server takes
 	   for a channel E2E is on for there, the same name too */
 	line = "PRIVMSG #x," ZABA_LOWER " :hello";
 	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
@@ -4548,7 +4548,7 @@ static void test_casemap_guard_bare_rows(void)
 	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_PASS);
 	g_free(m);
 	g_free(t);
-	/* R-E26: the script encrypts from its own row whatever the module's
+	/* the script encrypts from its own row whatever the module's
 	   config of the name says - one that is off does not hide it */
 	enable(&p, "E2E\x1f" ZABA_LOWER, "normal");
 	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f" ZABA_LOWER, NULL), "enabled", 0);
@@ -4584,7 +4584,7 @@ static void test_casemap_ircnet_short_name(void)
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!other", NULL), ==, E2E_GATE_PASS);
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!AB12Csecret", NULL), ==, E2E_GATE_CIPHER);
 	e2e_json_free(kr);
-	/* R-E26: an ID written in lower case, and the other way round: a
+	/* an ID written in lower case, and the other way round: a
 	   short name with E2E on, the full name as the target */
 	kr = e2e_keyring_new();
 	p.kr = kr;
@@ -4597,7 +4597,7 @@ static void test_casemap_ircnet_short_name(void)
 	e2e_json_free(kr);
 }
 
-/* R-E28: a list of targets with a query piece E2E is on for */
+/* a list of targets with a query piece E2E is on for */
 static char *cm_resolve_bob(const char *nick, const E2E_JSON *kr, void *data)
 {
 	return g_ascii_strcasecmp(nick, "bob") == 0 ? g_strdup(BOB) : NULL;
@@ -4698,7 +4698,7 @@ static void test_casemap_list_dm_pieces(void)
 	e2e_json_free(kr);
 }
 
-/* R-E29: a bot command bypasses E2E on a channel only - DMs never bypass,
+/* a bot command bypasses E2E on a channel only - DMs never bypass,
    also when a channel piece of the list makes the line a bot command */
 static void test_casemap_list_dm_bypass(void)
 {
@@ -4749,7 +4749,7 @@ static void test_casemap_list_dm_bypass(void)
 	e2e_bot_bypass = FALSE;
 }
 
-/* R-E29: an old bare-nick row (no '@') with E2E on counts for a nick in a
+/* an old bare-nick row (no '@') with E2E on counts for a nick in a
    list, as nick_enabled() does for the module */
 static void test_casemap_list_bare_nick(void)
 {
@@ -4970,7 +4970,7 @@ static void test_casemap_script_single_nick(void)
    Perl's lc() on a string it decoded from JSON, not on the bytes irssi
    gives it: it may not find the peer, and sends in clear text. A
    non-ASCII nick resolved only through the keyring's cache counts as not
-   resolved for the script (R-E30); a live address is the script's own. */
+   resolved for the script; a live address is the script's own. */
 static void test_casemap_script_nonascii_cache(void)
 {
 	static const char *const nicks[] = {
@@ -5091,7 +5091,7 @@ static void test_casemap_blocked_folded_peer(void)
 
 /* rpe2e.pl loaded: the nick resolves to another address than the one of
    a query E2E is on for whose peer the server takes for that nick - the
-   native gate refuses (REFUSE_DM_MOVED), so does the guard (R-E30) */
+   native gate refuses (REFUSE_DM_MOVED), so does the guard */
 static void test_casemap_script_dm_moved(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -5137,7 +5137,7 @@ static void tie_peer(E2E_JSON *kr, const char *fp, const char *nick, const char 
 	e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
 }
 
-/* R-E31: the newest last_seen wins, a tie goes to the smallest
+/* the newest last_seen wins, a tie goes to the smallest
    fingerprint key (byte order), null or missing is 0 - whatever order
    the peers were stored in */
 static void test_cache_tie_order(void)
@@ -5170,7 +5170,7 @@ static void test_cache_tie_order(void)
 /* rpe2e.pl loaded: two addresses tie for the nick in the keyring's cache.
    An older script picks one by Perl's hash order, which changes from
    process to process: the module's pick may not be the script's, so a
-   cache-only address with a tie counts as not resolved (R-E31). */
+   cache-only address with a tie counts as not resolved. */
 static void test_casemap_script_cache_tie(void)
 {
 	int order;
@@ -5280,7 +5280,7 @@ static void test_gate_dry(void)
 	e2e_bot_bypass = FALSE;
 }
 
-/* the reviewer's PoC (R-E33): y's KEYREQ for x's query, stored as
+/* y's KEYREQ for x's query, stored as
    rpe2e.pl stored it, must never get y our key for x */
 static void test_accept_foreign_dm(void)
 {
@@ -5404,7 +5404,7 @@ static void put_accepted_recipient(E2E_JSON *kr, const char *handle, const char 
 	g_free(k);
 }
 
-/* R-E34: an "accepted" y|@x the bug of R-E33 already wrote gets nothing
+/* an "accepted" y|@x the bug of before already wrote gets nothing
    more: no REKEY of x's query, no KEYRSP; told as damaged; dropped by
    /e2e decline (our key for x then rotates) */
 static void test_damaged_dm_rows(void)
@@ -5507,7 +5507,7 @@ static void test_damaged_dm_rows(void)
 #undef DCTX
 }
 
-/* R-E34: y may hold our CURRENT key for x already - the next message to
+/* y may hold our CURRENT key for x already - the next message to
    x rotates it without /e2e decline, the new key reaches x only; told
    once */
 static void test_damaged_dm_auto_rotation(void)
@@ -6372,22 +6372,22 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);
-	g_test_add_func("/e2e/review/c1-keyrsp-is-no-acceptance", test_review_c1);
-	g_test_add_func("/e2e/review/c2-rekey-needs-session", test_review_c2);
-	g_test_add_func("/e2e/review/i2-multiline-buffer", test_review_i2);
-	g_test_add_func("/e2e/review/i3-dm-handle-changed", test_review_i3);
-	g_test_add_func("/e2e/review/i5-no-key-no-trust", test_review_i5);
-	g_test_add_func("/e2e/review/m1-control-characters", test_review_m1);
-	g_test_add_func("/e2e/review/m6-keyrsp-binding", test_review_m6);
-	g_test_add_func("/e2e/review/m7-rekey-replay", test_review_m7);
-	g_test_add_func("/e2e/review/m8-limits", test_review_m8);
-	g_test_add_func("/e2e/review/m10-robustness", test_review_m10);
-	g_test_add_func("/e2e/review2/i3-unresolved-nick", test_review2_i3_unresolved);
-	g_test_add_func("/e2e/review2/m7-rekey-replay-after-many", test_review2_rekey_replay);
-	g_test_add_func("/e2e/review2/m8-growth-from-wires", test_review2_growth);
-	g_test_add_func("/e2e/review2/rekey-to-accepted-only", test_review2_rekey_recipients);
-	g_test_add_func("/e2e/review2/queued-buffer-privmsg", test_review2_buffer_privmsg);
-	g_test_add_func("/e2e/review2/query-off-this-address", test_review2_query_off);
+	g_test_add_func("/e2e/proto/keyrsp-is-no-acceptance", test_keyrsp_is_no_acceptance);
+	g_test_add_func("/e2e/proto/rekey-needs-session", test_rekey_needs_session);
+	g_test_add_func("/e2e/proto/multiline-buffer", test_multiline_buffer);
+	g_test_add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
+	g_test_add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
+	g_test_add_func("/e2e/proto/control-characters", test_control_characters);
+	g_test_add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
+	g_test_add_func("/e2e/proto/rekey-replay", test_rekey_replay);
+	g_test_add_func("/e2e/proto/limits", test_limits);
+	g_test_add_func("/e2e/proto/robustness", test_robustness);
+	g_test_add_func("/e2e/proto/unresolved-nick", test_unresolved_nick);
+	g_test_add_func("/e2e/proto/rekey-replay-after-many", test_rekey_replay_after_many);
+	g_test_add_func("/e2e/proto/growth-from-wires", test_growth_from_wires);
+	g_test_add_func("/e2e/proto/rekey-to-accepted-only", test_rekey_to_accepted_only);
+	g_test_add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
+	g_test_add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
 	g_test_add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
 	g_test_add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
 	g_test_add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);

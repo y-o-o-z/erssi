@@ -6,7 +6,7 @@
  /e2e accept - for the statusbar, /e2e pending, /e2e list and fe-web.
 
  Everything here is pure (no irssi) and only READS the keyring: no
- legacy row is taken over (R-E18), nothing is created or changed.
+ legacy row is taken over, nothing is created or changed.
 
  A waiting request is a pending_inbound row "<handle>|<ctx>" with the
  members "handle" and "channel" (e2e_handle_keyreq and rpe2e.pl write
