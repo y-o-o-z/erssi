@@ -6,6 +6,7 @@
 src=${1:?usage: check-help.sh <source dir>}
 rc=0
 for t in term_truecolor colors_ansi_24bit print_whois_rpl_in_server_window \
+	print_whois_rpl_in_active_window show_names_on_join show_names_on_join_alone \
 	show_names_on_join_limit nick_mode_color nick_mode_color_owner \
 	nick_mode_color_op nick_mode_color_halfop nick_mode_color_voice \
 	nick_mode_color_normal nickmode term_notify window_close_disconnects; do

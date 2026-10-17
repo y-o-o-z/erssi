@@ -1,0 +1,25 @@
+%9Setting:%9
+
+    show_names_on_join_alone (boolean; default: ON, the Shellter default
+    configuration sets OFF)
+
+%9Description:%9
+
+    Prints the table of nicks when you join a channel you are alone on.
+
+    A table with only your own nick says nothing, so with the setting OFF
+    such a join prints only the count line ("Total of 1 nicks ...").
+    Channels with other people are not affected; for them
+    show_names_on_join_limit decides.
+
+    Nothing is printed when show_names_on_join is OFF. The list can always
+    be printed with /NAMES.
+
+%9Examples:%9
+
+    /SET show_names_on_join_alone on
+    /SET show_names_on_join_alone off
+
+%9See also:%9
+
+    SET, NAMES, SHOW_NAMES_ON_JOIN, SHOW_NAMES_ON_JOIN_LIMIT

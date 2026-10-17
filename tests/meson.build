@@ -9,6 +9,9 @@ help_python = find_program('python3', required : false)
 if help_python.found()
   test('help defaults', help_python, args : [files('help/check-help-defaults.py'), meson.source_root()],
        protocol : 'tap')
+  # every topic under "See also" has a page of its own
+  test('help see also', help_python, args : [files('help/check-help-see-also.py'), meson.source_root()],
+       protocol : 'tap')
 endif
 if have_fe_web
   subdir('fe-web')
