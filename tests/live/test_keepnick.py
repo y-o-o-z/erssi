@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """The built-in keepnick: /KEEPNICK, /UNKEEPNICK, /LISTNICK; the nick taken
-back when its holder quits (ISON, or MONITOR when 005 offers it) or changes
-nick (at once); 437 (nick delay) tried at most once per check; a manual
-/NICK pauses, a nick the server forces does not; keepnick_auto for a nick
-taken at connect; keepnick_quiet; the nicks of ~/.erssi/keepnick (the
-keepnick.pl script's file) imported once; the built-in off while a script
-named keepnick is loaded.
+back when its holder quits (ISON, or MONITOR when 005 offers it, also after
+the user's MONITOR C) or changes nick (at once); 437 (nick delay) tried at
+most once per check; a manual /NICK pauses, a nick the server forces does
+not; keepnick_auto for a nick taken at connect; keepnick_quiet; the nicks
+of ~/.erssi/keepnick (the keepnick.pl script's file) imported once; the
+built-in off while a script named keepnick is loaded.
 Usage: test_keepnick.py <build dir> [<source dir>]"""
 import os
 import re
@@ -274,6 +274,42 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         assert wait_log(a, off, got_back("zed"), 4), log_since(a, off)
         time.sleep(1)
         assert not sent(tr, r" MONITOR - ", start), sent(tr, r" MONITOR ", start)
+        finish(a)
+
+    def t_monitor_cleared():
+        """the server keeps one MONITOR list per connection: the user's
+        MONITOR C, or MONITOR - of the kept nick (also one the user had
+        added), takes ours out too - it is added again after that line, and
+        the 731 still takes the nick back"""
+        port, tr = ircd("moncleared", "--nick-rules", "--monitor")
+        holder = harness.Client(port, "zed")
+        a = erssi("moncleared", port, "alice", 'keepnick_auto = "no"; keepnick_check_time = "60s";')
+        off = log_size(a)
+        start = len(trace(tr))
+        a.type("/keepnick zed")
+        assert wait_trace(tr, r" in alice MONITOR \+ :?zed$", start), "no MONITOR +:\n" + trace(tr)[start:]
+        for i, cmds in enumerate((["MONITOR C"], ["MONITOR - zed"], ["MONITOR + zed", "MONITOR - bob,zed"])):
+            pos = len(trace(tr))
+            for cmd in cmds:
+                a.type("/quote " + cmd)
+            last = re.escape(cmds[-1])
+            assert wait_trace(tr, r" in alice %s$" % last, pos), (i, trace(tr)[pos:])
+            pos = pos + re.search(r" in alice %s$" % last, trace(tr)[pos:], re.M).end()
+            # not at the next check (60 s): right after the user's line
+            assert wait_trace(tr, r" in alice MONITOR \+ :?zed$", pos, 3), \
+                "no MONITOR + after %s:\n%s" % (cmds[-1], trace(tr)[pos:])
+        # nothing of ours removed what is no longer there
+        assert len(sent(tr, r" MONITOR - ", start)) == 2, sent(tr, r" MONITOR ", start)
+        out = run(a, "/listnick")
+        assert "Keepnick: Keeping zed in [E2E] (active)" in out, out
+        t0 = time.time()
+        leave(holder)
+        assert wait_log(a, off, got_back("zed"), 3), "zed not taken at 731:\n" + log_since(a, off)
+        assert time.time() - t0 < 3
+        assert not sent(tr, r" ISON ", start), sent(tr, r" ISON ", start)
+        # the replies to our MONITOR + are not printed, the user's are
+        out = log_since(a, off)
+        assert out.count("zed!") == 1, out
         finish(a)
 
     def t_nick_delay():
@@ -761,7 +797,7 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
 
     try:
         harness.main([t_install, t_ison_quit_save_list, t_holder_nick_change, t_holder_flips, t_late_reply,
-                      t_late_484, t_monitor, t_monitor_user, t_bad_bytes, t_nick_delay,
+                      t_late_484, t_monitor, t_monitor_user, t_monitor_cleared, t_bad_bytes, t_nick_delay,
                       t_refused, t_invalid, t_autosave_guard,
                       t_manual_pause_forced_not, t_auto, t_auto_pause, t_auto_off, t_two_servers,
                       t_casemapping, t_upgrade, t_migrate, t_script_loaded, t_auto_script])

@@ -31,7 +31,10 @@
     are tried again at the next check; an erroneous nick or a restricted
     connection stops keeping on that network, with one message. The
     server's MONITOR replies about the kept nick are not shown either;
-    those about the nicks you MONITOR yourself are.
+    those about the nicks you MONITOR yourself are. The server keeps one
+    MONITOR list for the connection: when you or a script send MONITOR C,
+    or MONITOR - with the kept nick, erssi adds the kept nick again right
+    after.
 
     A nick that is not one IRC word (a space, comma, ! or @, a line
     break, a leading :, #, & or -) or longer than the server's NICKLEN

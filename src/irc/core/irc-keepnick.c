@@ -48,7 +48,8 @@
  MONITOR replies about our nick (also the 730 the server sends when the
  nick becomes ours, before it read our MONITOR -) are not printed; the
  user's own MONITOR targets (seen in what is sent) still are, and our
- MONITOR - never removes one of them.
+ MONITOR - never removes one of them. The user's MONITOR C, or MONITOR -
+ of the nick, empties our entry too: it is sent again right after.
 
  A manual /NICK away from the kept nick (server->last_nick, set by /NICK)
  pauses keeping on that network until the nick is ours again or /KEEPNICK
@@ -87,6 +88,7 @@ typedef struct {
 	GSList *user_monitor;	/* the user's own MONITOR targets (bytes as sent) */
 	char *told_invalid;	/* the invalid nick that was said */
 	guint check_tag;	/* the check every keepnick_check_time */
+	guint readd_tag;	/* MONITOR + again after the user's C or - */
 	gint64 last_attempt;	/* monotonic time of our last NICK */
 
 	unsigned int collided:1;	/* 433/437 before 001 */
@@ -130,6 +132,8 @@ static void state_free(KEEPNICK_SERVER_REC *st)
 {
 	if (st->check_tag != 0)
 		g_source_remove(st->check_tag);
+	if (st->readd_tag != 0)
+		g_source_remove(st->readd_tag);
 	g_slist_free_full(st->user_monitor, g_free);
 	g_free(st->auto_nick);
 	g_free(st->monitored);
@@ -312,6 +316,17 @@ static void send_monitor(IRC_SERVER_REC *server, const char *op, const char *nic
 	g_free(cmd);
 }
 
+/* the monitored nick is out of the server's list */
+static void monitor_forget(KEEPNICK_SERVER_REC *st)
+{
+	/* its 730/731 that cross our MONITOR - are still ours */
+	g_free(st->unmonitored);
+	st->unmonitored = st->monitored;
+	st->unmonitored_until = g_get_monotonic_time() + UNMONITOR_GRACE;
+	st->monitored = NULL;
+	st->offline = FALSE;
+}
+
 static void monitor_remove(KEEPNICK_SERVER_REC *st)
 {
 	if (st->monitored == NULL)
@@ -320,12 +335,7 @@ static void monitor_remove(KEEPNICK_SERVER_REC *st)
 	if (!user_monitors(st, st->monitored) && st->server->connected &&
 	    !st->server->connection_lost)
 		send_monitor(st->server, "-", st->monitored);
-	/* its 730/731 that cross our MONITOR - are still ours */
-	g_free(st->unmonitored);
-	st->unmonitored = st->monitored;
-	st->unmonitored_until = g_get_monotonic_time() + UNMONITOR_GRACE;
-	st->monitored = NULL;
-	st->offline = FALSE;
+	monitor_forget(st);
 }
 
 /* nothing to keep: no timer, nothing monitored */
@@ -809,6 +819,27 @@ static void sig_late_reply(IRC_SERVER_REC *server, const char *data)
 
 /* ---- MONITOR (730 online, 731 offline, 734 list full) ---- */
 
+static gboolean monitor_readd(KEEPNICK_SERVER_REC *st)
+{
+	st->readd_tag = 0;
+	keepnick_update(st->server, FALSE);
+	return FALSE;
+}
+
+/* The server keeps one MONITOR list per client, so the user's (or a
+   script's) MONITOR C, or MONITOR - of the nick we monitor, takes our
+   entry out as well: no 731 would ever come. It is sent again once that
+   line is out - it is written right after this signal, and ours must not
+   reach the server before it. */
+static void monitor_lost(KEEPNICK_SERVER_REC *st)
+{
+	if (st->monitored == NULL)
+		return;
+	monitor_forget(st);
+	if (st->readd_tag == 0)
+		st->readd_tag = g_idle_add((GSourceFunc) monitor_readd, st);
+}
+
 /* what the user sends: MONITOR + / - / C of their own */
 static void sig_server_outgoing(IRC_SERVER_REC *server, GString *data)
 {
@@ -822,6 +853,7 @@ static void sig_server_outgoing(IRC_SERVER_REC *server, GString *data)
 	if (words[0] != NULL && g_ascii_strcasecmp(words[0], "C") == 0) {
 		g_slist_free_full(st->user_monitor, g_free);
 		st->user_monitor = NULL;
+		monitor_lost(st);
 	} else if (words[0] != NULL && words[1] != NULL &&
 	           (strcmp(words[0], "+") == 0 || strcmp(words[0], "-") == 0)) {
 		targets = g_strsplit(words[1] + (*words[1] == ':'), ",", -1);
@@ -837,6 +869,9 @@ static void sig_server_outgoing(IRC_SERVER_REC *server, GString *data)
 				g_free(found->data);
 				st->user_monitor = g_slist_delete_link(st->user_monitor, found);
 			}
+			if (*words[0] == '-' && st->monitored != NULL &&
+			    nickcmp(server, *tmp, st->monitored) == 0)
+				monitor_lost(st);
 		}
 		g_strfreev(targets);
 	}
