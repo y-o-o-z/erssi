@@ -1,0 +1,27 @@
+%9Setting:%9
+
+    sidepanel_debug (boolean; default: OFF)
+
+%9Description:%9
+
+    Writes a debug log of the side panels and the mouse: clicks, scrolls,
+    gestures, window switches and how the panels are laid out. For
+    tracking down a problem with the panels or the mouse; leave it off
+    otherwise.
+
+    The log is sidepanels.log in the erssi home (~/.erssi/sidepanels.log
+    unless erssi was started with --home), readable only by you: it holds
+    the names of your windows and channels and nicks. A link or anything
+    but a file of your own in its place is not written to. ON opens the
+    log at once and appends to it, OFF closes it.
+
+%9Examples:%9
+
+    /SET sidepanel_debug on
+    /EXEC -interactive tail -f ~/.erssi/sidepanels.log
+    /SET sidepanel_debug off
+
+%9See also:%9
+
+    SET, RESIZE_DEBUG
+

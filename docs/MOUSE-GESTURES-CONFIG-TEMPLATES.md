@@ -169,10 +169,10 @@ To completely disable mouse gestures:
 /set sidepanel_debug on
 
 # Perform test gestures and check the log
-# Log location: /tmp/irssi_sidepanels.log
+# Log location: ~/.erssi/sidepanels.log (the erssi home; readable only by you)
 
 # View log in real-time
-/exec -interactive tail -f /tmp/irssi_sidepanels.log
+/exec -interactive tail -f ~/.erssi/sidepanels.log
 ```
 
 ### Common Adjustments
@@ -246,7 +246,7 @@ Copy desired configuration from above, paste into irssi one line at a time.
 
 ### Specific Gestures Missing
 1. Enable debug: `/set sidepanel_debug on`
-2. Check log: `/exec tail -f /tmp/irssi_sidepanels.log`
+2. Check log: `/exec tail -f ~/.erssi/sidepanels.log`
 3. Verify your gesture meets distance/direction requirements
 
 ### Performance Issues

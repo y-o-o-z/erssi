@@ -42,6 +42,8 @@
 #include <irssi/src/fe-ansi/gui-printtext.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-ansi/textbuffer-view.h>
+#include <irssi/src/fe-ansi/resize-debug.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include "gui-mouse.h"
@@ -64,13 +66,23 @@ static int mouse_scroll_chat;
    in sidepanels-types.h) */
 static SP_MAINWIN_CTX *sp_ctx;
 
-/* Logging system */
+/* The debug log (sidepanel_debug): sidepanels.log in the erssi home,
+   a file of the user's own (debug_log_open) - it holds channel names,
+   nicks and window names. Open while the setting is on. */
 static FILE *sp_log;
 
 static void sp_log_open(void)
 {
-	if (!sp_log)
-		sp_log = fopen("/tmp/irssi_sidepanels.log", "a");
+	char *path;
+
+	if (sp_log)
+		return;
+	path = g_build_filename(get_irssi_dir(), "sidepanels.log", NULL);
+	sp_log = debug_log_open(path);
+	if (sp_log == NULL)
+		g_warning("sidepanels: cannot open the debug log %s: %s", path,
+		          g_strerror(errno));
+	g_free(path);
 }
 
 static void sp_log_close(void)
@@ -91,7 +103,6 @@ void sp_logf(const char *fmt, ...)
 	if (!sp_debug)
 		return;
 
-	sp_log_open();
 	if (!sp_log)
 		return;
 
@@ -149,7 +160,18 @@ static void read_settings(void)
 	sp_enable_right = settings_get_bool("sidepanel_right");
 	sp_auto_hide_right = settings_get_bool("sidepanel_right_auto_hide");
 	sp_enable_mouse = TRUE; /* always on natively */
-	sp_debug = settings_get_bool("sidepanel_debug");
+	/* /SET sidepanel_debug takes effect at once: on opens the log, off
+	   closes it (a log that could not be opened is tried again at the
+	   next ON) */
+	if (settings_get_bool("sidepanel_debug") != sp_debug) {
+		sp_debug = !sp_debug;
+		if (sp_debug) {
+			sp_log_open();
+			sp_logf("side panel debug log started");
+		} else {
+			sp_log_close();
+		}
+	}
 	sp_auto_create_separators = settings_get_bool("auto_create_separators");
 
 	/* Mouse Gesture Settings - delegate to gesture system */
@@ -283,6 +305,7 @@ void sidepanels_deinit(void)
 	/* Mouse and gesture systems are cleaned up by main irssi.c */
 	
 	sp_log_close();
+	sp_debug = FALSE;
 }
 
 /* Settings accessors */

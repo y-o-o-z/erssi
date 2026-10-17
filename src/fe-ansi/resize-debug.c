@@ -4,7 +4,8 @@
  * Comprehensive resize debugging system for terminal resize analysis.
  * Logs all stages of resize handling to help diagnose terminal-specific issues.
  *
- * Log file: ~/.erssi/resize-$TERM-$LC_TERMINAL.log
+ * Log file: resize-$TERM-<terminal>-<multiplexer>.log in the erssi home
+ * (~/.erssi), while resize_debug is on.
  *
  * Copyright (C) 2024-2025 erssi-org team
  */
@@ -12,12 +13,16 @@
 #include "module.h"
 #include "resize-debug.h"
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/signals.h>
 #include <irssi/src/core/special-vars.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -64,10 +69,47 @@ static void sanitize_for_filename(char *str)
 	}
 }
 
+/* A debug log of the user's own (see resize-debug.h). O_NOFOLLOW: a
+ * symbolic link put in its place is not followed; O_NONBLOCK: a FIFO
+ * does not hang erssi (it is refused by the fstat, as is anything else
+ * that is no regular file of this user). */
+FILE *debug_log_open(const char *path)
+{
+	struct stat st;
+	FILE *fp;
+	int fd;
+
+	g_return_val_if_fail(path != NULL, NULL);
+
+	fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC,
+	          S_IRUSR | S_IWUSR);
+	if (fd < 0)
+		return NULL;
+	if (fstat(fd, &st) < 0)
+		goto fail;
+	if (!S_ISREG(st.st_mode) || st.st_uid != geteuid()) {
+		errno = EPERM;
+		goto fail;
+	}
+	/* a log an older erssi made with the umask's mode */
+	if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0 && fchmod(fd, S_IRUSR | S_IWUSR) < 0)
+		goto fail;
+	fp = fdopen(fd, "a");
+	if (fp != NULL)
+		return fp;
+fail:
+	{
+		int err = errno;
+
+		close(fd);
+		errno = err;
+	}
+	return NULL;
+}
+
 /* Get terminal info and build log filename */
 static void build_log_path(void)
 {
-	const char *home = g_get_home_dir();
 	const char *term = g_getenv("TERM");
 	const char *lc_terminal = g_getenv("LC_TERMINAL");
 	const char *tmux = g_getenv("TMUX");
@@ -110,8 +152,8 @@ static void build_log_path(void)
 	}
 
 	snprintf(log_path, sizeof(log_path),
-	         "%s/.erssi/resize-%s-%s-%s.log",
-	         home, term_safe, terminal_safe, multiplexer);
+	         "%s/resize-%s-%s-%s.log",
+	         get_irssi_dir(), term_safe, terminal_safe, multiplexer);
 }
 
 /* Write terminal environment info to log */
@@ -150,38 +192,24 @@ static void log_environment_info(void)
 	fflush(debug_log);
 }
 
-void resize_debug_init(void)
+static void debug_log_start(void)
 {
-	char *dir;
-
-	settings_add_bool("lookandfeel", "resize_debug", FALSE);
-
-	debug_enabled = settings_get_bool("resize_debug");
-
-	if (!debug_enabled)
-		return;
-
 	build_log_path();
 
-	/* Ensure directory exists */
-	dir = g_path_get_dirname(log_path);
-	g_mkdir_with_parents(dir, 0700);
-	g_free(dir);
-
-	/* Open log file (append mode) */
-	debug_log = fopen(log_path, "a");
+	debug_log = debug_log_open(log_path);
 	if (!debug_log) {
-		g_warning("resize-debug: Cannot open log file: %s", log_path);
-		debug_enabled = FALSE;
+		g_warning("resize-debug: Cannot open log file %s: %s", log_path,
+		          g_strerror(errno));
 		return;
 	}
+	debug_enabled = TRUE;
 
 	log_environment_info();
 
 	resize_debug_log("INIT", "Resize debug logging started - log file: %s", log_path);
 }
 
-void resize_debug_deinit(void)
+static void debug_log_stop(void)
 {
 	if (debug_log) {
 		resize_debug_log("DEINIT", "Resize debug logging stopped");
@@ -189,6 +217,37 @@ void resize_debug_deinit(void)
 		debug_log = NULL;
 	}
 	debug_enabled = FALSE;
+}
+
+/* /SET resize_debug takes effect at once: on opens the log, off closes
+   it (a log that could not be opened is tried again at the next ON, not
+   at every other /SET) */
+static void read_settings(void)
+{
+	static gboolean was_on = FALSE;
+	gboolean on = settings_get_bool("resize_debug");
+
+	if (on == was_on)
+		return;
+	was_on = on;
+	if (on)
+		debug_log_start();
+	else
+		debug_log_stop();
+}
+
+void resize_debug_init(void)
+{
+	settings_add_bool("lookandfeel", "resize_debug", FALSE);
+
+	read_settings();
+	signal_add("setup changed", (SIGNAL_FUNC) read_settings);
+}
+
+void resize_debug_deinit(void)
+{
+	signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
+	debug_log_stop();
 }
 
 gboolean resize_debug_enabled(void)

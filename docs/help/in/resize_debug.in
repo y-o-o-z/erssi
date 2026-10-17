@@ -1,0 +1,31 @@
+%9Setting:%9
+
+    resize_debug (boolean; default: OFF)
+
+%9Description:%9
+
+    Writes a debug log of every terminal resize: the new size, how the
+    main windows and the side panels are laid out again and each redraw,
+    with times. For tracking down a terminal that is drawn wrong after a
+    resize; leave it off otherwise.
+
+    The log is in the erssi home (~/.erssi unless erssi was started with
+    --home), named after the terminal:
+
+        resize-<TERM>-<terminal>-<multiplexer>.log
+
+    for example resize-xterm-256color-kitty-tmux.log. It starts with the
+    terminal's environment (TERM, COLORTERM, TERM_PROGRAM and the like)
+    and is readable only by you. A link or anything but a file of your own
+    in its place is not written to. ON opens the log at once and appends
+    to it, OFF closes it.
+
+%9Examples:%9
+
+    /SET resize_debug on
+    /SET resize_debug off
+
+%9See also:%9
+
+    SET, RESIZE, SIDEPANEL_DEBUG
+
