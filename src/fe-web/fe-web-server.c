@@ -784,14 +784,30 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			/* RFC 6455 5.5.1: answer with a Close frame (echoing the
 			 * status code), then close - the client then sees an orderly
 			 * close instead of waiting for its timeout. A client's close
-			 * payload is masked; only the 2-byte status code is echoed. */
+			 * payload is masked; only the 2-byte status code is echoed,
+			 * and only a code an endpoint may send (7.4): 1005, 1006 and
+			 * 1015 never go in a close frame, and an undefined code or a
+			 * status cut to one byte is answered as a protocol error. */
 			guchar status[2] = { 0x03, 0xE8 }; /* 1000 normal closure */
 			guchar *close_frame;
 			gsize close_len;
 
 			if (payload_len >= 2) {
-				status[0] = payload[0] ^ mask_key[0];
-				status[1] = payload[1] ^ mask_key[1];
+				int code = ((payload[0] ^ mask_key[0]) << 8) |
+				           (payload[1] ^ mask_key[1]);
+
+				if ((code >= 1000 && code <= 1003) ||
+				    (code >= 1007 && code <= 1011) ||
+				    (code >= 3000 && code <= 4999)) {
+					status[0] = code >> 8;
+					status[1] = code & 0xff;
+				} else {
+					status[0] = 0x03;
+					status[1] = 0xEA; /* 1002 protocol error */
+				}
+			} else if (payload_len == 1) {
+				status[0] = 0x03;
+				status[1] = 0xEA;
 			}
 			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
 			fe_web_client_send_raw(client, close_frame, close_len);

@@ -492,6 +492,66 @@ static void test_header_after_request_not_read(void)
 	fe_web_fuzz_client_free(c);
 }
 
+/* The answer to a masked close frame with this payload */
+static GByteArray *close_answer(const void *payload, gsize len)
+{
+	WEB_CLIENT_REC *c = fe_web_fuzz_client_new_peer("p", TRUE, FALSE);
+	GByteArray *got = g_byte_array_new();
+
+	send_frame(c, WS_OPCODE_CLOSE, payload, len, TRUE);
+	g_assert_false(fe_web_fuzz_client_alive(c));
+	g_byte_array_append(got, fe_web_fuzz_received()->data, fe_web_fuzz_received()->len);
+	fe_web_fuzz_client_free(c);
+	return got;
+}
+
+static void assert_close_answer(int code, int want)
+{
+	guchar payload[2] = { code >> 8, code & 0xff };
+	guchar answer[4] = { 0x88, 0x02, want >> 8, want & 0xff };
+	GByteArray *got = close_answer(payload, sizeof(payload));
+
+	if (got->len != sizeof(answer) || memcmp(got->data, answer, sizeof(answer)) != 0)
+		g_error("close %d: answered with %u bytes, not close %d", code, got->len, want);
+	g_byte_array_unref(got);
+}
+
+/* RFC 6455 5.5.1 and 7.4: the status of a client's close is echoed when it
+ * is one an endpoint may send; 1005, 1006 and 1015 must never be in a close
+ * frame, and codes that are not defined, or a status cut to one byte, are
+ * a protocol error (1002) */
+static void test_close_status_echoed_when_valid(void)
+{
+	static const int valid[] = { 1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011,
+		                     3000, 3999, 4000, 4999 };
+	static const int invalid[] = { 0, 999, 1004, 1005, 1006, 1012, 1013, 1014, 1015,
+		                       1016, 1100, 2000, 2999, 5000, 65535 };
+	static const guchar normal[] = { 0x88, 0x02, 0x03, 0xE8 };
+	GByteArray *got;
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS(valid); i++)
+		assert_close_answer(valid[i], valid[i]);
+	for (i = 0; i < G_N_ELEMENTS(invalid); i++)
+		assert_close_answer(invalid[i], 1002);
+
+	/* a status with a reason: the status is echoed */
+	got = close_answer("\x03\xe9" "bye", 5);
+	g_assert_cmpuint(got->len, ==, 4);
+	g_assert_cmpmem(got->data, 4, "\x88\x02\x03\xe9", 4);
+	g_byte_array_unref(got);
+
+	/* no status: a normal close */
+	got = close_answer("", 0);
+	g_assert_cmpmem(got->data, got->len, normal, sizeof(normal));
+	g_byte_array_unref(got);
+
+	/* one byte is no status */
+	got = close_answer("\x03", 1);
+	g_assert_cmpmem(got->data, got->len, refused, sizeof(refused));
+	g_byte_array_unref(got);
+}
+
 int main(int argc, char **argv)
 {
 	test_init(&argc, &argv);
@@ -530,6 +590,8 @@ int main(int argc, char **argv)
 	                test_unmasked_frame_after_request);
 	g_test_add_func("/fe-web/frames/header-after-request-not-read",
 	                test_header_after_request_not_read);
+	g_test_add_func("/fe-web/frames/close-status-echoed-when-valid",
+	                test_close_status_echoed_when_valid);
 
 	return g_test_run();
 }
