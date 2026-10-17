@@ -21,11 +21,15 @@
 #
 # Update (--update): the newest release on the repository that carries a
 # valid signature by the key below - the key of the installed copy, so a
-# release pushed by anyone else is skipped. Nothing is built when the
-# installed erssi is that version already; --check only reports. The
-# settings of the install (source directory, repository, tests, clean) come
-# from <prefix>/share/irssi/shellter-install.conf; an erssi kept up to date
-# by another tool names it there as UPDATE_COMMAND, which --update runs.
+# release pushed by anyone else is skipped - if its version is newer than
+# the installed one; --check only reports. Release tags never move (a
+# release made again is a new version): a signed tag of the installed
+# release that points to another commit is reported, never installed. An
+# erssi installed from a branch or a commit (--ref) is offered a release
+# only when its version is newer. The settings of the install (what it was
+# installed from, the source directory, repository, tests, clean) come from
+# <prefix>/share/irssi/shellter-install.conf; an erssi kept up to date by
+# another tool names it there as UPDATE_COMMAND, which --update runs.
 #
 # Inside a user namespace (rootless container, bwrap) root's directories,
 # like those of every user the namespace does not map, show as the overflow
@@ -70,8 +74,9 @@ erssi Shellter Edition - install and update
   sh shellter-install.sh [options]
   erssi --update | erssi --check-update
 
-  --update       update to the newest signed release (nothing to do when
-                 the installed erssi is that version)
+  --update       update to the newest signed release when its version is
+                 newer than the installed one (also for an erssi installed
+                 from a branch or a commit with --ref)
   --check        with --update: only report whether an update is available
   --prefix DIR   install here (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
@@ -261,11 +266,13 @@ fetch_ref() {   # repository-dir ref
 # the newest shellter-vX.Y.Z on $REPO newer than $2 with a valid signature,
 # checked in the repository $1; unsigned ones are named and skipped. Prints
 # the tag; none newer than $2: prints nothing (an up to date install). With
-# the installed commit $3, the release $2 itself counts when its signed tag
-# now points elsewhere (the same version released again with changes).
-# Codes: 1 no signed release, 2 $REPO cannot be reached, 3 a release cannot
-# be downloaded (its name printed) - a failed download is not an unsigned
-# release, and must not end as "up to date".
+# the commit $3 that release $2 was installed from, the tag of $2 is checked
+# too: release tags never move (a release made again is a new version), so
+# one that now points to another commit - moved by mistake, or an older tag
+# object served by a mirror to roll the install back - is reported and
+# never installed. Codes: 1 no signed release, 2 $REPO cannot be reached,
+# 3 a release cannot be downloaded (its name printed) - a failed download
+# is not an unsigned release, and must not end as "up to date".
 newest_signed() {
     refs=$(git ls-remote --tags --refs -- "$REPO" 'shellter-v*' 2>>"${LOG:-/dev/null}") || return 2
     tags=$(printf '%s\n' "$refs" |
@@ -275,11 +282,12 @@ newest_signed() {
     tries=0
     for v in $tags; do
         if ! newer "$v" "$2"; then
-            # older, or the installed version without a known commit
+            # older, or the installed release without a known commit
             newer "$2" "$v" || [ -z "${3:-}" ] && return 0
             fetch_ref "$1" "shellter-v$v" || { echo "shellter-v$v"; return 3; }
             if signed_tag "$1" "shellter-v$v"; then
-                [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] || echo "shellter-v$v $TAG_OBJ"
+                [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] ||
+                    warn "the release tag shellter-v$v now points to a different commit than the installed one - not updating; report it" >&2
                 return 0
             fi
             warn "shellter-v$v is not signed by the erssi Shellter release key - skipped" >&2
@@ -486,6 +494,10 @@ INSTALLED=""
 INSTALLED_COMMIT=$(conf_get COMMIT)
 [ -n "$INSTALLED_COMMIT" ] || [ ! -d "$SRC/.git" ] ||
     INSTALLED_COMMIT=$(git -C "$SRC" rev-parse -q --verify HEAD 2>/dev/null) || INSTALLED_COMMIT=""
+# what it was installed from: a release tag, or a branch or commit (--ref).
+# Nothing recorded (installed before 2026.10.3): a release, as every
+# --update and every install without --ref made one
+INSTALLED_REF=$(conf_get REF)
 
 if [ "$UPDATE" = 1 ]; then
     OTHER=$(conf_get UPDATE_COMMAND)
@@ -809,33 +821,42 @@ fi
 if [ "$UPDATE" = 1 ]; then
     step "Finding the release"
     can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.2"
-    rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
+    case "$INSTALLED_REF" in
+        ''|shellter-v*)
+            # a release: a newer one, and its own tag checked
+            rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
+            FROM_BRANCH="" ;;
+        *)
+            # a branch or a commit: main keeps the version of the last
+            # release until the next one, so its commit says nothing about
+            # the release of that version - the newest signed release, and
+            # only a newer version counts
+            rc=0; FOUND=$(newest_signed "$WORK" 0) || rc=$?
+            FROM_BRANCH=$INSTALLED_REF ;;
+    esac
     [ "$rc" != 2 ] || die "cannot reach $REPO"
     [ "$rc" != 3 ] || die "cannot download $FOUND from $REPO - nothing was changed; try again later"
-    [ "$rc" = 0 ] || die "no signed release newer than $INSTALLED found on $REPO"
+    if [ "$rc" != 0 ]; then
+        [ -n "$FROM_BRANCH" ] || die "no signed release newer than $INSTALLED found on $REPO"
+        die "no signed release found on $REPO"
+    fi
     REF=${FOUND%% *}; TAG_OBJ=${FOUND#* }
-    SAME=""             # the installed version, released again with changes
     if [ -n "$REF" ]; then
         NEWEST=${REF#shellter-v}
         done_ "$REF $S_SEP signed by the erssi Shellter release key"
-        if [ "$NEWEST" = "$INSTALLED" ]; then
-            SAME="$(echo "$INSTALLED_COMMIT" | cut -c1-8) $S_ARROW $(git -C "$WORK" rev-parse "$TAG_OBJ^{commit}" | cut -c1-8)"
-        fi
     else
         NEWEST=$INSTALLED
         done_ "none newer than $INSTALLED"
     fi
-    if [ -n "$SAME" ]; then
-        if [ "$CHECK" = 1 ]; then
-            printf '\n  %sChanges to %s available: %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$SAME" "$N"
+    if [ -n "$FROM_BRANCH" ]; then
+        printf '\n  Installed from %s; newest release is %s' "$FROM_BRANCH" "$NEWEST"
+        if ! newer "$NEWEST" "$INSTALLED"; then
+            printf ', not newer than the installed %s - nothing to do.\n\n' "$INSTALLED"
             exit 0
         fi
-    elif ! newer "$NEWEST" "$INSTALLED"; then
-        if newer "$INSTALLED" "$NEWEST"; then
-            printf '\n  The installed erssi %s is newer than the newest release (%s) - nothing to do.\n\n' "$INSTALLED" "$NEWEST"
-        else
-            printf '\n  %serssi Shellter Edition %s is up to date%s (the newest signed release).\n\n' "$B" "$INSTALLED" "$N"
-        fi
+        printf '.\n'
+    elif [ -z "$REF" ]; then
+        printf '\n  %serssi Shellter Edition %s is up to date%s (the newest signed release).\n\n' "$B" "$INSTALLED" "$N"
         exit 0
     fi
     if [ "$CHECK" = 1 ]; then
@@ -885,11 +906,9 @@ fi
 # exactly the object that was checked, not whatever FETCH_HEAD is by now
 git -C "$SRC" -c advice.detachedHead=false checkout -q --force "$TAG_OBJ^{commit}" >> "$LOG" 2>&1 || die "cannot check out $REF"
 HEAD_SHA=$(git -C "$SRC" rev-parse HEAD)
-if [ -n "$PINNED" ] && [ "$UPDATE" = 1 ] && [ "$HEAD_SHA" != "$PINNED" ]; then
-    # this copy of the installer records the release as first published;
-    # an update trusts the release signature checked above
-    :
-elif [ -n "$PINNED" ]; then
+# release tags never move: a recorded release elsewhere is refused, on an
+# update too
+if [ -n "$PINNED" ]; then
     [ "$HEAD_SHA" = "$PINNED" ] || die "$REF points to $HEAD_SHA, but this installer expects $PINNED - refusing to build (download the installer again, or report it)"
     VERIFIED="${VERIFIED:+$VERIFIED $S_SEP }commit recorded"
 elif [ "$UPDATE" = 0 ]; then
@@ -944,6 +963,7 @@ fi
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
 {
     echo "# written by shellter-install.sh - the settings erssi --update uses"
+    echo "REF=$REF"
     echo "SRC=$SRC"
     echo "REPO=$REPO"
     echo "TESTS=$RUN_TESTS"
@@ -973,10 +993,7 @@ else
     esac
 fi
 printf '\n'
-if [ -n "${SAME:-}" ]; then
-    printf '  %s%sUpdated: %s (%s)%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$SAME" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
-    field "running" "in a running erssi, /upgrade loads it without disconnecting"
-elif [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
+if [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
     printf '  %s%sUpdated: %s %s %s%s  %s(%s)%s\n\n' "$B" "$G" "$INSTALLED" "$S_ARROW" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
     field "running" "in a running erssi, /upgrade loads $VERSION without disconnecting"
 else

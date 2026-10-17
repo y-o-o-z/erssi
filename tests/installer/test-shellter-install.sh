@@ -1431,6 +1431,7 @@ release-pinned)
     check "... signed and the commit recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
     check "... version 2026.10.2" grep -q 'erssi Shellter Edition 2026.10.2 is installed' "$W/out"
     check "... the commit kept" grep -qx "COMMIT=$c2" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
+    check "... and the release" grep -qx "REF=shellter-v2026.10.2" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
     # moved to another commit, even signed by the release key: refused
     rtag shellter-v2026.10.2 "$c3"
     run_release
@@ -1484,6 +1485,7 @@ update)
     check "... updated" grep -q 'Updated: 2026.10.1 -> 2026.10.2' "$W/out"
     check "... the new erssi" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
     check "... its commit kept" grep -qx "COMMIT=$c2" "$W/p/share/irssi/shellter-install.conf"
+    check "... and the release" grep -qx "REF=shellter-v2026.10.2" "$W/p/share/irssi/shellter-install.conf"
     run_update --check
     check "again: up to date" grep -q 'erssi Shellter Edition 2026.10.2 is up to date' "$W/out"
     # a newer release signed by another key: named, not offered
@@ -1493,6 +1495,96 @@ update)
     check "... named" grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key' "$W/out"
     run_update
     check "... not built" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    # a release this installer records, on another commit than recorded
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    printf 'shellter-v2026.10.4 %s signed\n' "$c3" > "$W/releases"
+    patch_installer
+    run_update
+    check "recorded release on another commit: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.4 points to $c4, but this installer expects $c3 - refusing to build" "$W/out"
+    check "... not installed" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    printf 'shellter-v2026.10.4 %s signed\n' "$c4" > "$W/releases"
+    patch_installer
+    run_update
+    check "on the recorded commit: updated" grep -q 'Updated: 2026.10.2 -> 2026.10.4' "$W/out"
+    check "... signed and recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    ;;
+update-same-version)
+    # Release tags never move: a signed tag of the installed release that
+    # now points to another commit is reported, never installed - a newer
+    # commit (a tag moved by mistake) or an older one (a mirror serving the
+    # previous tag object: a rollback)
+    release_key
+    c3=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c3"
+    old_tag=$(git -C "$W/repo" rev-parse shellter-v2026.10.2)
+    c4=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c4"
+    release_prefix 2026.10.2 "$c4" shellter-v2026.10.2
+    git -C "$W/repo" update-ref refs/tags/shellter-v2026.10.2 "$old_tag"
+    moved="the release tag shellter-v2026.10.2 now points to a different commit than the installed one - not updating; report it"
+    run_update --check
+    check "older tag object of the installed release, --check: no update" [ "$RC" = 0 ]
+    check "... reported" grep -qF "$moved" "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    run_update
+    check "... --update: nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$c4" "$W/p/share/irssi/shellter-install.conf"
+    # the tag moved on to a newer commit: the same
+    c5=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c5"
+    run_update
+    check "tag moved to a newer commit: reported" grep -qF "$moved" "$W/out"
+    check "... nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$c4" "$W/p/share/irssi/shellter-install.conf"
+    # an install from before REF was recorded: a release, as an update or
+    # an install without --ref made it
+    release_prefix 2026.10.2 "$c4"
+    run_update --check
+    check "no REF recorded: reported" grep -qF "$moved" "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    # the tag where it was: nothing to say
+    rtag shellter-v2026.10.2 "$c4"
+    run_update --check
+    check "the tag on the installed commit: up to date" grep -q 'erssi Shellter Edition 2026.10.2 is up to date' "$W/out"
+    check "... nothing reported" no_grep 'different commit' "$W/out"
+    # the installed release cannot be downloaded: said so
+    fetch_fails
+    FAKE_FETCH_FAIL=1 run_update --check
+    check "download of the installed release fails: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    ;;
+update-branch)
+    # an erssi installed from a branch (--ref main): main keeps the version
+    # of the last release until the next one, so a release of that version
+    # is not an update - only a newer version is
+    release_key
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    cm=$(release_commit 2026.10.2)
+    release_prefix 2026.10.2 "$cm" main
+    run_update --check
+    check "release of the same version, --check: nothing to do" [ "$RC" = 0 ]
+    check "... named" grep -qF 'Installed from main; newest release is 2026.10.2, not newer than the installed 2026.10.2 - nothing to do.' "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    check "... nothing reported" no_grep 'different commit' "$W/out"
+    run_update
+    check "... --update: nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$cm" "$W/p/share/irssi/shellter-install.conf"
+    # an older release only: nothing either
+    release_prefix 2026.10.3 "$cm" main
+    run_update --check
+    check "release older than the branch: nothing to do" grep -qF 'newest release is 2026.10.2, not newer than the installed 2026.10.3' "$W/out"
+    # a newer release: offered, and an update makes it a release install
+    release_prefix 2026.10.2 "$cm" main
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3"
+    run_update --check
+    check "newer release, --check: offered" grep -q 'Update available: 2026.10.2 -> 2026.10.3' "$W/out"
+    check "... from main" grep -qF 'Installed from main; newest release is 2026.10.3.' "$W/out"
+    run_update
+    check "... --update: updated" grep -q 'Updated: 2026.10.2 -> 2026.10.3' "$W/out"
+    check "... the release recorded" grep -qx "REF=shellter-v2026.10.3" "$W/p/share/irssi/shellter-install.conf"
+    check "... its commit" grep -qx "COMMIT=$c3" "$W/p/share/irssi/shellter-install.conf"
+    # an install records what it was installed from
+    run_release --ref main --prefix "$W/q"
+    check "install from a branch: done" [ "$RC" = 0 ]
+    check "... main recorded" grep -qx "REF=main" "$W/q/share/irssi/shellter-install.conf"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

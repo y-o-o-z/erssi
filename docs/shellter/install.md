@@ -86,9 +86,17 @@ takes the newest release on GitHub that carries a valid signature by the key
 of that installer (a tag pushed by anyone else is skipped), builds, tests
 and installs it into the same prefix, with the settings of the first install.
 
-- A release of the installed version published again with changes (its
-  signed tag moved to a new commit) counts as an update too.
+- Only a newer version is an update. Release tags never move: a release
+  made again gets a new version number. If the signed tag of the installed
+  release points to another commit than the one installed, `--update` says
+  so ("report it") and installs nothing.
+- An erssi installed from a branch or a commit (`--ref main`) is told the
+  newest release and offered it only when its version is newer than the
+  installed one; `main` keeps the version of the last release until the
+  next one.
 - Nothing is built when erssi is up to date.
+- A release that cannot be downloaded stops the update with "cannot
+  download"; nothing is changed.
 - `--update` needs git 2.34+ and ssh-keygen to check the signature; without
   them it stops and says how to update with the installer's `--ref`
   instead.
