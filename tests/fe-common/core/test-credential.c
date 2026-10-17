@@ -110,7 +110,7 @@ static void test_decrypt(void)
 	{
 		char *plain;
 
-		g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*before 2026.10.3*cannot tell*");
+		g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*before 2026.10.3*cannot tell*HELP CREDENTIAL*");
 		plain = credential_decrypt(LEGACY_VECTOR, MASTER);
 		g_test_assert_expected_messages();
 		g_assert_cmpstr(plain, ==, "old:secret");

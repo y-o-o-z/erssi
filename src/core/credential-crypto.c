@@ -473,12 +473,11 @@ static char *decrypt_legacy(const char *encrypted_data, const char *password)
 
 	if (result != NULL && !warned) {
 		warned = TRUE;
+		/* what becomes of the value depends on the caller, so no advice
+		 * here beyond the help page */
 		g_warning("A credential is stored in the encrypted form of erssi "
 		          "versions before 2026.10.3, which cannot tell whether it was "
-		          "changed. /SAVE writes it again in the current form when the "
-		          "master password is set and a value already in the current "
-		          "form confirms it; otherwise enter the password again with "
-		          "NETWORK ADD or SERVER ADD.");
+		          "changed; see /HELP CREDENTIAL.");
 	}
 	return result;
 }

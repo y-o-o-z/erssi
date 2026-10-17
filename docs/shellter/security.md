@@ -69,6 +69,9 @@ a wrong master password could delete stored credentials. Existing setups
 keep working; `/help credential` explains how to return to plain storage.
 A value they encrypt is AES-256-GCM, so a changed value or a wrong master
 password is refused; values from versions before 2026.10.3 (AES-256-CBC,
-which cannot detect a change) are still read, and `/SAVE` writes them in
-the new form once a value already in the new form confirms the master
-password.
+which cannot detect a change) are still read. With encryption on,
+`/credential passwd` followed by `/save` writes them, like all others, in
+plain text. Only a value still in the old form at `/save`, in config mode
+and with a master password that a value already in the new form proves
+right, is written again in the new form; the external credentials file
+is never rewritten that way.
