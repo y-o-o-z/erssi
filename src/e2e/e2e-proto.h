@@ -301,8 +301,9 @@ gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
 /* Chunks read lately, to drop one the server delivers again: the
    timestamp check lets a ciphertext through for E2E_TS_TOLERANCE either
    way, and repartee and rpe2e.pl show such a repeat again. A chunk is
-   remembered by a SHA-256 of its network, context, sender and the wire
-   itself (msgid, part, nonce, ciphertext) for 2 * E2E_TS_TOLERANCE, at
+   remembered by a SHA-256 of its storage context (network included),
+   sender and parsed fields (msgid, ts, part, total, nonce, ciphertext -
+   not its spelling) for as long as the timestamp check would take it, at
    most max of them (the oldest go first: memory stays bounded under a
    flood; only chunks that opened under a trusted key are remembered). */
 typedef struct _E2E_REPLAY E2E_REPLAY;
@@ -310,7 +311,7 @@ typedef struct _E2E_REPLAY E2E_REPLAY;
 E2E_REPLAY *e2e_replay_new(guint max);
 void e2e_replay_free(E2E_REPLAY *r);
 /* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
-gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const char *wire);
+gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w);
 guint e2e_replay_size(const E2E_REPLAY *r);
 
 typedef struct {

@@ -3395,7 +3395,7 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 }
 
 struct _E2E_REPLAY {
-	GHashTable *seen;	/* digest (hex) -> gint64 * when */
+	GHashTable *seen;	/* digest (hex) -> gint64 * expiry */
 	GQueue *order;		/* the digests, oldest first (shared keys) */
 	guint max;
 };
@@ -3424,27 +3424,41 @@ guint e2e_replay_size(const E2E_REPLAY *r)
 	return g_hash_table_size(r->seen);
 }
 
-gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const char *wire)
+static void append_be(GString *in, guint64 v, int bytes)
+{
+	while (bytes-- > 0)
+		g_string_append_c(in, (char) ((v >> (8 * bytes)) & 0xff));
+}
+
+gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w)
 {
 	GString *in = g_string_new(NULL);
 	unsigned char digest[32];
-	gint64 now = e2e_now(), *when;
+	gint64 now = e2e_now(), *until;
 	char *hex, *oldest;
 
-	/* the expired ones go first (the oldest are at the head) */
+	/* the expired ones go first, from the oldest on */
 	while ((oldest = g_queue_peek_head(r->order)) != NULL) {
-		when = g_hash_table_lookup(r->seen, oldest);
-		if (when != NULL && now - *when < 2 * E2E_TS_TOLERANCE && *when <= now)
+		until = g_hash_table_lookup(r->seen, oldest);
+		if (until != NULL && now <= *until)
 			break;
 		g_queue_pop_head(r->order);
 		g_hash_table_remove(r->seen, oldest);
 	}
-	/* the names may hold anything but NUL: one 0 byte apart */
+	/* the chunk as parsed, not as spelled: the parser takes other
+	   spellings of the same chunk (spaces, the case of the msgid, leading
+	   zeros), which open all the same. The names may hold anything but
+	   NUL: one 0 byte apart. */
 	g_string_append(in, ctx != NULL ? ctx : "");
 	g_string_append_c(in, '\0');
 	g_string_append(in, sender != NULL ? sender : "");
 	g_string_append_c(in, '\0');
-	g_string_append(in, wire);
+	g_string_append_len(in, (const char *) w->msgid, sizeof(w->msgid));
+	append_be(in, (guint64) w->ts, 8);
+	append_be(in, (guint32) w->part, 4);
+	append_be(in, (guint32) w->total, 4);
+	g_string_append_len(in, (const char *) w->nonce, sizeof(w->nonce));
+	g_string_append_len(in, (const char *) w->ct, w->ctlen);
 	if (!e2e_sha256((const unsigned char *) in->str, in->len, digest))
 		memset(digest, 0, sizeof(digest));
 	g_string_free(in, TRUE);
@@ -3456,9 +3470,12 @@ gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, co
 	while (g_hash_table_size(r->seen) >= r->max &&
 	       (oldest = g_queue_pop_head(r->order)) != NULL)
 		g_hash_table_remove(r->seen, oldest);
-	when = g_new(gint64, 1);
-	*when = now;
-	g_hash_table_insert(r->seen, hex, when);
+	/* as long as the timestamp check takes the chunk (|now - ts| <=
+	   E2E_TS_TOLERANCE, at either end), and never shorter than that from
+	   now: a clock step does not shorten it */
+	until = g_new(gint64, 1);
+	*until = MAX(w->ts, now) + E2E_TS_TOLERANCE + 1;
+	g_hash_table_insert(r->seen, hex, until);
 	g_queue_push_tail(r->order, hex);
 	return FALSE;
 }
@@ -3619,7 +3636,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 out:
 	/* read before: the server sent the same chunk again */
 	if (res->action == E2E_IN_PLAIN && p->replay != NULL &&
-	    e2e_replay_check(p->replay, res->ctx, p->is_own_line ? "" : p->handle, text)) {
+	    e2e_replay_check(p->replay, res->ctx, p->is_own_line ? "" : p->handle, w)) {
 		e2e_wipe(res->plain, strlen(res->plain));
 		g_free(res->plain);
 		res->plain = NULL;

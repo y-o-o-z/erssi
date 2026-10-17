@@ -6222,6 +6222,7 @@ static void test_bot_bypass_setting(void)
    timestamp window, and the memory stays bounded */
 static void test_replay(void)
 {
+	gint64 start;
 	PEER a, b;
 	E2E_GATE_RESULT g;
 	E2E_IN_PARAMS in;
@@ -6250,10 +6251,45 @@ static void test_replay(void)
 	g_assert_null(r.plain);
 	assert_placeholder(&b, &a, &r, "repeated encrypted message from alice");
 	e2e_in_result_clear(&r);
+	/* other spellings of the same chunk open all the same: the same
+	   chunk (a trailing space, the msgid in upper case, two spaces after
+	   the prefix, a leading zero) */
+	{
+		char **f = g_strsplit(one, " ", -1), *msgid_up = g_ascii_strup(f[1], -1);
+		char *variants[5];
+		int v;
+
+		g_assert_cmpuint(g_strv_length(f), ==, 5);
+		variants[0] = g_strconcat(one, " ", NULL);
+		variants[1] = g_strjoin(" ", f[0], msgid_up, f[2], f[3], f[4], NULL);
+		variants[2] = g_strjoin("  ", f[0], f[1], NULL);
+		variants[3] = g_strconcat(f[0], " ", f[1], " 0", f[2], " ", f[3], " ", f[4], NULL);
+		variants[4] = NULL;
+		{
+			char *rest = g_strjoin(" ", variants[2], f[2], f[3], f[4], NULL);
+
+			g_free(variants[2]);
+			variants[2] = rest;
+		}
+		for (v = 0; variants[v] != NULL; v++) {
+			e2e_decrypt_incoming(b.kr, &b.id, &in, variants[v], &r);
+			if (r.why != E2E_IN_WHY_REPEAT)
+				g_error("variant \"%s\": action %d why %d", variants[v], r.action, r.why);
+			e2e_in_result_clear(&r);
+			g_free(variants[v]);
+		}
+		g_free(msgid_up);
+		g_strfreev(f);
+	}
 	/* the same chunk from someone else, or in another channel, is
 	   another one (it would not open there anyway) */
-	g_assert_false(e2e_replay_check(rp, "#other", ALICE, one));
-	g_assert_false(e2e_replay_check(rp, "#test", BOB, one));
+	{
+		E2E_WIRE *w = e2e_wire_parse(one);
+
+		g_assert_false(e2e_replay_check(rp, "#other", ALICE, w));
+		g_assert_false(e2e_replay_check(rp, "#test", BOB, w));
+		e2e_wire_free(w);
+	}
 
 	/* a long message: every part reads once, a part again is dropped */
 	longtext = g_strnfill(500, 'q');
@@ -6270,26 +6306,60 @@ static void test_replay(void)
 	e2e_gate_result_clear(&g);
 	g_free(longtext);
 
-	/* forgotten after twice the window (the timestamp check refuses it
-	   by then) */
+	g_free(one);
+	e2e_replay_free(rp);
+
+	/* the whole timestamp window: read first at its very start (the
+	   chunk 300 s ahead of our clock), the repeat at its very end */
+	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	in.replay = rp;
+	one = wire_from(&a, "#test", "edge");
+	start = fake_now;
+	fake_now -= E2E_TS_TOLERANCE;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
 	fake_now += 2 * E2E_TS_TOLERANCE;
-	g_assert_false(e2e_replay_check(rp, "#test", ALICE, one));
-	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
-	fake_now -= 2 * E2E_TS_TOLERANCE;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	/* a second later the timestamp check refuses it: forgotten then */
+	fake_now += 1;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	e2e_in_result_clear(&r);
+	fake_now += E2E_TS_TOLERANCE + 2;
+	{
+		E2E_WIRE *w = e2e_wire_parse(one);
+
+		g_assert_false(e2e_replay_check(rp, "#test", ALICE, w));
+		g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+		e2e_wire_free(w);
+	}
+	fake_now = start;
 	g_free(one);
 	e2e_replay_free(rp);
 
 	/* bounded: the oldest go first */
 	rp = e2e_replay_new(8);
-	for (i = 0; i < 100; i++) {
-		char *w = g_strdup_printf("+RPE2E01 fake %u", i);
+	{
+		E2E_WIRE w;
+		unsigned char ct[17] = { 0 };
 
-		g_assert_false(e2e_replay_check(rp, "#test", ALICE, w));
-		g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
-		g_free(w);
+		memset(&w, 0, sizeof(w));
+		w.ts = fake_now;
+		w.part = w.total = 1;
+		w.ct = ct;
+		w.ctlen = sizeof(ct);
+		for (i = 0; i < 100; i++) {
+			w.msgid[0] = i;
+			g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+			g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
+		}
+		g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+		w.msgid[0] = 0;
+		g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
 	}
-	g_assert_true(e2e_replay_check(rp, "#test", ALICE, "+RPE2E01 fake 99"));
-	g_assert_false(e2e_replay_check(rp, "#test", ALICE, "+RPE2E01 fake 0"));
 	e2e_replay_free(rp);
 	peer_free(&a);
 	peer_free(&b);
