@@ -223,17 +223,19 @@
     encrypted message not read - no key from <nick> (<ident@host>) yet -
     key requested]" when there is no session with them yet (a key request
     goes to them at most every 30 s for each channel or query, at most 3
-    in 10 s to everyone together, and only while encryption is on here;
-    their answer lets you read their next messages), "[E2E rejected: ...]"
-    in red when it does not open with their key (their current key is then
-    requested - their REKEY may not have reached you) or you declined or
-    revoked them here (then nothing is requested), "too old to verify"
-    when its time is more than 5 minutes off (history a bouncer plays back
-    - your own lines too - a replay, or a clock far off), and the reason
-    when a key exchange of theirs is blocked (a new address, a new key,
-    revoked - see REVERIFY); such a block is also told in full, with the
-    command to run, when it happens and at most once a minute while they
-    write.
+    in 10 s to everyone together - people you confirmed (/E2E ACCEPT, an
+    AUTOTRUST rule, /E2E REVERIFY, /E2E UNREVOKE, an exchange you started
+    with /E2E HANDSHAKE) are not held back by that - and only while
+    encryption is on here; their answer lets you read their next
+    messages), "[E2E rejected: ...]" in red when it does not open with
+    their key (their current key is then requested - their REKEY may not
+    have reached you) or you declined or revoked them here (then nothing
+    is requested), "too old to verify" when its time is more than 5
+    minutes off (history a bouncer plays back - your own lines too - a
+    replay, or a clock far off), and the reason when a key exchange of
+    theirs is blocked (a new address, a new key, revoked - see REVERIFY);
+    such a block is also told in full, with the command to run, when it
+    happens and at most once a minute while they write.
 
     Your own key goes only to people you accepted: /E2E ACCEPT, an
     AUTOTRUST rule or auto-accept mode. Having their key is not enough -
@@ -248,19 +250,21 @@
     Requests for a channel or query where encryption is off are ignored, a
     request for a query must come from the person it names, and each kind
     of request (KEYREQ, KEYRSP, REKEY) from one person for one context is
-    handled at most every 10 s. A key change announced by a person (REKEY)
-    only replaces a key you already have from them (the key it replaces
-    still opens their messages for 2 minutes, for those sent just before
-    it), and each one is taken once (after 1024 of them from one person in
-    one context the next key change goes through a new key request
-    instead). When your own key changes, only people you accepted get the
-    new one. At most 64 requests wait for /E2E ACCEPT, at most 256 of your
-    own key requests wait for an answer and at most 256 people you never
-    accepted are remembered, with their keys; the oldest go first (people
-    you accepted are always kept). Messages of the module are prefixed
-    with [E2E] (warnings in the error colour); with /SET e2e_debug ON it
-    also traces the key exchange. Line breaks in a decrypted message are
-    shown as spaces.
+    handled at most every 10 s; requests from people you have not
+    confirmed that would be answered or stored are taken at most 5 in 10 s
+    together, and at most 10 key exchange messages leave in 10 s in all. A
+    key change announced by a person (REKEY) only replaces a key you
+    already have from them (the key it replaces still opens their messages
+    for 2 minutes, for those sent just before it), and each one is taken
+    once (after 1024 of them from one person in one context the next key
+    change goes through a new key request instead). When your own key
+    changes, only people you accepted get the new one. At most 64 requests
+    wait for /E2E ACCEPT, at most 256 of your own key requests wait for an
+    answer and at most 256 people you never accepted are remembered, with
+    their keys; the oldest go first (people you accepted are always kept).
+    Messages of the module are prefixed with [E2E] (warnings in the error
+    colour); with /SET e2e_debug ON it also traces the key exchange. Line
+    breaks in a decrypted message are shown as spaces.
 
     A message to a nick is not sent when encryption is on for that nick
     at another ident@host (a new host, or someone else took the nick), or
