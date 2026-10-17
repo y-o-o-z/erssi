@@ -93,7 +93,9 @@ static char *keyring_file;
 
 static GHashTable *keyreq_out;		/* handle -> our last KEYREQ (30 s) */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
-static GHashTable *own_wait_notice;	/* "tag|nick" -> last "held" notice */
+/* "tag|handle|change|fp" -> the last warning about a blocked key exchange */
+static GHashTable *trust_notice;
+#define E2E_TRUST_NOTICE_INTERVAL 60
 /* "tag|handle|ctx" -> last "Pending key exchange" notice (bounded) */
 static GHashTable *pending_notice;
 static guint state_idle_id;
@@ -133,6 +135,20 @@ void e2e_print_item(void *item, const char *fmt, ...)
 	g_free(text);
 }
 
+void e2e_print_warning(void *item, const char *fmt, ...)
+{
+	WI_ITEM_REC *wi = item;
+	va_list va;
+	char *text;
+
+	va_start(va, fmt);
+	text = g_strdup_vprintf(fmt, va);
+	va_end(va);
+	printformat(wi != NULL ? wi->server : NULL, wi != NULL ? wi->visible_name : NULL,
+	            MSGLEVEL_CLIENTERROR, TXT_E2E_WARNING, text);
+	g_free(text);
+}
+
 /* ---- loaded for this session only ---- */
 
 /* "gui exit" came (/quit, /upgrade): the module is unloaded with the
@@ -142,10 +158,7 @@ static gboolean exiting;
 /* a warning (client error level) in a window item, NULL: the active one */
 static void print_warning(void *item, const char *text)
 {
-	WI_ITEM_REC *wi = item;
-
-	printformat(wi != NULL ? wi->server : NULL, wi != NULL ? wi->visible_name : NULL,
-	            MSGLEVEL_CLIENTERROR, TXT_E2E_MESSAGE, text);
+	e2e_print_warning(item, "%s", text);
 }
 
 static const char *contexts_word(guint n)
@@ -859,6 +872,83 @@ void e2e_print_pending(SERVER_REC *server, const char *ctx, const char *nick, co
 	g_free(dnick);
 	g_free(dhandle);
 	g_free(dctx);
+}
+
+void e2e_tell_trust_changes(SERVER_REC *server, const char *ctx, const char *nick,
+                            const E2E_JSON *kr, const char *handle, gboolean force)
+{
+	GPtrArray *changes;
+	GHashTable *told;
+	WI_ITEM_REC *item;
+	guint i;
+
+	if (handle == NULL || *handle == '\0')
+		return;
+	changes = e2e_trust_changes(kr, handle);
+	if (changes->len == 0) {
+		g_ptr_array_unref(changes);
+		return;
+	}
+	item = e2e_notice_item(server, ctx, nick);
+	/* a change seen in several channels is one decision: told once */
+	told = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	for (i = 0; i < changes->len; i++) {
+		const E2E_JSON *row = g_ptr_array_index(changes, i);
+		const char *change = e2e_json_get_string(row, "change");
+		const char *fp = e2e_json_get_string(row, "new_fp");
+		const char *rnick = e2e_json_get_string(row, "nick");
+		E2E_JSON *peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
+		char *what = g_strconcat(change, "|", fp, NULL);
+		char *stamp, *dnick, *dhandle;
+
+		if (g_hash_table_contains(told, what)) {
+			g_free(what);
+			continue;
+		}
+		stamp = g_strconcat(server != NULL && server->tag != NULL ? server->tag : "", "|", handle,
+		                    "|", what, NULL);
+		g_hash_table_add(told, what);
+		if (!e2e_stamp_allow(trust_notice, stamp, force ? 0 : E2E_TRUST_NOTICE_INTERVAL)) {
+			g_free(stamp);
+			continue;
+		}
+		g_free(stamp);
+		if (nick == NULL || *nick == '\0')
+			nick = rnick != NULL ? rnick : e2e_json_get_string(peer, "last_nick");
+		dnick = e2e_text_display(nick != NULL ? nick : "?");
+		dhandle = e2e_text_display(handle);
+		if (strcmp(change, "handle_changed") == 0) {
+			const char *was = e2e_json_get_string(peer, "last_handle");
+			char *dwas = e2e_text_display(was != NULL ? was : "?");
+			char *fp16 = g_strndup(fp, 16);
+
+			printformat(server, item != NULL ? item->visible_name : NULL,
+			            MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_TRUST_HANDLE, dnick,
+			            dhandle, fp16, dwas);
+			g_free(fp16);
+			g_free(dwas);
+		} else if (strcmp(change, "fingerprint_changed") == 0) {
+			const char *old = e2e_json_get_string(row, "old_fp");
+			char *old16 = g_strndup(old != NULL ? old : "?", 16), *new16 = g_strndup(fp, 16);
+
+			printformat(server, item != NULL ? item->visible_name : NULL,
+			            MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_TRUST_KEY, dnick,
+			            dhandle, old16, new16);
+			g_free(old16);
+			g_free(new16);
+		} else {
+			char *fp16 = g_strndup(fp, 16);
+
+			printformat(server, item != NULL ? item->visible_name : NULL,
+			            MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_TRUST_REVOKED, dnick,
+			            dhandle, fp16);
+			g_free(fp16);
+		}
+		g_free(dnick);
+		g_free(dhandle);
+	}
+	g_hash_table_destroy(told);
+	g_ptr_array_unref(changes);
 }
 
 void e2e_tell_damaged(void *item, const GPtrArray *found)
@@ -1622,6 +1712,20 @@ static void sig_server_gone(SERVER_REC *server)
 
 /* ---- incoming messages ---- */
 
+/* An encrypted message that is not shown: in its place, as a message of
+   its sender, a line that says so and why (as repartee does) - every one,
+   so the user sees that someone writes to them; it is routed, themed,
+   logged and seen by web clients like the message itself. warn: red, the
+   user has to act. Must be called from the "event privmsg" emission. */
+static void show_placeholder(SERVER_REC *server, const char *target, const char *nick,
+                             const char *address, const char *text, gboolean warn)
+{
+	char *data = g_strdup_printf("%s :%s%s\017", target, warn ? "\00304" : "\00314", text);
+
+	signal_continue(4, server, data, nick, address);
+	g_free(data);
+}
+
 static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *nick,
                               const char *address)
 {
@@ -1631,7 +1735,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	E2E_JSON *kr;
 	E2E_NET net;
 	const char *sp, *text, *orig_nick = nick, *orig_address = address;
-	char *target, **readings, *wait_key, *newdata;
+	char *target, **readings, *newdata;
 	gboolean have_id, is_channel, lost;
 
 	if (!IS_IRC_SERVER(server) || data == NULL || !e2e_native_active())
@@ -1685,7 +1789,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	if (kr == NULL || lost) {
 		e2e_print_debug(server, target, nick, "wire from %s hidden: the keyring is lost (/e2e reset)",
 		                nick);
-		signal_stop();
+		show_placeholder(server, target, orig_nick, orig_address, E2E_PLACEHOLDER_LOST, TRUE);
 		e2e_json_free(kr);
 		e2e_net_clear(&net);
 		g_strfreev(readings);
@@ -1700,14 +1804,9 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 		break;
 	case E2E_IN_WAIT_OWN:
 		/* decrypting or asking under the sender's handle would set up the
-		   wrong direction: hold it, the next message works */
-		wait_key = g_strconcat(server->tag, "|", nick, NULL);
-		if (e2e_stamp_allow(own_wait_notice, wait_key, E2E_KEYREQ_MIN_INTERVAL))
-			e2e_print_item(e2e_notice_item(server, nick, nick),
-			               "encrypted DM from %s held — own identity not learned yet (waiting for the WHOIS reply)",
-			               nick);
-		g_free(wait_key);
-		signal_stop();
+		   wrong direction: not read, the next message works */
+		show_placeholder(server, target, orig_nick, orig_address,
+		                 E2E_PLACEHOLDER_OWN_UNKNOWN, FALSE);
 		break;
 	case E2E_IN_DROP:
 		if (res.debug != NULL)
@@ -1716,15 +1815,23 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			char *shown = e2e_ctx_display(res.ctx);
 
 			e2e_send_notice(server, nick, res.keyreq);
-			e2e_print_item(e2e_notice_item(server, res.ctx, nick), "KEYREQ sent to %s for %s",
-			               nick, shown);
 			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
 			g_free(shown);
 		}
 		/* a KEYREQ of ours waits for its answer; old rows taken over */
 		if (res.save_needed)
 			e2e_save(kr);
-		signal_stop();
+		{
+			char *text = e2e_in_placeholder(kr, &res, nick, address);
+
+			show_placeholder(server, target, orig_nick, orig_address, text,
+			                 res.why == E2E_IN_WHY_TRUST || res.why == E2E_IN_WHY_REVOKED ||
+			                 res.why == E2E_IN_WHY_REJECTED);
+			g_free(text);
+		}
+		/* the trust change that blocks it, in full now and then */
+		if (res.why == E2E_IN_WHY_TRUST)
+			e2e_tell_trust_changes(server, res.ctx, nick, kr, address, FALSE);
 		break;
 	case E2E_IN_PLAIN:
 		if (res.save_needed)
@@ -1763,6 +1870,17 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 }
 
 /* ---- the key exchange ---- */
+
+/* a nick from the server as it is shown: control bytes as '?'. Valid
+   until the next call. */
+static const char *shown_nick(const char *nick)
+{
+	static char *last;
+
+	g_free(last);
+	last = e2e_text_display(nick != NULL ? nick : "");
+	return last;
+}
 
 static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nick,
                            const char *address, const char *target)
@@ -1809,6 +1927,13 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	if (kr == NULL || lost) {
 		e2e_print_debug(server, ctx, nick, "%s from %s ignored: the keyring is lost (/e2e reset)",
 		                names[type], nick);
+		/* once a minute per server, whoever sends them */
+		limit = g_strconcat(server->tag, "|lost", NULL);
+		if (e2e_stamp_allow(trust_notice, limit, E2E_TRUST_NOTICE_INTERVAL))
+			e2e_print_warning(e2e_notice_item(server, ctx, nick),
+			                  "%s from %s ignored: the keyring is lost - /e2e reset starts a new one, /e2e import loads an export",
+			                  names[type], shown_nick(nick));
+		g_free(limit);
 		e2e_json_free(kr);
 		e2e_handshake_free(parsed);
 		return;
@@ -1816,9 +1941,20 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	e2e_server_net(server, &net);
 	/* E2E set up before networks were kept apart, erssi on several: the
 	   handshake is ignored (E2E is off there) until /e2e adopt */
-	if (parsed != NULL && e2e_ctx_lookup(kr, &net, ctx, &sctx) == E2E_CTX_BLOCKED)
+	if (parsed != NULL && e2e_ctx_lookup(kr, &net, ctx, &sctx) == E2E_CTX_BLOCKED) {
 		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s ignored: E2E there was set up before networks were kept apart and erssi uses several - /e2e adopt in this window binds it to this network",
 		                names[type], nick, sender, ctx);
+		limit = g_strdup_printf("%s|blocked|%s", server->tag, ctx);
+		if (e2e_stamp_allow(trust_notice, limit, E2E_TRUST_NOTICE_INTERVAL)) {
+			char *where = e2e_text_display(ctx);
+
+			e2e_print_warning(e2e_notice_item(server, ctx, nick),
+			                  "%s from %s for %s ignored: E2E there was set up before erssi kept networks apart, and erssi uses several - /e2e adopt in its window binds it to this network",
+			                  names[type], shown_nick(nick), where);
+			g_free(where);
+		}
+		g_free(limit);
+	}
 	g_free(sctx);
 	sctx = NULL;
 	before = e2e_keyring_snapshot(kr);
@@ -1849,6 +1985,10 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	after = e2e_keyring_snapshot(kr);
 	if (strcmp(before, after) != 0)
 		e2e_save(kr);
+	/* blocked by a trust change of the sender (recorded just now, or
+	   before): said with the command that settles it */
+	if (parsed != NULL)
+		e2e_tell_trust_changes(server, ctx, nick, kr, sender, FALSE);
 
 	/* the request waits where e2e_handle_keyreq put it, "<sender>|<ctx>" */
 	if (type == E2E_HS_KEYREQ && parsed != NULL && rsp == NULL &&
@@ -1911,7 +2051,7 @@ void e2e_core_init(void)
 
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
-	own_wait_notice = e2e_stamps_new();
+	trust_notice = e2e_stamps_new();
 	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
@@ -2026,7 +2166,7 @@ void e2e_core_deinit(void)
 
 	g_hash_table_destroy(keyreq_out);
 	g_hash_table_destroy(keyreq_in);
-	g_hash_table_destroy(own_wait_notice);
+	g_hash_table_destroy(trust_notice);
 	g_hash_table_destroy(pending_notice);
 	if (state_idle_id != 0)
 		g_source_remove(state_idle_id);

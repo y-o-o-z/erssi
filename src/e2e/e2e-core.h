@@ -100,6 +100,16 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
 void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle,
                     const char *fingerprint);
 
+/* The key exchanges of handle that a trust change blocks (e2e_trust_changes:
+   a new address, a new key, revoked), each as a warning with the command
+   that settles it, in the window of ctx (or of nick; else the active
+   one): each one at most once a minute per server, unless force */
+void e2e_tell_trust_changes(SERVER_REC *server, const char *ctx, const char *nick,
+                            const E2E_JSON *kr, const char *handle, gboolean force);
+/* a warning ("[E2E] text" in the warning colour) in a window item, NULL:
+   the active one */
+void e2e_print_warning(void *item, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
+
 /* e2e_rotate_for_damaged() found entries (pairs "<handle>", "<ctx>"):
    told in item's window (NULL: the active one) */
 void e2e_tell_damaged(void *item, const GPtrArray *found);

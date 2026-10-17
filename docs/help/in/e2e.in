@@ -176,9 +176,17 @@
     other than ACTION are always sent in plain text. NOTICEs are not
     encrypted.
 
-    An encrypted message from a person without a trusted session is
-    hidden, and a key request is sent to them (at most every 30 s) if
-    encryption is on here; their answer lets you read them. Your own key
+    An encrypted message that cannot be read is never dropped without a
+    word: in its place - as a message of its sender, logged like one -
+    comes a line in brackets that says why and what to do: "[E2E:
+    encrypted message not read - no key from <nick> (<ident@host>) yet -
+    key requested]" when there is no session with them yet (a key request
+    goes to them at most every 30 s, and only while encryption is on
+    here; their answer lets you read their next messages), "[E2E
+    rejected: ...]" in red when it does not open with their key, its time
+    is more than 5 minutes off, or you declined or revoked them here (then
+    nothing is requested), and the reason when a key exchange of theirs
+    is blocked (a new address, a new key, revoked - see REVERIFY). Your own key
     goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
     auto-accept mode. Having their key is not enough - so in normal mode
     each of you accepts the other once. A request for a channel is
@@ -199,8 +207,9 @@
     /E2E ACCEPT, at most 256 of your own key requests wait for an answer
     and at most 256 people you never accepted are remembered, with their
     keys; the oldest go first (people you accepted are always kept).
-    Messages of the module are prefixed with [E2E]; with /SET e2e_debug ON
-    it also explains what it drops. Line breaks in a decrypted message are
+    Messages of the module are prefixed with [E2E] (warnings in the
+    error colour); with /SET e2e_debug ON it also traces the key
+    exchange. Line breaks in a decrypted message are
     shown as spaces.
 
     A message to a nick is not sent when encryption is on for that nick

@@ -34,6 +34,16 @@ FORMAT_REC e2e_formats[] = {
 	/* the same for a query: nick, ident@host, the network, the suffix -
 	   answered from any window of that network */
 	{ "e2e_pending_query", "[E2E] Pending key exchange from {hilight $0} ($1) for a query$3. Run /e2e accept $1 or /e2e decline $1 in any window of $2 (/e2e pending lists all)", 4, { 0, 0, 0, 0 } },
+	/* something the user has to act on: a message NOT sent, a refusal */
+	{ "e2e_warning", "{error [E2E] $0}", 1, { 0 } },
+	/* a key exchange blocked by a trust change, with the command that
+	   settles it: nick, the new ident@host, the start of the fingerprint,
+	   the ident@host the key was known under */
+	{ "e2e_trust_handle", "{error [E2E] Notice: the known key $2 of $0 appeared under a new address, $1 (before: $3). Their messages are not read until you accept it - if it is the same person: /e2e reverify $1}", 4, { 0, 0, 0, 0 } },
+	/* nick, ident@host, old and new start of the fingerprint */
+	{ "e2e_trust_key", "{error [E2E] WARNING: the identity key of $0 ($1) has CHANGED (old $2, new $3). Their messages are not read; compare the new one with them over another channel, then /e2e reverify $1}", 4, { 0, 0, 0, 0 } },
+	/* nick, ident@host, the start of the fingerprint */
+	{ "e2e_trust_revoked", "{error [E2E] $0 ($1, key $2) is REVOKED: their key exchange is refused and their messages are not read. /e2e unrevoke $0 restores them}", 3, { 0, 0, 0 } },
 
 	{ NULL, NULL, 0 }
 };

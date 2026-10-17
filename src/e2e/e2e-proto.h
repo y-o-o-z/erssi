@@ -310,8 +310,35 @@ typedef enum {
 	E2E_IN_WAIT_OWN		/* a DM before our handle is known: hide, tell */
 } E2E_IN_ACTION;
 
+/* why a DROP is not shown: e2e_in_placeholder() says it to the user */
+typedef enum {
+	E2E_IN_WHY_NONE,
+	E2E_IN_WHY_NO_SESSION,	/* no key from the sender here yet (res->ask) */
+	E2E_IN_WHY_TRUST,	/* a trust change of the sender waits for the user
+				   (e2e_trust_changes): no key is asked for */
+	E2E_IN_WHY_REVOKED,	/* the sender's session here is revoked (/e2e decline,
+				   /e2e revoke): not read, no key is asked for */
+	E2E_IN_WHY_REJECTED,	/* it does not open under their key, or its time is
+				   off (res->reason) */
+	E2E_IN_WHY_OWN_COPY,	/* our own line relayed back, not under our key now */
+	E2E_IN_WHY_BLOCKED	/* an old context of unknown network: off here */
+} E2E_IN_WHY;
+
+/* E2E_IN_WHY_NO_SESSION: what became of the key request */
+typedef enum {
+	E2E_IN_ASK_NONE,
+	E2E_IN_ASK_SENT,	/* res->keyreq goes to the sender */
+	E2E_IN_ASK_RECENT,	/* one went to that handle within E2E_KEYREQ_MIN_INTERVAL */
+	E2E_IN_ASK_WAITING,	/* ours waits for their answer (E2E_PENDING_KEYREQ_TTL) */
+	E2E_IN_ASK_OFF,		/* E2E is off here: nothing is asked */
+	E2E_IN_ASK_FAILED	/* no identity, or the request could not be made */
+} E2E_IN_ASK;
+
 typedef struct {
 	E2E_IN_ACTION action;
+	E2E_IN_WHY why;		/* DROP: why */
+	E2E_IN_ASK ask;		/* E2E_IN_WHY_NO_SESSION */
+	char *reason;		/* E2E_IN_WHY_REJECTED: what was wrong, for the user */
 	char *plain;		/* PLAIN: valid UTF-8 */
 	char *ctx;		/* the storage context (bare until it is found) */
 	char *keyreq;		/* DROP: an automatic KEYREQ to send to the sender */
@@ -325,6 +352,26 @@ typedef struct {
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
                           const char *text, E2E_IN_RESULT *res);
 void e2e_in_result_clear(E2E_IN_RESULT *res);
+/* The text shown in place of an encrypted message that is not shown -
+   one line per message, so the user sees that someone writes and why it
+   cannot be read: res a DROP of e2e_decrypt_incoming (kr the keyring it
+   used, for a trust change that waits), nick and handle its sender (shown
+   with control bytes as '?'). Valid UTF-8, no line break. */
+char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const char *nick,
+                         const char *handle);
+/* the same for a message the module cannot even try to read */
+#define E2E_PLACEHOLDER_LOST "[E2E: encrypted message not read - the keyring is lost: /e2e reset starts a new one, /e2e import loads an export]"
+#define E2E_PLACEHOLDER_OWN_UNKNOWN "[E2E: encrypted message not read - your own address is not known yet (waiting for the WHOIS reply); the next one will be]"
+
+/* ---- trust changes ---- */
+
+/* The trust changes recorded for key exchanges that are blocked and still
+   are (rows of pending_trust_change: "handle", "channel", "change" -
+   handle_changed, fingerprint_changed or revoked - "old_fp", "new_fp",
+   "nick", "recorded_at"): a row whose change no longer holds (/e2e
+   reverify, /e2e unrevoke, /e2e forget since) is left out. Of handle,
+   or all for NULL; the newest first. The rows are kr's. */
+GPtrArray *e2e_trust_changes(const E2E_JSON *kr, const char *handle);
 /* plain marked "\017 (E2E key of <via>)" - the formatting reset first,
    inside the \001 of an ACTION; control bytes of via shown as '?' */
 char *e2e_plain_with_via(const char *plain, const char *via);
