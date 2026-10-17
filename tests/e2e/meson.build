@@ -32,3 +32,14 @@ test('e2e live interop (native <-> rpe2e.pl)', find_program('live-interop.sh'),
   depends : live_depends,
   is_parallel : false,
   timeout : 1500)
+
+# native module <-> repartee itself, on the fake server of tests/live;
+# skipped unless REPARTEE_BIN names a repartee binary (and without tmux)
+python3_e2e = find_program('python3', required : false)
+if python3_e2e.found()
+  test('e2e live interop (native <-> repartee)', python3_e2e,
+    args : [files('repartee-interop.py'), meson.build_root(), meson.source_root()],
+    env : test_env,
+    is_parallel : false,
+    timeout : 600)
+endif
