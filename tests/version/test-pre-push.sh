@@ -253,6 +253,15 @@ newrepo
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'signed release tag' ok -- refs/tags/shellter-v2026.10.0
 
+# a release tag on the remote never moves, even signed and forced
+newrepo
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'release tag for the move' ok -- refs/tags/shellter-v2026.10.0
+cm -S -m 'a fix'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+push 'release tag moved' refused 'release tags never move' -- --force refs/tags/shellter-v2026.10.0
+push 'the fix to main' ok -- main
+
 newrepo
 git -C "$r" tag shellter-v2026.10.0
 push 'lightweight release tag' refused 'must be annotated' -- refs/tags/shellter-v2026.10.0

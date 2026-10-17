@@ -16,7 +16,9 @@
 #    commit that names that tag and carries a valid SSH signature by the key
 #    in utils/allowed_signers; every release tag except legacy shellter-v1.*
 #    (e.g. shellter-v2026.10.0) must also agree with meson.build and NEWS
-#    (utils/check-version.sh);
+#    (utils/check-version.sh); a release tag that exists on the remote is
+#    never moved (a release made again is a new version: erssi --update
+#    takes only a newer one and reports a moved tag);
 #    src/fe-ansi/default-files-known.h lists every shipped startup/theme
 # 3. nothing that the push publishes matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line, case
@@ -97,6 +99,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         hits=$(printf '%s\n%s\n' "$local_ref" "$remote_ref" | private)
         [ -n "$hits" ] && bad "ref name: private data: $hits"
     fi
+    # a release tag on the remote stays where it is (git push --force)
+    case "$remote_ref" in
+        refs/tags/shellter-v*)
+            [ "$remote_sha" = "$ZERO" ] || [ "$remote_sha" = "$local_sha" ] ||
+                bad "$remote_ref: release tags never move - release the change as a new version" ;;
+    esac
     # tags too: a tag can carry commits that no branch on GitHub has
     if ! tip=$(git rev-parse -q --verify "$local_sha^{commit}" 2>/dev/null); then
         case "$remote_ref" in
