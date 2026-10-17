@@ -35,7 +35,12 @@
 # 5. The remotes of OLD_REPO that filter-repo removed or that are missing
 #    (origin, staging) are added back with their URLs, the stale copies of
 #    their branches (refs/remotes/<remote>/*) are deleted, and the push
-#    commands are printed.
+#    commands are printed - with what to do about their other branches
+#    that still hold the old history (OLD_REPO's copies of them).
+# Before 1, a fresh clone is set up from OLD_REPO where it lacks it: the
+# signing identity (user.name, user.email, user.signingkey, gpg.format,
+# gpg.ssh.allowedSignersFile) and the release hook, utils/pre-push copied
+# to .git/hooks/pre-push.
 set -eu
 
 die() { printf 'resign-history: error: %s\n' "$*" >&2; exit 1; }
@@ -66,6 +71,22 @@ MAP=$GD/filter-repo/commit-map
 tmp=$(mktemp -d) || die "mktemp failed"
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
+
+# the fresh clone: the identity and signing settings of OLD_REPO where this
+# clone has none, and the release hook
+for k in user.name user.email user.signingkey gpg.format gpg.ssh.allowedSignersFile; do
+    git config --get "$k" >/dev/null 2>&1 && continue
+    val=$(git -C "$OLD" config --get "$k" 2>/dev/null) || continue
+    git config "$k" "$val"
+    say "$k taken from $OLD: $val"
+done
+hook=$(git rev-parse --git-path hooks)/pre-push
+if [ ! -e "$hook" ]; then
+    mkdir -p "$(dirname "$hook")"
+    git show main:utils/pre-push > "$hook" || die "no utils/pre-push on main"
+    chmod 755 "$hook"
+    say "release hook installed: $hook (a copy of utils/pre-push)"
+fi
 
 # git that checks SSH signatures against the rewritten main's
 # utils/allowed_signers only (no gpg, whatever the configuration says)
@@ -125,7 +146,20 @@ while read -r t; do
     git ls-tree -r --full-tree "$fc" | sort > "$tmp/new.tree"
     comm -13 "$tmp/old.tree" "$tmp/new.tree" > "$tmp/changed"
     if [ -s "$tmp/changed" ]; then
-        sed 's/^/    changed or added: /' "$tmp/changed" | head -n 20
+        # per file: changed or added, the line counts and the first lines
+        while IFS="$(printf '\t')" read -r meta path; do
+            nb=$(echo "$meta" | awk '{ print $3 }')
+            ob=$(awk -F '\t' -v p="$path" '$2 == p { split($1, m, " "); print m[3] }' "$tmp/old.tree")
+            if [ -z "$ob" ]; then
+                say "$t: $path: added"
+                continue
+            fi
+            git -C "$OLD" cat-file blob "$ob" > "$tmp/a" 2>/dev/null || : > "$tmp/a"
+            git cat-file blob "$nb" > "$tmp/b" 2>/dev/null || : > "$tmp/b"
+            diff "$tmp/a" "$tmp/b" > "$tmp/d" || :
+            say "$t: $path: changed (-$(grep -c '^<' "$tmp/d") +$(grep -c '^>' "$tmp/d") lines)"
+            grep '^[<>]' "$tmp/d" | head -n 4 | cut -c1-100 | sed 's/^</      -/; s/^>/      +/'
+        done < "$tmp/changed"
         [ "$ALLOW" = 1 ] || die "$t: the rewrite changed the release, not only removed files (--allow-changes to accept)"
     fi
     gone=$(comm -23 "$tmp/old.tree" "$tmp/new.tree" | wc -l | tr -d ' ')
@@ -153,7 +187,10 @@ awk '$1 == "U" { print $2 "^{tree}"; print $3 "^{tree}" }' "$tmp/kinds" |
 awk '$1 == "U" { print $2 }' "$tmp/kinds" > "$tmp/ucommits"
 awk -v c="$tmp/ucommits" '{ t[NR] = $1 } END { i = 0
         while ((getline h < c) > 0) { i += 2; if (t[i - 1] != t[i]) print h } }' "$tmp/utrees" > "$tmp/ubad"
-[ ! -s "$tmp/ubad" ] || die "the rewrite changed upstream commits (e.g. $(head -n 1 "$tmp/ubad")) - only the fork's history may change"
+if [ -s "$tmp/ubad" ]; then
+    first=$(awk -v c="$(head -n 1 "$tmp/ubad")" '$2 == c { print $3; exit }' "$tmp/kinds")
+    die "the rewrite changed $(wc -l < "$tmp/ubad" | tr -d ' ') upstream commits, e.g. $first ($(git log -1 --format='%h %s' "$first" 2>/dev/null)) - only the fork's history may change: narrow the --replace-text/--replace-message rules (see docs/shellter/releasing.md)"
+fi
 awk '$1 == "U" { print $2, $3 }' "$tmp/kinds" > "$tmp/final"
 n_up=$(wc -l < "$tmp/final" | tr -d ' ')
 
@@ -220,10 +257,19 @@ awk -v m="$tmp/composed" '
     inr && NF >= 2 && ($2 in n) { sub($2, n[$2]) }
     { print }' shellter-install.sh > "$tmp/inst" && cat "$tmp/inst" > shellter-install.sh
 # abbreviated or full ids of the fork's old commits (7 to 40 hex digits)
-# become the same length of the new id; an ambiguous prefix is left alone
+# become the same length of the new id; an ambiguous prefix is left alone.
+# A file is written only when an id in it was replaced, with its last line
+# ending as it did. Ids of commits the rewrite dropped (they became empty)
+# cannot be mapped: they are named.
+awk -v up="$tmp/upstream" -v z="$ZERO" 'BEGIN { while ((getline l < up) > 0) u[l] = 1 }
+    $2 == z && !($1 in u) { print $1, "-" }' "$tmp/fr" > "$tmp/dropped"
+cat "$tmp/composed" "$tmp/dropped" > "$tmp/idmap"
 git ls-files -- '*.md' NEWS > "$tmp/docs"
+: > "$tmp/stale"
 while read -r f; do
-    awk -v m="$tmp/composed" '
+    nl=0
+    [ ! -s "$f" ] || [ "$(tail -c 1 "$f" | od -An -c | tr -d ' ')" != '\n' ] || nl=1
+    awk -v m="$tmp/idmap" -v nl="$nl" -v f="$f" -v cnt="$tmp/count" -v st="$tmp/stale" '
         BEGIN { while ((getline l < m) > 0) { split(l, a, " "); k = substr(a[1], 1, 7)
                     if (k in p && p[k] != a[1]) amb[k] = 1; p[k] = a[1]; n[a[1]] = a[2] } }
         { out = ""; s = $0
@@ -233,12 +279,21 @@ while read -r f; do
               after = substr(s, RSTART + RLENGTH, 1)
               k = substr(w, 1, 7)
               if (RLENGTH <= 40 && before !~ /[0-9A-Za-z]/ && after !~ /[0-9A-Za-z]/ &&
-                  (k in p) && !(k in amb) && substr(p[k], 1, RLENGTH) == w)
-                  w = substr(n[p[k]], 1, RLENGTH)
+                  (k in p) && !(k in amb) && substr(p[k], 1, RLENGTH) == w) {
+                  if (n[p[k]] == "-") print f ":" NR ": " w > st
+                  else { w = substr(n[p[k]], 1, RLENGTH); done++ } }
               out = out pre w; s = substr(s, RSTART + RLENGTH) }
-          print out s }' "$f" > "$tmp/doc" || die "cannot map the ids in $f"
-    if ! cmp -s "$tmp/doc" "$f"; then cat "$tmp/doc" > "$f"; say "commit ids mapped in $f"; fi
+          printf "%s%s", (NR > 1 ? "\n" : ""), out s }
+        END { if (NR && nl) printf "\n"; print done + 0 > cnt }' "$f" > "$tmp/doc" || die "cannot map the ids in $f"
+    if [ "$(cat "$tmp/count")" -gt 0 ]; then
+        cat "$tmp/doc" > "$f"
+        say "$(cat "$tmp/count") commit ids mapped in $f"
+    fi
 done < "$tmp/docs"
+if [ -s "$tmp/stale" ]; then
+    say "warning: these ids name commits the rewrite dropped (they became empty) - edit them by hand if they matter:"
+    sed 's/^/    /' "$tmp/stale"
+fi
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     {
         echo "shellter-install.sh, docs: commit ids of the re-signed history"
@@ -277,6 +332,45 @@ for r in $(git -C "$OLD" remote); do
     git for-each-ref --format='delete %(refname)' "refs/remotes/$r/" | git update-ref --stdin
     targets="$targets $r"
 done
+
+# the other branches of the push targets (OLD_REPO's copies): those that
+# still hold old commits whose content the rewrite changed or dropped
+# publish what was removed, until they are rewritten too or deleted
+awk '$1 == "F" { print $3 "^{tree}" }' "$tmp/kinds" | git -C "$OLD" cat-file --batch-check='%(objectname)' > "$tmp/ot"
+awk '$1 == "F" { print $2 "^{tree}" }' "$tmp/kinds" | git cat-file --batch-check='%(objectname)' > "$tmp/nt"
+awk '$1 == "F" { print $3 }' "$tmp/kinds" > "$tmp/fold"
+paste -d ' ' "$tmp/fold" "$tmp/ot" "$tmp/nt" | awk '$2 != $3 { print $1 }' > "$tmp/touched"
+awk '{ print $1 }' "$tmp/dropped" >> "$tmp/touched"
+awk '{ print $1 }' "$tmp/fr" > "$tmp/seen"
+oldup=""
+for u in $up_names; do
+    case "$u" in *[!A-Za-z0-9._-]*) continue ;; esac
+    oldup="$oldup --glob=refs/remotes/$u/*"
+done
+: > "$tmp/branches"
+for r in $targets; do
+    for b in $(git -C "$OLD" for-each-ref --format='%(refname)' "refs/remotes/$r/"); do
+        name=${b#refs/remotes/"$r"/}
+        case "$name" in main|HEAD) continue ;; esac
+        # shellcheck disable=SC2086 # glob arguments, globbing off
+        (set -f; git -C "$OLD" rev-list "$b" --not $oldup) > "$tmp/bc"
+        [ -s "$tmp/bc" ] || continue
+        c=$(awk -v t="$tmp/touched" 'BEGIN { while ((getline l < t) > 0) x[l] = 1 } $1 in x' "$tmp/bc" | wc -l | tr -d ' ')
+        o=$(awk -v t="$tmp/seen" 'BEGIN { while ((getline l < t) > 0) x[l] = 1 } $1 in x' "$tmp/bc" | wc -l | tr -d ' ')
+        x=$(($(wc -l < "$tmp/bc" | tr -d ' ') - o))
+        if [ "$c" -gt 0 ]; then
+            echo "  $r/$name: $c commits whose content the rewrite changed or dropped - rewrite this branch too, or delete it: git push $r --delete $name" >> "$tmp/branches"
+        elif [ "$o" -gt 0 ]; then
+            echo "  $r/$name: $o commits of the old history (content unchanged, old ids) - rebase it onto the new main, or delete it: git push $r --delete $name" >> "$tmp/branches"
+        elif [ "$x" -gt 0 ]; then
+            echo "  $r/$name: $x commits outside this rewrite (another history) - check them for what was removed" >> "$tmp/branches"
+        fi
+    done
+done
+if [ -s "$tmp/branches" ]; then
+    say "other branches of the remotes that hold old history (from $OLD's copies; GitHub may serve old commits by id until it collects them):"
+    cat "$tmp/branches"
+fi
 
 say "done. Check, then push - staging first, then origin (each runs utils/pre-push):"
 for r in staging origin $targets; do

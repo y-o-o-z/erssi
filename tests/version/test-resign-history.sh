@@ -35,13 +35,9 @@ mkdir -p "$HOME/.config" "$TMPDIR" || exit 1
 printf 'neverappearsanywhere\n' > "$HOME/.config/git-private-patterns"
 ssh-keygen -q -t ed25519 -N '' -C test -f "$tmp/key" || exit 1
 ssh-keygen -q -t ed25519 -N '' -C other -f "$tmp/other" || exit 1
+# the identity and the signing key only in the old clone (as on the
+# owner's machine): the script must take them over into the new one
 cat > "$HOME/.gitconfig" <<EOF
-[user]
-	name = y-o-o-z
-	email = $EMAIL
-	signingkey = $tmp/key
-[gpg]
-	format = ssh
 [commit]
 	gpgsign = false
 [tag]
@@ -87,12 +83,16 @@ release() {
 # --- the history before the rewrite ----------------------------------------
 git init -q "$tmp/up"
 up 'upstream one'
-up 'upstream two, signed by its author' -c user.signingkey="$tmp/other" -c commit.gpgsign=true
+up 'upstream two, signed by its author' -c gpg.format=ssh -c user.signingkey="$tmp/other" -c commit.gpgsign=true
 git clone -q "$tmp/up" "$tmp/old" && git -C "$tmp/old" remote rename origin upstream
-mkdir -p "$tmp/old/utils" && cp "$signers" "$tmp/old/utils/allowed_signers" &&
-    cp "$root/utils/check-version.sh" "$tmp/old/utils/"
+git -C "$tmp/old" config user.name y-o-o-z && git -C "$tmp/old" config user.email "$EMAIL" &&
+    git -C "$tmp/old" config user.signingkey "$tmp/key" && git -C "$tmp/old" config gpg.format ssh
+mkdir -p "$tmp/old/utils" "$tmp/old/doc" && cp "$signers" "$tmp/old/utils/allowed_signers" &&
+    cp "$root/utils/check-version.sh" "$root/utils/pre-push" "$tmp/old/utils/"
+# a file with no final newline and no commit id: never touched
+printf 'no ids, no final newline' > "$tmp/old/doc/nonl.md"
 printf 'RELEASES="\n"\n' > "$tmp/old/shellter-install.sh"
-git -C "$tmp/old" add utils shellter-install.sh
+git -C "$tmp/old" add utils doc shellter-install.sh
 fc 'fork: the start' secret.txt 'a secret that must go'
 fc 'fork: a feature' f 'feature'
 git -C "$tmp/old" checkout -q -b side
@@ -108,6 +108,9 @@ at
 git -C "$tmp/old" merge -q --no-ff -S -m 'Merge upstream' upstream/main
 echo 'more secret' >> "$tmp/old/secret.txt" && git -C "$tmp/old" add secret.txt
 fc 'fork: the secret again, and more' f 'and more'
+# a commit that only changes the dropped file: filter-repo drops it
+fc 'fork: the secret only' secret.txt 'only secret'
+drop=$(git -C "$tmp/old" rev-parse HEAD)
 release 2026.10.1
 r0=$(git -C "$tmp/old" rev-parse 'shellter-v2026.10.0^{commit}')
 r1=$(git -C "$tmp/old" rev-parse 'shellter-v2026.10.1^{commit}')
@@ -115,8 +118,8 @@ feat=$(git -C "$tmp/old" log --format=%H --grep='^fork: a feature$' main)
 u1=$(git -C "$tmp/up" rev-parse 'main~2')
 u2=$(git -C "$tmp/up" rev-parse 'main~1')
 printf 'RELEASES="\nshellter-v2026.10.0 %s signed\nshellter-v2026.10.1 %s signed\n"\n' "$r0" "$r1" > "$tmp/old/shellter-install.sh"
-printf '# Upstream\n\n- %s the feature; %s in full; upstream %s.\n' \
-    "$(echo "$feat" | cut -c1-8)" "$feat" "$(echo "$u1" | cut -c1-8)" > "$tmp/old/docs.md"
+printf '# Upstream\n\n- %s the feature; %s in full; upstream %s; dropped %s.\n' \
+    "$(echo "$feat" | cut -c1-8)" "$feat" "$(echo "$u1" | cut -c1-8)" "$(echo "$drop" | cut -c1-8)" > "$tmp/old/docs.md"
 git -C "$tmp/old" add shellter-install.sh docs.md
 fc 'shellter-install.sh: pins' f 'pins'
 git init -q --bare "$tmp/origin.git" && git init -q --bare "$tmp/staging.git"
@@ -125,6 +128,8 @@ git -C "$tmp/old" config --add remote.origin.pushurl "$tmp/origin.git"
 for rr in origin staging; do
     git -C "$tmp/old" push -q "$rr" main 'refs/tags/shellter-v*:refs/tags/shellter-v*' 2>/dev/null || { echo "FAIL setup push"; exit 1; }
 done
+# a branch on staging with the old history
+git -C "$tmp/old" push -q staging main:refs/heads/dev/x 2>/dev/null
 git -C "$tmp/old" fetch -q origin && git -C "$tmp/old" fetch -q staging
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
@@ -159,14 +164,18 @@ fork=$(git -C "$new" rev-list main --not --remotes=upstream)
 bad=0
 for c in $fork; do v -C "$new" verify-commit "$c" || bad=$((bad + 1)); done
 check "every fork commit is signed by the release key" [ "$bad" = 0 ]
+# the old ones, less the dropped commit, and the commit with the new pins
 check "... all of them, and the commit with the new pins" \
-    [ "$(echo "$fork" | wc -l | tr -d ' ')" = "$(($(git -C "$tmp/old" rev-list --count main --not --remotes=upstream) + 1))" ]
+    [ "$(echo "$fork" | wc -l | tr -d ' ')" = "$(git -C "$tmp/old" rev-list --count main --not --remotes=upstream)" ]
 check "upstream commits keep their ids" git -C "$new" merge-base --is-ancestor "$u2" main
 check "... the one signed by its author too" [ "$(git -C "$new" rev-list main --count --not "$u2")" -gt 0 ]
 check "merges kept" [ "$(git -C "$new" rev-list --merges --count main)" = "$(git -C "$tmp/old" rev-list --merges --count main)" ]
-fmt='%an|%ae|%ad|%cn|%ce|%cd|%B'
-git -C "$tmp/old" log --date=raw --topo-order --format="$fmt" main > "$tmp/old.log"
-git -C "$new" log --date=raw --topo-order --format="$fmt" main^ > "$tmp/new.log"
+# one record per commit; the dropped commit is not in the new history
+fmt='%x01%an|%ae|%ad|%cn|%ce|%cd|%B'
+git -C "$tmp/old" log --date=raw --topo-order --format="$fmt" main |
+    awk 'BEGIN { RS = "\001" } NR > 1 && $0 !~ /\|fork: the secret only\n/ { printf "%s", $0 }' > "$tmp/old.log"
+git -C "$new" log --date=raw --topo-order --format="$fmt" main^ |
+    awk 'BEGIN { RS = "\001" } NR > 1 { printf "%s", $0 }' > "$tmp/new.log"
 check "authors, committers, dates and messages kept" cmp -s "$tmp/old.log" "$tmp/new.log"
 check "the last commit: the new pins and ids" [ "$(git -C "$new" log -1 --format=%s main)" = 'shellter-install.sh, docs: commit ids of the re-signed history' ]
 check "... signed" v -C "$new" verify-commit main
@@ -183,7 +192,16 @@ for tg in shellter-v2026.10.0 shellter-v2026.10.1; do
 done
 nfeat=$(git -C "$new" log --format=%H --grep='^fork: a feature$' main)
 check "docs: the fork id mapped" grep -qF "$(echo "$nfeat" | cut -c1-8) the feature; $nfeat in full;" "$new/docs.md"
-check "docs: the upstream id kept" grep -qF "upstream $(echo "$u1" | cut -c1-8)." "$new/docs.md"
+check "docs: the upstream id kept" grep -qF "upstream $(echo "$u1" | cut -c1-8);" "$new/docs.md"
+check "docs: the id of the dropped commit named" grep -qF "docs.md:3: $(echo "$drop" | cut -c1-8)" "$tmp/out"
+check "docs: a file without ids untouched (no newline added)" cmp -s "$new/doc/nonl.md" "$tmp/old/doc/nonl.md"
+check "the identity taken over" [ "$(git -C "$new" config --local user.signingkey)" = "$tmp/key" ]
+check "... gpg.format too" [ "$(git -C "$new" config --local gpg.format)" = ssh ]
+check "the release hook installed, a copy" cmp -s "$new/.git/hooks/pre-push" "$root/utils/pre-push"
+check "... executable" [ -x "$new/.git/hooks/pre-push" ]
+check "staging's other branch with the old history named" \
+    grep -qF "staging/dev/x: " "$tmp/out"
+check "... with the command to delete it" grep -qF "git push staging --delete dev/x" "$tmp/out"
 check "origin added back" [ "$(git -C "$new" config --get remote.origin.url)" = "$tmp/origin.git" ]
 check "... with its push URL" [ "$(git -C "$new" config --get remote.origin.pushurl)" = "$tmp/origin.git" ]
 check "staging kept" [ "$(git -C "$new" config --get remote.staging.url)" = "$tmp/staging.git" ]
@@ -193,7 +211,6 @@ check "the push to staging printed" grep -qF "  $cmd_staging" "$tmp/out"
 check "... before origin" [ "$(grep -n 'git push' "$tmp/out" | head -n 1 | grep -c staging)" = 1 ]
 
 # --- the printed pushes, through the release hook -------------------------
-ln -s "$root/utils/pre-push" "$new/.git/hooks/pre-push"
 for rr in staging origin; do
     cmd=$(sed -n "s/^  \(PREPUSH_RETAG=.* $rr main .*\)$/\1/p" "$tmp/out")
     (cd "$new" && eval "$cmd") > "$tmp/push.$rr" 2>&1
@@ -216,6 +233,22 @@ before=$(git -C "$tmp/new2" rev-parse main)
 check "a changed release: refused" [ $? != 0 ]
 check "... named" grep -q 'shellter-v2026.10.0: the rewrite changed the release' "$tmp/out2"
 check "... nothing changed" [ "$(git -C "$tmp/new2" rev-parse main)" = "$before" ]
+check "... the release, the file and the lines named" grep -qF 'shellter-v2026.10.0: f: changed (-1 +1 lines)' "$tmp/out2"
+check "... the old line" grep -qF -- '- feature' "$tmp/out2"
+(cd "$tmp/new2" && sh "$root/utils/resign-history.sh" --allow-changes "$tmp/old") > "$tmp/out2" 2>&1
+check "--allow-changes: done" [ $? = 0 ]
+check "... the changes listed" grep -qF 'shellter-v2026.10.1: f: changed' "$tmp/out2"
+
+# --- a rewrite that changed upstream commits: refused, by their old ids ---
+git clone -q --no-local "$tmp/old" "$tmp/new3"
+printf 'upstream==>UP\n' > "$tmp/replace"
+(cd "$tmp/new3" && git filter-repo --quiet --force --replace-text "$tmp/replace") > /dev/null 2>&1
+git -C "$tmp/new3" remote add upstream "$tmp/up" 2>/dev/null; git -C "$tmp/new3" fetch -q upstream
+before=$(git -C "$tmp/new3" rev-parse main)
+(cd "$tmp/new3" && sh "$root/utils/resign-history.sh" --allow-changes "$tmp/old") > "$tmp/out3" 2>&1
+check "changed upstream commits: refused" [ $? != 0 ]
+check "... the original id named" grep -qF "the rewrite changed 3 upstream commits, e.g. $u1" "$tmp/out3"
+check "... nothing changed" [ "$(git -C "$tmp/new3" rev-parse main)" = "$before" ]
 
 if [ "$failed" != 0 ]; then
     echo "--- resign-history output ---"; cat "$tmp/out"

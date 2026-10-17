@@ -82,6 +82,21 @@ afterwards](#what-installed-copies-do-afterwards)).
    git filter-repo --invert-paths --path FILE-TO-DROP     # your filter; no --force on a fresh clone
    ```
 
+   Keep the rule files of `--replace-text` and `--replace-message` outside
+   the repository, for example in `~/rewrite-rules/` (`blobs.txt`,
+   `msgs.txt`). Two rules for them:
+   - **They must never touch upstream content.** The upstream projects'
+     history is public and keeps its ids. The script refuses a rewrite that
+     changed an upstream commit, and names the original commit. Before
+     rewriting, check each word that a rule replaces:
+     `git -C ~/src/erssi log --remotes=upstream --remotes=irssi -i -G 'WORD' --oneline`
+     must print nothing. Otherwise narrow the rule, e.g.
+     `regex:word(?!N)==>other`.
+   - **`--replace-text` changes releases**, so step 4 then needs
+     `--allow-changes`. The script lists, per release, every changed file
+     with its line counts and first lines. Read that list, and stop if
+     anything is there that the rules should not have changed.
+
 3. **The upstream projects, fetched again.** filter-repo removes `origin`.
    The upstream commits have to be here with their original ids:
 
@@ -93,10 +108,17 @@ afterwards](#what-installed-copies-do-afterwards)).
 4. **The re-signing.**
 
    ```sh
-   sh ~/src/erssi/utils/resign-history.sh ~/src/erssi
+   sh ~/src/erssi/utils/resign-history.sh ~/src/erssi              # add --allow-changes after --replace-text
    ```
 
-   In order, the script:
+   First, the script sets up the fresh clone where it lacks anything:
+   - it takes `user.name`, `user.email`, `user.signingkey`, `gpg.format`
+     and `gpg.ssh.allowedSignersFile` from the old clone;
+   - it installs the release hook, a copy of `utils/pre-push`, as
+     `.git/hooks/pre-push`, so that the pushes in step 6 are checked.
+
+   Check with `test -x .git/hooks/pre-push && git config user.signingkey`.
+   Then, in order, the script:
    - maps the old commits to the rewritten ones
      (`.git/filter-repo/commit-map`). It checks that the rewritten `main`
      is the rewrite of the old `main`, that every release tag agrees with
@@ -117,10 +139,19 @@ afterwards](#what-installed-copies-do-afterwards)).
      ids of the re-signed history". It holds the new pins and maps the
      fork commit ids cited in the `.md` files and `NEWS`, such as
      `docs/UPSTREAM.md`, to the new ids;
+   - names the ids in those files that point to commits the rewrite
+     dropped (commits that became empty). Edit those by hand;
    - adds back the remotes of the old clone that are missing (`origin`,
-     `staging`, with their push URLs), deletes our copies of their
-     branches (`refs/remotes/<remote>/*`, which filter-repo rewrote), and
-     prints the push commands.
+     `staging`, with their push URLs), and deletes our copies of their
+     branches (`refs/remotes/<remote>/*`, which filter-repo rewrote);
+   - lists the other branches of those remotes that still hold the old
+     history, as the old clone knows them. Such a branch keeps serving what
+     the rewrite removed. If it holds commits whose content changed or was
+     dropped, it says so and prints the delete command, for example `git
+     push staging --delete dev/2026.10`. A branch with old ids but
+     unchanged content gets "rebase it onto the new main, or delete it".
+     Commits outside this rewrite, such as `gh-pages`, get "check them";
+   - prints the push commands.
 
    After any error, start again from step 2 with a new clone.
 
@@ -129,7 +160,11 @@ afterwards](#what-installed-copies-do-afterwards)).
    dates: `git for-each-ref refs/tags/shellter-v* --format='%(refname:short) %(taggerdate)'`.
 
 6. **Push to staging first, then to origin**, with the commands it
-   printed:
+   printed. Before that, deal with every branch it listed in step 4:
+   delete it, or rewrite it and push it again the same way. The push of
+   `main` and the tags does not change the other branches. GitHub can
+   serve old commits by id until it collects them; only GitHub support
+   can purge them sooner.
 
    ```sh
    PREPUSH_RETAG='shellter-v1.3.2 … shellter-v2026.10.3' git push --atomic --force staging main 'refs/tags/shellter-v*:refs/tags/shellter-v*'
@@ -146,6 +181,8 @@ afterwards](#what-installed-copies-do-afterwards)).
 
    `PREPUSH_RETAG` only lets the named tags move, with a warning for each
    one. `--atomic` moves `main` (the new pins) and the tags together.
+   The hook checks each commit once per push, but for the whole fork
+   history (about 400 commits) that still takes a minute or two.
 
 7. **Wait a few minutes, then check from outside.**
    raw.githubusercontent.com serves `shellter-install.sh` from a cache. For
