@@ -151,8 +151,9 @@ extern GSList *web_clients;
 void fe_web_init(void);
 void fe_web_deinit(void);
 
-/* Server functions */
-void fe_web_server_init(void);
+/* Server functions; fe_web_server_init() returns TRUE when the server
+ * listens */
+gboolean fe_web_server_init(void);
 void fe_web_server_deinit(void);
 
 /* Client functions */

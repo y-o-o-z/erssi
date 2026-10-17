@@ -1681,8 +1681,8 @@ static void server_listen_unix(const char *value)
 	          "socket 0600, only your own processes");
 }
 
-/* Initialize server */
-void fe_web_server_init(void)
+/* Start the server; TRUE when it listens (also when it already did) */
+gboolean fe_web_server_init(void)
 {
 	IPADDR *bind_ip;
 	const char *bind_addr;
@@ -1692,7 +1692,7 @@ void fe_web_server_init(void)
 
 	/* Check if already running */
 	if (listen_channel != NULL) {
-		return;
+		return TRUE;
 	}
 
 	/* SECURITY: Verify password is set */
@@ -1704,7 +1704,7 @@ void fe_web_server_init(void)
 		          "fe-web: Please set password: /SET fe_web_password <strong-password>");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Use a long random secret, e.g. the output of: openssl rand -base64 32");
-		return;
+		return FALSE;
 	}
 
 	/* SECURITY: TLS context (key and certificate made at the first start;
@@ -1714,7 +1714,7 @@ void fe_web_server_init(void)
 		          "fe-web: FATAL: SSL/TLS not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: SSL certificate generation failed. Check OpenSSL installation.");
-		return;
+		return FALSE;
 	}
 
 	/* SECURITY: Verify encryption is initialized */
@@ -1723,14 +1723,14 @@ void fe_web_server_init(void)
 		          "fe-web: FATAL: Encryption not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Encryption key derivation failed. Check password setting.");
-		return;
+		return FALSE;
 	}
 
 	/* A Unix socket instead of TCP */
 	socket_path = settings_get_str("fe_web_socket");
 	if (socket_path != NULL && *socket_path != '\0') {
 		server_listen_unix(socket_path);
-		return;
+		return listen_channel != NULL;
 	}
 
 	/* Get settings */
@@ -1743,7 +1743,7 @@ void fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Invalid bind address: %s", bind_addr);
 		g_free(bind_ip);
-		return;
+		return FALSE;
 	}
 
 	/* Create listening socket */
@@ -1756,7 +1756,7 @@ void fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: Failed to bind to %s:%d: %s",
 		          bind_addr, port, strerror(errno));
-		return;
+		return FALSE;
 	}
 
 	listen_port = port;
@@ -1770,6 +1770,7 @@ void fe_web_server_init(void)
 	          bind_addr, port);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled");
+	return TRUE;
 }
 
 /* Deinitialize server */
@@ -1777,6 +1778,7 @@ void fe_web_server_deinit(void)
 {
 	GSList *tmp;
 	GSList *next;
+	gboolean was_listening = listen_channel != NULL;
 
 	/* Close all clients */
 	for (tmp = web_clients; tmp != NULL; tmp = next) {
@@ -1814,6 +1816,8 @@ void fe_web_server_deinit(void)
 	g_free(own_peer_key);
 	own_peer_key = NULL;
 
-	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server stopped");
+	/* not for a server that could not start */
+	if (was_listening)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web: WebSocket server stopped");
 }

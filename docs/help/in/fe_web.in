@@ -20,7 +20,10 @@
 
     The server itself is controlled by the settings below. Changing any of
     them starts, stops or restarts the server, which disconnects the web
-    clients; changing other settings does not touch it.
+    clients; changing other settings does not touch it. When the server
+    cannot start (the error says why), fix the cause and run /SET
+    fe_web_enabled ON again: while it is not running, a /SET or /TOGGLE
+    of any fe_web_ setting tries again, also with the value it has.
 
         fe_web_enabled (default: OFF)
             Runs the server.
