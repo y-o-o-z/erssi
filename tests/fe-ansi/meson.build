@@ -231,3 +231,25 @@ test('test-term-notify test', test_test_term_notify,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_debug_log = executable('test-debug-log',
+  files(
+    '../../src/fe-ansi/resize-debug.c',
+    'test-debug-log.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-debug-log test', test_test_debug_log,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

@@ -44,7 +44,10 @@ log of clicked URLs is off by default.
 
 ## Configuration
 
-`~/.erssi/config` is written readable only by you.
+`~/.erssi/config` is written readable only by you. So are the debug logs
+of the side panels and of terminal resizes (`/set sidepanel_debug on`,
+`/set resize_debug on`): they are kept in `~/.erssi`, never in `/tmp`, and
+never written through a link.
 
 ## Hardened build
 

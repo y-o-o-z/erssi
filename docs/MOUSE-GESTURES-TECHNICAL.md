@@ -258,7 +258,7 @@ sp_logf("GESTURE: Detected gesture %d, dx=%d, dy=%d, duration=%dms",
 
 #### Troubleshooting
 - Enable sidepanel debug: `/set sidepanel_debug on`
-- Check log file: `/tmp/irssi_sidepanels.log`
+- Check log file: `~/.erssi/sidepanels.log` (in the erssi home, readable only by you)
 - Verify chat area boundaries with coordinate logging
 
 ### Extension Points

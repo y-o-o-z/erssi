@@ -66,6 +66,91 @@ static void mainwindow_widths_set(MAIN_WINDOW_REC *rec)
 		rec->ref_row = 0;
 }
 
+/* The geometry of every main window when the screen collapsed (see
+   mainwindows_resize), put back when it recovers: the rows, and the
+   windows side by side in them, come back as they were instead of one
+   window above the other. The lines are those of a screen of
+   collapse_height lines with the lines reserved then. Forgotten when a
+   main window is made or destroyed while collapsed. */
+typedef struct {
+	MAIN_WINDOW_REC *rec;
+	int first_line, last_line, first_column, last_column;
+} MAIN_WINDOW_GEOMETRY;
+
+static GArray *collapse_geometry; /* NULL: none */
+static int collapse_height, collapse_reserved_top, collapse_reserved_bottom;
+
+static void collapse_forget(void)
+{
+	if (collapse_geometry != NULL)
+		g_array_free(collapse_geometry, TRUE);
+	collapse_geometry = NULL;
+}
+
+static void collapse_save(int height)
+{
+	GSList *tmp;
+
+	collapse_forget();
+	collapse_geometry = g_array_new(FALSE, FALSE, sizeof(MAIN_WINDOW_GEOMETRY));
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *rec = tmp->data;
+		MAIN_WINDOW_GEOMETRY geo;
+
+		geo.rec = rec;
+		geo.first_line = rec->first_line;
+		geo.last_line = rec->last_line;
+		geo.first_column = rec->first_column;
+		geo.last_column = rec->last_column;
+		g_array_append_val(collapse_geometry, geo);
+	}
+	collapse_height = height;
+	collapse_reserved_top = screen_reserved_top;
+	collapse_reserved_bottom = screen_reserved_bottom;
+}
+
+/* Put the saved geometry back: FALSE (nothing changed) when there is
+   none, or it no longer fits the main windows or the reserved lines.
+   The columns are laid out again for the new width by the caller. */
+static gboolean collapse_restore(void)
+{
+	GSList *tmp;
+	guint i;
+
+	if (collapse_geometry == NULL ||
+	    collapse_geometry->len != g_slist_length(mainwindows) ||
+	    collapse_reserved_top != screen_reserved_top ||
+	    collapse_reserved_bottom != screen_reserved_bottom) {
+		collapse_forget();
+		return FALSE;
+	}
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+		for (i = 0; i < collapse_geometry->len; i++) {
+			if (g_array_index(collapse_geometry, MAIN_WINDOW_GEOMETRY, i).rec == tmp->data)
+				break;
+		}
+		if (i == collapse_geometry->len) {
+			collapse_forget();
+			return FALSE;
+		}
+	}
+	for (i = 0; i < collapse_geometry->len; i++) {
+		MAIN_WINDOW_GEOMETRY *geo = &g_array_index(collapse_geometry, MAIN_WINDOW_GEOMETRY, i);
+		MAIN_WINDOW_REC *rec = geo->rec;
+
+		rec->first_line = geo->first_line;
+		rec->last_line = geo->last_line;
+		rec->height = rec->last_line - rec->first_line + 1;
+		rec->first_column = geo->first_column;
+		rec->last_column = geo->last_column;
+		rec->width = rec->last_column - rec->first_column + 1;
+		rec->size_dirty = TRUE;
+		rec->dirty = TRUE;
+	}
+	collapse_forget();
+	return TRUE;
+}
+
 static MAIN_WINDOW_REC *find_window_with_room()
 {
 	MAIN_WINDOW_REC *biggest_rec;
@@ -311,6 +396,7 @@ MAIN_WINDOW_REC *mainwindow_create(int right)
 	term_refresh(NULL);
 
 	mainwindows = g_slist_append(mainwindows, rec);
+	collapse_forget();
 	signal_emit("mainwindow created", 1, rec);
 	return rec;
 }
@@ -577,6 +663,7 @@ static void mainwindow_destroy_full(MAIN_WINDOW_REC *window, int respace)
 	g_return_if_fail(window != NULL);
 
 	mainwindows = g_slist_remove(mainwindows, window);
+	collapse_forget();
 	signal_emit("mainwindow destroyed", 1, window);
 
 	term_window_destroy(window->screen_win);
@@ -949,15 +1036,26 @@ static void mainwindows_widths_set_all(void)
 
 void mainwindows_resize(int width, int height)
 {
-	int xdiff, ydiff;
+	int xdiff, ydiff, old_height;
+	gboolean refit = FALSE;
 
 	resize_debug_start_sequence();
 	resize_debug_dimensions("MW_RESIZE_START", screen_width, screen_height, width, height);
 
 	xdiff = width - screen_width;
 	ydiff = height - screen_height;
+	old_height = screen_height;
 	screen_width = width;
 	screen_height = height;
+
+	/* The side panels give way to the main windows, so they go first:
+	   a panel the new width has no room for (next to the widest row of
+	   main windows) gives its columns back now, before the rows are
+	   fitted to the new width below - and before a window a row has no
+	   room for is destroyed. Laid out only afterwards, on "terminal
+	   resized", the panels kept their columns through the destroy step:
+	   side-by-side windows that fit without the panels were destroyed. */
+	signal_emit("terminal resizing", 0);
 
 	resize_debug_log("MW_RESIZE", "xdiff=%d, ydiff=%d, reserved: top=%d bot=%d left=%d right=%d",
 	                 xdiff, ydiff, screen_reserved_top, screen_reserved_bottom,
@@ -975,8 +1073,11 @@ void mainwindows_resize(int width, int height)
 		if (avail_w < MW_MIN_AVAIL_WIDTH || avail_h <= 1) {
 			GSList *tmp;
 			resize_debug_log("MW_RESIZE", "ENTERING COLLAPSED MODE (too small)");
-			if (!screen_collapsed)
+			if (!screen_collapsed) {
 				screen_collapsed = 1;
+				/* the lines are still those of the screen before */
+				collapse_save(old_height);
+			}
 			for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
 				MAIN_WINDOW_REC *rec = tmp->data;
 				rec->first_column = screen_reserved_left;
@@ -993,9 +1094,20 @@ void mainwindows_resize(int width, int height)
 			resize_debug_log("MW_RESIZE", "collapsed mode - returning early");
 			resize_debug_end_sequence();
 			return;
+		} else if (screen_collapsed && collapse_restore()) {
+			/* Recover from collapsed state: the main windows are back
+			 * where they were, for a screen of collapse_height lines;
+			 * from there the new size is handled as any other resize
+			 * (the rows fitted to it, those without room destroyed) */
+			resize_debug_log("MW_RESIZE", "RECOVERING FROM COLLAPSED MODE, saved layout");
+			screen_collapsed = 0;
+			ydiff = height - collapse_height;
+			refit = TRUE;
 		} else if (screen_collapsed) {
-			/* Recover from collapsed state: restore both width and height.
-			 * Windows were set to 1x1 during collapse, now restore proper geometry. */
+			/* Recover from collapsed state without a saved layout (a
+			 * main window came or went meanwhile): restore both width
+			 * and height. Windows were set to 1x1 during collapse, now
+			 * restore proper geometry, one row each. */
 			int avail_height = avail_h;
 			int num_windows = 0;
 			int height_per_window, extra_height;
@@ -1069,12 +1181,12 @@ void mainwindows_resize(int width, int height)
 		g_slist_free(line);
 	}
 
-	if (xdiff > 0) {
+	if (xdiff > 0 && !refit) {
 		/* algorithm: distribute new space on each line */
 		mainwindows_fit_lines();
 	}
 
-	if (xdiff < 0) {
+	if (xdiff < 0 || refit) {
 		/* algorithm: shrink each window,
 		   destroy windows on the right if no room */
 		MAIN_WINDOW_REC *win;
@@ -1110,7 +1222,7 @@ void mainwindows_resize(int width, int height)
 	}
 
 	/* the widths for the new terminal width are the new reference */
-	if (xdiff != 0)
+	if (xdiff != 0 || refit)
 		mainwindows_widths_set_all();
 
 	/* if we lost our active mainwin, get a new one */

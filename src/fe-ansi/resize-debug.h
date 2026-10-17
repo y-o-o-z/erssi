@@ -11,8 +11,18 @@
 #define RESIZE_DEBUG_H
 
 #include <glib.h>
+#include <stdio.h>
 
-/* Initialize resize debug logging - call once at startup */
+/* Open the debug log PATH for appending: a file of the user's own,
+ * created readable and writable by the user only (0600, whatever the
+ * umask; an existing log is made 0600 too), never through a symbolic link
+ * and never anything but a regular file the user owns. NULL (errno set)
+ * when it cannot be opened. For sidepanel_debug and resize_debug: their
+ * logs hold channel names, nicks and window names. */
+FILE *debug_log_open(const char *path);
+
+/* Initialize resize debug logging - call once at startup; it follows
+ * /SET resize_debug from then on */
 void resize_debug_init(void);
 
 /* Cleanup - call at shutdown */
@@ -25,7 +35,8 @@ void resize_debug_log(const char *stage, const char *fmt, ...);
 void resize_debug_dimensions(const char *stage, int old_cols, int old_rows,
                               int new_cols, int new_rows);
 
-/* Log cache operation */
+/* Log cache operation; WINDOW_ID is the number of the main window's
+ * active window, -1 for all of them (as in resize_debug_redraw) */
 void resize_debug_cache(const char *operation, const char *panel, int window_id);
 
 /* Log redraw operation */

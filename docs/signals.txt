@@ -379,6 +379,13 @@ textbuffer-view.c
 textbuffer-formats.c
  "gui render line text", TEXT_DEST_REC, GString *str, LINE_INFO_META_REC
 
+mainwindows.c:
+ "terminal resizing"
+   (mainwindows_resize() is about to lay the main windows out for a new
+   terminal size, term_width and term_height; the side panels give back
+   the columns the new width has no room for. "terminal resized" follows
+   once the main windows are laid out)
+
 term-ansi.c:
  "terminal focus changed", int focused
    (only while focus reporting is on, see /HELP term_notify; focused is

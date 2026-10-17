@@ -27,6 +27,10 @@ TOPICS = {
     "nickmode": "$nickmode in a message format is the sender's mode prefix",
     "term_notify": "Shows a desktop notification through the terminal for every mention",
     "window_close_disconnects": "Disconnects a server when /WINDOW CLOSE closes the last window that",
+    "sidepanel_debug": "Writes a debug log of the side panels and the mouse",
+    "resize_debug": "Writes a debug log of every terminal resize",
+    "sidepanel_left_width": "The width in columns of the left side panel",
+    "sidepanel_right_width": "The width in columns of the right side panel",
 }
 
 

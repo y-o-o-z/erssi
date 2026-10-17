@@ -42,6 +42,8 @@
 #include <irssi/src/fe-ansi/gui-printtext.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-ansi/textbuffer-view.h>
+#include <irssi/src/fe-ansi/resize-debug.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include "gui-mouse.h"
@@ -64,13 +66,23 @@ static int mouse_scroll_chat;
    in sidepanels-types.h) */
 static SP_MAINWIN_CTX *sp_ctx;
 
-/* Logging system */
+/* The debug log (sidepanel_debug): sidepanels.log in the erssi home,
+   a file of the user's own (debug_log_open) - it holds channel names,
+   nicks and window names. Open while the setting is on. */
 static FILE *sp_log;
 
 static void sp_log_open(void)
 {
-	if (!sp_log)
-		sp_log = fopen("/tmp/irssi_sidepanels.log", "a");
+	char *path;
+
+	if (sp_log)
+		return;
+	path = g_build_filename(get_irssi_dir(), "sidepanels.log", NULL);
+	sp_log = debug_log_open(path);
+	if (sp_log == NULL)
+		g_warning("sidepanels: cannot open the debug log %s: %s", path,
+		          g_strerror(errno));
+	g_free(path);
 }
 
 static void sp_log_close(void)
@@ -91,7 +103,6 @@ void sp_logf(const char *fmt, ...)
 	if (!sp_debug)
 		return;
 
-	sp_log_open();
 	if (!sp_log)
 		return;
 
@@ -139,17 +150,44 @@ static void destroy_ctx(void)
 	sp_ctx = NULL;
 }
 
+/* The narrowest a panel is drawn: on the left a window number, ". ", a
+   character of the name and the border; on the right the border, the
+   mode prefix, two characters of a nick and the column of the scroll
+   markers. Narrower, the text was drawn over the main window (the clip
+   was off at 0 columns left for it) or past the last column. */
+#define SP_MIN_PANEL_WIDTH 6
+
+/* A width setting: below SP_MIN_PANEL_WIDTH it is SP_MIN_PANEL_WIDTH, 0
+   (or less) hides the panel as before */
+static int panel_width_setting(const char *name)
+{
+	int width = settings_get_int(name);
+
+	return width <= 0 ? 0 : MAX(width, SP_MIN_PANEL_WIDTH);
+}
+
 static void read_settings(void)
 {
 	int old_mouse = sp_enable_mouse;
 
-	sp_left_width = settings_get_int("sidepanel_left_width");
-	sp_right_width = settings_get_int("sidepanel_right_width");
+	sp_left_width = panel_width_setting("sidepanel_left_width");
+	sp_right_width = panel_width_setting("sidepanel_right_width");
 	sp_enable_left = settings_get_bool("sidepanel_left");
 	sp_enable_right = settings_get_bool("sidepanel_right");
 	sp_auto_hide_right = settings_get_bool("sidepanel_right_auto_hide");
 	sp_enable_mouse = TRUE; /* always on natively */
-	sp_debug = settings_get_bool("sidepanel_debug");
+	/* /SET sidepanel_debug takes effect at once: on opens the log, off
+	   closes it (a log that could not be opened is tried again at the
+	   next ON) */
+	if (settings_get_bool("sidepanel_debug") != sp_debug) {
+		sp_debug = !sp_debug;
+		if (sp_debug) {
+			sp_log_open();
+			sp_logf("side panel debug log started");
+		} else {
+			sp_log_close();
+		}
+	}
 	sp_auto_create_separators = settings_get_bool("auto_create_separators");
 
 	/* Mouse Gesture Settings - delegate to gesture system */
@@ -283,6 +321,7 @@ void sidepanels_deinit(void)
 	/* Mouse and gesture systems are cleaned up by main irssi.c */
 	
 	sp_log_close();
+	sp_debug = FALSE;
 }
 
 /* Settings accessors */

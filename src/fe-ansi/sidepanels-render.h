@@ -37,7 +37,6 @@ extern gboolean batch_mode_active;
 
 /* Core rendering functions */
 void clear_window_full(TERM_WINDOW *tw, int width, int height);
-void draw_border_vertical(TERM_WINDOW *tw, int width, int height, int right_border);
 
 /* Theme-based drawing functions */
 void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format_id, const char *text,

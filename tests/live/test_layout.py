@@ -222,13 +222,85 @@ def main():
         # 30 columns: no room for the panel (it goes, its columns come back)
         for cols, rows_, reserved in ((120, 40, 15), (200, 50, 15), (90, 30, 15), (30, 20, 0),
                                       (200, 50, 15)):
-            e.resize(cols, rows_)
-            started(e)
-            # erssi lays the windows out for the new size when it reads the
-            # SIGWINCH: the layout it saves tiles the new size from then on
-            harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, cols, rows_,
-                                                  reserved), WAIT, interval=0.2)
-            tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
+            resized(e, cols, rows_, reserved)
+        e.quit()
+
+    def resized(e, cols, rows_, reserved):
+        """a new terminal size: the layout erssi saves tiles it (once erssi
+        has read the SIGWINCH); that layout"""
+        e.resize(cols, rows_)
+        started(e)
+        harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, cols, rows_,
+                                              reserved), WAIT, interval=0.2)
+        return tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
+
+    def t_panels_give_way_on_resize():
+        # two windows side by side, both panels (15 columns each): at 60
+        # columns the two windows fit without the right panel (45 >= 41),
+        # so the right panel goes and the windows stay. Before, the windows
+        # were fitted while the panels still held their 30 columns, the
+        # right window was destroyed, and it did not come back.
+        text = cfg("giveway").replace('"irc/core" =',
+                                      '"fe-ansi" = { sidepanel_right_auto_hide = "no"; };\n  "irc/core" =', 1)
+        e = new("giveway", text, 100, 30)
+        e.type_and_wait("/window new -right")
+        tiles(e, 100, 30, "two side by side", reserved=30)
+        for cols, reserved in ((60, 15), (45, 0), (100, 30)):
+            layout = resized(e, cols, 30, reserved)
+            assert len(layout) == 2 and len(rows(layout)) == 1, (cols, layout)
+        e.quit()
+
+    def collapse_log(e):
+        logs = sorted(e.home.glob("resize-*.log"))
+        return logs[0].read_text(errors="replace") if logs else ""
+
+    def collapsed_and_back(e, cols, rows_, small):
+        """the terminal SMALL (cols, rows) - too low for any main window,
+        the screen collapses - then COLS x ROWS again (resize_debug on:
+        its log says when erssi collapsed and when it recovered)"""
+        before = collapse_log(e).count("ENTERING COLLAPSED MODE")
+        e.resize(*small)
+        # a line typed wakes erssi up for the SIGWINCH, as in resized()
+        started(e)
+        assert harness.wait_until(lambda: collapse_log(e).count("ENTERING COLLAPSED MODE") > before,
+                                  WAIT), f"{small}: the screen did not collapse"
+        back = collapse_log(e).count("RECOVERING FROM COLLAPSED MODE")
+        e.resize(cols, rows_)
+        started(e)
+        assert harness.wait_until(lambda: collapse_log(e).count("RECOVERING FROM COLLAPSED MODE") > back,
+                                  WAIT), f"{small}: the screen did not recover"
+
+    def t_collapse_keeps_rows():
+        # a row of two windows side by side under a window of its own,
+        # both panels: a terminal too low for any text line (4 lines or
+        # fewer: the topic and the statusbars take 3) collapses the
+        # screen; back at a usable size the rows come back as they were.
+        # Before, every window came back in a row of its own, one above
+        # the other. (A terminal is at least 20 columns wide for erssi,
+        # and the panels give way before the main area gets narrower
+        # than that, so it is the height that collapses the screen.)
+        text = cfg("collapse").replace('"irc/core" =',
+                                       '"fe-ansi" = { sidepanel_right_auto_hide = "no"; '
+                                       'resize_debug = "yes"; };\n  "irc/core" =', 1)
+        e = new("collapse", text, 100, 30)
+        e.type_and_wait("/window new split")
+        e.type_and_wait("/window new -right")
+        before = tiles(e, 100, 30, "a row and two side by side", reserved=30)
+        assert sorted(len([w for w in before.values() if (int(w["first_line"]), int(w["lines"])) == r])
+                      for r in rows(before)) == [1, 2], before
+        for small in ((100, 4), (100, 1), (20, 2)):
+            collapsed_and_back(e, 100, 30, small)
+            harness.wait_until(lambda: geometry(block(save(e), "mainwindows") or {}) == geometry(before),
+                               WAIT, interval=0.2)
+            after = tiles(e, 100, 30, f"back from {small}", reserved=30)
+            assert geometry(after) == geometry(before), f"back from {small}:\n{after}\nwas\n{before}"
+        # back at a size with no room for the split: the windows that do
+        # not fit go, as on any resize
+        collapsed_and_back(e, 30, 30, (100, 2))
+        harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, 30, 30, 0),
+                           WAIT, interval=0.2)
+        after = tiles(e, 30, 30, "back at 30 columns", reserved=0)
+        assert len(after) == 2 and len(rows(after)) == 2, after
         e.quit()
 
     def t_both_panels_rows_and_side_by_side():
@@ -436,6 +508,7 @@ windows = {
         harness.main([t_install, t_left_panel_one_main_window, t_both_panels, t_left_panel_split,
                       t_left_panel_side_by_side, t_left_panel_three_rows_set, t_left_panel_side_by_side_set,
                       t_left_panel_width_set, t_left_panel_window_commands, t_left_panel_terminal_resize,
+                      t_panels_give_way_on_resize, t_collapse_keeps_rows,
                       t_both_panels_rows_and_side_by_side,
                       t_left_panel_fifteen_rows_set, t_left_panel_restore_7_rows_80x24,
                       t_left_panel_restore_15_rows, t_left_panel_restore_side_by_side,

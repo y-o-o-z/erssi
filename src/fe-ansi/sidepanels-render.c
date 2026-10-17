@@ -54,9 +54,6 @@ int redraw_timer_tag = -1;
 int redraw_batch_timeout = 5; /* ms - WeeChat uses 1ms, we use 5ms for safety */
 gboolean batch_mode_active = FALSE;
 
-/* External functions we need */
-extern void sp_logf(const char *fmt, ...);
-
 /* The window whose theme the left panel is drawn with: the active one of
    the active main window. (Each band of the right panel is drawn with the
    theme of the window it shows.) */
@@ -200,24 +197,6 @@ void clear_window_full(TERM_WINDOW *tw, int width, int height)
 	}
 }
 
-void draw_border_vertical(TERM_WINDOW *tw, int width, int height, int right_border)
-{
-	int y;
-	int x = right_border ? width - 1 : 0;
-	if (!tw)
-		return;
-	/* Use blue color to match default theme's window_border = "%B│%N"
-	 * Note: irssi color 1 = blue (maps to ANSI 4), irssi color 4 = red */
-	term_set_color(tw, 1);  /* Blue (irssi color 1) - matches %B in theme */
-	for (y = 0; y < height; y++) {
-		term_move(tw, x, y);
-		/* Use Unicode box drawing character for continuous vertical line */
-		term_addstr(tw, "│");
-	}
-	/* Reset color after drawing border */
-	term_set_color(tw, ATTR_RESET);
-}
-
 typedef struct {
 	TERM_WINDOW *tw;
 	int x, y;
@@ -283,13 +262,12 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 	theme = window_get_theme(wctx);
 	out = format_get_text_theme(theme, MODULE_NAME, &dest, format_id, text);
 
-	if (out != NULL && *out != '\0') {
+	/* an empty format (a theme that hides these entries) draws nothing:
+	   the raw text is not written instead - it would bypass the filter
+	   and the clip of draw_formatted(), and a channel name from the
+	   server may hold control characters (ESC) */
+	if (out != NULL && *out != '\0')
 		draw_formatted(tw, x, y, out, max_width);
-	} else {
-		/* Fallback: display plain text if theme formatting fails */
-		term_move(tw, x, y);
-		term_addstr(tw, text ? text : "");
-	}
 	g_free(out);
 }
 
@@ -333,14 +311,9 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 
 	out = format_get_text_theme_charargs(theme, MODULE_NAME, &dest, format_id, args);
 
-	if (out != NULL && *out != '\0') {
+	/* empty: nothing, as in draw_str_themed() */
+	if (out != NULL && *out != '\0')
 		draw_formatted(tw, x, y, out, max_width);
-	} else {
-		/* Fallback: display plain text if theme formatting fails */
-		term_move(tw, x, y);
-		term_addstr(tw, param1 ? param1 : "");
-		term_addstr(tw, param2 ? param2 : "");
-	}
 	g_free(out);
 }
 
@@ -660,10 +633,8 @@ void draw_left_contents(SP_MAINWIN_CTX *ctx)
 	/* Clean up */
 	free_sorted_window_list(sort_list);
 
-	/* Always draw the right border of the left panel for consistent visual separation.
-	 * Previously this was conditional on right panel existence, but that created
-	 * inconsistent UI when auto-hide mode hides the right panel in non-channel windows. */
-	draw_border_vertical(tw, width, height, 1);
+	/* the border (the panel's last column) is the theme's
+	   {window_border}, drawn by draw_panel_borders() after the panels */
 
 	/* Scroll markers in the column next to the border */
 	lines_changed += draw_scroll_markers(tw, wctx, width - 2, 0, height, has_more_above,
@@ -891,14 +862,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 	new_count = 0;
 	total_items = 0;
 
-	/* DEBUG: Log what we see when entering draw_right_band */
-	sp_logf("DEBUG draw_right_band: y=%d h=%d aw=%p, aw->active=%p, name='%s', IS_CHANNEL=%d, cache->count=%d",
-	        top, height, (void*)aw,
-	        aw ? (void*)aw->active : NULL,
-	        aw && aw->active ? aw->active->visible_name : "NULL",
-	        aw && aw->active ? IS_CHANNEL(aw->active) : -1,
-	        cache->count);
-
 	/* Check if we need full redraw (dimensions or scroll changed) */
 	full_redraw = sp_cache_needs_full_redraw(cache, height, width, skip);
 
@@ -964,10 +927,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 		/* Count total nicks and clamp scroll offset */
 		total_items = g_slist_length(sorted_nicks);
 
-		/* DEBUG: Log nick count and cache state */
-		sp_logf("DEBUG draw_right CHANNEL: total_nicks=%d, cache->count=%d, full_redraw=%d, height=%d",
-		        total_items, cache->count, full_redraw, height);
-
 		/* Calculate max scroll offset - at least one item must be visible */
 		max_scroll = MAX(0, total_items - 1);
 
@@ -981,8 +940,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 		 * This fixes the bug where nicklist stays empty when returning from DCC chat */
 		if (cache->count == 0 && total_items > 0)
 			full_redraw = TRUE;
-
-		sp_logf("DEBUG draw_right AFTER: full_redraw=%d, skip=%d", full_redraw, skip);
 
 		/* Check if we have more content above/below */
 		has_more_above = (skip > 0);
@@ -1110,8 +1067,6 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 		}
 		ctx->right_gaps_dirty = FALSE;
 	}
-
-	draw_border_vertical(tw, width, height, 0);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {
