@@ -859,6 +859,9 @@ int settings_save(const char *fname, int autosave)
 	if (fname == NULL)
 		fname = mainconfig->fname;
 
+	/* last changes to what is written, such as credentials stored again
+	 * in their current encrypted form */
+	signal_emit("setup saving", 2, mainconfig, fname);
 	error = config_write(mainconfig, fname, 0600) != 0;
 	irssi_config_save_state(fname);
 	config_last_modifycounter = mainconfig->modifycounter;

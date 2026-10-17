@@ -50,9 +50,10 @@
  * Versions before 2026.10.3 wrote salt_hex:iv_hex:base64 of AES-256-CBC
  * with no prefix and no tag. Such a value is still read when it has
  * exactly that shape (see credential_is_legacy_encrypted()), which a
- * password does not by chance, but a change to it cannot be detected;
- * credential_set() and the config write hook encrypt it again in the
- * current form when the master password decrypts it. */
+ * password does not by chance, but a change to it cannot be detected, and
+ * a wrong master password may decrypt it to random text. It is encrypted
+ * again in the current form only when the master password is confirmed
+ * (see credential_master_password_confirmed() in credential.c). */
 #define CREDENTIAL_PREFIX "erssi-enc1:"
 
 /* === Funkcje pomocnicze === */
@@ -275,6 +276,14 @@ static char *decrypt_aes256_cbc_openssl(const char *ciphertext_b64, const unsign
 	EVP_CIPHER_CTX_free(ctx);
 	g_free(ciphertext);
 
+	/* a NUL inside is no password but what a wrong key gives now and
+	 * then: the padding check alone passes about once in 256 */
+	if (memchr(plaintext, '\0', plaintext_len) != NULL) {
+		memset(plaintext, 0, ciphertext_len + 16);
+		g_free(plaintext);
+		return NULL;
+	}
+
 	/* Null-terminate and return as string */
 	result = g_malloc(plaintext_len + 1);
 	memcpy(result, plaintext, plaintext_len);
@@ -466,7 +475,10 @@ static char *decrypt_legacy(const char *encrypted_data, const char *password)
 		warned = TRUE;
 		g_warning("A credential is stored in the encrypted form of erssi "
 		          "versions before 2026.10.3, which cannot tell whether it was "
-		          "changed.");
+		          "changed. /SAVE writes it again in the current form when the "
+		          "master password is set and a value already in the current "
+		          "form confirms it; otherwise enter the password again with "
+		          "NETWORK ADD or SERVER ADD.");
 	}
 	return result;
 }

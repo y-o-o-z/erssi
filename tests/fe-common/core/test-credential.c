@@ -360,7 +360,30 @@ static void test_config_hooks(void)
 	legacy = legacy_encrypt("/msg NickServ identify old:secret");
 	node = config_node_traverse(config, "chatnets/Net", FALSE);
 	config_node_set_str(config, node, "autosendcmd", legacy);
+
+	/* nothing confirms the master password yet: the old value stays */
+	{
+		CONFIG_REC *unconfirmed = config_open(NULL, -1);
+
+		g_assert_cmpint(config_parse_data(unconfirmed, "chatnets = { Net = {}; };\n",
+		                                  "test"), ==, 0);
+		node = config_node_traverse(unconfirmed, "chatnets/Net", FALSE);
+		config_node_set_str(unconfirmed, node, "autosendcmd", legacy);
+		credential_config_write_hook(unconfirmed);
+		g_assert_cmpstr(config_node_get_str(node, "autosendcmd", NULL), ==, legacy);
+		config_close(unconfirmed);
+	}
 	g_free(legacy);
+
+	/* a value in the current form that decrypts confirms it */
+	{
+		char *current = credential_encrypt("other secret", MASTER);
+
+		node = config_node_traverse(config, "chatnets", FALSE);
+		node = config_node_section(config, node, "Other", NODE_TYPE_BLOCK);
+		config_node_set_str(config, node, "sasl_password", current);
+		g_free(current);
+	}
 
 	credential_config_write_hook(config);
 	node = config_node_traverse(config, "chatnets/Net", FALSE);

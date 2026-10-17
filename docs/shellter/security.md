@@ -69,4 +69,6 @@ a wrong master password could delete stored credentials. Existing setups
 keep working; `/help credential` explains how to return to plain storage.
 A value they encrypt is AES-256-GCM, so a changed value or a wrong master
 password is refused; values from versions before 2026.10.3 (AES-256-CBC,
-which cannot detect a change) are still read.
+which cannot detect a change) are still read, and `/SAVE` writes them in
+the new form once a value already in the new form confirms the master
+password.

@@ -314,3 +314,25 @@ test('test-tls-hostname test', test_test_tls_hostname,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# /SAVE with an old encrypted credential in the configuration
+test_test_credential_save = executable('test-credential-save',
+  files(
+    'test-credential-save.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential-save test', test_test_credential_save,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
