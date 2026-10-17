@@ -182,8 +182,9 @@ E2E interop with `rpe2e.pl`, libFuzzer runs on the fe-web and E2E parsers,
 the installer test and shellcheck. Each job is a commit status (the check
 mark next to a commit) with a one-line result. Pull requests from other
 contributors are tested after they have been reviewed.
-`.github/workflows/shellter-ci.yml` describes the same jobs for GitHub
-Actions, which stay switched off on this repository.
+`.github/workflows/shellter-ci.yml` describes a subset of these jobs for
+GitHub Actions (the hardened build, the ASan/UBSan build and the installer
+checks), which stay switched off on this repository.
 
 ## Credits and license
 
