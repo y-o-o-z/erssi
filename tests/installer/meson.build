@@ -23,3 +23,8 @@ foreach c : ['ascii', 'utf8',
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)
 endforeach
+
+# install.sh (inherited, with sudo and the package manager): the local
+# install's ~/.local/bin, with a temporary HOME
+test('installer install.sh', find_program('sh'),
+  args : [files('test-install-sh.sh'), meson.current_source_dir() / '..' / '..'])
