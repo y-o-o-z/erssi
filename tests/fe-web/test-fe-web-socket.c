@@ -249,6 +249,38 @@ static void test_recheck_after_mkdir(void)
 	teardown();
 }
 
+static char *swap_target;
+
+static void swap_for_link(const char *dir)
+{
+	g_assert_cmpint(rmdir(dir), ==, 0);
+	g_assert_cmpint(symlink(swap_target, dir), ==, 0);
+}
+
+/* The directory erssi just created is swapped for a link: refused, and
+ * the message says so, not what errno still held after a successful
+ * mkdir */
+static void test_swapped_after_mkdir(void)
+{
+	char *path, *out;
+
+	setup();
+	make_dir("elsewhere", 0700);
+	swap_target = under("elsewhere");
+	/* two directories to make: g_mkdir_with_parents() then returns 0
+	 * with errno ENOENT */
+	path = under("made/sub/fe-web.sock");
+	fe_web_fuzz_after_mkdir(swap_for_link);
+	out = test_start_unix(path);
+	assert_printed(out, "not created as a directory of yours");
+	g_assert_null(strstr(out, g_strerror(ENOENT)));
+	g_assert_false(is_socket(path));
+	g_free(out);
+	g_free(path);
+	g_free(swap_target);
+	teardown();
+}
+
 static void test_not_a_socket_kept(void)
 {
 	char *path, *content, *out;
@@ -973,6 +1005,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/socket/own-link-into-untrusted-refused",
 	                test_own_link_into_untrusted_refused);
 	g_test_add_func("/fe-web/socket/recheck-after-mkdir", test_recheck_after_mkdir);
+	g_test_add_func("/fe-web/socket/swapped-after-mkdir", test_swapped_after_mkdir);
 	g_test_add_func("/fe-web/socket/not-a-socket-kept", test_not_a_socket_kept);
 	g_test_add_func("/fe-web/socket/stale-socket-replaced", test_stale_socket_replaced);
 	g_test_add_func("/fe-web/socket/live-listener-kept", test_live_listener_kept);
