@@ -483,6 +483,9 @@ ascii)
     check "fails in Finding the release" grep -q 'Finding the release.*failed' "$W/out"
     check "output is ASCII only" ascii_only "$W/out"
     check "header with an ASCII separator" grep -qF 'erssi Shellter Edition - update' "$W/out"
+    check "names the current installer, for this prefix" \
+        grep -qF "curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh -s -- --prefix $W/p" "$W/out"
+    check "... not a release of its own" no_grep '[-]-ref shellter-v' "$W/out"
     check "ASCII spinner" [ "$(spinner)" = '|/-\|/-\|/' ]
     # no locale command and no locale variables: ASCII as well
     rm -f "$W/shim/locale"

@@ -102,8 +102,9 @@ and installs it into the same prefix, with the settings of the first install.
 - A release that cannot be downloaded stops the update with "cannot
   download"; nothing is changed.
 - `--update` needs git 2.34+ and ssh-keygen to check the signature; without
-  them it stops and says how to update with the installer's `--ref`
-  instead.
+  them it stops and names the install command above (with your `--prefix`):
+  the current installer checks the newest release against the commit it
+  records.
 - In a running erssi, `/upgrade` then loads the new version without
   disconnecting.
 

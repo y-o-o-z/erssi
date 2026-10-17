@@ -828,7 +828,13 @@ else
 fi
 if [ "$UPDATE" = 1 ]; then
     step "Finding the release"
-    can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.2"
+    # the current installer instead: it records the newest release's commit
+    # and checks that without a signature check (this copy cannot know a
+    # release newer than its own)
+    if ! can_verify; then
+        p=""; [ "$PREFIX" = "$HOME/.local/opt/erssi" ] || p=" -s -- --prefix $PREFIX"
+        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh$p"
+    fi
     case "$INSTALLED_REF" in
         ''|shellter-v*)
             # a release: a newer one, and its own tag checked
