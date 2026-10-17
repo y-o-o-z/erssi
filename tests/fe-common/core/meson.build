@@ -270,3 +270,25 @@ test('test-credential test', test_test_credential,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# core/credential.c compiled in, with an encryption that can be made to fail
+test_test_credential_set = executable('test-credential-set',
+  files(
+    'test-credential-set.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential-set test', test_test_credential_set,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

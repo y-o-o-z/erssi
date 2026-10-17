@@ -401,11 +401,42 @@ gboolean credential_is_autosendcmd_sensitive(const char *cmd)
 gboolean credential_set(const char *network, CredentialContext context, const char *value)
 {
 	CREDENTIAL_REC *rec;
-	char *encrypted_value = NULL;
+	char *new_value;
 	gboolean should_encrypt = FALSE;
 
 	g_return_val_if_fail(network != NULL, FALSE);
 	g_return_val_if_fail(value != NULL, FALSE);
+
+	/* Encryption logic:
+	 * - credential_config_encrypt=ON: encrypt (requires master_password)
+	 * - credential_config_encrypt=OFF: plaintext
+	 * Independent of storage mode (config or external)
+	 */
+
+	if (credential_config_encrypt) {
+		should_encrypt = TRUE;
+	}
+
+	/* Check if value is already encrypted */
+	if (credential_is_encrypted(value)) {
+		should_encrypt = FALSE;
+	}
+
+	/* The new value is made before the record is touched: when encrypting
+	 * it fails, an existing record keeps its old value and no new record
+	 * is left behind. */
+	if (should_encrypt && master_password != NULL) {
+		new_value = credential_encrypt(value, master_password);
+		if (new_value == NULL) {
+			return FALSE;
+		}
+	} else {
+		if (should_encrypt) {
+			/* Cannot encrypt without password - store plaintext with warning */
+			g_warning("Encryption is ON but master password not set. Storing in plaintext.");
+		}
+		new_value = g_strdup(value);
+	}
 
 	/* Find existing record or create new one */
 	rec = credential_find(network, context);
@@ -420,42 +451,7 @@ gboolean credential_set(const char *network, CredentialContext context, const ch
 		g_free(rec->salt);
 	}
 
-	/* Encryption logic:
-	 * - credential_config_encrypt=ON: encrypt (requires master_password)
-	 * - credential_config_encrypt=OFF: plaintext
-	 * Independent of storage mode (config or external)
-	 */
-
-	if (credential_config_encrypt) {
-		should_encrypt = TRUE;
-	}
-
-	/* Check if value is already encrypted */
-	if (value != NULL && credential_is_encrypted(value)) {
-		should_encrypt = FALSE;
-	}
-
-	if (should_encrypt) {
-		if (master_password == NULL) {
-			/* Cannot encrypt without password - store plaintext with warning */
-			g_warning("Encryption is ON but master password not set. Storing in plaintext.");
-			rec->encrypted_value = g_strdup(value);
-		} else {
-			encrypted_value = credential_encrypt(value, master_password);
-			if (encrypted_value == NULL) {
-				if (rec->network == NULL) {
-					credentials = g_slist_remove(credentials, rec);
-					credential_free(rec);
-				}
-				return FALSE;
-			}
-			rec->encrypted_value = encrypted_value;
-		}
-	} else {
-		/* Store in plaintext */
-		rec->encrypted_value = g_strdup(value);
-	}
-
+	rec->encrypted_value = new_value;
 	rec->salt = NULL;
 
 	/* Automatic save to external file if used */
