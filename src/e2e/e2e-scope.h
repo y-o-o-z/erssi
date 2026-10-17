@@ -69,10 +69,13 @@ typedef struct {
 	char *label;		/* NULL when the server has no chatnet and no tag */
 	E2E_CASEMAP casemap;
 	gboolean legacy_ok;	/* whether unscoped rows may be used here */
+	gboolean from_tag;	/* the label is the server's tag (no chatnet): it
+				   can change with the next connection */
 } E2E_NET;
 
-/* label from chatnet (if non-empty) or tag (if non-empty), else NULL;
-   casemap from the CASEMAPPING value (NULL when the server sent none) */
+/* label from chatnet (if non-empty) or tag (if non-empty, from_tag),
+   else NULL; casemap from the CASEMAPPING value (NULL when the server
+   sent none) */
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok);
 /* frees the label; safe to call twice */

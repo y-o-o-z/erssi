@@ -154,6 +154,7 @@
 #define REFUSE_RAW_LINES "a raw line holding several IRC lines (CR/LF) includes a PRIVMSG that the E2E gate does not let out as it is (%s) — NOTHING of it was sent"
 #define REFUSE_UNDECIDED "how the server's CASEMAPPING compares %s cannot be decided (not valid UTF-8, an unassigned character, or a CASEMAPPING erssi does not know): %s may be the same channel as %s, where E2E is on - message NOT sent"
 #define REFUSE_UNSCOPED  "E2E cannot be kept per network for %s (its name holds the control character 0x1F, or the network has no name) and may be on for it — message NOT sent"
+#define REFUSE_RELABELED "E2E is on for %s on the network \"%s\", and this one is \"%s\"%s — it may be the same network under another name, so the message was NOT sent. /e2e on here encrypts it, /e2e off here sends it in clear text on this network; a chatnet for the server (/network add, /server add -network) keeps the name stable"
 
 static gint64 default_now(void)
 {
@@ -2798,6 +2799,38 @@ static const char *folded_peer_blocked(const E2E_JSON *kr, const E2E_NET *net, c
 
 /* _gate_decide for one target; dry: decide only (no key is generated,
    nothing in kr changes) */
+/* No config of wire on net, but E2E is on for it on a network whose label
+   may be this one's under another name: net is labelled by the server's
+   tag (no chatnet - the tag can change with the next connection), or the
+   two labels differ only in case (a chatnet added for a tag). That label,
+   or NULL. */
+static const char *enabled_relabeled(const E2E_JSON *kr, const E2E_NET *net, const char *wire)
+{
+	E2E_JSON *channels = e2e_json_get(kr, "channels");
+	GPtrArray *keys;
+	const char *found = NULL;
+	guint i;
+
+	if (net == NULL || net->label == NULL)
+		return NULL;
+	keys = e2e_json_keys(channels);
+	for (i = 0; i < keys->len && found == NULL; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		const char *sep = strchr(k, E2E_SCOPE_SEP);
+		gsize len;
+
+		if (sep == NULL || strcmp(sep + 1, wire) != 0 || !e2e_ctx_enabled(kr, k))
+			continue;
+		len = sep - k;
+		if (strlen(net->label) == len && memcmp(k, net->label, len) == 0)
+			continue;
+		if (net->from_tag || (strlen(net->label) == len && g_ascii_strncasecmp(k, net->label, len) == 0))
+			found = k;
+	}
+	g_ptr_array_unref(keys);
+	return found;
+}
+
 static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
                         const E2E_NET *net, const char *target, const char *body,
                         E2E_RESOLVE_FUNC resolve, void *resolve_data, gboolean dry,
@@ -2952,6 +2985,20 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 			   user expects E2E */
 			res->action = E2E_GATE_REFUSE;
 			res->message = g_strdup_printf(REFUSE_DM_MOVED, target, other, target, wire + 1, other);
+		} else if (is_channel && kind == E2E_CTX_NEW &&
+		           (config = enabled_relabeled(kr, net, wire)) != NULL) {
+			/* the label of a network changed (a tag, a chatnet
+			   added): never clear text where E2E was on */
+			char *label = g_strndup(config, strchr(config, E2E_SCOPE_SEP) - config);
+			char *shown_label = e2e_text_display(label);
+			char *here = e2e_text_display(net->label);
+
+			res->action = E2E_GATE_REFUSE;
+			res->message = g_strdup_printf(REFUSE_RELABELED, wire, shown_label, here,
+			                               net->from_tag ? " (the server's tag: it has no chatnet)" : "");
+			g_free(label);
+			g_free(shown_label);
+			g_free(here);
 		} else {
 			res->action = E2E_GATE_PASS;
 		}

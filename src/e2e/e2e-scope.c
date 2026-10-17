@@ -52,12 +52,15 @@ static char *label_from(const char *name)
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok)
 {
-	if (chatnet != NULL && *chatnet != '\0')
+	net->from_tag = FALSE;
+	if (chatnet != NULL && *chatnet != '\0') {
 		net->label = label_from(chatnet);
-	else if (tag != NULL && *tag != '\0')
+	} else if (tag != NULL && *tag != '\0') {
 		net->label = label_from(tag);
-	else
+		net->from_tag = TRUE;
+	} else {
 		net->label = NULL;
+	}
 	net->casemap = e2e_casemap_parse(casemapping);
 	net->legacy_ok = legacy_ok;
 }

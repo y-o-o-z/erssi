@@ -344,6 +344,21 @@ static const char *str_or(const char *s, const char *def)
 }
 
 /* SYNTAX: E2E [HELP] */
+/* the window's server has no chatnet: its E2E settings are kept under the
+   tag, which can change with the next connection - said at /e2e on */
+static void warn_tag_label(WI_ITEM_REC *item)
+{
+	E2E_NET net;
+
+	if (item == NULL || item->server == NULL)
+		return;
+	e2e_server_net(item->server, &net);
+	if (net.from_tag)
+		e2e_print_warning(item, "this server has no chatnet, so E2E here is kept under its tag \"%s\", which can change (a second connection, a reconnect); a message here is then refused until /e2e on or /e2e off again. A chatnet keeps it stable: /network add <name>, then /server add -network <name> for this server",
+		                  shown_text(net.label));
+	e2e_net_clear(&net);
+}
+
 /* SYNTAX: E2E ON */
 static void cmd_on(WI_ITEM_REC *item)
 {
@@ -358,6 +373,7 @@ static void cmd_on(WI_ITEM_REC *item)
 		set_channel(kr, ctx, 1, "normal", query_nick(item));
 		e2e_save(kr);
 		e2e_print_item(item, "enabled on %s (mode=normal)", shown(ctx));
+		warn_tag_label(item);
 		e2e_warn_session_only(item);
 	}
 	g_free(ctx);

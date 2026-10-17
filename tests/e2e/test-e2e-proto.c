@@ -6092,6 +6092,52 @@ static void test_stop_giving_key(void)
 	peer_free(&b);
 }
 
+/* a network labelled by its tag (no chatnet) whose tag changed, or whose
+   label changed case: a channel with E2E on under the old label is not
+   sent in clear text under the new one */
+static void test_gate_relabeled(void)
+{
+	E2E_NET old_tag = { (char *) "libera", E2E_CASEMAP_RFC1459, FALSE, TRUE };
+	E2E_NET new_tag = { (char *) "libera2", E2E_CASEMAP_RFC1459, FALSE, TRUE };
+	E2E_NET chatnet = { (char *) "Libera", E2E_CASEMAP_RFC1459, FALSE, FALSE };
+	E2E_NET other = { (char *) "OFTC", E2E_CASEMAP_RFC1459, FALSE, FALSE };
+	E2E_GATE_RESULT g;
+	PEER a;
+	char *ctx;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable_scoped(&a, &old_tag, "#secret");
+	e2e_gate_decide(a.kr, TRUE, &a.id, &old_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	/* the tag changed: refused, with what to do */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_nonnull(strstr(g.message, "E2E is on for #secret on the network \"libera\", and this one is \"libera2\" (the server's tag: it has no chatnet)"));
+	g_assert_nonnull(strstr(g.message, "NOT sent"));
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, TRUE, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* a chatnet of the same name in another case: refused too */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &chatnet, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* another named network is another network */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &other, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	/* /e2e off there settles it: clear text */
+	ctx = e2e_ctx_scoped(&new_tag, "#secret");
+	enable(&a, ctx, "normal");
+	e2e_json_set_int(path_get(a.kr, "channels", ctx, NULL), "enabled", 0);
+	g_free(ctx);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	peer_free(&a);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6105,6 +6151,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
 	g_test_add_func("/e2e/proto/reverify", test_reverify);
 	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
+	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);

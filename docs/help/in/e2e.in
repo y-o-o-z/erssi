@@ -372,7 +372,13 @@
     the per-network entries as they are (repartee's exports use the same
     form).
     A network without a chatnet is labelled by its server tag, which can
-    change when tags collide - set a chatnet for stable E2E scopes.
+    change when tags collide - set a chatnet for stable E2E scopes
+    (/E2E ON warns on such a server). So that a changed label never
+    sends in clear text where E2E was on: on a server without a chatnet,
+    and wherever the label differs from another one only in case (a
+    chatnet added for a tag), a message to a channel with no E2E entry
+    of its own there is NOT sent while E2E is on for that channel under
+    the other label - /E2E ON or /E2E OFF in its window settles it.
     A channel or address whose name holds the control character U+001F
     cannot be kept per network: nothing is encrypted for it, and a
     message to it is not sent while an old entry may have encryption on.
