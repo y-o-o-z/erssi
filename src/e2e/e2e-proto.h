@@ -30,6 +30,9 @@
 #include "e2e-wire.h"
 
 #define E2E_KEYREQ_MIN_INTERVAL         30
+/* automatic KEYREQs of all senders together: at most BURST per WINDOW s */
+#define E2E_AUTO_KEYREQ_BURST           3
+#define E2E_AUTO_KEYREQ_WINDOW          10
 #define E2E_KEYREQ_INBOUND_MIN_INTERVAL 10
 #define E2E_PENDING_KEYREQ_TTL          120
 /* growth limits of what anyone can make us store */
@@ -363,7 +366,8 @@ typedef enum {
 	E2E_IN_ASK_RECENT,	/* one went to that handle within E2E_KEYREQ_MIN_INTERVAL */
 	E2E_IN_ASK_WAITING,	/* ours waits for their answer (E2E_PENDING_KEYREQ_TTL) */
 	E2E_IN_ASK_OFF,		/* E2E is off here: nothing is asked */
-	E2E_IN_ASK_FAILED	/* no identity, or the request could not be made */
+	E2E_IN_ASK_FAILED,	/* no identity, or the request could not be made */
+	E2E_IN_ASK_BUSY		/* the cap of all senders together is reached */
 } E2E_IN_ASK;
 
 typedef struct {

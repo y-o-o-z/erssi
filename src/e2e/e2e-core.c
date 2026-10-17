@@ -91,7 +91,7 @@
 static char *keyring_dir;
 static char *keyring_file;
 
-static GHashTable *keyreq_out;		/* handle -> our last KEYREQ (30 s) */
+static GHashTable *keyreq_out;		/* "handle|ctx" -> our last KEYREQ (30 s), and the cap of all */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
 /* "tag|handle|change|fp" -> the last warning about a blocked key exchange */
 static GHashTable *trust_notice;

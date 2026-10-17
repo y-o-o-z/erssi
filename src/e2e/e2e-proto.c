@@ -1852,6 +1852,43 @@ static char *reciprocal_ctx_on(const E2E_JSON *kr, const E2E_NET *net, const cha
 	return found;
 }
 
+/* The automatic KEYREQs of all senders together: at most
+   E2E_AUTO_KEYREQ_BURST in E2E_AUTO_KEYREQ_WINDOW seconds, so that a
+   flood of clones (one wire each) is no flood of NOTICEs - an Excess
+   Flood - and of keyring writes. The slots are kept in the stamps table
+   of the 30 s limiter. take: use a free slot. */
+static gboolean auto_keyreq_budget(GHashTable *stamps, gboolean take)
+{
+	gint64 now = e2e_now(), *when;
+	char key[16];
+	int i;
+
+	for (i = 0; i < E2E_AUTO_KEYREQ_BURST; i++) {
+		g_snprintf(key, sizeof(key), "\001auto|%d", i);
+		when = g_hash_table_lookup(stamps, key);
+		if (when != NULL && now - *when < E2E_AUTO_KEYREQ_WINDOW && *when <= now)
+			continue;
+		if (take) {
+			when = g_new(gint64, 1);
+			*when = now;
+			g_hash_table_replace(stamps, g_strdup(key), when);
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* the 30 s limiter of our KEYREQs: per address AND context - a query
+   opened right after a channel's exchange is asked for as well */
+static gboolean keyreq_stamp_allow(GHashTable *stamps, const char *handle, const char *ctx)
+{
+	char *key = g_strconcat(handle, "|", ctx, NULL);
+	gboolean ok = e2e_stamp_allow(stamps, key, E2E_KEYREQ_MIN_INTERVAL);
+
+	g_free(key);
+	return ok;
+}
+
 static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
                                            GHashTable *stamps, const E2E_NET *net,
                                            const char *ctx, const char *sender,
@@ -1867,7 +1904,8 @@ static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
 	pk = pending_key(rctx, sender);
 	trusted = is_trusted(row_or_twin(kr, net, "incoming", sender, rctx, TRUE, NULL));
 	pending = row_or_twin(kr, net, "pending", sender, rctx, FALSE, NULL) != NULL;
-	if (!pending && !trusted && e2e_stamp_allow(stamps, sender, E2E_KEYREQ_MIN_INTERVAL))
+	if (!pending && !trusted && auto_keyreq_budget(stamps, FALSE) &&
+	    keyreq_stamp_allow(stamps, sender, rctx) && auto_keyreq_budget(stamps, TRUE))
 		out = e2e_build_keyreq(kr, id, rctx, sender, &error);
 	g_free(error);
 	g_free(k);
@@ -3473,8 +3511,13 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 	if (pending != NULL &&
 	    is_fresh(e2e_json_get_int(pending, "created_at", 0), E2E_PENDING_KEYREQ_TTL))
 		return E2E_IN_ASK_WAITING;
-	if (!e2e_stamp_allow(p->keyreq_stamps, p->handle, E2E_KEYREQ_MIN_INTERVAL))
+	/* all senders together first: a sender is not counted as asked
+	   while nothing could be sent */
+	if (!auto_keyreq_budget(p->keyreq_stamps, FALSE))
+		return E2E_IN_ASK_BUSY;
+	if (!keyreq_stamp_allow(p->keyreq_stamps, p->handle, res->ctx))
 		return E2E_IN_ASK_RECENT;
+	auto_keyreq_budget(p->keyreq_stamps, TRUE);
 	res->keyreq = e2e_build_keyreq(kr, id, res->ctx, p->handle, &error);
 	g_free(error);
 	if (res->keyreq == NULL)
@@ -3784,7 +3827,8 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 			[E2E_IN_ASK_RECENT] = " - key requested a moment ago, waiting for the answer",
 			[E2E_IN_ASK_WAITING] = " - key requested, waiting for the answer",
 			[E2E_IN_ASK_OFF] = " - E2E is off here, so it is not requested (/e2e on)",
-			[E2E_IN_ASK_FAILED] = " - it cannot be requested (no identity of yours)"
+			[E2E_IN_ASK_FAILED] = " - it cannot be requested (no identity of yours)",
+			[E2E_IN_ASK_BUSY] = " - not requested now: many key requests at once (their next message asks)"
 		};
 
 		out = g_strdup_printf("[E2E: encrypted message not read - no key from %s (%s) yet%s]",
@@ -3828,7 +3872,8 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 		if (res->ask == E2E_IN_ASK_SENT)
 			out = g_strdup_printf("[E2E rejected: %s - their current key requested]",
 			                      res->reason != NULL ? res->reason : "it cannot be read");
-		else if (res->ask == E2E_IN_ASK_RECENT || res->ask == E2E_IN_ASK_WAITING)
+		else if (res->ask == E2E_IN_ASK_RECENT || res->ask == E2E_IN_ASK_WAITING ||
+		         res->ask == E2E_IN_ASK_BUSY)
 			out = g_strdup_printf("[E2E rejected: %s - their current key requested, waiting for the answer]",
 			                      res->reason != NULL ? res->reason : "it cannot be read");
 		else

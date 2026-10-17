@@ -6742,6 +6742,77 @@ static void test_reverify_mixed_changes(void)
 	peer_free(&eve2);
 }
 
+/* automatic KEYREQs: once per 30 s per address AND context (a query
+   right after a channel's exchange is asked for too), and at most
+   E2E_AUTO_KEYREQ_BURST in E2E_AUTO_KEYREQ_WINDOW s of all senders
+   together (a flood of clones is no flood of NOTICEs and writes) */
+static void test_auto_keyreq_limits(void)
+{
+	PEER me, clone;
+	E2E_IN_RESULT r;
+	E2E_IN_PARAMS in;
+	int i, sent = 0, busy = 0;
+
+	peer_init(&me, "me", BOB, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	peer_init(&clone, "c", "c@h", -1);
+	enable(&clone, "#a", "normal");
+	enable(&clone, "#b", "normal");
+	{
+		char *wa = wire_from(&clone, "#a", "x"), *wb = wire_from(&clone, "#b", "x");
+
+		/* one sender, two contexts: both asked */
+		in_params(&in, &me, "c", "c@h", "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, wa, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		in_params(&in, &me, "c", "c@h", "#b", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, wb, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(wa);
+		g_free(wb);
+	}
+	/* 50 clones, one wire each, in the same second */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	for (i = 0; i < 50; i++) {
+		char *h = g_strdup_printf("clone%d@h", i), *w = wire_from(&clone, "#a", "x");
+
+		in_params(&in, &me, "clone", h, "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		if (r.ask == E2E_IN_ASK_SENT) {
+			sent++;
+			g_assert_nonnull(r.keyreq);
+		} else {
+			g_assert_cmpint(r.ask, ==, E2E_IN_ASK_BUSY);
+			g_assert_null(r.keyreq);
+			assert_placeholder(&me, &clone, &r, "not requested now: many key requests at once");
+			busy++;
+		}
+		e2e_in_result_clear(&r);
+		g_free(w);
+		g_free(h);
+	}
+	g_assert_cmpint(sent, ==, E2E_AUTO_KEYREQ_BURST);
+	g_assert_cmpint(busy, ==, 50 - E2E_AUTO_KEYREQ_BURST);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "pending")), ==, 2 + E2E_AUTO_KEYREQ_BURST);
+	/* a clone that got none is not counted as asked: later it is */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	{
+		char *w = wire_from(&clone, "#a", "x");
+
+		in_params(&in, &me, "clone", "clone49@h", "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+	}
+	fake_now -= 2 * E2E_AUTO_KEYREQ_WINDOW;
+	peer_free(&me);
+	peer_free(&clone);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6762,6 +6833,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
 	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
+	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
