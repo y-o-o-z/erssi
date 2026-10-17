@@ -239,28 +239,67 @@ cm -m 'unsigned'
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'release tag and unsigned main in one push' refused 'not signed by the release key' -- refs/tags/shellter-v2026.10.0 main
 
-# deletes create nothing on the remote and pass
+# a deleted branch: nothing is created on the remote
 newrepo
 cm -m 'unsigned'
 push 'branch for the delete' ok -- HEAD:refs/heads/dev/x
 push 'delete a branch' ok -- :refs/heads/dev/x
-git -C "$r" tag -s -m 'release' shellter-v2026.10.0
-push 'release tag for the delete' ok -- refs/tags/shellter-v2026.10.0
-push 'delete a release tag' ok -- :refs/tags/shellter-v2026.10.0
 
 # --- release tags ---------------------------------------------------------
 newrepo
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'signed release tag' ok -- refs/tags/shellter-v2026.10.0
 
-# a release tag on the remote never moves, even signed and forced
 newrepo
+cm -m 'unsigned'
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'signed release tag of an unsigned commit' refused 'release commit' -- refs/tags/shellter-v2026.10.0
+
+# a release tag on the remote is never moved or deleted, even signed and
+# forced; nor is one that shellter-install.sh records pushed on another
+# commit (a delete that skipped the hook, then the tag again)
+newrepo
+base=$(git -C "$r" rev-parse HEAD)
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'release tag for the move' ok -- refs/tags/shellter-v2026.10.0
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$base" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'pin'
 cm -S -m 'a fix'
+push 'the pin and the fix to main' ok -- main
 git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
 push 'release tag moved' refused 'release tags never move' -- --force refs/tags/shellter-v2026.10.0
-push 'the fix to main' ok -- main
+push 'release tag deleted' refused 'release tags are never deleted' -- :refs/tags/shellter-v2026.10.0
+push 'release tag deleted, the hook skipped' ok -- --no-verify :refs/tags/shellter-v2026.10.0
+push 'release tag pushed again on another commit' refused 'shellter-install.sh records' -- refs/tags/shellter-v2026.10.0
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 "$base" >/dev/null
+push 'release tag pushed again on its recorded commit' ok -- refs/tags/shellter-v2026.10.0
+
+# a one-time re-signing: PREPUSH_RETAG names the release tags that may move
+# or be deleted; every other check still runs
+newrepo
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+git -C "$r" tag -s -m 'release' shellter-v1.3.2
+push 'release tags for the re-signing' ok -- refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+cm -S -m 'rewritten'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+git -C "$r" tag -f -s -m 'release' shellter-v1.3.2 >/dev/null
+export PREPUSH_RETAG=shellter-v2026.10.1
+push 're-signing, another tag named' refused 'release tags never move' -- --force refs/tags/shellter-v2026.10.0
+export PREPUSH_RETAG=shellter-v2026.10.0
+push 're-signing, only one of two tags named' refused 'shellter-v1.3.2: release tags never move' -- --force refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+export PREPUSH_RETAG='shellter-v2026.10.0 shellter-v1.3.2'
+git -C "$r" tag -f -s -u "$tmp/other" -m 'release' shellter-v2026.10.0 >/dev/null
+push 're-signing, a tag signed by another key' refused 'not signed by the release key' -- --force refs/tags/shellter-v2026.10.0
+cm -m 'unsigned'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+push 're-signing, a tag of an unsigned commit' refused 'release commit' -- --force refs/tags/shellter-v2026.10.0
+git -C "$r" tag -f shellter-v2026.10.0 >/dev/null
+push 're-signing, a lightweight tag' refused 'must be annotated' -- --force refs/tags/shellter-v2026.10.0
+git -C "$r" reset -q --hard HEAD^
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+push 're-signing, both named' ok 'PREPUSH_RETAG' -- --force refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+push 're-signing, a named tag deleted' ok 'PREPUSH_RETAG' -- :refs/tags/shellter-v1.3.2
+unset PREPUSH_RETAG
 
 newrepo
 git -C "$r" tag shellter-v2026.10.0

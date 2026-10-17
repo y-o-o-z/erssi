@@ -16,9 +16,15 @@
 #    commit that names that tag and carries a valid SSH signature by the key
 #    in utils/allowed_signers; every release tag except legacy shellter-v1.*
 #    (e.g. shellter-v2026.10.0) must also agree with meson.build and NEWS
-#    (utils/check-version.sh); a release tag that exists on the remote is
-#    never moved (a release made again is a new version: erssi --update
-#    takes only a newer one and reports a moved tag);
+#    (utils/check-version.sh), and the commit it points to must carry a
+#    valid signature by that key too. A release tag that exists on the
+#    remote is never moved or deleted, and one that shellter-install.sh
+#    records is never created on another commit than recorded (a release
+#    made again is a new version: erssi --update takes only a newer one
+#    and reports a moved tag). The one exception, a one-time re-signing
+#    (docs/shellter/releasing.md): PREPUSH_RETAG="shellter-vA shellter-vB"
+#    git push --force ... lets exactly the tags it names move or go, with a
+#    warning; every other check still runs;
 #    src/fe-ansi/default-files-known.h lists every shipped startup/theme
 # 3. nothing that the push publishes matches a private pattern from
 #    ~/.config/git-private-patterns (one extended regex per line, case
@@ -32,7 +38,9 @@
 #    PREPUSH_NO_PATTERNS=1 git push pushes once without this check.
 # The hook's temporary files live in one directory, removed on exit and on
 # HUP, INT and TERM.
-# Skip in an emergency with: git push --no-verify
+# Skip in an emergency with: git push --no-verify - it skips every check
+# above, so prefer PREPUSH_NO_PATTERNS or PREPUSH_RETAG where one of them
+# fits.
 set -u
 ROOT=$(git rev-parse --show-toplevel)
 EMAIL='136268860+y-o-o-z@users.noreply.github.com'
@@ -48,6 +56,14 @@ if [ -n "$REMOTE" ] && git config --get "remote.$REMOTE.url" >/dev/null 2>&1; th
     tracking="refs/remotes/$REMOTE/"
 fi
 bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
+warn() { printf 'pre-push: warning: %s\n' "$*" >&2; }
+# a release tag the one-time re-signing names (PREPUSH_RETAG)
+retag() { case " ${PREPUSH_RETAG:-} " in *" $1 "*) return 0 ;; esac; return 1; }
+# the commit shellter-install.sh at $1 records for the release $2
+pinned() {
+    git show "$1:shellter-install.sh" 2>/dev/null | sed -n '/^RELEASES="/,/^"/p' |
+        awk -v t="$2" '$1 == t { print $2; exit }'
+}
 # git with SSH signatures checked against utils/allowed_signers only (no gpg
 # or gpgsm, whatever the git config says)
 verify() {
@@ -94,17 +110,32 @@ private() { grep -a -iEf "$PATTERNS_CLEAN" | head -3; }
 
 pushed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
+    # a release tag on the remote is never moved (git push --force) or
+    # deleted - a delete and a new push would move it too - unless the
+    # re-signing names it
+    case "$remote_ref" in
+        refs/tags/shellter-v*)
+            what=""
+            if [ "$local_sha" = "$ZERO" ]; then
+                [ "$remote_sha" = "$ZERO" ] || what=deleted
+            elif [ "$remote_sha" != "$ZERO" ] && [ "$remote_sha" != "$local_sha" ]; then
+                what=moved
+            fi
+            if [ -z "$what" ]; then
+                :
+            elif retag "${remote_ref#refs/tags/}"; then
+                warn "$remote_ref is $what on the remote (PREPUSH_RETAG: a re-signing; the other checks still run)"
+            elif [ "$what" = moved ]; then
+                bad "$remote_ref: release tags never move - release the change as a new version (a re-signing: docs/shellter/releasing.md)"
+            else
+                bad "$remote_ref: release tags are never deleted (a re-signing: docs/shellter/releasing.md)"
+            fi ;;
+    esac
     [ "$local_sha" = "$ZERO" ] && continue          # deletion
     if [ "$check_private" = 1 ]; then
         hits=$(printf '%s\n%s\n' "$local_ref" "$remote_ref" | private)
         [ -n "$hits" ] && bad "ref name: private data: $hits"
     fi
-    # a release tag on the remote stays where it is (git push --force)
-    case "$remote_ref" in
-        refs/tags/shellter-v*)
-            [ "$remote_sha" = "$ZERO" ] || [ "$remote_sha" = "$local_sha" ] ||
-                bad "$remote_ref: release tags never move - release the change as a new version" ;;
-    esac
     # tags too: a tag can carry commits that no branch on GitHub has
     if ! tip=$(git rev-parse -q --verify "$local_sha^{commit}" 2>/dev/null); then
         case "$remote_ref" in
@@ -113,6 +144,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
     pushed="$pushed $tip"
+    # a release tag that the installer records - in this checkout or on the
+    # remote's main - is created only on the recorded commit (a delete that
+    # skipped this hook, then the tag again elsewhere)
+    case "$remote_ref" in
+        refs/tags/shellter-v*)
+            if [ "$remote_sha" = "$ZERO" ] && ! retag "${remote_ref#refs/tags/}"; then
+                for at in HEAD ${tracking:+"${tracking}main"}; do
+                    p=$(pinned "$at" "${remote_ref#refs/tags/}")
+                    [ -z "$p" ] || [ "$p" = "$tip" ] ||
+                        { bad "$remote_ref: shellter-install.sh records $p for it ($at), not $tip - release tags never move"; break; }
+                done
+            fi ;;
+    esac
     # what this remote does not have yet: not reachable from its tip for
     # this ref or from our copies of its branches; when the tip is unknown
     # here (force push without fetching), from those copies only
@@ -175,6 +219,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
                     bad "$remote_ref: the tag object names another tag"
                 verify verify-tag "$local_sha" ||
                     bad "$remote_ref: not signed by the release key (git tag -s; utils/allowed_signers)"
+                verify verify-commit "$tip" ||
+                    bad "$remote_ref: the release commit $(git log -1 --format=%h "$tip") is not signed by the release key"
                 # every release but legacy shellter-v1.* must match meson.build and NEWS
                 case "${remote_ref#refs/tags/shellter-v}" in
                     1.*) ;;
