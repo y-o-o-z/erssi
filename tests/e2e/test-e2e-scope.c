@@ -1714,6 +1714,8 @@ static void test_legacy_script_guard(void)
 	char *line;
 	guint moved;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	put_cfg(kr, "E2E\x1f#only", 1, NULL);
 	put_cfg(kr, "E2E\x1f#off", 0, NULL);
 	put_cfg(kr, "E2E\x1f@bob@127.0.0.1", 1, "bob");
@@ -1774,11 +1776,12 @@ static void test_legacy_script_guard(void)
 	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #only :!seen x", "#only", "CLEARTEXT"), ==,
 	                E2E_GATE_BYPASS);
 	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #free :!seen x", NULL, NULL), ==, E2E_GATE_PASS);
-	/* a keyring that cannot be read: nothing but bot commands and CTCPs */
+	/* a keyring that cannot be read: nothing but CTCPs */
 	g_assert_cmpint(guard(kr, FALSE, &a, "PRIVMSG #free :hi", "#free", "keyring"), ==,
 	                E2E_GATE_REFUSE);
-	g_assert_cmpint(guard(kr, FALSE, &a, "PRIVMSG #free :!seen x", "#free", "CLEARTEXT"), ==,
-	                E2E_GATE_BYPASS);
+	/* a bot command neither: fail closed */
+	g_assert_cmpint(guard(kr, FALSE, &a, "PRIVMSG #free :!seen x", "#free", "keyring"), ==,
+	                E2E_GATE_REFUSE);
 	/* a name another network took over: refused there too */
 	g_assert_cmpint(e2e_adopt_explicit(kr, &a, "#test", NULL, &moved), ==, E2E_ADOPT_MOVED);
 	g_assert_cmpint(guard(kr, TRUE, &b, "PRIVMSG #test :hi", "#test", "rpe2e.pl does not know"), ==,
@@ -1786,6 +1789,7 @@ static void test_legacy_script_guard(void)
 	g_assert_cmpint(guard(kr, TRUE, &a, "PRIVMSG #test :hi", "#test", "E2E:#test"), ==,
 	                E2E_GATE_REFUSE);
 	e2e_json_free(kr);
+	e2e_bot_bypass = FALSE;
 }
 
 /* a wire passes only as the script's own chunk, sent from within its
@@ -1880,8 +1884,13 @@ static void test_legacy_script_guard_lost(void)
 
 	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, hi, strlen(hi), "#free", E2E_REFUSE_LOST),
 	                ==, E2E_GATE_REFUSE);
-	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, bot, strlen(bot), "#free", "CLEARTEXT"),
-	                ==, E2E_GATE_BYPASS);
+	/* a bot command neither, the bypass on or off */
+	e2e_bot_bypass = TRUE;
+	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, bot, strlen(bot), "#free", E2E_REFUSE_LOST),
+	                ==, E2E_GATE_REFUSE);
+	e2e_bot_bypass = FALSE;
+	g_assert_cmpint(guard_ex(kr, FALSE, TRUE, FALSE, &a, bot, strlen(bot), "#free", E2E_REFUSE_LOST),
+	                ==, E2E_GATE_REFUSE);
 	/* unreadable, not lost: no /e2e reset (it would start a new keyring) */
 	g_assert_cmpint(guard_ex(kr, FALSE, FALSE, FALSE, &a, hi, strlen(hi), "#free", "keyring read failed"),
 	                ==, E2E_GATE_REFUSE);

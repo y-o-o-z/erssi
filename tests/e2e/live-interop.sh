@@ -1182,10 +1182,14 @@ cp "$WORK/alice/rpe2e/keyring.json" "$WORK/bob/rpe2e/keyring.json"
 say bob "/window goto $CHAN"
 # R-E19: rpe2e.pl on a keyring whose #test is set up only in the module's
 # per-network entries ("E2E\x1f#test"): the script would send in clear
-# text, the inactive module stops it; a bot command still goes out
+# text, the inactive module stops it; a bot command too, unless
+# e2e_bot_bypass is on: then it goes out, with the warning
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
 say bob "scoped only from bob"
 say bob "!seen scopedbot"
+say bob "/set e2e_bot_bypass on"
+say bob "!seen bypassbot"
+say bob "/set e2e_bot_bypass off"
 # a wire typed (or pasted) by the user is text, not the script's chunk
 TYPED_WIRE=$(grep -a "^alice PRIVMSG $CHAN :+RPE2E01 " "$WORK/wire.log" | tail -n 1 | cut -d' ' -f4- | cut -c2-)
 say bob "$TYPED_WIRE"
@@ -1205,11 +1209,16 @@ if wait_for "$WORK/bob/logs/E2E/$CHAN.log" "E2E is on for E2E:$CHAN in the e2e m
 else
     bad "bob is not told why his message was not delivered"
 fi
-if grep -aqF "bob PRIVMSG $CHAN :!seen scopedbot" "$WORK/wire.log" &&
-   grep -qF "bot-style message to $CHAN sent in CLEARTEXT" "$WORK/bob/logs/E2E/$CHAN.log"; then
-    pass "rpe2e.pl loaded: a bot command on that channel still goes out, with the warning"
+if grep -aqF "!seen scopedbot" "$WORK/wire.log"; then
+    bad "rpe2e.pl loaded: a bot command on that channel went out in plain text (e2e_bot_bypass off)"
 else
-    bad "rpe2e.pl loaded: the bot command was stopped"
+    pass "rpe2e.pl loaded: a bot command on that channel is not sent while e2e_bot_bypass is off"
+fi
+if grep -aqF "bob PRIVMSG $CHAN :!seen bypassbot" "$WORK/wire.log" &&
+   grep -qF "bot-style message to $CHAN sent in CLEARTEXT" "$WORK/bob/logs/E2E/$CHAN.log"; then
+    pass "rpe2e.pl loaded: with e2e_bot_bypass on a bot command goes out, with the warning"
+else
+    bad "rpe2e.pl loaded: with e2e_bot_bypass on the bot command was stopped"
 fi
 say bob "/e2e mode quiet"
 # the script decides a raw buffer of several lines by its first target:

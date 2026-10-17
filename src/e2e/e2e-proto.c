@@ -78,7 +78,7 @@
     cut,
   - /upgrade sends the flood queue through the gate (irssi wrote it raw),
   - after a corrupt keyring is moved aside the state is LOST until
-    /e2e reset or /e2e import: the gate refuses (bot commands excepted),
+    /e2e reset or /e2e import: the gate refuses (bot commands too),
     nothing is saved (rpe2e.pl started an empty keyring: clear text
     everywhere),
   - handshake NOTICEs go through the flood queue (a REKEY right before
@@ -123,7 +123,9 @@
  the target's to every server of the CASEMAPPING is shown with
  "(E2E key of <name>)" (R-E22).
  Not addressed (known limitations, /help e2e):
- NOTICEs, non-ACTION CTCPs, bot commands and IRCv3 tags stay clear text;
+ NOTICEs, non-ACTION CTCPs, bot commands (only with e2e_bot_bypass,
+ off by default: repartee has no such exception) and IRCv3 tags stay
+ clear text;
  nicks in /e2e accept etc. resolve through the keyring's last_nick; a
  KEYREQ is not bound to the handle that sends it (the signed payload has
  no handle - a protocol limit), so someone who forwards a peer's request
@@ -145,7 +147,7 @@
 #define WRAP_INFO  "RPE2E01-WRAP:"
 #define REKEY_INFO "RPE2E01-REKEY:"
 
-#define BOT_BYPASS_WARN  "bot-style message to %s sent in CLEARTEXT — channel lines starting with '.' or '!' and a letter bypass encryption for bots"
+#define BOT_BYPASS_WARN  "bot-style message to %s sent in CLEARTEXT — with e2e_bot_bypass ON, channel lines starting with '.' or '!' and a letter bypass encryption for bots (/set e2e_bot_bypass off encrypts them)"
 #define REFUSE_AMBIGUOUS "ambiguous target %s — E2E is enabled on both %s (STATUSMSG subset vs distinct channel); refusing to guess a context"
 #define REFUSE_CASE      "E2E is enabled on %s, the same channel as %s for the server — message NOT sent; write the name as %s"
 #define REFUSE_MULTI     "message to several targets (%s) includes an encrypted conversation — message NOT sent; send it to each target separately"
@@ -162,6 +164,8 @@ static gint64 default_now(void)
 }
 
 gint64 (*e2e_now)(void) = default_now;
+
+gboolean e2e_bot_bypass = FALSE;
 
 static char *pipe_key(const char *a, const char *b)
 {
@@ -2886,18 +2890,21 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 		}
 	}
 
-	/* bot commands go out in clear text, channel only, warned about
-	   whenever E2E cannot be ruled out */
-	if (is_channel && e2e_is_bot_command(body)) {
-		res->action = E2E_GATE_BYPASS;
-		if (!kr_ok || on->len > 0 || blocked != NULL)
-			res->message = g_strdup_printf(BOT_BYPASS_WARN, readings[0]);
-		goto out;
-	}
-	/* an unreadable keyring may hold an enabled config: fail closed */
+	/* an unreadable or lost keyring may hold an enabled config: fail
+	   closed, bot commands too */
 	if (!kr_ok) {
 		res->action = E2E_GATE_REFUSE;
 		res->message = g_strdup(E2E_REFUSE_KEYRING);
+		goto out;
+	}
+	/* only with e2e_bot_bypass (rpe2e.pl's behaviour; repartee has no
+	   such exception): bot commands go out in clear text, channel only,
+	   warned about whenever E2E is on there. Otherwise they are lines
+	   like any other. */
+	if (e2e_bot_bypass && is_channel && e2e_is_bot_command(body)) {
+		res->action = E2E_GATE_BYPASS;
+		if (on->len > 0 || blocked != NULL)
+			res->message = g_strdup_printf(BOT_BYPASS_WARN, readings[0]);
 		goto out;
 	}
 

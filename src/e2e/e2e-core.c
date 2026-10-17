@@ -253,7 +253,7 @@ static void warn_unload(void)
 	n = enabled_contexts(&lost);
 	if (lost)
 		text = g_strdup("the e2e module is unloaded while the keyring is lost (a corrupt one "
-		                "was moved aside): it refused every message but bot commands, to keep "
+		                "was moved aside): it refused every message, to keep "
 		                "channels and queries with E2E on safe, and every message is now sent in clear text "
 		                "(/load e2e, then /e2e reset or /e2e import)");
 	else if (n == 0)
@@ -2035,6 +2035,11 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 
 /* ---- the module ---- */
 
+static void read_settings(void)
+{
+	e2e_bot_bypass = settings_get_bool("e2e_bot_bypass");
+}
+
 void e2e_core_init(void)
 {
 	GSList *tmp;
@@ -2042,6 +2047,8 @@ void e2e_core_init(void)
 	module_register("e2e", "core");
 	theme_register(e2e_formats);
 	settings_add_bool("e2e", "e2e_debug", FALSE);
+	settings_add_bool("e2e", "e2e_bot_bypass", FALSE);
+	read_settings();
 
 	keyring_dir = g_build_filename(get_irssi_dir(), "rpe2e", NULL);
 	keyring_file = g_build_filename(keyring_dir, "keyring.json", NULL);
@@ -2079,6 +2086,7 @@ void e2e_core_init(void)
 	signal_add("script destroyed", (SIGNAL_FUNC) sig_script_destroyed);
 	signal_add_first("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
 	signal_add("gui exit", (SIGNAL_FUNC) sig_gui_exit);
+	signal_add("setup changed", (SIGNAL_FUNC) read_settings);
 
 	e2e_commands_init();
 	e2e_statusbar_init();
@@ -2148,6 +2156,7 @@ void e2e_core_deinit(void)
 	signal_remove("script destroyed", (SIGNAL_FUNC) sig_script_destroyed);
 	signal_remove("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
 	signal_remove("gui exit", (SIGNAL_FUNC) sig_gui_exit);
+	signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
 	if (script_check_id != 0)
 		g_source_remove(script_check_id);
 	script_check_id = 0;

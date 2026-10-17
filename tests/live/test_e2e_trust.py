@@ -184,6 +184,20 @@ def main():
         assert wait_chan(a, "secret three", start), chan_log(a)[start:]
         assert "not read" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_bot_lines():
+        """a line that looks like a bot command is encrypted like any
+        other; with e2e_bot_bypass on it goes out in clear text, warned"""
+        a, k = st["alice"], st["bob"]
+        start = len(chan_log(k))
+        say(a, "!secret bot line")
+        assert wait_chan(k, "!secret bot line", start), chan_log(k)[start:]
+        assert "!secret bot line" not in (work / "wire.log").read_text(errors="replace")
+        off = log_size(a)
+        a.type_and_wait("/set e2e_bot_bypass on", "/msg #test !seen clearbot", "/set e2e_bot_bypass off")
+        assert harness.wait_until(lambda: "PRIVMSG #test :!seen clearbot" in
+                                  (work / "wire.log").read_text(errors="replace"), WAIT)
+        assert wait_log(a, off, "bot-style message to #test sent in CLEARTEXT"), log_since(a, off)
+
     def t_unreadable_keyring():
         """a keyring that cannot be read: /e2e export writes no empty
         export, /e2e rotate claims nothing - both say why"""
@@ -223,7 +237,7 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_unreadable_keyring, t_wire])
+                      t_bot_lines, t_unreadable_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

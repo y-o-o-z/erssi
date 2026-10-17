@@ -511,6 +511,8 @@ static void test_gate(void)
 	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
 	E2E_JSON *out;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, -1);
 	g_hash_table_insert(nicks, (char *) "bob", (char *) BOB);
 
@@ -604,14 +606,15 @@ static void test_gate(void)
 	g_assert_cmpstr(g.message, ==, E2E_REFUSE_NO_HANDLE);
 	e2e_gate_result_clear(&g);
 
-	/* a keyring that could not be read: nothing but bot commands */
+	/* a keyring that could not be read: nothing at all, a bot command
+	   neither (it may be a channel with E2E on) */
 	e2e_gate_decide(a.kr, FALSE, &a.id, NULL, "#plain", "hello", table_resolve, nicks, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
 	g_assert_cmpstr(g.message, ==, E2E_REFUSE_KEYRING);
 	e2e_gate_result_clear(&g);
 	e2e_gate_decide(a.kr, FALSE, &a.id, NULL, "#plain", ".op", table_resolve, nicks, &g);
-	g_assert_cmpint(g.action, ==, E2E_GATE_BYPASS);
-	g_assert_nonnull(g.message);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_cmpstr(g.message, ==, E2E_REFUSE_KEYRING);
 	e2e_gate_result_clear(&g);
 
 	/* a scheduled rotation: a new key, REKEY to the recipients first */
@@ -660,6 +663,7 @@ static void test_gate(void)
 #undef GATE
 	g_hash_table_destroy(nicks);
 	peer_free(&a);
+	e2e_bot_bypass = FALSE;
 }
 
 static void test_incoming(void)
@@ -3079,6 +3083,8 @@ static void test_legacy_multi_network(void)
 	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
 	char *before, *after, *plain, *rsp = NULL, *recip = NULL, *msg;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, 0x41);
 	legacy_fixture_fill(a.kr);
 	/* old rows that rpe2e.pl's KEYRSP and REKEY (from bob) would match:
@@ -3164,6 +3170,7 @@ static void test_legacy_multi_network(void)
 	g_hash_table_destroy(nicks);
 	peer_free(&a);
 	peer_free(&b);
+	e2e_bot_bypass = FALSE;
 }
 
 /* rows of this network exist: they are used, old ones are left alone */
@@ -4495,8 +4502,15 @@ static void test_casemap_guard_bare_rows(void)
 	g_free(m);
 	g_free(t);
 	line = "PRIVMSG #MULTI :!seen x";
+	e2e_bot_bypass = TRUE;
 	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_ascii, line, strlen(line),
 	                                 no_resolve, NULL, &m, &t), !=, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	/* without the bypass the module would encrypt it: refused */
+	e2e_bot_bypass = FALSE;
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_ascii, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
 	g_free(m);
 	g_free(t);
 	/* R-E26: rpe2e.pl does not split "#x,#y": a piece the server takes
@@ -4683,6 +4697,8 @@ static void test_casemap_list_dm_bypass(void)
 	E2E_JSON *kr = e2e_keyring_new();
 	PEER p = { .kr = kr };
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	/* the module active: the DM piece refuses the list (as before) */
 	enable(&p, "E2E\x1f@" BOB, "normal");
 	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,bob", "!help secret", cm_resolve_bob), ==,
@@ -4722,6 +4738,7 @@ static void test_casemap_list_dm_bypass(void)
 	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG #x,#\xc5\xbb" "aba :help", cm_resolve_bob), ==,
 	                E2E_GATE_REFUSE);
 	e2e_json_free(kr);
+	e2e_bot_bypass = FALSE;
 }
 
 /* R-E29: an old bare-nick row (no '@') with E2E on counts for a nick in a
@@ -5206,6 +5223,8 @@ static void test_gate_dry(void)
 	PEER a;
 	char *before, *after;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, -1);
 	/* an old context on the only network, no key of ours yet */
 	enable(&a, "#old", "normal");
@@ -5250,6 +5269,7 @@ static void test_gate_dry(void)
 	g_free(after);
 	g_free(before);
 	peer_free(&a);
+	e2e_bot_bypass = FALSE;
 }
 
 /* the reviewer's PoC (R-E33): y's KEYREQ for x's query, stored as
@@ -6138,6 +6158,57 @@ static void test_gate_relabeled(void)
 	peer_free(&a);
 }
 
+/* what a line becomes at the gate, with E2E on for #test: the action,
+   and for CIPHER that no wire holds the text */
+static E2E_GATE_ACTION gate_bot(PEER *a, gboolean kr_ok, const char *chan, const char *body)
+{
+	E2E_GATE_RESULT g;
+	E2E_GATE_ACTION action;
+	guint i;
+
+	e2e_gate_decide(a->kr, kr_ok, &a->id, NULL, chan, body, no_resolve, NULL, &g);
+	action = g.action;
+	for (i = 0; g.wires != NULL && i < g.wires->len; i++)
+		g_assert_null(strstr(g_ptr_array_index(g.wires, i), body));
+	/* warned about where E2E is on */
+	if (action == E2E_GATE_BYPASS)
+		g_assert_true((g.message != NULL) == (strcmp(chan, "#test") == 0));
+	e2e_gate_result_clear(&g);
+	return action;
+}
+
+/* bot-command lines ('.' or '!' and a letter) are encrypted like any
+   other unless e2e_bot_bypass is on; an unreadable keyring refuses them
+   either way */
+static void test_bot_bypass_setting(void)
+{
+	static const char *const bots[] = { "!secret x", ".op", "!seen bob", NULL };
+	static const char *const never[] = { "plain text", "...", "!!", "!", ". op", NULL };
+	PEER a;
+	int i, on;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#test", "normal");
+	g_assert_false(e2e_bot_bypass);	/* the default */
+	for (on = 0; on < 2; on++) {
+		e2e_bot_bypass = on;
+		for (i = 0; bots[i] != NULL; i++) {
+			g_assert_cmpint(gate_bot(&a, TRUE, "#test", bots[i]), ==,
+			                on ? E2E_GATE_BYPASS : E2E_GATE_CIPHER);
+			g_assert_cmpint(gate_bot(&a, FALSE, "#test", bots[i]), ==, E2E_GATE_REFUSE);
+			/* where E2E is off it is clear text anyway */
+			g_assert_cmpint(gate_bot(&a, TRUE, "#plain", bots[i]), ==,
+			                on ? E2E_GATE_BYPASS : E2E_GATE_PASS);
+		}
+		for (i = 0; never[i] != NULL; i++) {
+			g_assert_cmpint(gate_bot(&a, TRUE, "#test", never[i]), ==, E2E_GATE_CIPHER);
+			g_assert_cmpint(gate_bot(&a, FALSE, "#test", never[i]), ==, E2E_GATE_REFUSE);
+		}
+	}
+	e2e_bot_bypass = FALSE;
+	peer_free(&a);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6152,6 +6223,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/reverify", test_reverify);
 	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
+	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);

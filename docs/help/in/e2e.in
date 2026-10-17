@@ -172,8 +172,8 @@
     module's per-network entries (see Networks), so it would send a
     channel or query that only the module set up in clear text: while
     the script is loaded the module still stops such messages (they are
-    NOT sent, and you are told), lets bot commands out with a warning,
-    and warns once that the keyring has such entries. Going back to
+    NOT sent, and you are told), lets bot commands out with a warning
+    only while e2e_bot_bypass is on, and warns once that the keyring has such entries. Going back to
     rpe2e.pl after the module wrote them is a downgrade - unload the
     script to send there encrypted; /E2E EXPORT keeps a copy.
 
@@ -191,11 +191,14 @@
     encrypted. When encryption is not possible, the message is NOT sent,
     although it is shown locally, and an [E2E] message is printed; a line
     to several targets at once (#a,#b) is not sent when one of them is
-    encrypted. Exceptions: on a channel, lines starting with '.' or '!'
-    followed by a letter (bot commands such as .op or !seen) are sent in
-    plain text, with a warning - "..." or "!!" are encrypted - and CTCPs
-    other than ACTION are always sent in plain text. NOTICEs are not
-    encrypted.
+    encrypted. Exceptions: CTCPs other than ACTION are always sent in
+    plain text, and NOTICEs are not encrypted. With /SET e2e_bot_bypass
+    ON (off by default, as in repartee; rpe2e.pl always did it), lines on
+    a channel starting with '.' or '!' followed by a letter (bot commands
+    such as .op or !seen) are sent in plain text, with a warning - "..."
+    or "!!" are encrypted all the same; with it off they are encrypted
+    like any other line. A keyring that cannot be read, or is lost, lets
+    no such line out either.
 
     An encrypted message that cannot be read is never dropped without a
     word: in its place - as a message of its sender, logged like one -
@@ -295,10 +298,10 @@
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again; the subcommands
     (but HELP and IMPORT) refuse then, so that EXPORT never writes an
-    empty export and nothing claims a change that was not saved. One that is not
-    valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
-    state is then LOST: nothing is sent to any channel or query (except
-    bot commands) and nothing is saved, also after a restart, until you
+    empty export and nothing claims a change that was not saved. One
+    that is not valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
+    state is then LOST: nothing is sent to any channel or query and
+    nothing is saved, also after a restart, until you
     run /E2E RESET (a new keyring) or /E2E IMPORT a keyring export.
     Which people you accepted is stored in keyring.json as "accepted"
     (rpe2e.pl keeps it, exports do not carry it): with a keyring from
@@ -332,8 +335,8 @@
     Known limitations: a server that names rfc1459, ascii or
     strict-rfc1459 but folds the bytes of another code page (koi8-r,
     cp1251) is not covered: such names may be one channel to it and two
-    to erssi. NOTICEs, CTCPs other than ACTION, bot commands and IRCv3
-    message tags are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY
+    to erssi. NOTICEs, CTCPs other than ACTION, bot commands with
+    e2e_bot_bypass on and IRCv3 message tags are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY
     etc. are resolved with the last nick stored in the keyring, which
     may meanwhile belong to someone else - check the ident@host the
     command prints. A keyring written with real Unicode (repartee's

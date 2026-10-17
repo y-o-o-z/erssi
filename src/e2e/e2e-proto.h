@@ -43,6 +43,10 @@
 
 /* seconds since the epoch; tests replace it */
 extern gint64 (*e2e_now)(void);
+/* the e2e_bot_bypass setting: channel lines that look like bot commands
+   ('.' or '!' and a letter) go out in clear text where E2E is on (as
+   rpe2e.pl did); FALSE (the default): encrypted like any other line */
+extern gboolean e2e_bot_bypass;
 
 typedef struct {
 	unsigned char pk[32];
