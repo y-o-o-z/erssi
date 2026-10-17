@@ -298,6 +298,21 @@ gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
 
 /* ---- incoming messages ---- */
 
+/* Chunks read lately, to drop one the server delivers again: the
+   timestamp check lets a ciphertext through for E2E_TS_TOLERANCE either
+   way, and repartee and rpe2e.pl show such a repeat again. A chunk is
+   remembered by a SHA-256 of its network, context, sender and the wire
+   itself (msgid, part, nonce, ciphertext) for 2 * E2E_TS_TOLERANCE, at
+   most max of them (the oldest go first: memory stays bounded under a
+   flood; only chunks that opened under a trusted key are remembered). */
+typedef struct _E2E_REPLAY E2E_REPLAY;
+#define E2E_REPLAY_MAX 4096
+E2E_REPLAY *e2e_replay_new(guint max);
+void e2e_replay_free(E2E_REPLAY *r);
+/* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
+gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const char *wire);
+guint e2e_replay_size(const E2E_REPLAY *r);
+
 typedef struct {
 	const char *nick;	/* sender */
 	const char *handle;	/* sender's ident@host */
@@ -310,6 +325,7 @@ typedef struct {
 	void *resolve_data;
 	GHashTable *keyreq_stamps;	/* the 30 s limiter of our KEYREQs */
 	const E2E_NET *net;	/* the network; NULL: unscoped (as before) */
+	E2E_REPLAY *replay;	/* chunks read lately (NULL: not checked) */
 } E2E_IN_PARAMS;
 
 typedef enum {
@@ -330,7 +346,8 @@ typedef enum {
 	E2E_IN_WHY_REJECTED,	/* it does not open under their key, or its time is
 				   off (res->reason) */
 	E2E_IN_WHY_OWN_COPY,	/* our own line relayed back, not under our key now */
-	E2E_IN_WHY_BLOCKED	/* an old context of unknown network: off here */
+	E2E_IN_WHY_BLOCKED,	/* an old context of unknown network: off here */
+	E2E_IN_WHY_REPEAT	/* the same chunk again (E2E_REPLAY): dropped */
 } E2E_IN_WHY;
 
 /* E2E_IN_WHY_NO_SESSION: what became of the key request */

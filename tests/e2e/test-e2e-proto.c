@@ -6209,6 +6209,84 @@ static void test_bot_bypass_setting(void)
 	peer_free(&a);
 }
 
+/* a chunk the server delivers again is dropped, not shown twice: a
+   whole message, one part of a long one; it is forgotten after twice the
+   timestamp window, and the memory stays bounded */
+static void test_replay(void)
+{
+	PEER a, b;
+	E2E_GATE_RESULT g;
+	E2E_IN_PARAMS in;
+	E2E_IN_RESULT r;
+	E2E_REPLAY *rp;
+	char *longtext, *one;
+	guint i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	in_params(&in, &b, "alice", ALICE, "#test", NULL);
+	in.replay = rp;
+
+	/* one message, twice */
+	one = wire_from(&a, "#test", "only once");
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	g_assert_null(r.plain);
+	assert_placeholder(&b, &a, &r, "repeated encrypted message from alice");
+	e2e_in_result_clear(&r);
+	/* the same chunk from someone else, or in another channel, is
+	   another one (it would not open there anyway) */
+	g_assert_false(e2e_replay_check(rp, "#other", ALICE, one));
+	g_assert_false(e2e_replay_check(rp, "#test", BOB, one));
+
+	/* a long message: every part reads once, a part again is dropped */
+	longtext = g_strnfill(500, 'q');
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", longtext, no_resolve, NULL, &g);
+	g_assert_cmpuint(g.wires->len, >, 1);
+	for (i = 0; i < g.wires->len; i++) {
+		e2e_decrypt_incoming(b.kr, &b.id, &in, g_ptr_array_index(g.wires, i), &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+		e2e_in_result_clear(&r);
+	}
+	e2e_decrypt_incoming(b.kr, &b.id, &in, g_ptr_array_index(g.wires, 1), &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	e2e_gate_result_clear(&g);
+	g_free(longtext);
+
+	/* forgotten after twice the window (the timestamp check refuses it
+	   by then) */
+	fake_now += 2 * E2E_TS_TOLERANCE;
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, one));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	fake_now -= 2 * E2E_TS_TOLERANCE;
+	g_free(one);
+	e2e_replay_free(rp);
+
+	/* bounded: the oldest go first */
+	rp = e2e_replay_new(8);
+	for (i = 0; i < 100; i++) {
+		char *w = g_strdup_printf("+RPE2E01 fake %u", i);
+
+		g_assert_false(e2e_replay_check(rp, "#test", ALICE, w));
+		g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
+		g_free(w);
+	}
+	g_assert_true(e2e_replay_check(rp, "#test", ALICE, "+RPE2E01 fake 99"));
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, "+RPE2E01 fake 0"));
+	e2e_replay_free(rp);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6224,6 +6302,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
+	g_test_add_func("/e2e/proto/replay", test_replay);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);

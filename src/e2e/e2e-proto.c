@@ -3389,6 +3389,75 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 	return ask;
 }
 
+struct _E2E_REPLAY {
+	GHashTable *seen;	/* digest (hex) -> gint64 * when */
+	GQueue *order;		/* the digests, oldest first (shared keys) */
+	guint max;
+};
+
+E2E_REPLAY *e2e_replay_new(guint max)
+{
+	E2E_REPLAY *r = g_new0(E2E_REPLAY, 1);
+
+	r->seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	r->order = g_queue_new();
+	r->max = max > 0 ? max : 1;
+	return r;
+}
+
+void e2e_replay_free(E2E_REPLAY *r)
+{
+	if (r == NULL)
+		return;
+	g_queue_free(r->order);
+	g_hash_table_destroy(r->seen);
+	g_free(r);
+}
+
+guint e2e_replay_size(const E2E_REPLAY *r)
+{
+	return g_hash_table_size(r->seen);
+}
+
+gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const char *wire)
+{
+	GString *in = g_string_new(NULL);
+	unsigned char digest[32];
+	gint64 now = e2e_now(), *when;
+	char *hex, *oldest;
+
+	/* the expired ones go first (the oldest are at the head) */
+	while ((oldest = g_queue_peek_head(r->order)) != NULL) {
+		when = g_hash_table_lookup(r->seen, oldest);
+		if (when != NULL && now - *when < 2 * E2E_TS_TOLERANCE && *when <= now)
+			break;
+		g_queue_pop_head(r->order);
+		g_hash_table_remove(r->seen, oldest);
+	}
+	/* the names may hold anything but NUL: one 0 byte apart */
+	g_string_append(in, ctx != NULL ? ctx : "");
+	g_string_append_c(in, '\0');
+	g_string_append(in, sender != NULL ? sender : "");
+	g_string_append_c(in, '\0');
+	g_string_append(in, wire);
+	if (!e2e_sha256((const unsigned char *) in->str, in->len, digest))
+		memset(digest, 0, sizeof(digest));
+	g_string_free(in, TRUE);
+	hex = e2e_hex_encode(digest, sizeof(digest));
+	if (g_hash_table_contains(r->seen, hex)) {
+		g_free(hex);
+		return TRUE;
+	}
+	while (g_hash_table_size(r->seen) >= r->max &&
+	       (oldest = g_queue_pop_head(r->order)) != NULL)
+		g_hash_table_remove(r->seen, oldest);
+	when = g_new(gint64, 1);
+	*when = now;
+	g_hash_table_insert(r->seen, hex, when);
+	g_queue_push_tail(r->order, hex);
+	return FALSE;
+}
+
 /* _decrypt_wire_message */
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
                           const char *text, E2E_IN_RESULT *res)
@@ -3543,6 +3612,19 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		g_ptr_array_unref(changes);
 	}
 out:
+	/* read before: the server sent the same chunk again */
+	if (res->action == E2E_IN_PLAIN && p->replay != NULL &&
+	    e2e_replay_check(p->replay, res->ctx, p->is_own_line ? "" : p->handle, text)) {
+		e2e_wipe(res->plain, strlen(res->plain));
+		g_free(res->plain);
+		res->plain = NULL;
+		g_free(res->via);
+		res->via = NULL;
+		res->action = E2E_IN_DROP;
+		res->why = E2E_IN_WHY_REPEAT;
+		g_free(res->debug);
+		res->debug = g_strdup_printf("drop ciphertext from %s (%s): a repeat", p->nick, p->handle);
+	}
 	g_free(wire);
 	e2e_wire_free(w);
 }
@@ -3613,6 +3695,9 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 		break;
 	case E2E_IN_WHY_BLOCKED:
 		out = g_strdup("[E2E: encrypted message not read - E2E here was set up before erssi kept networks apart, and erssi uses several: /e2e adopt in this window binds it to this network]");
+		break;
+	case E2E_IN_WHY_REPEAT:
+		out = g_strdup_printf("[E2E: a repeated encrypted message from %s dropped]", who);
 		break;
 	case E2E_IN_WHY_NONE:
 		out = g_strdup("[E2E: encrypted message not read]");

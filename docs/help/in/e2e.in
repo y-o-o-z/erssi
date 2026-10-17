@@ -343,8 +343,13 @@
     export) that stores a nick whose letters all fit Latin-1 (kótek) is
     read as Latin-1 bytes, so neither erssi nor rpe2e.pl finds that nick
     by it (one with other letters, żbik, is found). As in repartee, the
-    server can replay an encrypted message within 5 minutes, and drop or
-    reorder the parts of a long one. A key request carries no ident@host:
+    server can drop or reorder the parts of a long message (each part is
+    shown on its own). A part read before that the server delivers again
+    within 10 minutes is dropped, with "repeated message from <nick>
+    dropped" (once a minute per sender); the last 4096 parts read are
+    remembered, so a flood can push an older one out, and after a
+    restart nothing is - a repeat within the 5 minutes of the timestamp
+    check is then shown again, as in repartee. A key request carries no ident@host:
     someone who forwards your peer's request before the peer's first
     contact with you ties that key to their own address, and the peer's
     own request is then held back as a changed address until /E2E REVERIFY

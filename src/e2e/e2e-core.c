@@ -95,6 +95,8 @@ static GHashTable *keyreq_out;		/* handle -> our last KEYREQ (30 s) */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
 /* "tag|handle|change|fp" -> the last warning about a blocked key exchange */
 static GHashTable *trust_notice;
+/* chunks read lately: a repeat is dropped */
+static E2E_REPLAY *replay;
 #define E2E_TRUST_NOTICE_INTERVAL 60
 /* "tag|handle|ctx" -> last "Pending key exchange" notice (bounded) */
 static GHashTable *pending_notice;
@@ -1712,6 +1714,17 @@ static void sig_server_gone(SERVER_REC *server)
 
 /* ---- incoming messages ---- */
 
+/* a nick from the server as it is shown: control bytes as '?'. Valid
+   until the next call. */
+static const char *shown_nick(const char *nick)
+{
+	static char *last;
+
+	g_free(last);
+	last = e2e_text_display(nick != NULL ? nick : "");
+	return last;
+}
+
 /* An encrypted message that is not shown: in its place, as a message of
    its sender, a line that says so and why (as repartee does) - every one,
    so the user sees that someone writes to them; it is routed, themed,
@@ -1780,6 +1793,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	p.resolve = resolve_cb;
 	p.resolve_data = server;
 	p.keyreq_stamps = keyreq_out;
+	p.replay = replay;
 	e2e_server_net(server, &net);
 	p.net = &net;
 
@@ -1811,6 +1825,19 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	case E2E_IN_DROP:
 		if (res.debug != NULL)
 			e2e_print_debug(server, res.ctx, nick, "%s", res.debug);
+		/* the server sent a chunk again: dropped, said once a minute
+		   per sender (a flood of repeats is no flood of lines) */
+		if (res.why == E2E_IN_WHY_REPEAT) {
+			char *stamp = g_strconcat(server->tag, "|repeat|", nick, NULL);
+
+			if (e2e_stamp_allow(trust_notice, stamp, E2E_TRUST_NOTICE_INTERVAL))
+				e2e_print_warning(e2e_notice_item(server, res.ctx, nick),
+				                  "repeated message from %s dropped - the server delivered an encrypted message it had delivered before (more of them in the next minute are dropped without this line)",
+				                  shown_nick(nick));
+			g_free(stamp);
+			signal_stop();
+			break;
+		}
 		if (res.keyreq != NULL) {
 			char *shown = e2e_ctx_display(res.ctx);
 
@@ -1871,16 +1898,6 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 
 /* ---- the key exchange ---- */
 
-/* a nick from the server as it is shown: control bytes as '?'. Valid
-   until the next call. */
-static const char *shown_nick(const char *nick)
-{
-	static char *last;
-
-	g_free(last);
-	last = e2e_text_display(nick != NULL ? nick : "");
-	return last;
-}
 
 static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nick,
                            const char *address, const char *target)
@@ -2059,6 +2076,7 @@ void e2e_core_init(void)
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
 	trust_notice = e2e_stamps_new();
+	replay = e2e_replay_new(E2E_REPLAY_MAX);
 	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
@@ -2176,6 +2194,8 @@ void e2e_core_deinit(void)
 	g_hash_table_destroy(keyreq_out);
 	g_hash_table_destroy(keyreq_in);
 	g_hash_table_destroy(trust_notice);
+	e2e_replay_free(replay);
+	replay = NULL;
 	g_hash_table_destroy(pending_notice);
 	if (state_idle_id != 0)
 		g_source_remove(state_idle_id);
