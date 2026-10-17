@@ -5,10 +5,10 @@ name: Shellter CI
 # UndefinedBehaviorSanitizer running the same tests, and a check that the
 # installer is valid POSIX sh. The workflows inherited from erssi-org
 # (build, check, ABI check, fuzzing, commit lint) are kept for upstream
-# merges and switched off in this repository's Actions settings. The Shellter team's
-# CI runs these jobs on every commit and reports commit statuses; this
-# workflow is kept for GitHub Actions. utils/pre-push runs the same build,
-# tests and release checks before every push.
+# merges and switched off in this repository's Actions settings. The CI on
+# the Shellter team's own server runs these jobs on every commit and reports
+# commit statuses; this workflow is kept for GitHub Actions. utils/pre-push
+# runs the same build, tests and release checks before every push.
 
 on:
   push:
