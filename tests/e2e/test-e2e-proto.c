@@ -6019,6 +6019,26 @@ static void test_reverify(void)
 	peer_free(&a);
 	peer_free(&b);
 
+	/* a later request of hers for the same channel takes the place of
+	   the record: the session of her blocked answer stays with it */
+	handle_change_setup(&a, &b);
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 1);
+	g_assert_nonnull(e2e_json_get(g_ptr_array_index(changes, 0), "session_sk"));
+	g_ptr_array_unref(changes);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpuint(rv.installed->len, ==, 1);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
 	/* by the new address, and by the old one (the address the key is at) */
 	handle_change_setup(&a, &b);
 	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);

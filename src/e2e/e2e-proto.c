@@ -1011,16 +1011,22 @@ static void record_pending_trust_change(E2E_JSON *kr, const char *handle, const 
                                         const char *old_fp, const char *new_fp,
                                         const char *nick, const char *old_handle)
 {
-	E2E_JSON *list = e2e_json_get(kr, "pending_trust_change"), *row;
+	E2E_JSON *list = e2e_json_get(kr, "pending_trust_change"), *row, *kept = NULL;
 	guint i;
 
 	for (i = 0; i < list->array->len;) {
 		row = g_ptr_array_index(list->array, i);
 		if (g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0 &&
-		    g_strcmp0(e2e_json_get_string(row, "channel"), ctx) == 0)
+		    g_strcmp0(e2e_json_get_string(row, "channel"), ctx) == 0) {
+			/* the session a blocked answer of the same key left
+			   (for /e2e reverify) is not lost to a later request */
+			if (kept == NULL && g_strcmp0(e2e_json_get_string(row, "new_fp"), new_fp) == 0 &&
+			    e2e_json_get(row, "session_sk") != NULL)
+				kept = e2e_json_copy(e2e_json_get(row, "session_sk"));
 			g_ptr_array_remove_index(list->array, i);
-		else
+		} else {
 			i++;
+		}
 	}
 	/* bounded: anyone can make these with a forwarded request */
 	while (list->array->len >= E2E_MAX_TRUST_CHANGES)
@@ -1039,6 +1045,8 @@ static void record_pending_trust_change(E2E_JSON *kr, const char *handle, const 
 		e2e_json_set_string(row, "nick", nick);
 	if (old_handle != NULL)
 		e2e_json_set_string(row, "old_handle", old_handle);
+	if (kept != NULL)
+		e2e_json_set(row, "session_sk", kept);
 	e2e_json_set_int(row, "recorded_at", e2e_now());
 	e2e_json_array_add(list, row);
 }
