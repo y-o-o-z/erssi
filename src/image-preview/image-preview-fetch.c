@@ -851,6 +851,8 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		if (success) {
 			preview->fetch_failed = FALSE;
 			image_preview_debug_print("FETCH: saved to %s", fetch->cache_path);
+			/* the new file may take the cache over its size limit */
+			image_cache_enforce_limit(fetch->cache_path);
 		} else {
 			/* Remove failed download file */
 			if (fetch->cache_path != NULL) {

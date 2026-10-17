@@ -97,6 +97,7 @@ char *image_cache_get(const char *url);
 gboolean image_cache_store(const char *url, const char *source_path);
 void image_cache_clear_all(void);
 void image_cache_cleanup(void);
+void image_cache_enforce_limit(const char *path);
 void image_cache_print_stats(void);
 
 /* Async fetch management */

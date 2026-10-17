@@ -19,6 +19,7 @@
 
 #include <sys/stat.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -296,27 +297,57 @@ gboolean image_cache_store(const char *url, const char *source_path)
 	return TRUE;
 }
 
+/* TRUE for the name of a file the cache writes: the SHA-256 of the URL in
+ * lower-case hex and a short extension (see generate_cache_path() and
+ * image_preview_queue_fetch()). Nothing else in the directory is deleted,
+ * even when the directory is not the one erssi made. */
+static gboolean is_cache_file_name(const char *name)
+{
+	int i;
+
+	for (i = 0; i < 64; i++) {
+		if (!g_ascii_isxdigit(name[i]) || g_ascii_isupper(name[i]))
+			return FALSE;
+	}
+	return name[64] == '.' && name[65] != '\0' && strlen(name + 64) <= 6;
+}
+
+/* Opens the cache directory for reading entries relative to it */
+static DIR *open_cache_dir(void)
+{
+	int fd;
+	DIR *dir;
+
+	if (cache_dir == NULL || !ensure_cache_dir())
+		return NULL;
+
+	fd = open(cache_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0)
+		return NULL;
+	dir = fdopendir(fd);
+	if (dir == NULL)
+		close(fd);
+	return dir;
+}
+
 /* Clear all cached images */
 void image_cache_clear_all(void)
 {
 	DIR *dir;
 	struct dirent *entry;
-	char *path;
+	struct stat st;
 
-	if (cache_dir == NULL || !ensure_cache_dir())
-		return;
-
-	dir = opendir(cache_dir);
+	dir = open_cache_dir();
 	if (dir == NULL)
 		return;
 
 	while ((entry = readdir(dir)) != NULL) {
-		if (entry->d_name[0] == '.')
+		if (!is_cache_file_name(entry->d_name))
 			continue;
-
-		path = g_strdup_printf("%s/%s", cache_dir, entry->d_name);
-		unlink(path);
-		g_free(path);
+		/* a regular file only: a symlink is not followed, nor removed */
+		if (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
+		    S_ISREG(st.st_mode))
+			unlinkat(dirfd(dir), entry->d_name, 0);
 	}
 
 	closedir(dir);
@@ -325,73 +356,123 @@ void image_cache_clear_all(void)
 	cache_stats.entry_count = 0;
 }
 
-/* Cleanup old cache entries */
-void image_cache_cleanup(void)
+typedef struct {
+	char *name;
+	time_t mtime;
+	gint64 size;
+} CACHE_FILE_REC;
+
+static int cache_file_cmp_age(gconstpointer a, gconstpointer b)
+{
+	const CACHE_FILE_REC *fa = a, *fb = b;
+
+	if (fa->mtime != fb->mtime)
+		return fa->mtime < fb->mtime ? -1 : 1;
+	return strcmp(fa->name, fb->name);
+}
+
+static void cache_file_free(CACHE_FILE_REC *rec)
+{
+	g_free(rec->name);
+	g_free(rec);
+}
+
+/* Removes files older than 7 days, then the oldest files until the cache
+ * is no larger than image_preview_cache_size. keep_name, when not NULL, is
+ * a file that stays (the image that was just downloaded to be shown). Only
+ * regular files with the cache's own names directly in the cache
+ * directory are looked at; symlinks are neither followed nor removed. */
+static void cache_cleanup(const char *keep_name)
 {
 	DIR *dir;
 	struct dirent *entry;
 	struct stat st;
-	char *path;
 	time_t now;
 	int max_age_seconds;
-	gint64 max_size_bytes;
+	gint64 max_size_bytes, total;
 	GSList *files = NULL;
 	GSList *l;
+	int count;
 
-	if (cache_dir == NULL || !ensure_cache_dir())
+	dir = open_cache_dir();
+	if (dir == NULL)
 		return;
 
 	now = time(NULL);
 	max_age_seconds = 7 * 24 * 60 * 60;  /* 7 days default */
 	max_size_bytes = settings_get_size(IMAGE_PREVIEW_CACHE_SIZE);
 
-	dir = opendir(cache_dir);
-	if (dir == NULL)
-		return;
-
 	/* Collect all files with their stats */
+	total = 0;
+	count = 0;
 	while ((entry = readdir(dir)) != NULL) {
-		if (entry->d_name[0] == '.')
+		CACHE_FILE_REC *rec;
+
+		if (!is_cache_file_name(entry->d_name))
+			continue;
+		if (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0 ||
+		    !S_ISREG(st.st_mode))
 			continue;
 
-		path = g_strdup_printf("%s/%s", cache_dir, entry->d_name);
-		if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
-			/* Check age - remove if too old */
-			if ((now - st.st_mtime) > max_age_seconds) {
-				unlink(path);
-				g_free(path);
-				continue;
-			}
+		/* Check age - remove if too old */
+		if ((now - st.st_mtime) > max_age_seconds &&
+		    g_strcmp0(entry->d_name, keep_name) != 0) {
+			unlinkat(dirfd(dir), entry->d_name, 0);
+			continue;
+		}
 
-			files = g_slist_prepend(files, path);
-		} else {
-			g_free(path);
+		rec = g_new0(CACHE_FILE_REC, 1);
+		rec->name = g_strdup(entry->d_name);
+		rec->mtime = st.st_mtime;
+		rec->size = st.st_size;
+		files = g_slist_prepend(files, rec);
+		total += rec->size;
+		count++;
+	}
+
+	/* If over the size limit, remove the oldest files first */
+	files = g_slist_sort(files, cache_file_cmp_age);
+	for (l = files; l != NULL && total > max_size_bytes; l = l->next) {
+		CACHE_FILE_REC *rec = l->data;
+
+		if (g_strcmp0(rec->name, keep_name) == 0)
+			continue;
+		if (unlinkat(dirfd(dir), rec->name, 0) == 0 || errno == ENOENT) {
+			image_preview_debug_print("CACHE: over the size limit, removed %s (%" G_GINT64_FORMAT " bytes)",
+			                          rec->name, rec->size);
+			total -= rec->size;
+			count--;
 		}
 	}
 
 	closedir(dir);
 
-	/* Recalculate cache size */
-	cache_stats.total_size = 0;
-	cache_stats.entry_count = 0;
+	cache_stats.total_size = total;
+	cache_stats.entry_count = count;
 
-	for (l = files; l != NULL; l = l->next) {
-		path = l->data;
-		if (stat(path, &st) == 0) {
-			cache_stats.total_size += st.st_size;
-			cache_stats.entry_count++;
-		}
+	g_slist_free_full(files, (GDestroyNotify) cache_file_free);
+}
+
+/* Cleanup old cache entries */
+void image_cache_cleanup(void)
+{
+	cache_cleanup(NULL);
+}
+
+/* Keeps the cache within its size limit after path was written to it;
+ * path itself stays */
+void image_cache_enforce_limit(const char *path)
+{
+	char *dir_name;
+	const char *name = NULL;
+
+	if (path != NULL && cache_dir != NULL) {
+		dir_name = g_path_get_dirname(path);
+		if (strcmp(dir_name, cache_dir) == 0)
+			name = path + strlen(cache_dir) + 1;
+		g_free(dir_name);
 	}
-
-	/* If still over size limit, remove oldest files */
-	if (cache_stats.total_size > max_size_bytes) {
-		/* TODO: Sort by mtime and remove oldest until under limit */
-		/* For now, just warn */
-		g_warning("image-cache: Cache size (%" G_GINT64_FORMAT " bytes) exceeds limit (%" G_GINT64_FORMAT " bytes)",
-		          cache_stats.total_size, max_size_bytes);
-	}
-
-	g_slist_free_full(files, g_free);
+	cache_cleanup(name);
 }
 
 /* Periodic cleanup callback */

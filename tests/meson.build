@@ -24,4 +24,7 @@ endif
 if have_e2e
   subdir('e2e')
 endif
+if have_image_preview
+  subdir('image-preview')
+endif
 subdir('live')
