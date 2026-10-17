@@ -203,12 +203,36 @@ git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.stagin
 cm -S -m 'signed'
 to=staging
 push 'signed main to a second remote' ok -- main
+# signed, so that only the commit checks (private data) can refuse it
+printf 'secret-box\n' >> "$PATTERNS"
+echo 'host secret-box.example.lan' >> "$r/f" && git -C "$r" add f
+git -C "$r" commit -q -S --amend -m 'rewritten, signed'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+push 'rewritten main over a rewritten copy of the remote main' refused 'private data in the diff' -- --force main
 git -C "$r" commit -q --amend -m 'rewritten, unsigned'
 git -C "$r" update-ref refs/remotes/staging/main HEAD
-push 'rewritten main over a rewritten copy of the remote main' refused 'not signed by the release key' -- --force main
 # ... also when the remote's old tip is gone from here (filter-repo prunes it)
 git -C "$r" reflog expire --expire=now --all && git -C "$r" gc -q --prune=now
 push 'the same, the remote tip not here any more' refused 'not signed by the release key' -- --force main
+to=origin
+
+# ... and for a new branch or tags only, where the remote reports no tip to
+# compare: a copy that no longer contains its previous commit (reflog) ...
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S -m 'signed'
+to=staging
+push 'signed main to a second remote' ok -- main
+printf 'secret-box\n' >> "$PATTERNS"
+echo 'host secret-box.example.lan' >> "$r/f" && git -C "$r" add f
+git -C "$r" commit -q -S --amend -m 'rewritten'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+push 'a new branch over a rewritten copy' refused 'private data in the diff' -- HEAD:refs/heads/x
+# ... or, with no reflog left, a repository git filter-repo rewrote
+git -C "$r" reflog expire --expire=now --all
+git -C "$r" tag note HEAD
+mkdir "$r/.git/filter-repo"
+push 'a tag after git filter-repo' refused 'private data in the diff' -- refs/tags/note
 to=origin
 
 # a push to a URL instead of a remote name: that remote's branches count

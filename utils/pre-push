@@ -38,10 +38,11 @@
 #    PREPUSH_NO_PATTERNS=1 git push pushes once without this check.
 # What the remote has: what it reports for each pushed ref and our copies of
 # its branches (refs/remotes/<remote>/*; a push to a URL uses the remote of
-# that URL, if there is one). The copies count only while they agree with
-# what the remote reports for the pushed branches: after a history rewrite
-# (git filter-repo rewrites refs/remotes/* too) or when the remote's tip is
-# not here, they are not used. Push to a remote that has been fetched: to a
+# that URL, if there is one). The copies count only while nothing says they
+# were rewritten (git filter-repo rewrites refs/remotes/* too): they are
+# not used after git filter-repo ran in this repository, when one of them
+# no longer contains its previous commit, or when the remote's tip for a
+# pushed branch is not here or differs from our copy. Push to a remote that has been fetched: to a
 # new remote the whole history counts as new, except the branches of the
 # upstream projects' remotes - the remotes named in git config
 # prepush.upstream (a list of names; "upstream irssi" when it is not set),
@@ -150,20 +151,37 @@ fi
 # prints "binary file matches" and the check sees nothing)
 private() { grep -a -iEf "$PATTERNS_CLEAN" | head -3; }
 
-# Our copies of the remote's branches count only while they agree with what
-# the remote reports for the pushed branches: a history rewrite moves
-# refs/remotes/* too (git filter-repo), and the copies would then leave out
-# exactly the rewritten commits. A remote tip that is not here, or that
-# differs from our copy, and none of the copies are used.
+# Our copies of the remote's branches count only while nothing says they
+# were rewritten: a history rewrite moves refs/remotes/* too (git
+# filter-repo), and the copies would then leave out exactly the rewritten
+# commits. None of them is used - for branches, new branches and tags
+# alike - when this repository was rewritten by git filter-repo, when a
+# copy moved to a commit that does not contain its previous one (its
+# reflog), or when the remote's tip for a pushed branch is not here or
+# differs from our copy.
 cat > "$tmpd/refs"
+distrust() {
+    warn "our copies of $remote_name's branches $1 - not used; everything not on an upstream remote is checked"
+    tracking=""
+}
+if [ -n "$tracking" ] && [ -d "$(git rev-parse --git-path filter-repo)" ]; then
+    distrust "may be rewritten (git filter-repo ran here)"
+fi
+if [ -n "$tracking" ]; then
+    for t in $(git for-each-ref --format='%(refname)' "$tracking"); do
+        prev=$(git rev-parse -q --verify "$t@{1}" 2>/dev/null) || continue
+        git merge-base --is-ancestor "$prev" "$t" 2>/dev/null && continue
+        distrust "were rewritten ($t no longer contains its previous commit)"
+        break
+    done
+fi
 if [ -n "$tracking" ]; then
     while read -r _ l_sha r_ref r_sha; do
         if [ "$l_sha" = "$ZERO" ] || [ "$r_sha" = "$ZERO" ]; then continue; fi
         case "$r_ref" in refs/heads/*) ;; *) continue ;; esac
         mine=$(git rev-parse -q --verify "${tracking}${r_ref#refs/heads/}^{commit}" 2>/dev/null) || mine=""
         if ! git cat-file -e "$r_sha^{commit}" 2>/dev/null || { [ -n "$mine" ] && [ "$mine" != "$r_sha" ]; }; then
-            warn "our copies of $remote_name's branches do not match what it reports for $r_ref - not used; everything not on an upstream remote is checked"
-            tracking=""
+            distrust "do not match what it reports for $r_ref"
             break
         fi
     done < "$tmpd/refs"
