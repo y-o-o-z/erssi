@@ -258,9 +258,9 @@
     confirmed that would be answered or stored are taken at most 5 in 10 s
     together, and at most 10 key exchange messages leave in 10 s in all.
     Those of people you have not confirmed wait behind everything you
-    send, and while more than 10 s of them wait in the send queue, their
-    requests are not taken ("many key requests at once - some are
-    ignored"). A key change announced by a person (REKEY) only replaces a
+    send, and while about 15 s of them wait in the send queue, no more
+    are sent ("many key requests at once - some are ignored"). A key
+    change announced by a person (REKEY) only replaces a
     key you already have from them (the key it replaces still opens their
     messages for 2 minutes, for those sent just before it), and each one
     is taken once (after 1024 of them from one person in one context the

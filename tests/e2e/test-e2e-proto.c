@@ -7171,12 +7171,13 @@ static void test_stranger_backlog(void)
 			e2e_json_remove(e2e_json_get(clones[c].kr, "pending"), "#auto|" BOB);
 			req = e2e_build_keyreq(clones[c].kr, &clones[c].id, "#auto", BOB, &error);
 			deliver_keyreq(&me, &clones[c], req, BOB, &rsp, &recip);
+			/* counted twice while they wait, as later_backlog does */
 			if (rsp != NULL && e2e_stranger_room(queued, strlen(rsp) + 20, speed)) {
-				queued += e2e_send_cost(strlen(rsp) + 20, speed);
+				queued += 2 * e2e_send_cost(strlen(rsp) + 20, speed);
 				answered++;
 			}
 			if (recip != NULL && e2e_stranger_room(queued, strlen(recip) + 20, speed))
-				queued += e2e_send_cost(strlen(recip) + 20, speed);
+				queued += 2 * e2e_send_cost(strlen(recip) + 20, speed);
 			worst = MAX(worst, queued);
 			g_free(req);
 			g_free(rsp);
@@ -7187,6 +7188,16 @@ static void test_stranger_backlog(void)
 	g_assert_cmpfloat(worst, <=, E2E_STRANGER_BACKLOG);
 	g_assert_cmpint(answered, >, 0);
 	g_assert_cmpint(held, >, 0);
+	/* what irssi really takes for what waits: half the bound at most,
+	   and the user's lines wait only for the line in flight (they go
+	   ahead of strangers' lines), never more than one long line takes */
+	g_assert_cmpfloat(worst / 2, <=, E2E_STRANGER_BACKLOG / 2);
+	g_assert_cmpfloat(e2e_inflight_wait(0, 30 * G_USEC_PER_SEC), <=, 7.0);
+	/* a KEYRSP and its reciprocal KEYREQ fit after a long line */
+	g_assert_true(e2e_stranger_room(e2e_inflight_wait(0, 7 * G_USEC_PER_SEC) + 2 * e2e_send_cost(330, speed), 240, speed));
+	/* the wall clock set back an hour: the wait stays one line's */
+	g_assert_cmpfloat(e2e_inflight_wait(-(gint64) 3600 * G_USEC_PER_SEC, 5 * G_USEC_PER_SEC), ==, 7.0);
+	g_assert_cmpfloat(e2e_inflight_wait(10 * G_USEC_PER_SEC, 5 * G_USEC_PER_SEC), ==, 0.0);
 	/* a long line costs what irssi waits after it */
 	g_assert_cmpfloat(e2e_send_cost(330, speed), ==, 5.0);
 	g_assert_cmpfloat(e2e_send_cost(50, speed), ==, 2.2);
@@ -7222,6 +7233,106 @@ static void test_migrate_confirmed(void)
 	peer_free(&b2);
 }
 
+/* a stranger's KEYRSP still queued carries the key of before a rotation:
+   it is told apart (the core drops it), and a KEYRSP built while a
+   rotation is due hands out the current key without using the rotation
+   up - the next line rotates, with its REKEYs */
+static void test_keyrsp_and_rotation(void)
+{
+	PEER a, b;
+	E2E_GATE_RESULT g;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *line;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	e2e_json_set_int(path_get(a.kr, "outgoing", "#test", NULL), "pending_rotation", 1);
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "#test|" ALICE);
+	req = e2e_build_keyreq(b.kr, &b.id, "#test", ALICE, &error);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_true(e2e_json_truthy(path_get(a.kr, "outgoing", "#test", "pending_rotation", NULL)));
+	line = g_strdup_printf("NOTICE bob :%s", rsp);
+	g_assert_true(e2e_line_is_keyrsp_for(line, "#test"));
+	g_assert_false(e2e_line_is_keyrsp_for(line, "#other"));
+	g_assert_false(e2e_line_is_keyrsp_for("NOTICE bob :\001RPEE2E KEYREQ v=1 c=#test\001", "#test"));
+	g_assert_false(e2e_line_is_keyrsp_for("PRIVMSG #test :hi", "#test"));
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "rotates now", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_true(g.rotated);
+	g_assert_nonnull(g.notices);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "no rotation", no_resolve, NULL, &g);
+	g_assert_false(g.rotated);
+	e2e_gate_result_clear(&g);
+	g_free(line);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* a request that waited too long goes with the all-zero session row it
+   left: /e2e accept then finds nothing and says so, and nothing opens
+   under the all-zero key */
+static void test_request_expiry(void)
+{
+	PEER a, b;
+	E2E_IN_RESULT r;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *wire;
+	unsigned char zero[32] = { 0 };
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&b, "#test", "normal");
+	enable(&a, "#test", "normal");
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_free(req);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpuint(e2e_prune_old_requests(b.kr), ==, 0);
+	fake_now += E2E_PENDING_INBOUND_TTL + 1;
+	g_assert_cmpuint(e2e_prune_old_requests(b.kr), ==, 1);
+	g_assert_null(path_get(b.kr, "pending_inbound", ALICE "|#test", NULL));
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "#test", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_NOTHING);
+	/* a row of the all-zero key, trusted (as rpe2e.pl could write): never
+	   used */
+	{
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+		char *z = e2e_b64_encode(zero, 32);
+
+		e2e_json_set_string(row, "fp", a.id.fp_hex);
+		e2e_json_set_string(row, "sk", z);
+		e2e_json_set_string(row, "status", "trusted");
+		e2e_json_set(e2e_json_get(b.kr, "incoming"), ALICE "|#test", row);
+		g_free(z);
+	}
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "#test", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_NO_KEY);
+	{
+		GPtrArray *w;
+		const char *err = NULL;
+
+		w = e2e_encrypt_plain(zero, "#test", "forged", fake_now, &err);
+		wire = g_strdup(g_ptr_array_index(w, 0));
+		g_ptr_array_unref(w);
+	}
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_null(r.plain);
+	e2e_in_result_clear(&r);
+	fake_now -= E2E_PENDING_INBOUND_TTL + 1;
+	g_free(wire);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -7249,6 +7360,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
 	g_test_add_func("/e2e/proto/stranger-backlog", test_stranger_backlog);
 	g_test_add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
+	g_test_add_func("/e2e/proto/keyrsp-and-rotation", test_keyrsp_and_rotation);
+	g_test_add_func("/e2e/proto/request-expiry", test_request_expiry);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);

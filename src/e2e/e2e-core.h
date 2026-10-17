@@ -64,8 +64,6 @@ void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
    queue (IRC_SEND_LATER), and only while it leaves within
    E2E_STRANGER_BACKLOG; FALSE when not sent */
 gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body);
-/* no room for a stranger's KEYRSP and reciprocal KEYREQ now */
-gboolean e2e_stranger_queue_full(SERVER_REC *server);
 /* the 30 s limiter of the KEYREQs we send */
 GHashTable *e2e_keyreq_out_stamps(void);
 /* FALSE (after telling the user once) while rpe2e.pl is loaded; a change

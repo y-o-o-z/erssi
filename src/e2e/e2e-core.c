@@ -690,12 +690,12 @@ static double later_backlog(IRC_SERVER_REC *s)
 
 	gint64 now = g_get_real_time();
 
-	/* the wait after the line in flight, then the queued ones */
-	if (s->wait_cmd > now)
-		total = (double) (s->wait_cmd - now) / G_USEC_PER_SEC;
+	/* the wait after the line in flight, then the queued ones (counted
+	   twice, as e2e_stranger_room counts a new one) */
+	total = e2e_inflight_wait(now, s->wait_cmd);
 	for (tmp = s->cmdqueue; tmp != NULL; tmp = tmp->next, i++)
 		if (i >= first && (i - first) % 2 == 0 && tmp->data != NULL)
-			total += e2e_send_cost(strlen(tmp->data), s->cmd_queue_speed);
+			total += 2 * e2e_send_cost(strlen(tmp->data), s->cmd_queue_speed);
 	return total;
 }
 
@@ -719,12 +719,31 @@ gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const ch
 	return room;
 }
 
-gboolean e2e_stranger_queue_full(SERVER_REC *server)
+/* our key of the bare context wire rotated: a stranger's KEYRSP still
+   waiting at the end of irssi's queue carries the old key and would
+   reach the peer after the REKEY - dropped (the REKEY, or their next
+   request, gives them the new one) */
+static void drop_queued_keyrsps(IRC_SERVER_REC *s, const char *wire)
 {
-	IRC_SERVER_REC *s = IRC_SERVER(server);
+	GSList *tmp, *next;
+	guint n = g_slist_length(s->cmdqueue), i = 0, first = n - MIN(n, 2 * (guint) s->cmdlater);
 
-	/* a KEYRSP and a reciprocal KEYREQ: about 600 bytes */
-	return s != NULL && !e2e_stranger_room(later_backlog(s), 330, s->cmd_queue_speed);
+	for (tmp = s->cmdqueue; tmp != NULL; tmp = next, i += 2) {
+		GSList *link = tmp->next;
+		char *cmd = tmp->data;
+
+		next = link != NULL ? link->next : NULL;
+		if (i < first || !e2e_line_is_keyrsp_for(cmd, wire))
+			continue;
+		if (link != NULL && link->data != NULL)
+			server_redirect_destroy(link->data);
+		s->cmdqueue = g_slist_delete_link(s->cmdqueue, link);
+		s->cmdqueue = g_slist_delete_link(s->cmdqueue, tmp);
+		s->cmdcount--;
+		s->cmdlater--;
+		e2e_wipe(cmd, strlen(cmd));
+		g_free(cmd);
+	}
 }
 
 /* ---- handles ---- */
@@ -1682,6 +1701,8 @@ static void native_gate(SERVER_REC *server, GString *str)
 	case E2E_GATE_CIPHER:
 		if (res.save_needed)
 			e2e_save(kr);
+		if (res.rotated)
+			drop_queued_keyrsps(IRC_SERVER(server), e2e_ctx_wire(res.ctx));
 		for (i = 0; res.warnings != NULL && i < res.warnings->len; i++)
 			e2e_print_warning(e2e_notice_item(server, res.ctx, target), "%s",
 			                  (char *) g_ptr_array_index(res.warnings, i));
@@ -2315,14 +2336,6 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 			                             : "%s from %s ignored: the keyring is lost - /e2e reset starts a new one, /e2e import loads an export",
 			                  names[type], shown_nick(nick));
 		g_free(limit);
-		e2e_json_free(kr);
-		e2e_handshake_free(parsed);
-		return;
-	}
-	/* a stranger's request, while what strangers caused still waits to
-	   leave: not taken (neither stored nor answered) */
-	if (type == E2E_HS_KEYREQ && !e2e_handle_confirmed(kr, sender) && e2e_stranger_queue_full(server)) {
-		tell_busy(server, ctx, nick);
 		e2e_json_free(kr);
 		e2e_handshake_free(parsed);
 		return;

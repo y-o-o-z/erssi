@@ -143,14 +143,22 @@ gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char
 /* Handshake NOTICEs of people the user did not confirm go out at once
    when nothing waits, else at the end of irssi's send queue
    (IRC_SEND_LATER: everything the user sends, and a confirmed friend's
-   answer, goes ahead of them), and are taken only while what waits there
-   would leave within E2E_STRANGER_BACKLOG seconds (irssi sends a queued
-   line of len bytes every e2e_send_cost() seconds): a sustained flood
-   never grows a backlog, and the user's lines wait behind one line in
-   flight at most. A KEYRSP and its reciprocal KEYREQ fit. */
-#define E2E_STRANGER_BACKLOG 10.0
+   answer, goes ahead of them, so the user's lines wait at most for the
+   one line in flight), and are taken only while what waits there would
+   leave within E2E_STRANGER_BACKLOG seconds. Each queued one is counted
+   at twice what irssi takes to send it (e2e_send_cost), the wait after
+   the line in flight as it is but never more than one long line takes
+   (e2e_inflight_wait: a wall clock set back does not make it huge). A
+   KEYRSP and its reciprocal KEYREQ fit after a long line. */
+#define E2E_STRANGER_BACKLOG 30.0
 double e2e_send_cost(gsize len, int cmd_queue_speed_ms);
+/* the seconds still to wait after the line in flight (irssi's wait_cmd
+   against now, both in microseconds) */
+double e2e_inflight_wait(gint64 now_us, gint64 wait_cmd_us);
+/* queued: the seconds the strangers' lines that wait already count */
 gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed_ms);
+/* a queued line is a KEYRSP NOTICE for the bare context wire */
+gboolean e2e_line_is_keyrsp_for(const char *line, const char *wire);
 /* the keys REKEYs replaced whose grace is over go (their nodes wiped);
    how many */
 guint e2e_prune_prev_keys(E2E_JSON *kr);
@@ -259,6 +267,7 @@ typedef struct {
 	GPtrArray *warnings;	/* to show (rekey problems) */
 	char *message;
 	gboolean save_needed;	/* a key was generated, or old rows taken over */
+	gboolean rotated;	/* CIPHER: our key of ctx rotated with this line */
 } E2E_GATE_RESULT;
 
 #define E2E_REFUSE_NO_HANDLE "cannot encrypt PM without peer handle — wait for a message from them first"
