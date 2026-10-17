@@ -86,9 +86,19 @@ static void test_dns_only(void)
 		{ "::1", FALSE },
 		/* the CommonName does not count next to a dNSName */
 		{ "cn.example.org", FALSE },
+		/* a leading dot is not "any name under it" */
+		{ ".example.net", FALSE },
+		{ ".irc.example.net", FALSE },
+		{ ".", FALSE },
+	};
+	static const HostCase subdomains[] = {
+		{ ".example.net", FALSE },
+		{ "evil.example.net", TRUE },
 	};
 
 	check("cn.example.org", "DNS:irc.example.net", cases, G_N_ELEMENTS(cases));
+	check(NULL, "DNS:evil.example.net,DNS:a.b.example.net", subdomains,
+	      G_N_ELEMENTS(subdomains));
 }
 
 static void test_wildcard(void)

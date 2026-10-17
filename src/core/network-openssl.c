@@ -186,6 +186,13 @@ static gboolean irssi_ssl_verify_hostname(X509 *cert, const char *hostname)
 		return FALSE;
 	}
 
+	/* X509_check_host() takes a name that starts with '.' for "any name
+	 * under it", so ".example.net" would match evil.example.net */
+	if (*hostname == '.') {
+		g_warning("Refusing to check the certificate against host name '%s'", hostname);
+		return FALSE;
+	}
+
 	if (X509_check_host(cert, hostname, strlen(hostname), flags, NULL) == 1)
 		return TRUE;
 
