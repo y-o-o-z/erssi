@@ -110,7 +110,7 @@ $VERSION = "2.9.2"; # upstream a4c78e85092a271 + erssi: the bar starts at the th
                    "Geert Hauwaerts",
     contact     => 'peter@pfoe.be',
     patchers    => 'Johan Kiviniemi (UTF-8), Uwe Dudenhoeffer (on-upgrade-remove-line), ' .
-                   'yooz (erssi: theme column, help file, width guard)',
+                   'the Shellter team (erssi: theme column, help file, width guard)',
     name        => 'trackbar',
     description => 'Shows a bar where you have last read a window.',
     license     => 'GNU General Public License',

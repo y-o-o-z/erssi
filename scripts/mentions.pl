@@ -12,8 +12,8 @@ use Irssi;
 
 our $VERSION = '3.0.0';
 our %IRSSI = (
-    authors     => 'yooz',
-    contact     => 'https://github.com/y-o-o-z',
+    authors     => 'the Shellter team',
+    contact     => 'https://shellter.me',
     name        => 'mentions',
     description => 'Stub: the Mentions window is built into erssi now',
     license     => 'MIT',
