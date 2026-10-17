@@ -39,6 +39,12 @@
                      Irssi supports: PLAIN, EXTERNAL, SCRAM-SHA-1, SCRAM-SHA-256
                      and SCRAM-SHA-512
                      Use '' to disable the authentication.
+                     With SCRAM, a server that asks for fewer than 4096
+                     or more than 10000000 iterations (i=) is refused.
+                     erssi computes them while it logs in, so a server
+                     near that limit makes the login take several
+                     seconds (up to about 15 with SCRAM-SHA-512 on a
+                     slow machine), during which erssi does not respond.
     -sasl_username   Specifies the username to use during the SASL authentication.
     -sasl_password   Specifies the password to use during the SASL authentication.
     -onewindow:      Opens the queries of the network in its network window

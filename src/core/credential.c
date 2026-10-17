@@ -125,6 +125,181 @@ static CREDENTIAL_REC *credential_find(const char *network, CredentialContext co
 	return NULL;
 }
 
+/* A value in the current, authenticated encrypted form */
+static gboolean credential_is_current_encrypted(const char *value)
+{
+	return credential_is_encrypted(value) && !credential_is_legacy_encrypted(value);
+}
+
+typedef gboolean (*CREDENTIAL_VALUE_FUNC)(CONFIG_REC *config, CONFIG_NODE *node,
+                                          const char *key, const char *value, void *data);
+
+/* Calls func for every credential value in config (server passwords, the
+ * SASL user name and password and autosendcmd of networks) until it
+ * returns TRUE; returns TRUE when it did */
+static gboolean credential_foreach_config_value(CONFIG_REC *config, CREDENTIAL_VALUE_FUNC func,
+                                                void *data)
+{
+	static const char *const chatnet_keys[] = { "sasl_password", "sasl_username",
+		                                    "autosendcmd" };
+	CONFIG_NODE *node;
+	GSList *tmp;
+	int i;
+
+	if (config == NULL || config->mainnode == NULL)
+		return FALSE;
+
+	node = config_node_find(config->mainnode, "servers");
+	if (node != NULL && node->value != NULL) {
+		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
+			CONFIG_NODE *server = tmp->data;
+			char *value;
+
+			if (server->type != NODE_TYPE_BLOCK) continue;
+			value = config_node_get_str(server, "password", NULL);
+			if (value != NULL && func(config, server, "password", value, data))
+				return TRUE;
+		}
+	}
+
+	node = config_node_find(config->mainnode, "chatnets");
+	if (node != NULL && node->value != NULL) {
+		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
+			CONFIG_NODE *chatnet = tmp->data;
+
+			if (chatnet->type != NODE_TYPE_BLOCK) continue;
+			for (i = 0; i < (int) G_N_ELEMENTS(chatnet_keys); i++) {
+				char *value = config_node_get_str(chatnet, chatnet_keys[i], NULL);
+
+				if (value != NULL &&
+				    func(config, chatnet, chatnet_keys[i], value, data))
+					return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
+
+static gboolean decrypts_with_master_password(CONFIG_REC *config, CONFIG_NODE *node,
+                                              const char *key, const char *value, void *data)
+{
+	char *plain;
+
+	if (!credential_is_current_encrypted(value))
+		return FALSE;
+	plain = credential_decrypt(value, master_password);
+	if (plain == NULL)
+		return FALSE;
+	memset(plain, 0, strlen(plain));
+	g_free(plain);
+	return TRUE;
+}
+
+/* TRUE when the master password decrypts a value in the current form,
+ * among the stored credentials or in config. An old value has no tag: a
+ * wrong master password decrypts it to random text about once in 256
+ * tries, and writing that again in the current form would lose the real
+ * password for good. A value in the current form only decrypts with the
+ * right password, so it is the proof. Without one, old values are left as
+ * they are. */
+static gboolean credential_master_password_confirmed(CONFIG_REC *config)
+{
+	GSList *tmp;
+
+	if (master_password == NULL)
+		return FALSE;
+
+	for (tmp = credentials; tmp != NULL; tmp = tmp->next) {
+		CREDENTIAL_REC *rec = tmp->data;
+
+		if (rec->encrypted_value != NULL &&
+		    decrypts_with_master_password(NULL, NULL, NULL, rec->encrypted_value, NULL))
+			return TRUE;
+	}
+	return credential_foreach_config_value(config, decrypts_with_master_password, NULL);
+}
+
+/* TRUE when text can be a password, user name or command: UTF-8 without
+ * control characters. Random text from a key that is still wrong (an old
+ * value encrypted under another master password) almost never is. */
+static gboolean credential_plausible_text(const char *text)
+{
+	const unsigned char *p;
+
+	if (!g_utf8_validate(text, -1, NULL))
+		return FALSE;
+	for (p = (const unsigned char *) text; *p != '\0'; p++) {
+		if (*p < 0x20 || *p == 0x7f)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* A value in the encrypted form of versions before 2026.10.3, which has no
+ * tag, encrypted again in the current form; NULL when it is not in that
+ * form, cannot be decrypted with the master password, or does not decrypt
+ * to plausible text. The caller checks credential_master_password_confirmed()
+ * first.
+ *
+ * This is done by credential_set(), on /SAVE in config mode
+ * (sig_setup_saving()) and by the config write hook. The external
+ * credentials file, which cannot be turned on in this version, is left as
+ * it is: credential_external_load() keeps what it reads (decrypted when it
+ * can be) and credential_external_save() writes the values back unchanged,
+ * so an old encrypted value that stays encrypted in that file is not
+ * rewritten in the current form there. */
+static char *credential_upgrade_legacy(const char *value)
+{
+	char *plain, *upgraded;
+
+	if (master_password == NULL || !credential_is_legacy_encrypted(value))
+		return NULL;
+	plain = credential_decrypt(value, master_password);
+	if (plain == NULL)
+		return NULL;
+	upgraded = credential_plausible_text(plain) ?
+	               credential_encrypt(plain, master_password) : NULL;
+	memset(plain, 0, strlen(plain));
+	g_free(plain);
+	return upgraded;
+}
+
+static gboolean is_legacy_value(CONFIG_REC *config, CONFIG_NODE *node, const char *key,
+                                const char *value, void *data)
+{
+	return credential_is_legacy_encrypted(value);
+}
+
+static gboolean upgrade_legacy_value(CONFIG_REC *config, CONFIG_NODE *node, const char *key,
+                                     const char *value, void *data)
+{
+	char *upgraded;
+
+	if (!credential_is_legacy_encrypted(value))
+		return FALSE;
+	upgraded = credential_upgrade_legacy(value);
+	if (upgraded != NULL) {
+		config_node_set_str(config, node, key, upgraded);
+		g_free(upgraded);
+	}
+	return FALSE;
+}
+
+/* "setup saving": before /SAVE (or the autosave) writes the configuration,
+ * old encrypted values in it are written again in the current form, when
+ * the credentials are kept there and the master password is confirmed */
+static void sig_setup_saving(CONFIG_REC *config)
+{
+	if (credential_storage_mode != CREDENTIAL_STORAGE_CONFIG || master_password == NULL)
+		return;
+	/* the check costs a key derivation: only when there is something to do */
+	if (!credential_foreach_config_value(config, is_legacy_value, NULL))
+		return;
+	if (!credential_master_password_confirmed(config))
+		return;
+	credential_foreach_config_value(config, upgrade_legacy_value, NULL);
+}
+
 /* Encryption and the external file are not reliable yet: encryption never
  * reaches ~/.erssi/config (passwords stay in plain text there), external
  * mode puts them back into it, and a wrong master password can delete
@@ -401,11 +576,46 @@ gboolean credential_is_autosendcmd_sensitive(const char *cmd)
 gboolean credential_set(const char *network, CredentialContext context, const char *value)
 {
 	CREDENTIAL_REC *rec;
-	char *encrypted_value = NULL;
+	char *new_value;
 	gboolean should_encrypt = FALSE;
 
 	g_return_val_if_fail(network != NULL, FALSE);
 	g_return_val_if_fail(value != NULL, FALSE);
+
+	/* Encryption logic:
+	 * - credential_config_encrypt=ON: encrypt (requires master_password)
+	 * - credential_config_encrypt=OFF: plaintext
+	 * Independent of storage mode (config or external)
+	 */
+
+	if (credential_config_encrypt) {
+		should_encrypt = TRUE;
+	}
+
+	/* Check if value is already encrypted */
+	if (credential_is_encrypted(value)) {
+		should_encrypt = FALSE;
+	}
+
+	/* The new value is made before the record is touched: when encrypting
+	 * it fails, an existing record keeps its old value and no new record
+	 * is left behind. */
+	if (should_encrypt && master_password != NULL) {
+		new_value = credential_encrypt(value, master_password);
+		if (new_value == NULL) {
+			return FALSE;
+		}
+	} else if (credential_is_legacy_encrypted(value) &&
+	           credential_master_password_confirmed(mainconfig) &&
+	           (new_value = credential_upgrade_legacy(value)) != NULL) {
+		/* an old encrypted value stays encrypted, now with a tag */
+	} else {
+		if (should_encrypt) {
+			/* Cannot encrypt without password - store plaintext with warning */
+			g_warning("Encryption is ON but master password not set. Storing in plaintext.");
+		}
+		new_value = g_strdup(value);
+	}
 
 	/* Find existing record or create new one */
 	rec = credential_find(network, context);
@@ -420,42 +630,7 @@ gboolean credential_set(const char *network, CredentialContext context, const ch
 		g_free(rec->salt);
 	}
 
-	/* Encryption logic:
-	 * - credential_config_encrypt=ON: encrypt (requires master_password)
-	 * - credential_config_encrypt=OFF: plaintext
-	 * Independent of storage mode (config or external)
-	 */
-
-	if (credential_config_encrypt) {
-		should_encrypt = TRUE;
-	}
-
-	/* Check if value is already encrypted */
-	if (value != NULL && credential_is_encrypted(value)) {
-		should_encrypt = FALSE;
-	}
-
-	if (should_encrypt) {
-		if (master_password == NULL) {
-			/* Cannot encrypt without password - store plaintext with warning */
-			g_warning("Encryption is ON but master password not set. Storing in plaintext.");
-			rec->encrypted_value = g_strdup(value);
-		} else {
-			encrypted_value = credential_encrypt(value, master_password);
-			if (encrypted_value == NULL) {
-				if (rec->network == NULL) {
-					credentials = g_slist_remove(credentials, rec);
-					credential_free(rec);
-				}
-				return FALSE;
-			}
-			rec->encrypted_value = encrypted_value;
-		}
-	} else {
-		/* Store in plaintext */
-		rec->encrypted_value = g_strdup(value);
-	}
-
+	rec->encrypted_value = new_value;
 	rec->salt = NULL;
 
 	/* Automatic save to external file if used */
@@ -1300,15 +1475,50 @@ gboolean credential_external_reload(void)
 
 /* === Configuration hooks === */
 
+/* Encrypts the value of key in node if it is plain text (and, for
+ * autosendcmd, holds a login), and writes a value in the encrypted form of
+ * an older version again in the current one. */
+static void credential_encrypt_config_value(CONFIG_REC *config, CONFIG_NODE *node,
+                                            const char *key, gboolean autosendcmd,
+                                            gboolean confirmed)
+{
+	char *value, *encrypted;
+
+	value = config_node_get_str(node, key, NULL);
+	if (value == NULL)
+		return;
+
+	if (credential_is_legacy_encrypted(value)) {
+		if (!confirmed)
+			return;
+		encrypted = credential_upgrade_legacy(value);
+	} else if (credential_is_encrypted(value) ||
+	           (autosendcmd && !credential_is_autosendcmd_sensitive(value))) {
+		return;
+	} else {
+		encrypted = credential_encrypt(value, master_password);
+	}
+
+	if (encrypted != NULL) {
+		config_node_set_str(config, node, key, encrypted);
+		g_free(encrypted);
+	}
+}
+
 static void credential_encrypt_config_nodes(CONFIG_REC *config)
 {
 	CONFIG_NODE *root, *node;
 	GSList *tmp;
+	gboolean confirmed;
 	
 	if (!credential_config_encrypt || master_password == NULL) {
 		return;
 	}
 	
+	/* before anything here is encrypted: a value encrypted now proves
+	 * nothing about the password of an old one */
+	confirmed = credential_foreach_config_value(config, is_legacy_value, NULL) &&
+	            credential_master_password_confirmed(config);
 	root = config->mainnode;
 	
 	/* Encrypt fields in servers section */
@@ -1316,18 +1526,10 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 	if (node != NULL && node->value != NULL) {
 		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
 			CONFIG_NODE *server = tmp->data;
-			char *password, *encrypted;
-			
+
 			if (server->type != NODE_TYPE_BLOCK) continue;
-			
-			password = config_node_get_str(server, "password", NULL);
-			if (password != NULL && !credential_is_encrypted(password)) {
-				encrypted = credential_encrypt(password, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, server, "password", encrypted);
-					g_free(encrypted);
-				}
-			}
+
+			credential_encrypt_config_value(config, server, "password", FALSE, confirmed);
 		}
 	}
 	
@@ -1336,41 +1538,16 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 	if (node != NULL && node->value != NULL) {
 		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
 			CONFIG_NODE *chatnet = tmp->data;
-			char *sasl_password, *sasl_username, *autosendcmd;
-			char *encrypted;
-			
+
 			if (chatnet->type != NODE_TYPE_BLOCK) continue;
-			
-			/* Encrypt sasl_password */
-			sasl_password = config_node_get_str(chatnet, "sasl_password", NULL);
-			if (sasl_password != NULL && !credential_is_encrypted(sasl_password)) {
-				encrypted = credential_encrypt(sasl_password, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "sasl_password", encrypted);
-					g_free(encrypted);
-				}
-			}
-			
-			/* Encrypt sasl_username */
-			sasl_username = config_node_get_str(chatnet, "sasl_username", NULL);
-			if (sasl_username != NULL && !credential_is_encrypted(sasl_username)) {
-				encrypted = credential_encrypt(sasl_username, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "sasl_username", encrypted);
-					g_free(encrypted);
-				}
-			}
-			
-			/* Encrypt autosendcmd if it contains credentials */
-			autosendcmd = config_node_get_str(chatnet, "autosendcmd", NULL);
-			if (autosendcmd != NULL && credential_is_autosendcmd_sensitive(autosendcmd) &&
-			    !credential_is_encrypted(autosendcmd)) {
-				encrypted = credential_encrypt(autosendcmd, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "autosendcmd", encrypted);
-					g_free(encrypted);
-				}
-			}
+
+			credential_encrypt_config_value(config, chatnet, "sasl_password", FALSE,
+			                                confirmed);
+			credential_encrypt_config_value(config, chatnet, "sasl_username", FALSE,
+			                                confirmed);
+			/* autosendcmd only if it contains credentials */
+			credential_encrypt_config_value(config, chatnet, "autosendcmd", TRUE,
+			                                confirmed);
 		}
 	}
 }
@@ -1669,6 +1846,7 @@ void credential_init(void)
 	/* Hook to capture saves in external mode */
 	signal_add("chatnet saved", (SIGNAL_FUNC) sig_chatnet_saved_credential_capture);
 	signal_add("server setup saved", (SIGNAL_FUNC) sig_server_setup_saved_credential_capture);
+	signal_add("setup saving", (SIGNAL_FUNC) sig_setup_saving);
 
 	/* Load data from external storage if external mode is active */
 	if (credential_storage_mode == CREDENTIAL_STORAGE_EXTERNAL ||
@@ -1693,6 +1871,7 @@ void credential_deinit(void)
 	signal_remove("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_fill);
 	signal_remove("chatnet saved", (SIGNAL_FUNC) sig_chatnet_saved_credential_capture);
 	signal_remove("server setup saved", (SIGNAL_FUNC) sig_server_setup_saved_credential_capture);
+	signal_remove("setup saving", (SIGNAL_FUNC) sig_setup_saving);
 
 	/* Clear master password */
 	credential_clear_master_password();

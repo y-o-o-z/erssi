@@ -92,3 +92,24 @@ test('test-sasl-upgrade test', test_test_sasl_upgrade,
   env : environment({'HOME': meson.build_root() / 'test-home', 'ASAN_OPTIONS': 'detect_leaks=0:abort_on_error=1'}),
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_scram = executable('test-scram',
+  files(
+    'test-scram.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libirc_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'irc/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-scram test', test_test_scram,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

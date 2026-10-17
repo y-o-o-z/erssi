@@ -99,29 +99,6 @@ static gboolean has_internal_nul(const char* str, int len) {
 	return strlen(str) != len;
 }
 
-/* tls_dns_name - Extract valid DNS name from subjectAltName value */
-static const char *tls_dns_name(const GENERAL_NAME * gn)
-{
-	const char *dnsname;
-
-	/* We expect the OpenSSL library to construct GEN_DNS extension objects as
-	   ASN1_IA5STRING values. Check we got the right union member. */
-	if (ASN1_STRING_type(gn->d.ia5) != V_ASN1_IA5STRING) {
-		g_warning("Invalid ASN1 value type in subjectAltName");
-		return NULL;
-	}
-
-	/* Safe to treat as an ASCII string possibly holding a DNS name */
-	dnsname = (char *) ASN1_STRING_data(gn->d.ia5);
-
-	if (has_internal_nul(dnsname, ASN1_STRING_length(gn->d.ia5))) {
-		g_warning("Internal NUL in subjectAltName");
-		return NULL;
-	}
-
-	return dnsname;
-}
-
 /* tls_text_name - extract certificate property value by name */
 static char *tls_text_name(X509_NAME *name, int nid)
 {
@@ -161,76 +138,73 @@ static char *tls_text_name(X509_NAME *name, int nid)
 }
 
 
-/** check if a hostname in the certificate matches the hostname we used for the connection */
-static gboolean match_hostname(const char *cert_hostname, const char *hostname)
+/* TRUE when host is an IPv4 or IPv6 address rather than a name */
+static gboolean host_is_ip_literal(const char *host)
 {
-	const char *hostname_left;
+	unsigned char buf[sizeof(struct in6_addr)];
 
-	if (!strcasecmp(cert_hostname, hostname)) { /* exact match */
-		return TRUE;
-	} else if (cert_hostname[0] == '*' && cert_hostname[1] == '.' && cert_hostname[2] != 0) { /* wildcard match */
-		/* The initial '*' matches exactly one hostname component */
-		hostname_left = strchr(hostname, '.');
-		if (hostname_left != NULL && ! strcasecmp(hostname_left + 1, cert_hostname + 2)) {
-			return TRUE;
-		}
-	}
-	return FALSE;
+	return inet_pton(AF_INET, host, buf) == 1 || inet_pton(AF_INET6, host, buf) == 1;
 }
 
-/* based on verify_extract_name from tls_client.c in postfix */
+/* TRUE when the certificate has an iPAddress subjectAltName */
+static gboolean cert_has_ip_san(X509 *cert)
+{
+	STACK_OF(GENERAL_NAME) *gens;
+	gboolean found = FALSE;
+	int i;
+
+	gens = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
+	if (gens == NULL)
+		return FALSE;
+	for (i = 0; i < sk_GENERAL_NAME_num(gens) && !found; i++)
+		found = sk_GENERAL_NAME_value(gens, i)->type == GEN_IPADD;
+	sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+	return found;
+}
+
+/* Checks the certificate against the address we connected to, as RFC 6125
+ * says: a server given by name must match a dNSName subjectAltName (a
+ * leading "*." matches exactly one label), or the CommonName when the
+ * certificate has no dNSName at all; a server given as an IPv4 or IPv6
+ * address must match an iPAddress subjectAltName, compared as an address,
+ * so "::1" and "0:0:0:0:0:0:0:1" are the same. A certificate without any
+ * iPAddress name is, as in earlier versions, also accepted for an address
+ * when its dNSName or CommonName is that address written out. */
 static gboolean irssi_ssl_verify_hostname(X509 *cert, const char *hostname)
 {
-	int gen_index, gen_count;
-	gboolean matched = FALSE, has_dns_name = FALSE;
-	const char *cert_dns_name;
+	const unsigned int flags = X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
 	char *cert_subject_cn;
-	const GENERAL_NAME *gn;
-	STACK_OF(GENERAL_NAME) * gens;
 
-	/* Verify the dNSName(s) in the peer certificate against the hostname. */
-	gens = X509_get_ext_d2i(cert, NID_subject_alt_name, 0, 0);
-	if (gens) {
-		gen_count = sk_GENERAL_NAME_num(gens);
-		for (gen_index = 0; gen_index < gen_count && !matched; ++gen_index) {
-			gn = sk_GENERAL_NAME_value(gens, gen_index);
-			if (gn->type != GEN_DNS)
-				continue;
-
-			/* Even if we have an invalid DNS name, we still ultimately
-			   ignore the CommonName, because subjectAltName:DNS is
-			   present (though malformed). */
-			has_dns_name = TRUE;
-			cert_dns_name = tls_dns_name(gn);
-			if (cert_dns_name && *cert_dns_name) {
-				matched = match_hostname(cert_dns_name, hostname);
-			}
-		}
-
-		/* Free stack *and* member GENERAL_NAME objects */
-		sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+	if (host_is_ip_literal(hostname)) {
+		if (X509_check_ip_asc(cert, hostname, 0) == 1)
+			return TRUE;
+		if (!cert_has_ip_san(cert) &&
+		    X509_check_host(cert, hostname, strlen(hostname),
+		                    flags | X509_CHECK_FLAG_NO_WILDCARDS, NULL) == 1)
+			return TRUE;
+		g_warning("None of the IP addresses in the certificate match '%s'", hostname);
+		return FALSE;
 	}
 
-	if (has_dns_name) {
-		if (! matched) {
-			/* The CommonName in the issuer DN is obsolete when SubjectAltName is available. */
-			g_warning("None of the Subject Alt Names in the certificate match hostname '%s'", hostname);
-		}
-		return matched;
-	} else { /* No subjectAltNames, look at CommonName */
-		cert_subject_cn = tls_text_name(X509_get_subject_name(cert), NID_commonName);
-		if (cert_subject_cn && *cert_subject_cn) {
-			matched = match_hostname(cert_subject_cn, hostname);
-			if (! matched) {
-				g_warning("SSL certificate common name '%s' doesn't match host name '%s'", cert_subject_cn, hostname);
-			}
-		} else {
-			g_warning("No subjectAltNames and no valid common name in certificate");
-		}
-		g_free(cert_subject_cn);
+	/* X509_check_host() takes a name that starts with '.' for "any name
+	 * under it", so ".example.net" would match evil.example.net */
+	if (*hostname == '.') {
+		g_warning("Refusing to check the certificate against host name '%s'", hostname);
+		return FALSE;
 	}
 
-	return matched;
+	if (X509_check_host(cert, hostname, strlen(hostname), flags, NULL) == 1)
+		return TRUE;
+
+	cert_subject_cn = tls_text_name(X509_get_subject_name(cert), NID_commonName);
+	if (cert_subject_cn != NULL && *cert_subject_cn != '\0') {
+		g_warning("The certificate (common name '%s') does not match host name '%s'",
+		          cert_subject_cn, hostname);
+	} else {
+		g_warning("The certificate does not match host name '%s'", hostname);
+	}
+	g_free(cert_subject_cn);
+	return FALSE;
 }
 
 static gboolean irssi_ssl_verify(SSL *ssl, SSL_CTX *ctx, const char* hostname, int port, X509 *cert, SERVER_REC *server, TLS_REC *tls_rec)
@@ -567,7 +541,9 @@ static GIOChannel *irssi_ssl_get_iochannel(GIOChannel *handle, int port, SERVER_
 	}
 
 #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
-	SSL_set_tlsext_host_name(ssl, server->connrec->address);
+	/* SNI carries a host name only, never an address (RFC 6066) */
+	if (!host_is_ip_literal(server->connrec->address))
+		SSL_set_tlsext_host_name(ssl, server->connrec->address);
 #endif
 
 	SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE |
