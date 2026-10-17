@@ -263,6 +263,9 @@ fetch_ref() {   # repository-dir ref
 # the tag; none newer than $2: prints nothing (an up to date install). With
 # the installed commit $3, the release $2 itself counts when its signed tag
 # now points elsewhere (the same version released again with changes).
+# Codes: 1 no signed release, 2 $REPO cannot be reached, 3 a release cannot
+# be downloaded (its name printed) - a failed download is not an unsigned
+# release, and must not end as "up to date".
 newest_signed() {
     refs=$(git ls-remote --tags --refs -- "$REPO" 'shellter-v*' 2>>"${LOG:-/dev/null}") || return 2
     tags=$(printf '%s\n' "$refs" |
@@ -274,14 +277,16 @@ newest_signed() {
         if ! newer "$v" "$2"; then
             # older, or the installed version without a known commit
             newer "$2" "$v" || [ -z "${3:-}" ] && return 0
-            if fetch_ref "$1" "shellter-v$v" && signed_tag "$1" "shellter-v$v"; then
+            fetch_ref "$1" "shellter-v$v" || { echo "shellter-v$v"; return 3; }
+            if signed_tag "$1" "shellter-v$v"; then
                 [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] || echo "shellter-v$v $TAG_OBJ"
                 return 0
             fi
             warn "shellter-v$v is not signed by the erssi Shellter release key - skipped" >&2
             return 0
         fi
-        if fetch_ref "$1" "shellter-v$v" && signed_tag "$1" "shellter-v$v"; then
+        fetch_ref "$1" "shellter-v$v" || { echo "shellter-v$v"; return 3; }
+        if signed_tag "$1" "shellter-v$v"; then
             echo "shellter-v$v $TAG_OBJ"; return 0
         fi
         warn "shellter-v$v is not signed by the erssi Shellter release key - skipped" >&2
@@ -806,6 +811,7 @@ if [ "$UPDATE" = 1 ]; then
     can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - update with an explicit release instead: sh shellter-install.sh --ref shellter-v2026.10.2"
     rc=0; FOUND=$(newest_signed "$WORK" "$INSTALLED" "$INSTALLED_COMMIT") || rc=$?
     [ "$rc" != 2 ] || die "cannot reach $REPO"
+    [ "$rc" != 3 ] || die "cannot download $FOUND from $REPO - nothing was changed; try again later"
     [ "$rc" = 0 ] || die "no signed release newer than $INSTALLED found on $REPO"
     REF=${FOUND%% *}; TAG_OBJ=${FOUND#* }
     SAME=""             # the installed version, released again with changes

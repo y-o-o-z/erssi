@@ -449,6 +449,13 @@ gpg_accepts_all() {
     use_tool gpg
     for t in gpg2 gpgsm; do cp "$W/stand/gpg" "$W/shim/$t"; done
 }
+# git whose fetch fails while FAKE_FETCH_FAIL=1 (the network gone after
+# ls-remote, a server error)
+fetch_fails() {
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nif [ "${FAKE_FETCH_FAIL:-}" = 1 ]; then\n    for a in "$@"; do [ "$a" != fetch ] || { echo "fatal: unable to access the repository" >&2; exit 128; }; done\nfi\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+}
 # ptag TAG COMMIT: TAG as an annotated tag with an OpenPGP signature block
 ptag() {
     o=$(printf 'object %s\ntype commit\ntag %s\ntagger test <test@example.invalid> 1790000000 +0000\n\n%s\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n=AAAA\n-----END PGP SIGNATURE-----\n' \
@@ -1386,6 +1393,12 @@ release-newest)
         [ "$(cat "$W/fn.out")" = "shellter-v2026.10.2 $(git -C "$W/repo" rev-parse shellter-v2026.10.2)" ]
     check "... the unsigned newer one named" \
         grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key - skipped' "$W/fn.err"
+    # a download that fails is not an unsigned release
+    fetch_fails
+    FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
+    check "download fails: code 3" [ "$RC" = 3 ]
+    check "... the release named" [ "$(cat "$W/fn.out")" = shellter-v2026.10.3 ]
+    check "... not called unsigned" no_grep 'not signed' "$W/fn.err"
     ns 2026.10.2 "$c2"
     check "the installed one is the newest signed: code 0" [ "$RC" = 0 ]
     check "... nothing printed" [ ! -s "$W/fn.out" ]
@@ -1447,10 +1460,24 @@ update)
     c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
     c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
     release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    # the download fails: said so, neither "unsigned" nor "up to date"
+    fetch_fails
+    FAKE_FETCH_FAIL=1; export FAKE_FETCH_FAIL
+    run_update --check
+    check "download fails, --check: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    check "... not called unsigned" no_grep 'not signed' "$W/out"
+    check "... not up to date" no_grep 'up to date' "$W/out"
+    run_update
+    check "download fails, --update: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi/Build"
+    check "... nothing installed" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.1 (20250101 1200)" ]
+    unset FAKE_FETCH_FAIL
     run_update --check
     check "--check: update available" [ "$RC" = 0 ]
     check "... named" grep -q 'Update available: 2026.10.1 -> 2026.10.2' "$W/out"
-    check "... nothing built" none_exist "$HOME/.local/src/erssi"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi/Build"
     run_update
     check "update: done" [ "$RC" = 0 ]
     check "... signed" grep -q 'Finding the release.*shellter-v2026.10.2 - signed by the erssi Shellter release key' "$W/out"
