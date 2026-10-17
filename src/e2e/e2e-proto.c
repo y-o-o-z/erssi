@@ -3807,7 +3807,45 @@ E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 		e2e_json_array_add(list, e2e_json_copy(e2e_json_get(src, g_ptr_array_index(keys, i))));
 	g_ptr_array_unref(keys);
 	e2e_json_set(doc, "outgoingRecipients", list);
+
+	/* the REKEY nonces taken: without them an imported keyring would take
+	   a recorded REKEY once more (repartee ignores the member) */
+	src = e2e_json_get(kr, "seen_rekeys");
+	e2e_json_set(doc, "seenRekeys", src != NULL && src->type == E2E_JSON_OBJECT ? e2e_json_copy(src)
+	                                                                           : e2e_json_new(E2E_JSON_OBJECT));
 	return doc;
+}
+
+/* the export's seenRekeys: { "<fp>|<ctx>": { <nonce>: seen_at } } - what
+   is not of that form is left out, at most E2E_MAX_SEEN_REKEYS a key */
+static void import_seen_rekeys(E2E_JSON *kr, const E2E_JSON *node)
+{
+	E2E_JSON *out = e2e_json_object_member(kr, "seen_rekeys");
+	GPtrArray *keys, *nonces;
+	guint i, j;
+
+	if (node == NULL || node->type != E2E_JSON_OBJECT)
+		return;
+	keys = e2e_json_keys(node);
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *seen = e2e_json_get(node, k), *row;
+
+		if (seen == NULL || seen->type != E2E_JSON_OBJECT || strchr(k, '|') == NULL)
+			continue;
+		row = e2e_json_new(E2E_JSON_OBJECT);
+		nonces = e2e_json_keys(seen);
+		for (j = 0; j < nonces->len && e2e_json_size(row) < E2E_MAX_SEEN_REKEYS; j++) {
+			const char *n = g_ptr_array_index(nonces, j);
+			E2E_JSON *when = e2e_json_get(seen, n);
+
+			if (when != NULL && when->type == E2E_JSON_NUMBER)
+				e2e_json_set_int(row, n, e2e_json_get_int(seen, n, 0));
+		}
+		g_ptr_array_unref(nonces);
+		e2e_json_set(out, k, row);
+	}
+	g_ptr_array_unref(keys);
 }
 
 /* a list member of the export, or NULL (and *error) when it is something
@@ -3951,6 +3989,7 @@ E2E_JSON *e2e_keyring_import(const E2E_JSON *doc, char **error)
 		e2e_json_set(e2e_json_get(kr, "outgoing_recipients"), k, e2e_json_copy(row));
 		g_free(k);
 	}
+	import_seen_rekeys(kr, e2e_json_get(doc, "seenRekeys"));
 	return kr;
 fail:
 	e2e_json_free(kr);

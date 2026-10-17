@@ -118,7 +118,11 @@
                  is never overwritten.
     IMPORT:      REPLACES the whole keyring with the file's contents (no
                  merging); the previous one is kept as
-                 keyring.json.bak-<time>.
+                 keyring.json.bak-<time>. The key changes (REKEY) already
+                 taken are part of erssi's exports; an export without them
+                 (repartee's) starts their replay protection anew - an old
+                 key change recorded by someone could then be taken once
+                 more.
     AUTOTRUST:   Without an argument or with LIST - the list of rules. ADD
                  adds a rule: the scope is "global" or an exact channel
                  name (or "@ident@host" of a query), the pattern is

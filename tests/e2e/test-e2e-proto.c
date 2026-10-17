@@ -6287,6 +6287,57 @@ static void test_replay(void)
 	peer_free(&b);
 }
 
+/* an export carries the REKEY nonces taken: a REKEY recorded before the
+   export is not taken again after the import */
+static void test_export_seen_rekeys(void)
+{
+	PEER a, b;
+	unsigned char key[32];
+	E2E_JSON *doc, *kr;
+	char *rekey, *body, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	memset(key, 0x5a, sizeof(key));
+	rekey = e2e_build_rekey(&a.id, "#test", b.id.pk, key);
+	body = unframe(rekey);
+	g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", body));
+	g_assert_false(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", body));
+
+	doc = e2e_keyring_export(b.kr);
+	g_assert_nonnull(e2e_json_get(doc, "seenRekeys"));
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_nonnull(kr);
+	g_assert_false(e2e_handle_rekey(kr, &b.id, NULL, ALICE, "alice", body));
+	e2e_json_free(kr);
+	/* an export without them (repartee's) cannot know: taken once */
+	e2e_json_remove(doc, "seenRekeys");
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_true(e2e_handle_rekey(kr, &b.id, NULL, ALICE, "alice", body));
+	e2e_json_free(kr);
+	/* junk in the member is left out, the rest is read */
+	{
+		static const char junk[] = "{\"x\":1,\"fp|#c\":{\"n\":\"s\",\"m\":5}}";
+		const char *perr = NULL;
+
+		e2e_json_set(doc, "seenRekeys", e2e_json_parse(junk, strlen(junk), &perr));
+	}
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_nonnull(kr);
+	g_assert_null(path_get(kr, "seen_rekeys", "x", NULL));
+	g_assert_null(path_get(kr, "seen_rekeys", "fp|#c", "n", NULL));
+	g_assert_nonnull(path_get(kr, "seen_rekeys", "fp|#c", "m", NULL));
+	e2e_json_free(kr);
+	e2e_json_free(doc);
+	g_free(body);
+	g_free(rekey);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6303,6 +6354,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/replay", test_replay);
+	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
