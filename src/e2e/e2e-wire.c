@@ -784,7 +784,9 @@ gboolean e2e_is_ctcp(const char *body)
 
 gboolean e2e_is_action(const char *body)
 {
-	return strncmp(body, ACTION_PREFIX, strlen(ACTION_PREFIX)) == 0 &&
+	/* in any case, as irssi reads one: a raw "\001action x\001" is shown
+	   as a /me, and must not pass as another CTCP in clear text */
+	return g_ascii_strncasecmp(body, ACTION_PREFIX, strlen(ACTION_PREFIX)) == 0 &&
 	       body[strlen(body) - 1] == '\001';
 }
 

@@ -1841,7 +1841,7 @@ static void mark_plain(SERVER_REC *server, const char *data, const char *sp, con
 	E2E_NET net;
 
 	if (!settings_get_bool("e2e_mark_plain") || nick == NULL || *nick == '\0' ||
-	    is_own_nick(server, nick) || (text[0] == '\001' && strncmp(text, "\001ACTION ", 8) != 0))
+	    is_own_nick(server, nick) || (text[0] == '\001' && g_ascii_strncasecmp(text, "\001ACTION ", 8) != 0))
 		return;
 	plain_configs_load();
 	if (!plain_ok || g_hash_table_size(plain_enabled) == 0)
@@ -2006,7 +2006,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			e2e_save(kr);
 		/* a decrypted non-ACTION CTCP would be answered by irssi with a
 		   PLAIN TEXT reply; our side never encrypts those, so drop it */
-		if (res.plain[0] == '\001' && strncmp(res.plain, "\001ACTION ", 8) != 0) {
+		if (res.plain[0] == '\001' && g_ascii_strncasecmp(res.plain, "\001ACTION ", 8) != 0) {
 			e2e_print_item(e2e_notice_item(server, p.target, nick),
 			               "dropped an encrypted non-ACTION CTCP from %s", nick);
 			signal_stop();

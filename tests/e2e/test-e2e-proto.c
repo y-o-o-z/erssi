@@ -6612,6 +6612,70 @@ static void test_rekey_lost_and_late(void)
 	peer_free(&b);
 }
 
+/* a raw "\001action x\001" (any case) is a /me to irssi: encrypted like
+   ACTION, not let out as another CTCP; and no spelling of a raw PRIVMSG
+   line - tags, a source prefix, leading spaces, a command in lower case,
+   in a buffer of several lines - gets past the gate */
+static void test_raw_lines_gated(void)
+{
+	static const char *const lines[] = {
+		"PRIVMSG #test :secret",
+		"privmsg #test :secret",
+		"  PRIVMSG #test :secret",
+		":me PRIVMSG #test :secret",
+		"@+draft/x=y PRIVMSG #test :secret",
+		"@a=b :me!u@h PrivMsg #test :secret",
+		NULL
+	};
+	E2E_GATE_RESULT g;
+	PEER a;
+	char *msg, *m, *t;
+	int i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#test", "normal");
+	/* the action, in lower case */
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001action secret\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001Action secret\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	/* another CTCP stays the clear-text escape hatch */
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001VERSION\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	for (i = 0; lines[i] != NULL; i++) {
+		char *buf = g_strconcat("NICK x\r\n", lines[i], NULL);
+
+		/* one line (what the outgoing hook parses) */
+		{
+			char *tags, *target, *body;
+
+			g_assert_true(e2e_parse_privmsg_line(lines[i], &tags, &target, &body));
+			g_assert_cmpstr(target, ==, "#test");
+			e2e_gate_decide(a.kr, TRUE, &a.id, NULL, target, body, no_resolve, NULL, &g);
+			g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+			e2e_gate_result_clear(&g);
+			g_free(tags);
+			g_free(target);
+			g_free(body);
+		}
+		/* in a buffer of several lines */
+		g_assert_true(e2e_buffer_has_privmsg(buf, strlen(buf)));
+		msg = e2e_gate_multiline(a.kr, TRUE, NULL, buf, strlen(buf), no_resolve, NULL);
+		g_assert_nonnull(msg);
+		g_free(msg);
+		/* with rpe2e.pl loaded, as the script's guard sees it */
+		g_assert_cmpint(e2e_script_guard(a.kr, TRUE, FALSE, FALSE, NULL, buf, strlen(buf),
+		                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+		g_free(m);
+		g_free(t);
+		g_free(buf);
+	}
+	peer_free(&a);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6630,6 +6694,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/replay", test_replay);
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
+	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
