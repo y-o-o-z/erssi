@@ -10,8 +10,9 @@ script switches to the module without new keys: unload the script
 is loaded the module stays inactive.
 
 This directory holds `rpe2e-from-repartee`, which moves an identity from
-repartee itself into that keyring. The module is a port of the MIT-licensed
-`rpe2e.pl`; the licence text is in [LICENSE](LICENSE).
+repartee itself into that keyring. The tool and its tests are the Shellter
+team's own, GPL-2.0-or-later like erssi. The module is a port of the
+MIT-licensed `rpe2e.pl`; [LICENSE](LICENSE) is that script's licence text.
 
 ## Moving keys from repartee
 

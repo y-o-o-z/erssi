@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 the Shellter team
 """rpe2e-from-repartee - moves E2E keys (RPE2E) from repartee to erssi.
 
 repartee keeps its keyring in the e2e_* tables of its database (~/.repartee/
@@ -46,7 +48,7 @@ import time
 
 FP_DOMAIN = b"RPE2E01-FP:"
 SECRET_BLOB_VERSION = 1
-SCOPE_SEP = "\x1f"  # repartee: "<network>\x1f<channel>" (scoping F3)
+SCOPE_SEP = "\x1f"  # repartee: "<network>\x1f<channel>"
 
 
 class MigrationError(Exception):
@@ -70,7 +72,7 @@ def load_sodium():
 
 
 def aes_gcm_decrypt(sodium, key, blob):
-    """Format repartee (storage::crypto::encrypt_bytes): wersja | nonce(12) | szyfrogram+tag."""
+    """repartee's format (storage::crypto::encrypt_bytes): version | nonce(12) | ciphertext+tag."""
     if len(blob) < 1 + 12 + 16:
         raise MigrationError("encrypted secret is too short")
     if blob[0] != SECRET_BLOB_VERSION:
@@ -89,7 +91,7 @@ def aes_gcm_decrypt(sodium, key, blob):
 
 
 def secret(sodium, key, blob, size, what):
-    """Jak Keyring::decode_secret: dlugosc docelowa = surowe bajty, inaczej szyfrogram."""
+    """As Keyring::decode_secret: a blob of the target length is the raw bytes, anything else is encrypted."""
     if blob is None:
         raise MigrationError(f"missing secret: {what}")
     data = bytes(blob) if len(blob) == size else aes_gcm_decrypt(sodium, key, bytes(blob))
