@@ -6613,6 +6613,19 @@ static void test_rekey_lost_and_late(void)
 	g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", rekey));
 	g_free(rekey);
 	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	/* never exported, and kept by a prune while the grace lasts */
+	{
+		E2E_JSON *doc = e2e_keyring_export(b.kr);
+		char *text = e2e_json_encode(doc, FALSE);
+
+		g_assert_null(strstr(text, "prev_sk"));
+		g_assert_null(strstr(text, "prev_until"));
+		e2e_wipe(text, strlen(text));
+		g_free(text);
+		e2e_json_free(doc);
+	}
+	g_assert_cmpuint(e2e_prune_prev_keys(b.kr), ==, 0);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
 	decrypt_from(&b, &a, "#test", after, &r);
 	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
 	e2e_in_result_clear(&r);
@@ -6629,6 +6642,20 @@ static void test_rekey_lost_and_late(void)
 	g_assert_true(r.save_needed);
 	e2e_in_result_clear(&r);
 	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	fake_now -= E2E_PREV_KEY_GRACE + 1;
+	/* in a quiet context, where no message comes: the prune */
+	{
+		char *w2 = rotate_wire(&a, "#test", "once more", &rekey);
+
+		g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", rekey));
+		g_free(rekey);
+		g_free(w2);
+	}
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	fake_now += E2E_PREV_KEY_GRACE + 1;
+	g_assert_cmpuint(e2e_prune_prev_keys(b.kr), ==, 1);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_until", NULL));
 	fake_now -= E2E_PREV_KEY_GRACE + 1;
 	g_free(before);
 	g_free(after);

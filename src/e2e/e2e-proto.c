@@ -2582,6 +2582,29 @@ guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick)
 	return n;
 }
 
+guint e2e_prune_prev_keys(E2E_JSON *kr)
+{
+	E2E_JSON *incoming = e2e_json_get(kr, "incoming");
+	GPtrArray *keys = e2e_json_keys(incoming);
+	guint i, n = 0;
+
+	for (i = 0; i < keys->len; i++) {
+		E2E_JSON *row = e2e_json_get(incoming, g_ptr_array_index(keys, i));
+
+		if (row == NULL || row->type != E2E_JSON_OBJECT ||
+		    (e2e_json_get(row, "prev_sk") == NULL && e2e_json_get(row, "prev_until") == NULL))
+			continue;
+		if (e2e_json_get(row, "prev_sk") != NULL &&
+		    e2e_json_get_int(row, "prev_until", 0) >= e2e_now())
+			continue;
+		e2e_json_remove(row, "prev_sk");
+		e2e_json_remove(row, "prev_until");
+		n++;
+	}
+	g_ptr_array_unref(keys);
+	return n;
+}
+
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
 {
 	char *k = pending_key(ctx, handle);
@@ -4212,7 +4235,7 @@ static E2E_JSON *row_with(const E2E_JSON *row, const char *name, const char *val
 
 E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 {
-	E2E_JSON *doc = e2e_json_new(E2E_JSON_OBJECT), *list, *src;
+	E2E_JSON *doc = e2e_json_new(E2E_JSON_OBJECT), *list, *src, *row;
 	GPtrArray *keys;
 	E2E_JSON *ident = e2e_json_get(kr, "identity");
 	guint i;
@@ -4240,8 +4263,12 @@ E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 		const char *bar = strchr(key, '|');
 		char *handle = bar != NULL ? g_strndup(key, bar - key) : g_strdup(key);
 
-		e2e_json_array_add(list, row_with(e2e_json_get(src, key), "handle", handle,
-		                                  "channel", bar != NULL ? bar + 1 : NULL));
+		row = row_with(e2e_json_get(src, key), "handle", handle, "channel",
+		               bar != NULL ? bar + 1 : NULL);
+		/* the key a REKEY replaced is no session to carry */
+		e2e_json_remove(row, "prev_sk");
+		e2e_json_remove(row, "prev_until");
+		e2e_json_array_add(list, row);
 		g_free(handle);
 	}
 	g_ptr_array_unref(keys);

@@ -151,6 +151,9 @@ gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char
 #define E2E_STRANGER_BACKLOG 10.0
 double e2e_send_cost(gsize len, int cmd_queue_speed_ms);
 gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed_ms);
+/* the keys REKEYs replaced whose grace is over go (their nodes wiped);
+   how many */
+guint e2e_prune_prev_keys(E2E_JSON *kr);
 /* our pending KEYREQ of ctx to handle goes (it was not sent) */
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
 /* the key at handle is one the user confirmed (/e2e accept, autotrust,

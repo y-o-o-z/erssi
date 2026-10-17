@@ -593,6 +593,10 @@ E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
 	was_lost = e2e_keyring_lost(keyring_file);
 	note_keyring_stat(FALSE);
 	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
+	/* the keys REKEYs replaced, once their grace is over, leave the
+	   file too */
+	if (status == E2E_LOAD_OK && e2e_prune_prev_keys(kr) > 0)
+		e2e_save(kr);
 	if (lost != NULL)
 		*lost = status == E2E_LOAD_LOST;
 	if (out != NULL)
@@ -2402,6 +2406,23 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 
 /* ---- the module ---- */
 
+/* once a minute: the keys REKEYs replaced whose grace is over leave
+   the keyring file even where nobody writes (e2e_load_full prunes) */
+static guint prune_tag;
+
+static gboolean prune_prev_keys(gpointer data)
+{
+	E2E_JSON *kr;
+	gboolean lost;
+
+	if (keyring_file != NULL && !e2e_keyring_is_lost() && e2e_native_active() &&
+	    g_file_test(keyring_file, G_FILE_TEST_EXISTS)) {
+		kr = e2e_load_full(&lost);
+		e2e_json_free(kr);
+	}
+	return TRUE;
+}
+
 static void read_settings(void)
 {
 	e2e_bot_bypass = settings_get_bool("e2e_bot_bypass");
@@ -2459,6 +2480,7 @@ void e2e_core_init(void)
 	signal_add_first("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
 	signal_add("gui exit", (SIGNAL_FUNC) sig_gui_exit);
 	signal_add("setup changed", (SIGNAL_FUNC) read_settings);
+	prune_tag = g_timeout_add_seconds(60, prune_prev_keys, NULL);
 
 	e2e_commands_init();
 	e2e_statusbar_init();
@@ -2536,6 +2558,9 @@ void e2e_core_deinit(void)
 	signal_remove("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
 	signal_remove("gui exit", (SIGNAL_FUNC) sig_gui_exit);
 	signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
+	if (prune_tag != 0)
+		g_source_remove(prune_tag);
+	prune_tag = 0;
 	if (script_check_id != 0)
 		g_source_remove(script_check_id);
 	script_check_id = 0;
