@@ -5,8 +5,11 @@ resizes (resize_debug) are files of the user's own in the erssi home
 on opens the log, off closes it. Before, the side panel log was the fixed
 /tmp/irssi_sidepanels.log (any user of the box could plant a link there
 or read the channels and nicks in it) and resize_debug worked only after
-a restart.
+a restart. The side panel log has no line for every band of every panel
+redraw, and the resize log names a main window by the number of its
+active window, not by a pointer cut to an int.
 Usage: test_debug_logs.py <build dir> [<source dir>]"""
+import re
 import shutil
 import stat
 import sys
@@ -70,6 +73,10 @@ def main():
             f"no side panel log in {a.home}"
         private(path)
         st["sp_log"] = path
+        # no trace of every band of every redraw (bob's join and line
+        # redrew the nick list)
+        text = log_text(path)
+        assert "DEBUG draw_right" not in text, "per-redraw traces in the log:\n" + text[-2000:]
 
     def t_sidepanel_debug_off():
         a = st["alice"]
@@ -94,6 +101,17 @@ def main():
             "the resize was not logged:\n" + log_text(path)[-2000:]
         st["rs_log"] = path
 
+    def t_resize_log_names_windows():
+        # "... cache for the main window of window N": N is the number of
+        # its active window, not a pointer cut to an int
+        def named():
+            return [int(m) for m in re.findall(r"cache for the main window of window (-?\d+)",
+                                               log_text(st["rs_log"]))]
+        # logged when the main window is redrawn, after the resize itself
+        assert harness.wait_until(named, WAIT), "no main window named:\n" + log_text(st["rs_log"])[-2000:]
+        ids = named()
+        assert all(1 <= i < 100 for i in ids), f"not window numbers: {sorted(set(ids))}"
+
     def t_resize_debug_off():
         a = st["alice"]
         path = st["rs_log"]
@@ -113,7 +131,8 @@ def main():
 
     try:
         harness.main([t_install, t_start, t_sidepanel_debug_on, t_sidepanel_debug_off,
-                      t_resize_debug_on_without_restart, t_resize_debug_off, t_sanitizers])
+                      t_resize_debug_on_without_restart, t_resize_log_names_windows,
+                      t_resize_debug_off, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()

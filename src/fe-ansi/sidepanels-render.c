@@ -54,9 +54,6 @@ int redraw_timer_tag = -1;
 int redraw_batch_timeout = 5; /* ms - WeeChat uses 1ms, we use 5ms for safety */
 gboolean batch_mode_active = FALSE;
 
-/* External functions we need */
-extern void sp_logf(const char *fmt, ...);
-
 /* The window whose theme the left panel is drawn with: the active one of
    the active main window. (Each band of the right panel is drawn with the
    theme of the window it shows.) */
@@ -891,14 +888,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 	new_count = 0;
 	total_items = 0;
 
-	/* DEBUG: Log what we see when entering draw_right_band */
-	sp_logf("DEBUG draw_right_band: y=%d h=%d aw=%p, aw->active=%p, name='%s', IS_CHANNEL=%d, cache->count=%d",
-	        top, height, (void*)aw,
-	        aw ? (void*)aw->active : NULL,
-	        aw && aw->active ? aw->active->visible_name : "NULL",
-	        aw && aw->active ? IS_CHANNEL(aw->active) : -1,
-	        cache->count);
-
 	/* Check if we need full redraw (dimensions or scroll changed) */
 	full_redraw = sp_cache_needs_full_redraw(cache, height, width, skip);
 
@@ -964,10 +953,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 		/* Count total nicks and clamp scroll offset */
 		total_items = g_slist_length(sorted_nicks);
 
-		/* DEBUG: Log nick count and cache state */
-		sp_logf("DEBUG draw_right CHANNEL: total_nicks=%d, cache->count=%d, full_redraw=%d, height=%d",
-		        total_items, cache->count, full_redraw, height);
-
 		/* Calculate max scroll offset - at least one item must be visible */
 		max_scroll = MAX(0, total_items - 1);
 
@@ -981,8 +966,6 @@ static int draw_right_band(SP_MAINWIN_CTX *ctx, SP_RIGHT_BAND *band, int width)
 		 * This fixes the bug where nicklist stays empty when returning from DCC chat */
 		if (cache->count == 0 && total_items > 0)
 			full_redraw = TRUE;
-
-		sp_logf("DEBUG draw_right AFTER: full_redraw=%d, skip=%d", full_redraw, skip);
 
 		/* Check if we have more content above/below */
 		has_more_above = (skip > 0);

@@ -292,8 +292,11 @@ void resize_debug_cache(const char *operation, const char *panel, int window_id)
 	if (!debug_enabled || !debug_log)
 		return;
 
-	resize_debug_log("CACHE", "%s %s cache for mainwindow %d",
-	                 operation, panel, window_id);
+	if (window_id >= 0)
+		resize_debug_log("CACHE", "%s %s cache for the main window of window %d",
+		                 operation, panel, window_id);
+	else
+		resize_debug_log("CACHE", "%s %s cache (all windows)", operation, panel);
 }
 
 void resize_debug_redraw(const char *type, int window_id)
@@ -302,7 +305,8 @@ void resize_debug_redraw(const char *type, int window_id)
 		return;
 
 	if (window_id >= 0) {
-		resize_debug_log("REDRAW", "%s for mainwindow %d", type, window_id);
+		resize_debug_log("REDRAW", "%s for the main window of window %d", type,
+		                 window_id);
 	} else {
 		resize_debug_log("REDRAW", "%s (all windows)", type);
 	}

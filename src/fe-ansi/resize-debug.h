@@ -35,7 +35,8 @@ void resize_debug_log(const char *stage, const char *fmt, ...);
 void resize_debug_dimensions(const char *stage, int old_cols, int old_rows,
                               int new_cols, int new_rows);
 
-/* Log cache operation */
+/* Log cache operation; WINDOW_ID is the number of the main window's
+ * active window, -1 for all of them (as in resize_debug_redraw) */
 void resize_debug_cache(const char *operation, const char *panel, int window_id);
 
 /* Log redraw operation */

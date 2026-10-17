@@ -492,7 +492,8 @@ void sig_nick_mode_filter(CHANNEL_REC *channel, NICK_REC *nick,
 void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 {
 	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
-	int mw_id = mw ? (int)(long)mw : -1;
+	/* the main window by the number of its active window */
+	int mw_id = mw != NULL && mw->active != NULL ? mw->active->refnum : -1;
 
 	resize_debug_log("SP_MW_RESIZED", "mainwindow %p resized, ctx=%p", (void*)mw, (void*)ctx);
 
