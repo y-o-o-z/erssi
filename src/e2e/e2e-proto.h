@@ -140,6 +140,22 @@ gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *c
    accepted - for a DM session ("@<own>") the acceptance of "@<handle>" */
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp);
+/* Handshake NOTICEs of people the user did not confirm go out at once
+   when nothing waits, else at the end of irssi's send queue
+   (IRC_SEND_LATER: everything the user sends, and a confirmed friend's
+   answer, goes ahead of them), and are taken only while what waits there
+   would leave within E2E_STRANGER_BACKLOG seconds (irssi sends a queued
+   line of len bytes every e2e_send_cost() seconds): a sustained flood
+   never grows a backlog, and the user's lines wait behind one line in
+   flight at most. A KEYRSP and its reciprocal KEYREQ fit. */
+#define E2E_STRANGER_BACKLOG 10.0
+double e2e_send_cost(gsize len, int cmd_queue_speed_ms);
+gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed_ms);
+/* our pending KEYREQ of ctx to handle goes (it was not sent) */
+void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
+/* the key at handle is one the user confirmed (/e2e accept, autotrust,
+   reverify, unrevoke, an exchange the user started) */
+gboolean e2e_handle_confirmed(const E2E_JSON *kr, const char *handle);
 /* how many addresses keys known as nick (ASCII case) are at */
 guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick);
 /* our pending KEYREQ of ctx to handle is one the user started

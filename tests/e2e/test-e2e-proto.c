@@ -7108,6 +7108,66 @@ static void test_user_started_confirms(void)
 	peer_free(&b2);
 }
 
+/* A model of irssi's send queue under a sustained flood: 5 clones each
+   send a signed KEYREQ to an auto-accept channel every 10 s for 10
+   minutes. Strangers' NOTICEs are queued only while what waits leaves
+   within E2E_STRANGER_BACKLOG (as e2e_send_notice_stranger does), and a
+   request is not taken while there is no room for its answer: the
+   backlog stays bounded, so the user's lines (queued ahead of them) and
+   a friend's answer never wait more than that. */
+static void test_stranger_backlog(void)
+{
+	PEER me, clones[5];
+	double queued = 0, worst = 0;
+	int w, c, answered = 0, held = 0;
+	const int speed = 2200;	/* cmd_queue_speed, ms */
+
+	peer_init(&me, "me", BOB, -1);
+	enable(&me, "#auto", "auto-accept");
+	for (c = 0; c < 5; c++) {
+		char *h = g_strdup_printf("clone%d@h", c);
+
+		peer_init(&clones[c], "c", h, -1);
+		g_free(h);
+	}
+	for (w = 0; w < 60; w++) {
+		fake_now += 10;
+		/* irssi drains the queue for 10 s */
+		queued = MAX(0, queued - 10);
+		for (c = 0; c < 5; c++) {
+			char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+			if (!e2e_stranger_room(queued, 330, speed)) {
+				held++;
+				continue;
+			}
+			e2e_json_remove(e2e_json_get(clones[c].kr, "pending"), "#auto|" BOB);
+			req = e2e_build_keyreq(clones[c].kr, &clones[c].id, "#auto", BOB, &error);
+			deliver_keyreq(&me, &clones[c], req, BOB, &rsp, &recip);
+			if (rsp != NULL && e2e_stranger_room(queued, strlen(rsp) + 20, speed)) {
+				queued += e2e_send_cost(strlen(rsp) + 20, speed);
+				answered++;
+			}
+			if (recip != NULL && e2e_stranger_room(queued, strlen(recip) + 20, speed))
+				queued += e2e_send_cost(strlen(recip) + 20, speed);
+			worst = MAX(worst, queued);
+			g_free(req);
+			g_free(rsp);
+			g_free(recip);
+		}
+	}
+	fake_now -= 600;
+	g_assert_cmpfloat(worst, <=, E2E_STRANGER_BACKLOG);
+	g_assert_cmpint(answered, >, 0);
+	g_assert_cmpint(held, >, 0);
+	/* a long line costs what irssi waits after it */
+	g_assert_cmpfloat(e2e_send_cost(330, speed), ==, 5.0);
+	g_assert_cmpfloat(e2e_send_cost(50, speed), ==, 2.2);
+	for (c = 0; c < 5; c++)
+		peer_free(&clones[c]);
+	peer_free(&me);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -7133,6 +7193,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
 	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
 	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
+	g_test_add_func("/e2e/proto/stranger-backlog", test_stranger_backlog);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);

@@ -2539,6 +2539,28 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 	return n;
 }
 
+double e2e_send_cost(gsize len, int cmd_queue_speed_ms)
+{
+	/* irc-servers.c: the next line waits cmd_queue_speed, and 2 s plus
+	   1 s per 100 bytes after a line of 100 bytes or more */
+	double speed = cmd_queue_speed_ms / 1000.0;
+	double wait = len >= 100 && cmd_queue_speed_ms > 10 ? 2 + (double) (len / 100) : 0;
+
+	return MAX(speed, wait);
+}
+
+gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed_ms)
+{
+	return queued_seconds + e2e_send_cost(len, cmd_queue_speed_ms) <= E2E_STRANGER_BACKLOG;
+}
+
+static gboolean known_at(const E2E_JSON *kr, const char *handle);
+
+gboolean e2e_handle_confirmed(const E2E_JSON *kr, const char *handle)
+{
+	return handle != NULL && known_at(kr, handle);
+}
+
 guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick)
 {
 	E2E_JSON *peers = e2e_json_get(kr, "peers");
@@ -2558,6 +2580,14 @@ guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick)
 	g_hash_table_destroy(seen);
 	g_ptr_array_unref(keys);
 	return n;
+}
+
+void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
+{
+	char *k = pending_key(ctx, handle);
+
+	e2e_json_remove(e2e_json_get(kr, "pending"), k);
+	g_free(k);
 }
 
 void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)

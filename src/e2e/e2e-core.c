@@ -669,6 +669,53 @@ void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body)
 	g_free(cmd);
 }
 
+/* what waits at the end of irssi's queue of server (IRC_SEND_LATER):
+   the seconds it takes to leave */
+static double later_backlog(IRC_SERVER_REC *s)
+{
+	GSList *tmp;
+	guint n = g_slist_length(s->cmdqueue), i = 0, first = n - MIN(n, 2 * (guint) s->cmdlater);
+	double total = 0;
+
+	gint64 now = g_get_real_time();
+
+	/* the wait after the line in flight, then the queued ones */
+	if (s->wait_cmd > now)
+		total = (double) (s->wait_cmd - now) / G_USEC_PER_SEC;
+	for (tmp = s->cmdqueue; tmp != NULL; tmp = tmp->next, i++)
+		if (i >= first && (i - first) % 2 == 0 && tmp->data != NULL)
+			total += e2e_send_cost(strlen(tmp->data), s->cmd_queue_speed);
+	return total;
+}
+
+gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body)
+{
+	IRC_SERVER_REC *s = IRC_SERVER(server);
+	char *cmd;
+	gboolean room;
+
+	if (s == NULL)
+		return FALSE;
+	cmd = g_strdup_printf("NOTICE %s :%s", nick, body);
+	room = e2e_stranger_room(later_backlog(s), strlen(cmd) + 2, s->cmd_queue_speed);
+	/* nothing waits and the flood rule allows: at once (as irc_send_cmd
+	   would), else behind everything else */
+	if (room)
+		irc_send_cmd_full(s, cmd, s->cmdqueue == NULL && g_get_real_time() >= s->wait_cmd &&
+		                  (s->cmdcount < s->max_cmds_at_once || s->cmd_queue_speed <= 0)
+		                  ? IRC_SEND_NOW : IRC_SEND_LATER, FALSE);
+	g_free(cmd);
+	return room;
+}
+
+gboolean e2e_stranger_queue_full(SERVER_REC *server)
+{
+	IRC_SERVER_REC *s = IRC_SERVER(server);
+
+	/* a KEYRSP and a reciprocal KEYREQ: about 600 bytes */
+	return s != NULL && !e2e_stranger_room(later_backlog(s), 330, s->cmd_queue_speed);
+}
+
 /* ---- handles ---- */
 
 char *e2e_resolve_dm_handle(SERVER_REC *server, const E2E_JSON *kr, const char *nick)
@@ -1845,6 +1892,17 @@ static void sig_server_gone(SERVER_REC *server)
 
 /* ---- incoming messages ---- */
 
+/* strangers' key exchange held back: said once a minute per server */
+static void tell_busy(SERVER_REC *server, const char *ctx, const char *nick)
+{
+	char *stamp = g_strconcat(server->tag, "|busy", NULL);
+
+	if (e2e_stamp_allow(trust_notice, stamp, E2E_TRUST_NOTICE_INTERVAL))
+		e2e_print_warning(e2e_notice_item(server, ctx, nick),
+		                  "many key requests at once - some are ignored for now (people you confirmed are always answered); their next message or request asks again");
+	g_free(stamp);
+}
+
 /* a nick from the server as it is shown: control bytes as '?'. Valid
    until the next call. */
 static const char *shown_nick(const char *nick)
@@ -2100,7 +2158,16 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 		if (res.keyreq != NULL) {
 			char *shown = e2e_ctx_display(res.ctx);
 
-			e2e_send_notice(server, nick, res.keyreq);
+			/* a person the user confirmed: the normal queue; anyone
+			   else's behind the user's lines, and only while that
+			   leaves within E2E_STRANGER_BACKLOG */
+			if (e2e_handle_confirmed(kr, address)) {
+				e2e_send_notice(server, nick, res.keyreq);
+			} else if (!e2e_send_notice_stranger(server, nick, res.keyreq)) {
+				e2e_forget_keyreq(kr, res.ctx, address);
+				res.ask = E2E_IN_ASK_BUSY;
+				tell_busy(server, res.ctx, nick);
+			}
 			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
 			g_free(shown);
 		}
@@ -2159,6 +2226,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 /* ---- the key exchange ---- */
 
 
+
 static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nick,
                            const char *address, const char *target)
 {
@@ -2215,6 +2283,14 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 			                             : "%s from %s ignored: the keyring is lost - /e2e reset starts a new one, /e2e import loads an export",
 			                  names[type], shown_nick(nick));
 		g_free(limit);
+		e2e_json_free(kr);
+		e2e_handshake_free(parsed);
+		return;
+	}
+	/* a stranger's request, while what strangers caused still waits to
+	   leave: not taken (neither stored nor answered) */
+	if (type == E2E_HS_KEYREQ && !e2e_handle_confirmed(kr, sender) && e2e_stranger_queue_full(server)) {
+		tell_busy(server, ctx, nick);
 		e2e_json_free(kr);
 		e2e_handshake_free(parsed);
 		return;
@@ -2292,13 +2368,23 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 		}
 		g_free(key);
 	}
-	if (rsp != NULL) {
-		e2e_send_notice(server, nick, rsp);
-		e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
-	}
-	if (recip != NULL) {
-		e2e_send_notice(server, nick, recip);
-		e2e_print_debug(server, ctx, nick, "TX reciprocal KEYREQ to %s for %s", nick, ctx);
+	{
+		gboolean confirmed = e2e_handle_confirmed(kr, sender);
+
+		if (rsp != NULL) {
+			if (confirmed)
+				e2e_send_notice(server, nick, rsp);
+			else if (!e2e_send_notice_stranger(server, nick, rsp))
+				tell_busy(server, ctx, nick);
+			e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
+		}
+		if (recip != NULL) {
+			if (confirmed)
+				e2e_send_notice(server, nick, recip);
+			else if (!e2e_send_notice_stranger(server, nick, recip))
+				tell_busy(server, ctx, nick);
+			e2e_print_debug(server, ctx, nick, "TX reciprocal KEYREQ to %s for %s", nick, ctx);
+		}
 	}
 	e2e_wipe(before, strlen(before));
 	e2e_wipe(after, strlen(after));
