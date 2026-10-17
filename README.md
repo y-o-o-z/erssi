@@ -58,8 +58,10 @@ erssi --update           # build and install it
 ```
 
 `--update` takes the newest release on GitHub that carries a valid
-signature by the release key of the installed copy and is a newer version,
-builds, tests and installs it into the same prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
+signature by the release key of the installed copy and is a newer version
+(the rules of the 2026.10.3 installer: from 2026.10.2 or older, run the
+install command once instead to get them), builds, tests and installs it
+into the same prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
 (no `--update`): run the install command again; your `~/.erssi/config` is
 kept and the Shellter look stays.
 

@@ -90,6 +90,15 @@ takes the newest release on GitHub that carries a valid signature by the key
 of that installer (a tag pushed by anyone else is skipped), builds, tests
 and installs it into the same prefix, with the settings of the first install.
 
+**The rules below hold from the 2026.10.3 installer on.** An erssi 2026.10.2
+or older runs its own, older installer on its next `erssi --update`. That
+installer also counts a signed tag of the installed version on another
+commit as an update, and it does not check the recorded commit on an
+update. To get the new rules right away, run the install command
+(`curl … | sh`, with `-s -- --prefix DIR` if you gave a prefix) once instead
+of `erssi --update`. After one update to 2026.10.3 or newer, every later
+`erssi --update` follows the new rules.
+
 - Only a newer version is an update. Release tags never move: a release
   made again gets a new version number. If the signed tag of the installed
   release points to another commit than the one installed, `--update` says
@@ -149,7 +158,10 @@ tag must point to. What it checks depends on how it runs:
    also point to the recorded commit. A signed tag of the installed release
    that now points to another commit is reported and never installed.
    `--update` needs git 2.34+ and ssh-keygen and stops without them. A new
-   release key would mean installing again with `curl … | sh`.
+   release key would mean installing again with `curl … | sh`. This holds
+   for an installed copy of 2026.10.3 or newer. The copy of 2026.10.2 or
+   older updates once with its own rules (see [Update](#update)), so run
+   `curl … | sh` once to switch over at once.
 
 ### Checking the installer yourself
 

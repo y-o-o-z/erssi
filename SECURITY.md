@@ -22,6 +22,9 @@ that key and the commit of every release it records:
   warning.
 - `erssi --update` takes only a newer release signed by the key of the
   installed copy, and reports, never installs, a release tag that moved.
+  This holds from 2026.10.3 on. An erssi 2026.10.2 or older updates once
+  with the older rules of its own installer; run the install command
+  (`curl … | sh`) once instead to get the new checks right away.
 
 How to check the installer and a release by hand, and the details:
 [What the installer verifies](docs/shellter/install.md#what-the-installer-verifies).
