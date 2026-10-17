@@ -1,7 +1,7 @@
 /*
  shellter-defaults.c : older configs keep the Shellter values of former defaults
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
