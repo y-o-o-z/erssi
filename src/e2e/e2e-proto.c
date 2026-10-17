@@ -1262,6 +1262,7 @@ static void add_ctx_once(GPtrArray *ctxs, const char *ctx)
 
 static void set_session(E2E_JSON *kr, const char *handle, const char *ctx,
                         const char *fp_hex, const unsigned char key[32], const char *status);
+static void confirm_peer(E2E_JSON *kr, const char *fp);
 
 /* the sessions kept with the records of the change accepted (KEYRSPs
    that were blocked) are installed; the contexts without one are asked
@@ -1540,6 +1541,7 @@ void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *f
 		e2e_json_set_int(peer, "last_seen", e2e_now());
 		detach_others(kr, handle, fp);
 		install_kept_sessions(kr, cands, handle, fp, out);
+		confirm_peer(kr, fp);
 		out->result = E2E_REVERIFY_REBOUND;
 	} else {
 		const char *old = e2e_json_get_string(chosen, "old_fp");
@@ -1568,6 +1570,7 @@ void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *f
 		e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
 		detach_others(kr, handle, fp);
 		install_kept_sessions(kr, cands, handle, fp, out);
+		confirm_peer(kr, fp);
 		out->result = E2E_REVERIFY_INSTALLED;
 	}
 	/* one key chosen for the address: the other claims to it go */
@@ -1938,14 +1941,14 @@ static char *reciprocal_ctx_on(const E2E_JSON *kr, const E2E_NET *net, const cha
    flood of clones (one wire each) is no flood of NOTICEs - an Excess
    Flood - and of keyring writes. The slots are kept in the stamps table
    of the 30 s limiter. take: use a free slot. */
-static gboolean auto_keyreq_budget(GHashTable *stamps, gboolean take)
+static gboolean budget(GHashTable *stamps, const char *name, int burst, gboolean take)
 {
 	gint64 now = e2e_now(), *when;
-	char key[16];
+	char key[24];
 	int i;
 
-	for (i = 0; i < E2E_AUTO_KEYREQ_BURST; i++) {
-		g_snprintf(key, sizeof(key), "\001auto|%d", i);
+	for (i = 0; i < burst; i++) {
+		g_snprintf(key, sizeof(key), "\001%s|%d", name, i);
 		when = g_hash_table_lookup(stamps, key);
 		if (when != NULL && now - *when < E2E_AUTO_KEYREQ_WINDOW && *when <= now)
 			continue;
@@ -1957,6 +1960,73 @@ static gboolean auto_keyreq_budget(GHashTable *stamps, gboolean take)
 		return TRUE;
 	}
 	return FALSE;
+}
+
+/* strangers' automatic KEYREQs together (see above) */
+static gboolean auto_keyreq_budget(GHashTable *stamps, gboolean take)
+{
+	return budget(stamps, "auto", E2E_AUTO_KEYREQ_BURST, take);
+}
+
+/* every handshake NOTICE we send by ourselves - KEYRSP, KEYREQ, of
+   anyone, confirmed or not: at most E2E_HANDSHAKE_CEILING in
+   E2E_AUTO_KEYREQ_WINDOW s */
+static gboolean ceiling(GHashTable *stamps, gboolean take)
+{
+	return budget(stamps, "all", E2E_HANDSHAKE_CEILING, take);
+}
+
+/* the requests of people the user did not confirm, that would store
+   something or be answered: at most E2E_INBOUND_BURST in
+   E2E_AUTO_KEYREQ_WINDOW s together */
+static gboolean inbound_budget(GHashTable *stamps, gboolean take)
+{
+	return budget(stamps, "in", E2E_INBOUND_BURST, take);
+}
+
+/* the key fp at handle is one the user confirmed: accepted by
+   /e2e accept or an autotrust rule (not by auto-accept mode), or taken by
+   /e2e reverify, /e2e unrevoke, or an exchange the user started - not a
+   key that became "trusted" by itself (answering our automatic request)
+   that a clone could get */
+static gboolean user_confirmed(const E2E_JSON *kr, const char *handle, const char *fp)
+{
+	E2E_JSON *accepted = e2e_json_get(kr, "accepted"), *peer;
+	GPtrArray *keys;
+	char *head;
+	gboolean ok = FALSE;
+	guint i;
+
+	if (handle == NULL || fp == NULL)
+		return FALSE;
+	peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
+	if (peer == NULL || strcmp(status_of(peer), "revoked") == 0 ||
+	    g_strcmp0(e2e_json_get_string(peer, "last_handle"), handle) != 0)
+		return FALSE;
+	if (e2e_json_truthy(e2e_json_get(peer, "confirmed")))
+		return TRUE;
+	head = g_strconcat(handle, "|", NULL);
+	keys = e2e_json_keys(accepted);
+	for (i = 0; i < keys->len && !ok; i++) {
+		E2E_JSON *row = e2e_json_get(accepted, g_ptr_array_index(keys, i));
+		const char *by = e2e_json_get_string(row, "by");
+
+		ok = g_str_has_prefix(g_ptr_array_index(keys, i), head) &&
+		     g_strcmp0(e2e_json_get_string(row, "fp"), fp) == 0 &&
+		     (g_strcmp0(by, "accept") == 0 || g_strcmp0(by, "autotrust") == 0);
+	}
+	g_ptr_array_unref(keys);
+	g_free(head);
+	return ok;
+}
+
+/* the user decided for the key fp: confirmed (user_confirmed) */
+static void confirm_peer(E2E_JSON *kr, const char *fp)
+{
+	E2E_JSON *peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
+
+	if (peer != NULL)
+		e2e_json_set_int(peer, "confirmed", 1);
 }
 
 /* the 30 s limiter of our KEYREQs: per address AND context - a query
@@ -1985,11 +2055,15 @@ static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
 	pk = pending_key(rctx, sender);
 	trusted = is_trusted(row_or_twin(kr, net, "incoming", sender, rctx, TRUE, NULL));
 	pending = row_or_twin(kr, net, "pending", sender, rctx, FALSE, NULL) != NULL;
-	/* a known key at its own address has its own allowance: strangers
-	   filling the cap never starve it */
-	if (!pending && !trusted && (known || auto_keyreq_budget(stamps, FALSE)) &&
-	    keyreq_stamp_allow(stamps, sender, rctx) && (known || auto_keyreq_budget(stamps, TRUE)))
+	/* a key the user confirmed has its own allowance: strangers filling
+	   the cap never starve it (the ceiling holds for everyone) */
+	if (!pending && !trusted && (known || auto_keyreq_budget(stamps, FALSE)) && ceiling(stamps, FALSE) &&
+	    keyreq_stamp_allow(stamps, sender, rctx)) {
+		if (!known)
+			auto_keyreq_budget(stamps, TRUE);
+		ceiling(stamps, TRUE);
 		out = e2e_build_keyreq(kr, id, rctx, sender, &error);
+	}
 	g_free(error);
 	g_free(k);
 	g_free(pk);
@@ -2036,7 +2110,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	E2E_JSON *cfg, *sess, *row;
 	PEER_CHANGE change;
 	const char *mode;
-	gboolean autotrust, trusted;
+	gboolean autotrust, trusted, confirmed, answer;
 	char *fp_hex = NULL, *k = NULL, *dm, *ctx = NULL;
 
 	*rsp = NULL;
@@ -2085,6 +2159,15 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	if (strcmp(mode, "quiet") == 0 && !trusted &&
 	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
 		goto out;
+	/* what costs a write or a KEYRSP now: people the user did not
+	   confirm share a budget (a flood of clones is no flood of writes
+	   and NOTICEs, and never stops the others), and a KEYRSP needs room
+	   under the ceiling of everyone's */
+	confirmed = change == CHANGE_KNOWN && user_confirmed(kr, sender_handle, fp_hex);
+	answer = strcmp(mode, "auto-accept") == 0 || accepted_or_twin(kr, net, sender_handle, ctx, fp_hex);
+	if ((!confirmed && !inbound_budget(outgoing_stamps, TRUE)) ||
+	    (answer && !ceiling(outgoing_stamps, TRUE)))
+		goto out;
 	update_peer(kr, fp_hex, req->pub, sender_handle, nick, NULL);
 	k = pipe_key(sender_handle, ctx);
 	/* read again: update_peer may prune the rows of other peers */
@@ -2122,7 +2205,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		mark_accepted(kr, sender_handle, ctx, fp_hex,
 		              autotrust ? "autotrust" : "auto-accept");
 	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, net, ctx,
-	                                            sender_handle, own_handle, change == CHANGE_KNOWN);
+	                                            sender_handle, own_handle, confirmed);
 out:
 	g_free(ctx);
 	g_free(k);
@@ -2166,7 +2249,7 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 	PEER_CHANGE change;
 	unsigned char eph_sk[32], key[32];
 	char *pk, *fp_hex = NULL, *ctx = NULL;
-	gboolean have_eph, ok = FALSE;
+	gboolean have_eph, ok = FALSE, user_started;
 
 	rsp = e2e_handshake_parse(body, E2E_HS_KEYRSP);
 	if (rsp == NULL)
@@ -2185,6 +2268,7 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 		goto out;
 	}
 	have_eph = b64_member(row, "eph_sk", eph_sk, 32);
+	user_started = e2e_json_truthy(e2e_json_get(row, "by_user"));
 	if (!have_eph) {
 		e2e_json_remove(pending, pk);
 		g_free(pk);
@@ -2215,6 +2299,9 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 	}
 	update_peer(kr, fp_hex, rsp->pub, sender_handle, nick, "trusted");
 	set_session(kr, sender_handle, ctx, fp_hex, key, "trusted");
+	/* the answer to an exchange the user started (/e2e handshake) */
+	if (user_started)
+		confirm_peer(kr, fp_hex);
 	ok = TRUE;
 out:
 	e2e_wipe(key, sizeof(key));
@@ -2391,6 +2478,7 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 		g_free(k);
 		fp_hex = e2e_fingerprint_hex(pub);
 		mark_accepted(kr, handle, ctx, fp_hex, "accept");
+		confirm_peer(kr, fp_hex);
 		g_free(fp_hex);
 		*reciprocal = reciprocal_on_accept(kr, id, ctx, own_ctx, handle, own_handle);
 		return E2E_ACCEPT_SENT;
@@ -2421,8 +2509,10 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 		if (!e2e_session_has_key(rows[i]))
 			continue;
 		e2e_json_set_string(rows[i], "status", "trusted");
-		if (fp != NULL)
+		if (fp != NULL) {
 			mark_accepted(kr, handle, ctx, fp, "accept");
+			confirm_peer(kr, fp);
+		}
 	}
 	return E2E_ACCEPT_TRUSTED;
 }
@@ -2449,6 +2539,37 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 	return n;
 }
 
+guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+	guint i, n;
+
+	for (i = 0; i < keys->len; i++) {
+		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
+		const char *h = e2e_json_get_string(peer, "last_handle");
+
+		if (h != NULL && *h != '\0' &&
+		    g_ascii_strcasecmp(str_or_empty(e2e_json_get_string(peer, "last_nick")), nick) == 0)
+			g_hash_table_add(seen, (char *) h);
+	}
+	n = g_hash_table_size(seen);
+	g_hash_table_destroy(seen);
+	g_ptr_array_unref(keys);
+	return n;
+}
+
+void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
+{
+	char *k = pending_key(ctx, handle);
+	E2E_JSON *row = e2e_json_get(e2e_json_get(kr, "pending"), k);
+
+	if (row != NULL)
+		e2e_json_set_int(row, "by_user", 1);
+	g_free(k);
+}
+
 gboolean e2e_unrevoke_peer(E2E_JSON *kr, const char *handle)
 {
 	E2E_JSON *peer;
@@ -2457,6 +2578,7 @@ gboolean e2e_unrevoke_peer(E2E_JSON *kr, const char *handle)
 	if (peer == NULL || strcmp(status_of(peer), "revoked") != 0)
 		return FALSE;
 	e2e_json_set_string(peer, "status", "trusted");
+	e2e_json_set_int(peer, "confirmed", 1);
 	return TRUE;
 }
 
@@ -3553,14 +3675,13 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 	return done;
 }
 
-/* a known key, not revoked, is bound to the sender's (server-stamped)
-   address: someone we read or accepted - not one of a flood of clones */
+/* the key bound to the sender's (server-stamped) address is one the user
+   confirmed (user_confirmed) - not one of a flood of clones */
 static gboolean known_at(const E2E_JSON *kr, const char *handle)
 {
-	E2E_JSON *peer;
+	const char *fp = e2e_find_peer_by_handle(kr, handle, NULL);
 
-	e2e_find_peer_by_handle(kr, handle, &peer);
-	return peer != NULL && strcmp(status_of(peer), "trusted") == 0;
+	return fp != NULL && user_confirmed(kr, handle, fp);
 }
 
 /* the key a REKEY replaced, while its grace lasts (set_session_after_rekey) */
@@ -3611,12 +3732,13 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 		return E2E_IN_ASK_WAITING;
 	/* all senders together first: a sender is not counted as asked
 	   while nothing could be sent */
-	if (!known && !auto_keyreq_budget(p->keyreq_stamps, FALSE))
+	if ((!known && !auto_keyreq_budget(p->keyreq_stamps, FALSE)) || !ceiling(p->keyreq_stamps, FALSE))
 		return E2E_IN_ASK_BUSY;
 	if (!keyreq_stamp_allow(p->keyreq_stamps, p->handle, res->ctx))
 		return E2E_IN_ASK_RECENT;
 	if (!known)
 		auto_keyreq_budget(p->keyreq_stamps, TRUE);
+	ceiling(p->keyreq_stamps, TRUE);
 	res->keyreq = e2e_build_keyreq(kr, id, res->ctx, p->handle, &error);
 	g_free(error);
 	if (res->keyreq == NULL)
@@ -3867,9 +3989,11 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 			res->reason = g_strdup("it does not open with their key (encrypted with another key of theirs, or changed on the way)");
 			/* most likely they rotated and their REKEY did not reach
 			   us: their current key is asked for (rate-limited, as
-			   for a missing key, but outside the cap strangers can
-			   fill: a trusted session at their address) */
-			res->ask = keyreq_for_wire(kr, id, p, is_dm, TRUE, res);
+			   for a missing key; outside the cap strangers can fill
+			   when the user confirmed that key) */
+			res->ask = keyreq_for_wire(kr, id, p, is_dm,
+			                           user_confirmed(kr, p->handle, e2e_json_get_string(row, "fp")),
+			                           res);
 		}
 		g_ptr_array_unref(changes);
 	}

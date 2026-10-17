@@ -883,8 +883,17 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 		e2e_print_item(item, "own identity not learned yet (waiting for the WHOIS reply) — try again in a moment");
 		goto out;
 	}
-	/* the live ident@host first: only an answer from that handle is taken */
-	handle = e2e_resolve_dm_handle(server, kr, nick);
+	/* the live ident@host: only an answer from that handle is taken;
+	   without one the keyring's, unless the nick is known at several
+	   addresses (an answer from the wrong one would be taken) */
+	handle = e2e_resolve_dm_handle(server, NULL, nick);
+	if (handle == NULL && e2e_nick_addresses(kr, nick) > 1) {
+		e2e_print_item(item, "%s is known at several addresses and is not here now — nothing sent; when they are in a common channel or send you a message, /e2e handshake %s again",
+		               shown_text(nick), shown_text(nick));
+		goto out;
+	}
+	if (handle == NULL)
+		handle = e2e_resolve_dm_handle(server, kr, nick);
 	if (handle == NULL) {
 		e2e_print_item(item, "cannot resolve handle for %s — wait until they are in a common channel or send you a message",
 		               nick);
@@ -898,6 +907,7 @@ static void cmd_handshake(SERVER_REC *server, WI_ITEM_REC *item, const char *nic
 		e2e_print_item(item, "handshake failed: %s", error);
 		goto out;
 	}
+	e2e_mark_user_keyreq(kr, kreq_ctx, handle);
 	e2e_save(kr);
 	e2e_send_notice(server, nick, wire);
 	e2e_print_item(item, "KEYREQ sent to %s for %s", nick, shown(ctx));
@@ -1117,7 +1127,11 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 		e2e_print_item(item, "usage: /e2e %s [<nick>|<ident@host>]", cmd);
 		return NULL;
 	}
-	handle = resolve_handle(kr, who);
+	/* who holds the nick now, else the keyring's (never a key's old
+	   address over a live one) */
+	handle = strchr(who, '@') == NULL ? e2e_resolve_dm_handle(server, NULL, who) : NULL;
+	if (handle == NULL)
+		handle = resolve_handle(kr, who);
 	if (handle == NULL) {
 		e2e_print_item(item, "cannot resolve handle for %s", shown_text(who));
 		return NULL;
@@ -1717,6 +1731,7 @@ static void reverify_keyreqs(SERVER_REC *server, WI_ITEM_REC *item, E2E_JSON *kr
 		}
 		wire = e2e_build_keyreq(kr, &id, kreq_ctx, r->handle, &error);
 		if (wire != NULL) {
+			e2e_mark_user_keyreq(kr, kreq_ctx, r->handle);
 			e2e_send_notice(srv, r->nick, wire);
 			e2e_print_item(item, "KEYREQ sent to %s for %s - their messages there are read once they answer",
 			               shown_text(r->nick), shown(ctx));

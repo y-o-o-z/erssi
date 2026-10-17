@@ -33,6 +33,11 @@
 /* automatic KEYREQs of all senders together: at most BURST per WINDOW s */
 #define E2E_AUTO_KEYREQ_BURST           3
 #define E2E_AUTO_KEYREQ_WINDOW          10
+/* every handshake NOTICE sent by ourselves, of anyone, per WINDOW s */
+#define E2E_HANDSHAKE_CEILING           10
+/* requests of people the user did not confirm that store something or
+   are answered, all together, per WINDOW s */
+#define E2E_INBOUND_BURST               5
 #define E2E_KEYREQ_INBOUND_MIN_INTERVAL 10
 #define E2E_PENDING_KEYREQ_TTL          120
 /* growth limits of what anyone can make us store */
@@ -135,6 +140,11 @@ gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *c
    accepted - for a DM session ("@<own>") the acceptance of "@<handle>" */
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp);
+/* how many addresses keys known as nick (ASCII case) are at */
+guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick);
+/* our pending KEYREQ of ctx to handle is one the user started
+   (/e2e handshake, /e2e reverify): its answer confirms the key */
+void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
 /* the ident@host of every "@<handle>" config with E2E on that belongs to
    nick (its "nick" member, or a peer last seen as nick there), of net:
    its own configs and old unscoped ones that none of its own hides */

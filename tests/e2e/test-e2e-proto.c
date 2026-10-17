@@ -139,6 +139,19 @@ static char *table_resolve(const char *nick, const E2E_JSON *kr, void *data)
 	return h != NULL ? g_strdup(h) : NULL;
 }
 
+/* the budgets of all senders together ("\001<name>|<n>" in the stamps
+   table) free again: a test of what a flood stores, with time passing */
+static void free_budgets(GHashTable *stamps)
+{
+	GHashTableIter iter;
+	gpointer key;
+
+	g_hash_table_iter_init(&iter, stamps);
+	while (g_hash_table_iter_next(&iter, &key, NULL))
+		if (*(const char *) key == '\001')
+			g_hash_table_iter_remove(&iter);
+}
+
 /* run one channel message through the gate of from and the decryption of to */
 static char *send_channel(PEER *from, PEER *to, const char *chan, const char *text)
 {
@@ -1350,6 +1363,7 @@ static void test_limits(void)
 		req = e2e_build_keyreq(kr, &id, "#c", ALICE, &error);
 		body = unframe(req);
 		fake_now++;
+		free_budgets(a.stamps);
 		e2e_handle_keyreq(a.kr, &a.id, a.stamps, NULL, handle, "u", body, ALICE, &rsp, &recip);
 		g_assert_null(rsp);
 		g_free(body);
@@ -1599,6 +1613,7 @@ static void test_growth_from_wires(void)
 		enable(&m, "#g", "auto-accept");
 		wire = gate_wire(&m, "#g", "x");
 		fake_now++;
+		free_budgets(a.stamps);
 		recv_wire(&a, &m, "#g", wire, &r);
 		g_assert_nonnull(r.keyreq);
 		if (i % 2 == 0) {
@@ -1770,6 +1785,7 @@ static void keyreq_from(PEER *to, const E2E_NET *net, const char *h)
 	g_assert_true(e2e_identity_get(kr, &id, TRUE, &created, &error));
 	req = e2e_build_keyreq(kr, &id, "#test", to->handle, &error);
 	body = unframe(req);
+	free_budgets(to->stamps);
 	e2e_handle_keyreq(to->kr, &to->id, to->stamps, net, h, "u", body, to->handle, &rsp, &recip);
 	g_assert_null(rsp);
 	g_free(body);
@@ -6709,6 +6725,7 @@ static void test_reverify_mixed_changes(void)
 	give_key(&a, &me, "#a");
 	give_key(&eve, &me, "#b");
 	/* alice's request, forwarded by eve */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#a|" BOB);
 	req = e2e_build_keyreq(a.kr, &a.id, "#a", BOB, &error);
 	fwd = a;
 	fwd.handle = EVE;
@@ -6822,12 +6839,13 @@ static void test_auto_keyreq_limits(void)
 	g_assert_cmpint(sent, ==, E2E_AUTO_KEYREQ_BURST);
 	g_assert_cmpint(busy, ==, 50 - E2E_AUTO_KEYREQ_BURST);
 	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "pending")), ==, 2 + E2E_AUTO_KEYREQ_BURST);
-	/* the cap is full: a known peer at its own address is still asked -
+	/* the cap is full: a key the user confirmed is still asked for -
 	   without a session here, and with one that no longer opens her
-	   chunks (her REKEY lost) */
+	   chunks (her REKEY lost); one that became trusted by itself (she
+	   answered our automatic request: a clone can do that) is not */
 	{
 		PEER a;
-		char *w, *rekey;
+		char *w, *rekey, *rsp2 = NULL, *recip2 = NULL;
 
 		peer_init(&a, "alice", ALICE, -1);
 		enable(&a, "#a", "auto-accept");
@@ -6836,6 +6854,12 @@ static void test_auto_keyreq_limits(void)
 		g_assert_false(auto_keyreq_budget_free(me.stamps));
 		w = wire_from(&a, "#b", "known");
 		in_params(&in, &me, "alice", ALICE, "#b", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_BUSY);
+		e2e_in_result_clear(&r);
+		/* /e2e accept alice: confirmed */
+		g_assert_cmpint(e2e_accept(me.kr, &me.id, ALICE, "#a", NULL, BOB, &rsp2, &recip2), ==,
+		                E2E_ACCEPT_TRUSTED);
 		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
 		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
 		e2e_in_result_clear(&r);
@@ -6849,6 +6873,32 @@ static void test_auto_keyreq_limits(void)
 		e2e_in_result_clear(&r);
 		g_free(w);
 		peer_free(&a);
+	}
+	/* and the ceiling of every handshake NOTICE holds for them too */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	free_budgets(me.stamps);
+	{
+		int n_sent = 0;
+
+		for (i = 0; i < E2E_HANDSHAKE_CEILING + 5; i++) {
+			PEER f;
+			char *h = g_strdup_printf("friend%d@h", i), *w, *rsp2 = NULL, *recip2 = NULL;
+
+			peer_init(&f, "f", h, -1);
+			enable(&f, "#a", "auto-accept");
+			enable(&f, "#b", "auto-accept");
+			give_key(&f, &me, "#a");
+			e2e_accept(me.kr, &me.id, h, "#a", NULL, BOB, &rsp2, &recip2);
+			w = wire_from(&f, "#b", "x");
+			in_params(&in, &me, "f", h, "#b", NULL);
+			e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+			n_sent += r.ask == E2E_IN_ASK_SENT;
+			e2e_in_result_clear(&r);
+			g_free(w);
+			g_free(h);
+			peer_free(&f);
+		}
+		g_assert_cmpint(n_sent, ==, E2E_HANDSHAKE_CEILING);
 	}
 	/* a clone that got none is not counted as asked: later it is */
 	fake_now += E2E_AUTO_KEYREQ_WINDOW;
@@ -6954,6 +7004,110 @@ static void test_reverify_nick_rules(void)
 	peer_free(&zed2);
 }
 
+/* KEYREQs of people the user did not confirm, that would store
+   something or be answered: E2E_INBOUND_BURST in E2E_AUTO_KEYREQ_WINDOW
+   s together - 40 clones on an auto-accept channel get 5 answers and 5
+   writes, a confirmed friend is still answered; requests for a context
+   with E2E off cost nothing */
+static void test_inbound_budget(void)
+{
+	PEER me, friend;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *before, *after;
+	int i, answered = 0;
+
+	peer_init(&me, "me", BOB, -1);
+	enable(&me, "#auto", "auto-accept");
+	peer_init(&friend, "friend", "friend@h", -1);
+	enable(&friend, "#auto", "auto-accept");
+	give_key(&friend, &me, "#auto");
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "friend@h", "#auto", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_TRUSTED);
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	free_budgets(me.stamps);
+	/* junk contexts first: nothing spent */
+	for (i = 0; i < 20; i++) {
+		PEER c;
+		char *h = g_strdup_printf("junk%d@h", i);
+
+		peer_init(&c, "c", h, -1);
+		req = e2e_build_keyreq(c.kr, &c.id, "#junk", BOB, &error);
+		deliver_keyreq(&me, &c, req, BOB, &rsp, &recip);
+		g_assert_null(rsp);
+		g_free(req);
+		g_free(h);
+		peer_free(&c);
+	}
+	before = e2e_keyring_snapshot(me.kr);
+	for (i = 0; i < 40; i++) {
+		PEER c;
+		char *h = g_strdup_printf("clone%d@h", i);
+
+		peer_init(&c, "c", h, -1);
+		req = e2e_build_keyreq(c.kr, &c.id, "#auto", BOB, &error);
+		deliver_keyreq(&me, &c, req, BOB, &rsp, &recip);
+		answered += rsp != NULL;
+		g_free(rsp);
+		g_free(recip);
+		rsp = recip = NULL;
+		g_free(req);
+		g_free(h);
+		peer_free(&c);
+	}
+	after = e2e_keyring_snapshot(me.kr);
+	g_assert_cmpstr(before, !=, after);
+	g_assert_cmpint(answered, ==, E2E_INBOUND_BURST);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "peers")), ==, 1 + E2E_INBOUND_BURST);
+	/* the friend: answered all the same */
+	e2e_json_remove(e2e_json_get(friend.kr, "pending"), "#auto|" BOB);
+	req = e2e_build_keyreq(friend.kr, &friend.id, "#auto", BOB, &error);
+	deliver_keyreq(&me, &friend, req, BOB, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	g_free(before);
+	g_free(after);
+	peer_free(&me);
+	peer_free(&friend);
+}
+
+/* an exchange the user started confirms the key that answers it; one
+   of ours that went out by itself does not. A nick known at several
+   addresses is told as such (/e2e handshake refuses it then) */
+static void test_user_started_confirms(void)
+{
+	PEER me, a, b2;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&me, "#a", "normal");
+	give_key(&a, &me, "#a");
+	g_assert_null(path_get(me.kr, "peers", a.id.fp_hex, "confirmed", NULL));
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#a|" BOB);
+	req = e2e_build_keyreq(me.kr, &me.id, "#a", ALICE, &error);
+	e2e_mark_user_keyreq(me.kr, "#a", ALICE);
+	g_assert_true(e2e_json_truthy(path_get(me.kr, "pending", "#a|" ALICE, "by_user", NULL)));
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &me, req, ALICE, &rsp, &recip);
+	g_assert_true(deliver_keyrsp(&me, &a, rsp));
+	g_assert_true(e2e_json_truthy(path_get(me.kr, "peers", a.id.fp_hex, "confirmed", NULL)));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	g_assert_cmpuint(e2e_nick_addresses(me.kr, "ALICE"), ==, 1);
+	peer_init(&b2, "alice", "alice@elsewhere", -1);
+	enable(&b2, "#a", "auto-accept");
+	give_key(&b2, &me, "#a");
+	g_assert_cmpuint(e2e_nick_addresses(me.kr, "alice"), ==, 2);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&b2);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6977,6 +7131,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
 	g_test_add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
 	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
+	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
+	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
