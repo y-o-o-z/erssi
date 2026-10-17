@@ -918,10 +918,25 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 	/* Handle handshake first */
 	if (!client->handshake_done) {
-		/* Null-terminate for string operations */
-		g_byte_array_append(client->input_buffer, (guchar *)"\0", 1);
+		const guchar *data = client->input_buffer->data;
+		const guchar *end;
+		gsize request_len = 0;
+		char *request;
 
-		ret = fe_web_handle_handshake(client, (const char *)client->input_buffer->data);
+		/* The request is what comes up to the empty line; RFC 6455 4.1
+		 * lets the client send frames right after it, and those may be
+		 * in this read too */
+		end = memmem(data, client->input_buffer->len, "\r\n\r\n", 4);
+		if (end != NULL)
+			request_len = end - data + 4;
+		ret = 0;
+		if (request_len > 0 && request_len <= FE_WEB_MAX_REQUEST) {
+			request = g_strndup((const char *) data, request_len);
+			ret = fe_web_handle_handshake(client, request);
+			/* the password is in there */
+			memset(request, 0, strlen(request));
+			g_free(request);
+		}
 		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
 			/* wrong password (after the 401 or 429 is written), failed
 			 * write or an endless request */
@@ -949,11 +964,13 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			    strcmp(client_peer(client), own_peer_key) != 0)
 				fe_web_pacing_succeeded(login_pacing, client_peer(client));
 
-			/* Clear input buffer */
-			g_byte_array_set_size(client->input_buffer, 0);
-		} else {
-			/* Remove null terminator */
-			g_byte_array_set_size(client->input_buffer, client->input_buffer->len - 1);
+			/* the request is done with; what came after it are
+			 * frames */
+			memset(client->input_buffer->data, 0, request_len);
+			g_byte_array_remove_range(client->input_buffer, 0, request_len);
+			if (client->input_buffer->len > 0 && !client->closing &&
+			    !client->output_failed)
+				fe_web_handle_websocket_data(client);
 		}
 		return;
 	}
