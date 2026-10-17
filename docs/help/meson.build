@@ -114,6 +114,8 @@ install_data(
     'setname',
     'show_names_on_join_limit',
     'sidepanel_debug',
+    'sidepanel_left_width',
+    'sidepanel_right_width',
     'silence',
     'squery',
     'squit',

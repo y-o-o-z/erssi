@@ -1,0 +1,26 @@
+%9Setting:%9
+
+    sidepanel_left_width (number; default: 15, the Shellter default
+    configuration sets 20)
+
+%9Description:%9
+
+    The width in columns of the left side panel (the window list), its border
+    included.
+
+    A panel is at least 6 columns wide: a smaller number is taken as 6.
+    0 hides the panel, as /SET sidepanel_left OFF does. The panels
+    give way to the main windows: a panel is shown only while the
+    terminal has room for it next to the widest row of main windows (20
+    columns for each window), so it can go and come back as the terminal
+    is resized or windows are split side by side.
+
+%9Examples:%9
+
+    /SET sidepanel_left_width 20
+    /SET sidepanel_left off
+
+%9See also:%9
+
+    SET, SIDEPANEL_RIGHT_WIDTH, WINDOW
+

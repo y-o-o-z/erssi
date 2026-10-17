@@ -25,6 +25,8 @@ TOPICS = {
     "term_notify": "Shows a desktop notification through the terminal for every mention",
     "sidepanel_debug": "Writes a debug log of the side panels and the mouse",
     "resize_debug": "Writes a debug log of every terminal resize",
+    "sidepanel_left_width": "The width in columns of the left side panel",
+    "sidepanel_right_width": "The width in columns of the right side panel",
 }
 
 

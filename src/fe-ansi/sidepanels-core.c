@@ -150,12 +150,28 @@ static void destroy_ctx(void)
 	sp_ctx = NULL;
 }
 
+/* The narrowest a panel is drawn: on the left a window number, ". ", a
+   character of the name and the border; on the right the border, the
+   mode prefix, two characters of a nick and the column of the scroll
+   markers. Narrower, the text was drawn over the main window (the clip
+   was off at 0 columns left for it) or past the last column. */
+#define SP_MIN_PANEL_WIDTH 6
+
+/* A width setting: below SP_MIN_PANEL_WIDTH it is SP_MIN_PANEL_WIDTH, 0
+   (or less) hides the panel as before */
+static int panel_width_setting(const char *name)
+{
+	int width = settings_get_int(name);
+
+	return width <= 0 ? 0 : MAX(width, SP_MIN_PANEL_WIDTH);
+}
+
 static void read_settings(void)
 {
 	int old_mouse = sp_enable_mouse;
 
-	sp_left_width = settings_get_int("sidepanel_left_width");
-	sp_right_width = settings_get_int("sidepanel_right_width");
+	sp_left_width = panel_width_setting("sidepanel_left_width");
+	sp_right_width = panel_width_setting("sidepanel_right_width");
 	sp_enable_left = settings_get_bool("sidepanel_left");
 	sp_enable_right = settings_get_bool("sidepanel_right");
 	sp_auto_hide_right = settings_get_bool("sidepanel_right_auto_hide");
