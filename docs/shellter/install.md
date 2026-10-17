@@ -165,30 +165,43 @@ tag must point to. What it checks depends on how it runs:
 
 ### Checking the installer yourself
 
-Commits on `main` are signed by the release key (the release hook refuses
-an unsigned one), so the newest one can be checked. To check the installer
-before you run it, take it from a clone of it instead of `curl`:
+The release hook refuses an unsigned commit on `main`, so every commit
+there is signed by the release key and the newest one can be checked. To
+check the installer before you run it, take it from a clone instead of
+`curl`. gpg is switched off for the check, as in the installer: git picks
+the program from the signature, and an OpenPGP signature by any key in
+your keyring would pass otherwise.
 
 ```sh
 git clone --depth 1 https://github.com/y-o-o-z/erssi.git erssi-installer
 cd erssi-installer
-git -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-commit HEAD
-grep -F "$(cat utils/allowed_signers)" shellter-install.sh >/dev/null && echo "the installer carries this key"
+git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
+    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-commit HEAD
+git log -1 --date=short --format='checked: %h %cd %s'
+sed -n '/^RELEASES="/,/^"/p' shellter-install.sh | awk 'NF >= 2 { r = $1 } END { print "installs: " r }'
 sh shellter-install.sh
 ```
 
-`verify-commit` must print `Good "git" signature for
-136268860+y-o-o-z@users.noreply.github.com with ED25519 key
-SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`. The clone checks the
-commit against a key from the same clone, so compare that fingerprint with
-one you got another way: from the project website, from an earlier clone,
-or from the copy of an earlier install
-(`grep SHA256: ~/.local/opt/erssi/share/irssi/shellter-install.sh`).
+Before the last command, check three things:
 
-To check a release tag by hand, in a clone:
+- `verify-commit` printed `Good "git" signature for
+  136268860+y-o-o-z@users.noreply.github.com with ED25519 key
+  SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw`.
+- That fingerprint is the one you got another way: from the project
+  website, from an earlier clone, or from the copy of an earlier install
+  (`grep SHA256: ~/.local/opt/erssi/share/irssi/shellter-install.sh`). The
+  clone checks the commit against a key from the same clone, so only that
+  comparison shows the key is the real one.
+- The release on the `installs:` line is the newest one on the [releases
+  page](https://github.com/y-o-o-z/erssi/releases). A signed but older
+  commit of `main` would install an older release.
+
+To check a release tag by hand, in a clone (`git fetch --tags` in a depth-1
+clone), with the same options:
 
 ```sh
-git -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.2
+git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
+    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.2
 ```
 
 ## Files in ~/.erssi
