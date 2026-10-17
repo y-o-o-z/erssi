@@ -3524,12 +3524,15 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		res->ctx = g_strdup(wire);
 	}
 
+	/* a time out of the window: not taken (a replay, history a bouncer
+	   plays back, a clock far off) - our own lines too; no key exchange
+	   changes that */
+	res->own = p->is_own_line;
 	if (ABS(e2e_now() - w->ts) > E2E_TS_TOLERANCE) {
 		res->debug = g_strdup_printf("drop ciphertext from %s (%s): timestamp skew",
 		                             p->nick, p->handle);
-		res->why = E2E_IN_WHY_REJECTED;
-		res->reason = g_strdup_printf("its time is %" G_GINT64_FORMAT " s off (a replay, or a clock far off)",
-		                              (gint64) ABS(e2e_now() - w->ts));
+		res->why = E2E_IN_WHY_STALE;
+		res->skew = e2e_now() - w->ts;
 		goto out;
 	}
 
@@ -3723,6 +3726,21 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 		out = g_strdup_printf("[E2E rejected: %s - /e2e handshake %s asks for their current key]",
 		                      res->reason != NULL ? res->reason : "it cannot be read", who);
 		break;
+	case E2E_IN_WHY_STALE: {
+		gint64 s = res->skew < 0 ? -res->skew : res->skew;
+		char *off = s >= 7200 ? g_strdup_printf("%" G_GINT64_FORMAT " h", s / 3600)
+		          : s >= 120 ? g_strdup_printf("%" G_GINT64_FORMAT " min", s / 60)
+		                     : g_strdup_printf("%" G_GINT64_FORMAT " s", s);
+
+		if (res->skew > 0)
+			out = g_strdup_printf("[E2E: %s encrypted message from %s ago not read - too old to verify (history played back, a replay, or a clock far off)]",
+			                      res->own ? "your own" : "an", off);
+		else
+			out = g_strdup_printf("[E2E: %s encrypted message dated %s ahead not read - a clock is far off]",
+			                      res->own ? "your own" : "an", off);
+		g_free(off);
+		break;
+	}
 	case E2E_IN_WHY_OWN_COPY:
 		out = g_strdup("[E2E: your own encrypted message, relayed back - it does not open with your current key (rotated since)]");
 		break;

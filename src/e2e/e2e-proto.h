@@ -347,8 +347,8 @@ typedef enum {
 				   (e2e_trust_changes): no key is asked for */
 	E2E_IN_WHY_REVOKED,	/* the sender's session here is revoked (/e2e decline,
 				   /e2e revoke): not read, no key is asked for */
-	E2E_IN_WHY_REJECTED,	/* it does not open under their key, or its time is
-				   off (res->reason) */
+	E2E_IN_WHY_REJECTED,	/* it does not open under their key (res->reason) */
+	E2E_IN_WHY_STALE,	/* its time is out of the window (res->skew) */
 	E2E_IN_WHY_OWN_COPY,	/* our own line relayed back, not under our key now */
 	E2E_IN_WHY_BLOCKED,	/* an old context of unknown network: off here */
 	E2E_IN_WHY_REPEAT	/* the same chunk again (E2E_REPLAY): dropped */
@@ -369,6 +369,8 @@ typedef struct {
 	E2E_IN_WHY why;		/* DROP: why */
 	E2E_IN_ASK ask;		/* E2E_IN_WHY_NO_SESSION */
 	char *reason;		/* E2E_IN_WHY_REJECTED: what was wrong, for the user */
+	gint64 skew;		/* E2E_IN_WHY_STALE: now - its time */
+	gboolean own;		/* our own line relayed back */
 	char *plain;		/* PLAIN: valid UTF-8 */
 	char *ctx;		/* the storage context (bare until it is found) */
 	char *keyreq;		/* DROP: an automatic KEYREQ to send to the sender */

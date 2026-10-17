@@ -1853,7 +1853,8 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 
 			show_placeholder(server, target, orig_nick, orig_address, text,
 			                 res.why == E2E_IN_WHY_TRUST || res.why == E2E_IN_WHY_REVOKED ||
-			                 res.why == E2E_IN_WHY_REJECTED);
+			                 res.why == E2E_IN_WHY_REJECTED ||
+			                 (res.why == E2E_IN_WHY_STALE && !res.own));
 			g_free(text);
 		}
 		/* the trust change that blocks it, in full now and then */

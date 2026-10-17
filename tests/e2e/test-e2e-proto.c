@@ -5712,13 +5712,47 @@ static void test_hidden_messages(void)
 		e2e_in_result_clear(&r);
 		g_free(bad);
 	}
-	/* too old (a replay): rejected, with the skew */
-	fake_now += E2E_TS_TOLERANCE + 100;
+	/* too old (a replay, history played back): not taken, said so -
+	   no key exchange to advise */
+	fake_now += 3600;
 	decrypt_from(&b, &a, "#test", wire, &r);
-	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
-	assert_placeholder(&b, &a, &r, "[E2E rejected: its time is");
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "[E2E: an encrypted message from 60 min ago not read - too old to verify");
+	{
+		char *text = e2e_in_placeholder(b.kr, &r, a.nick, a.handle);
+
+		g_assert_null(strstr(text, "handshake"));
+		g_free(text);
+	}
 	e2e_in_result_clear(&r);
+	/* our own, played back by a bouncer: the same, and our nick is not
+	   named */
+	{
+		E2E_IN_PARAMS own;
+
+		in_params(&own, &a, "alice", ALICE, "#test", NULL);
+		own.is_own_line = TRUE;
+		e2e_decrypt_incoming(a.kr, &a.id, &own, wire, &r);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+		g_assert_true(r.own);
+		{
+			char *text = e2e_in_placeholder(a.kr, &r, "alice", ALICE);
+
+			g_assert_nonnull(strstr(text, "your own encrypted message from 60 min ago"));
+			g_assert_null(strstr(text, "alice"));
+			g_free(text);
+		}
+		e2e_in_result_clear(&r);
+	}
+	fake_now -= 3600;
+	/* ahead: a clock */
 	fake_now -= E2E_TS_TOLERANCE + 100;
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+	assert_placeholder(&b, &a, &r, "ahead not read - a clock is far off");
+	e2e_in_result_clear(&r);
+	fake_now += E2E_TS_TOLERANCE + 100;
 
 	/* declined here: not read and not asked again, said so */
 	e2e_json_set_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "status", "revoked");
@@ -6326,7 +6360,7 @@ static void test_replay(void)
 	/* a second later the timestamp check refuses it: forgotten then */
 	fake_now += 1;
 	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
-	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
 	e2e_in_result_clear(&r);
 	fake_now += E2E_TS_TOLERANCE + 2;
 	{

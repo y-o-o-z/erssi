@@ -214,9 +214,11 @@
     key requested]" when there is no session with them yet (a key request
     goes to them at most every 30 s, and only while encryption is on
     here; their answer lets you read their next messages), "[E2E
-    rejected: ...]" in red when it does not open with their key, its time
-    is more than 5 minutes off, or you declined or revoked them here (then
-    nothing is requested), and the reason when a key exchange of theirs
+    rejected: ...]" in red when it does not open with their key or you
+    declined or revoked them here (then nothing is requested), "too old
+    to verify" when its time is more than 5 minutes off (history a
+    bouncer plays back - your own lines too - a replay, or a clock far
+    off), and the reason when a key exchange of theirs
     is blocked (a new address, a new key, revoked - see REVERIFY); such
     a block is also told in full, with the command to run, when it
     happens and at most once a minute while they write.
