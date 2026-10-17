@@ -22,10 +22,22 @@
 #include <irssi/src/irc/core/scram.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
+#include <openssl/crypto.h>
 
 #define NONCE_LENGTH 18
 #define CLIENT_KEY "Client Key"
 #define SERVER_KEY "Server Key"
+
+/* The iteration count i= of the server-first-message. RFC 5802 and 7677
+ * ask for at least 4096, which Ergo uses; Atheme (the services behind
+ * SASL on Libera.Chat and many networks running Solanum, InspIRCd or
+ * UnrealIRCd, which leave SCRAM to the services) defaults to 64000 and
+ * accepts 10000 to 5000000. The client computes PBKDF2 over i rounds in
+ * the main loop, so a larger count from a hostile or broken server would
+ * freeze erssi: 1000000 rounds already take a second or more with SHA-512
+ * on a slow machine. Anything outside this range is refused. */
+#define SCRAM_MIN_ITERATIONS 4096
+#define SCRAM_MAX_ITERATIONS 1000000
 
 // EVP_MD_CTX_create() and EVP_MD_CTX_destroy() were renamed in OpenSSL 1.1.0
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
@@ -83,6 +95,11 @@ static int create_SHA(SCRAM_SESSION_REC *session, const unsigned char *input, si
 {
 	EVP_MD_CTX *md_ctx = EVP_MD_CTX_new();
 
+	if (md_ctx == NULL) {
+		session->error = g_strdup("Message digest allocation failed");
+		return SCRAM_ERROR;
+	}
+
 	if (!EVP_DigestInit_ex(md_ctx, session->digest, NULL)) {
 		session->error = g_strdup("Message digest initialization failed");
 		EVP_MD_CTX_free(md_ctx);
@@ -110,7 +127,7 @@ static scram_status process_client_first(SCRAM_SESSION_REC *session, char **outp
 {
 	char nonce[NONCE_LENGTH];
 
-	if (!create_nonce(nonce, NONCE_LENGTH)) {
+	if (create_nonce(nonce, NONCE_LENGTH) != 1) {
 		session->error = g_strdup("Could not create client nonce");
 		return SCRAM_ERROR;
 	}
@@ -123,15 +140,70 @@ static scram_status process_client_first(SCRAM_SESSION_REC *session, char **outp
 	return SCRAM_IN_PROGRESS;
 }
 
+/* The value of i=: decimal digits only, nothing else, within the range
+ * above; 0 when it is anything else. */
+static unsigned int parse_iteration_count(const char *str)
+{
+	unsigned long value = 0;
+	const char *p;
+
+	if (*str == '\0')
+		return 0;
+	for (p = str; *p != '\0'; p++) {
+		if (!g_ascii_isdigit(*p))
+			return 0;
+		value = value * 10 + (*p - '0');
+		if (value > SCRAM_MAX_ITERATIONS)
+			return 0;
+	}
+	if (value < SCRAM_MIN_ITERATIONS)
+		return 0;
+	return value;
+}
+
+/* TRUE when str is padded base64 that decodes to at least one byte */
+static gboolean is_base64(const char *str)
+{
+	size_t len, pad, i;
+
+	len = strlen(str);
+	if (len == 0 || len % 4 != 0)
+		return FALSE;
+	pad = 0;
+	if (str[len - 1] == '=')
+		pad = str[len - 2] == '=' ? 2 : 1;
+	for (i = 0; i < len - pad; i++) {
+		if (!g_ascii_isalnum(str[i]) && str[i] != '+' && str[i] != '/')
+			return FALSE;
+	}
+	return len / 4 * 3 - pad > 0;
+}
+
+/* HMAC(key, data) into out, which holds digest_size bytes */
+static gboolean scram_hmac(SCRAM_SESSION_REC *session, const unsigned char *key,
+                           size_t key_len, const unsigned char *data, size_t data_len,
+                           unsigned char *out)
+{
+	unsigned int out_len = 0;
+
+	if (HMAC(session->digest, key, key_len, data, data_len, out, &out_len) == NULL ||
+	    out_len != session->digest_size) {
+		session->error = g_strdup("HMAC computation failed");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 static scram_status process_server_first(SCRAM_SESSION_REC *session, const char *data,
                                          char **output, size_t *output_len)
 {
 	char **params, *client_final_message_without_proof, *salt, *server_nonce_b64,
-	    *client_proof_b64;
+	    *client_proof_b64, *iterations;
 	unsigned char *client_key, stored_key[EVP_MAX_MD_SIZE], *client_signature, *client_proof;
-	unsigned int i, param_count, iteration_count, client_key_len, stored_key_len;
+	unsigned int i, param_count, iteration_count, stored_key_len;
 	gsize salt_len = 0;
 	size_t client_nonce_len;
+	scram_status status = SCRAM_ERROR;
 
 	params = g_strsplit(data, ",", -1);
 	param_count = g_strv_length(params);
@@ -145,29 +217,53 @@ static scram_status process_server_first(SCRAM_SESSION_REC *session, const char 
 
 	server_nonce_b64 = NULL;
 	salt = NULL;
-	iteration_count = 0;
+	iterations = NULL;
 
 	for (i = 0; i < param_count; i++) {
-		if (!strncmp(params[i], "r=", 2)) {
+		if (!strncmp(params[i], "m=", 2)) {
+			/* a mandatory extension this client does not know */
+			session->error = g_strdup_printf("Unsupported SCRAM extension in "
+			                                 "server-first-message: %s", data);
+			g_strfreev(params);
+			g_free(server_nonce_b64);
+			g_free(salt);
+			g_free(iterations);
+			return SCRAM_ERROR;
+		} else if (!strncmp(params[i], "r=", 2)) {
 			g_free(server_nonce_b64);
 			server_nonce_b64 = g_strdup(params[i] + 2);
 		} else if (!strncmp(params[i], "s=", 2)) {
 			g_free(salt);
 			salt = g_strdup(params[i] + 2);
 		} else if (!strncmp(params[i], "i=", 2)) {
-			iteration_count = strtoul(params[i] + 2, NULL, 10);
+			g_free(iterations);
+			iterations = g_strdup(params[i] + 2);
 		}
 	}
 
 	g_strfreev(params);
 
 	if (server_nonce_b64 == NULL || *server_nonce_b64 == '\0' || salt == NULL ||
-	    *salt == '\0' || iteration_count == 0) {
+	    !is_base64(salt) || iterations == NULL) {
 		session->error = g_strdup_printf("Invalid server-first-message: %s", data);
 		g_free(server_nonce_b64);
 		g_free(salt);
+		g_free(iterations);
 		return SCRAM_ERROR;
 	}
+
+	iteration_count = parse_iteration_count(iterations);
+	if (iteration_count == 0) {
+		session->error = g_strdup_printf("Refusing SCRAM iteration count i=%s: it must be "
+		                                 "a number from %d to %d",
+		                                 iterations, SCRAM_MIN_ITERATIONS,
+		                                 SCRAM_MAX_ITERATIONS);
+		g_free(server_nonce_b64);
+		g_free(salt);
+		g_free(iterations);
+		return SCRAM_ERROR;
+	}
+	g_free(iterations);
 
 	client_nonce_len = strlen(session->client_nonce_b64);
 
@@ -175,6 +271,8 @@ static scram_status process_server_first(SCRAM_SESSION_REC *session, const char 
 	if (strlen(server_nonce_b64) < client_nonce_len ||
 	    strncmp(server_nonce_b64, session->client_nonce_b64, client_nonce_len)) {
 		session->error = g_strdup_printf("Invalid server nonce: %s", server_nonce_b64);
+		g_free(server_nonce_b64);
+		g_free(salt);
 		return SCRAM_ERROR;
 	}
 
@@ -183,9 +281,14 @@ static scram_status process_server_first(SCRAM_SESSION_REC *session, const char 
 	// SaltedPassword := Hi(Normalize(password), salt, i)
 	session->salted_password = g_malloc(session->digest_size);
 
-	PKCS5_PBKDF2_HMAC(session->password, strlen(session->password), (unsigned char *) salt,
-	                  salt_len, iteration_count, session->digest, session->digest_size,
-	                  session->salted_password);
+	if (PKCS5_PBKDF2_HMAC(session->password, strlen(session->password), (unsigned char *) salt,
+	                      salt_len, iteration_count, session->digest, session->digest_size,
+	                      session->salted_password) != 1) {
+		session->error = g_strdup("PBKDF2 computation failed");
+		g_free(server_nonce_b64);
+		g_free(salt);
+		return SCRAM_ERROR;
+	}
 
 	// AuthMessage := client-first-message-bare + "," +
 	//                server-first-message + "," +
@@ -195,87 +298,90 @@ static scram_status process_server_first(SCRAM_SESSION_REC *session, const char 
 	session->auth_message = g_strdup_printf("%s,%s,%s", session->client_first_message_bare,
 	                                        data, client_final_message_without_proof);
 
-	// ClientKey := HMAC(SaltedPassword, "Client Key")
 	client_key = g_malloc0(session->digest_size);
+	client_signature = g_malloc0(session->digest_size);
+	client_proof = g_malloc0(session->digest_size);
 
-	HMAC(session->digest, session->salted_password, session->digest_size,
-	     (unsigned char *) CLIENT_KEY, strlen(CLIENT_KEY), client_key, &client_key_len);
+	// ClientKey := HMAC(SaltedPassword, "Client Key")
+	if (!scram_hmac(session, session->salted_password, session->digest_size,
+	                (unsigned char *) CLIENT_KEY, strlen(CLIENT_KEY), client_key))
+		goto out;
 
 	// StoredKey := H(ClientKey)
-	if (!create_SHA(session, client_key, session->digest_size, stored_key, &stored_key_len)) {
-		g_free(client_final_message_without_proof);
-		g_free(server_nonce_b64);
-		g_free(salt);
-		g_free(client_key);
-		return SCRAM_ERROR;
-	}
+	if (!create_SHA(session, client_key, session->digest_size, stored_key, &stored_key_len))
+		goto out;
 
 	// ClientSignature := HMAC(StoredKey, AuthMessage)
-	client_signature = g_malloc0(session->digest_size);
-	HMAC(session->digest, stored_key, stored_key_len, (unsigned char *) session->auth_message,
-	     strlen((char *) session->auth_message), client_signature, NULL);
+	if (!scram_hmac(session, stored_key, stored_key_len,
+	                (unsigned char *) session->auth_message, strlen(session->auth_message),
+	                client_signature))
+		goto out;
 
 	// ClientProof := ClientKey XOR ClientSignature
-	client_proof = g_malloc0(client_key_len);
-
-	for (i = 0; i < client_key_len; i++) {
+	for (i = 0; i < session->digest_size; i++) {
 		client_proof[i] = client_key[i] ^ client_signature[i];
 	}
 
-	client_proof_b64 = g_base64_encode((guchar *) client_proof, client_key_len);
+	client_proof_b64 = g_base64_encode((guchar *) client_proof, session->digest_size);
 
 	*output = g_strdup_printf("%s,p=%s", client_final_message_without_proof, client_proof_b64);
 	*output_len = strlen(*output);
+	g_free(client_proof_b64);
 
+	session->step++;
+	status = SCRAM_IN_PROGRESS;
+
+out:
 	g_free(server_nonce_b64);
 	g_free(salt);
 	g_free(client_final_message_without_proof);
 	g_free(client_key);
 	g_free(client_signature);
 	g_free(client_proof);
-	g_free(client_proof_b64);
-
-	session->step++;
-	return SCRAM_IN_PROGRESS;
+	return status;
 }
 
 static scram_status process_server_final(SCRAM_SESSION_REC *session, const char *data)
 {
 	char *verifier;
 	unsigned char *server_key, *server_signature;
-	unsigned int server_key_len = 0, server_signature_len = 0;
 	gsize verifier_len = 0;
+	scram_status status = SCRAM_ERROR;
 
-	if (strlen(data) < 3 || (data[0] != 'v' && data[1] != '=')) {
+	if (g_str_has_prefix(data, "e=")) {
+		session->error = g_strdup_printf("Server reported an error: %s", data + 2);
+		return SCRAM_ERROR;
+	}
+	if (!g_str_has_prefix(data, "v=") || !is_base64(data + 2)) {
+		session->error = g_strdup_printf("Invalid server-final-message: %s", data);
 		return SCRAM_ERROR;
 	}
 
 	verifier = g_strdup(data + 2);
 	g_base64_decode_inplace(verifier, &verifier_len);
 
-	// ServerKey := HMAC(SaltedPassword, "Server Key")
 	server_key = g_malloc0(session->digest_size);
-	HMAC(session->digest, session->salted_password, session->digest_size,
-	     (unsigned char *) SERVER_KEY, strlen(SERVER_KEY), server_key, &server_key_len);
-
-	// ServerSignature := HMAC(ServerKey, AuthMessage)
 	server_signature = g_malloc0(session->digest_size);
-	HMAC(session->digest, server_key, session->digest_size,
-	     (unsigned char *) session->auth_message, strlen((char *) session->auth_message),
-	     server_signature, &server_signature_len);
 
-	if (verifier_len == server_signature_len &&
-	    memcmp(verifier, server_signature, verifier_len) == 0) {
-		g_free(verifier);
-		g_free(server_key);
-		g_free(server_signature);
-		return SCRAM_SUCCESS;
-	} else {
-		g_free(verifier);
-		g_free(server_key);
-		g_free(server_signature);
-		return SCRAM_ERROR;
+	// ServerKey := HMAC(SaltedPassword, "Server Key")
+	// ServerSignature := HMAC(ServerKey, AuthMessage)
+	if (scram_hmac(session, session->salted_password, session->digest_size,
+	               (unsigned char *) SERVER_KEY, strlen(SERVER_KEY), server_key) &&
+	    scram_hmac(session, server_key, session->digest_size,
+	               (unsigned char *) session->auth_message, strlen(session->auth_message),
+	               server_signature)) {
+		if (verifier_len == session->digest_size &&
+		    CRYPTO_memcmp(verifier, server_signature, verifier_len) == 0)
+			status = SCRAM_SUCCESS;
+		else
+			session->error = g_strdup("The server signature does not match: the "
+			                          "server does not know the password");
 	}
+
+	g_free(verifier);
+	g_free(server_key);
+	g_free(server_signature);
+	return status;
 }
 
 scram_status scram_process(SCRAM_SESSION_REC *session, const char *input, char **output,
