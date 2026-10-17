@@ -1091,6 +1091,27 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 	guint n;
 
 	*nick = NULL;
+	/* a nick that is here now: only the request of its address now - one
+	   waiting under that nick from another address (an older holder of
+	   the nick) is not taken by the nick */
+	if (who != NULL && strchr(who, '@') == NULL && server != NULL &&
+	    (handle = e2e_resolve_dm_handle(server, NULL, who)) != NULL) {
+		k = g_strconcat(handle, "|", ctx, NULL);
+		row = e2e_json_get(e2e_json_get(kr, "pending_inbound"), k);
+		g_free(k);
+		e2e_server_net(server, &net);
+		found = row == NULL ? e2e_pending_handle(kr, ctx, who, net.casemap, &n) : NULL;
+		e2e_net_clear(&net);
+		if (row == NULL && found != NULL && strcmp(found, handle) != 0) {
+			e2e_print_item(item, "%s is %s now, but the key request waiting under that nick on %s came from %s - nothing done; /e2e %s %s takes that request if you mean it",
+			               shown_text(who), shown_text(handle), shown(ctx), shown_text(found), cmd,
+			               shown_text(found));
+			g_free(handle);
+			return NULL;
+		}
+		*nick = g_strdup(who);
+		return handle;
+	}
 	e2e_server_net(server, &net);
 	found = e2e_pending_handle(kr, ctx, who, net.casemap, &n);
 	if (n > 1) {

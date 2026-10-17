@@ -45,34 +45,35 @@
     HANDSHAKE:   Sends the person a key request (KEYREQ) for the current
                  channel or query; encryption must be on here and their
                  ident@host known (a common channel, a query).
-    ACCEPT:      Accepts the person: sends your key back (KEYRSP) to their
-                 pending request and requests theirs in return; their
-                 later requests here are answered without asking. Without
-                 an argument: the only request waiting in this window
-                 (with several they are listed - name one). With a nick:
-                 the request waiting here from that nick (compared as the
-                 server compares nicks); when the nick names requests of
-                 two addresses, none is accepted - they are listed, name
-                 one by its ident@host. With an ident@host: in a channel
-                 window the channel's request of that address, if one
-                 waits there; otherwise - from any window of the
-                 network - the request of that address for a query with
-                 it. Only requests of this window's channel or query, or
-                 of that address's query, on this network are ever taken.
-                 Without a pending request, a nick marks their session
-                 here (an ident@host: their query's session) as trusted
-                 and accepts them - only when a real key from them is
-                 stored. A query's key goes only to that query's own
-                 address: a request from anyone else for it is damaged
-                 (rpe2e.pl kept such requests before) - listed by
-                 /E2E PENDING and /E2E ACCEPT, never accepted, removed by
-                 /E2E DECLINE alone in that query. Such an address that
-                 was accepted already (by an erssi before 2026-10) is
-                 damaged too: it may hold your key of the query, so that
-                 key rotates by itself with your next message there (you
-                 are told once) and the new one never reaches it; /E2E
-                 LIST shows it, and /E2E DECLINE <ident@host> (or alone)
-                 in that query removes it.
+    ACCEPT:      Accepts the person: sends your key back (KEYRSP) to
+                 their pending request and requests theirs in return;
+                 their later requests here are answered without asking.
+                 Without an argument: the only request waiting in this
+                 window (with several they are listed - name one). With a
+                 nick: the request waiting here from that nick (compared
+                 as the server compares nicks; when the nick is here now,
+                 only the request of its address now); when the nick
+                 names requests of two addresses, none is accepted - they
+                 are listed, name one by its ident@host. With an
+                 ident@host: in a channel window the channel's request of
+                 that address, if one waits there; otherwise - from any
+                 window of the network - the request of that address for
+                 a query with it. Only requests of this window's channel
+                 or query, or of that address's query, on this network
+                 are ever taken. Without a pending request, a nick marks
+                 their session here (an ident@host: their query's
+                 session) as trusted and accepts them - only when a real
+                 key from them is stored. A query's key goes only to that
+                 query's own address: a request from anyone else for it
+                 is damaged (rpe2e.pl kept such requests before) - listed
+                 by /E2E PENDING and /E2E ACCEPT, never accepted, removed
+                 by /E2E DECLINE alone in that query. Such an address
+                 that was accepted already (by an erssi before 2026-10)
+                 is damaged too: it may hold your key of the query, so
+                 that key rotates by itself with your next message there
+                 (you are told once) and the new one never reaches it;
+                 /E2E LIST shows it, and /E2E DECLINE <ident@host> (or
+                 alone) in that query removes it.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
                  existing session gets the revoked status (their messages
                  are not read, and their key is not asked for again) and
@@ -262,13 +263,13 @@
     is taken once (after 1024 of them from one person in one context the
     next key change goes through a new key request instead). When your own
     key changes, only people you accepted get the new one. At most 64
-    requests wait for /E2E ACCEPT, at most 256 of your own key requests
-    wait for an answer and at most 256 people you never accepted are
-    remembered, with their keys; the oldest go first (people you accepted
-    are always kept). Messages of the module are prefixed with [E2E]
-    (warnings in the error colour); with /SET e2e_debug ON it also traces
-    the key exchange. Line breaks in a decrypted message are shown as
-    spaces.
+    requests wait for /E2E ACCEPT (each for a day at most), at most 256 of
+    your own key requests wait for an answer and at most 256 people you
+    never accepted are remembered, with their keys; the oldest go first
+    (people you accepted are always kept). Messages of the module are
+    prefixed with [E2E] (warnings in the error colour); with /SET
+    e2e_debug ON it also traces the key exchange. Line breaks in a
+    decrypted message are shown as spaces.
 
     A message to a nick is not sent when encryption is on for that nick
     at another ident@host (a new host, or someone else took the nick), or

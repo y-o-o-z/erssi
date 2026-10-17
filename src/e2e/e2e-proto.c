@@ -2605,6 +2605,28 @@ guint e2e_prune_prev_keys(E2E_JSON *kr)
 	return n;
 }
 
+guint e2e_prune_old_requests(E2E_JSON *kr)
+{
+	E2E_JSON *pending = e2e_json_get(kr, "pending_inbound");
+	GPtrArray *keys = e2e_json_keys(pending);
+	guint i, n = 0;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *row = e2e_json_get(pending, k), *sess;
+
+		if (is_fresh(e2e_json_get_int(row, "received_at", 0), E2E_PENDING_INBOUND_TTL))
+			continue;
+		sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
+		if (sess != NULL && !e2e_session_has_key(sess))
+			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
+		e2e_json_remove(pending, k);
+		n++;
+	}
+	g_ptr_array_unref(keys);
+	return n;
+}
+
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
 {
 	char *k = pending_key(ctx, handle);

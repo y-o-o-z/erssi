@@ -186,6 +186,35 @@ def main():
         assert wait_chan(a, "secret three", start), chan_log(a)[start:]
         assert "not read" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_accept_live_nick():
+        """/e2e accept <nick> of a nick that is here takes only the request
+        of its address now: one left under that nick by another address
+        is refused with a line naming it; requests older than a day go"""
+        a = st["alice"]
+        path = a.home / "rpe2e" / "keyring.json"
+        kr = json.loads(path.read_text())
+        row = {"handle": "zz@stale.example", "channel": "E2E\x1f#test",
+               "sender_handle": "zz@stale.example", "sender_nick": "bob",
+               "pubkey": "A" * 43 + "=", "eph_x25519": "A" * 43 + "=", "nonce": "A" * 22 + "==",
+               "sig": "A" * 86 + "==", "received_at": int(time.time())}
+        kr["pending_inbound"]["zz@stale.example|E2E\x1f#test"] = row
+        old = dict(row, handle="old@gone.example", sender_handle="old@gone.example",
+                   received_at=int(time.time()) - 2 * 86400)
+        kr["pending_inbound"]["old@gone.example|E2E\x1f#test"] = old
+        path.write_text(json.dumps(kr))
+        os.chmod(path, 0o600)
+        off = log_size(a)
+        a.type_and_wait("/window goto #test", "/e2e accept bob")
+        out = log_since(a, off)
+        assert "bob is bob2@127.0.0.1 now, but the key request waiting under that nick on " \
+               "E2E:#test came from zz@stale.example - nothing done" in out, out
+        kr = json.loads(path.read_text())
+        assert "zz@stale.example|E2E\x1f#test" in kr["pending_inbound"], kr["pending_inbound"]
+        assert "old@gone.example|E2E\x1f#test" not in kr["pending_inbound"], kr["pending_inbound"]
+        a.type_and_wait("/e2e decline zz@stale.example")
+        kr = json.loads(path.read_text())
+        assert "zz@stale.example|E2E\x1f#test" not in kr["pending_inbound"], kr["pending_inbound"]
+
     def t_bot_lines():
         """a line that looks like a bot command is encrypted like any
         other; with e2e_bot_bypass on it goes out in clear text, warned"""
@@ -300,8 +329,8 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_reset_force,
-                      t_corrupt_keyring, t_wire])
+                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_unreadable_keyring,
+                      t_reset_force, t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

@@ -595,7 +595,7 @@ E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
 	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
 	/* the keys REKEYs replaced, once their grace is over, leave the
 	   file too */
-	if (status == E2E_LOAD_OK && e2e_prune_prev_keys(kr) > 0)
+	if (status == E2E_LOAD_OK && e2e_prune_prev_keys(kr) + e2e_prune_old_requests(kr) > 0)
 		e2e_save(kr);
 	if (lost != NULL)
 		*lost = status == E2E_LOAD_LOST;

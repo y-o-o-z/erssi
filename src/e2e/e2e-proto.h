@@ -154,6 +154,10 @@ gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed
 /* the keys REKEYs replaced whose grace is over go (their nodes wiped);
    how many */
 guint e2e_prune_prev_keys(E2E_JSON *kr);
+/* key requests waiting for /e2e accept longer than E2E_PENDING_INBOUND_TTL
+   go, with the keyless session row stored with them; how many */
+#define E2E_PENDING_INBOUND_TTL (24 * 3600)
+guint e2e_prune_old_requests(E2E_JSON *kr);
 /* our pending KEYREQ of ctx to handle goes (it was not sent) */
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
 /* the key at handle is one the user confirmed (/e2e accept, autotrust,
