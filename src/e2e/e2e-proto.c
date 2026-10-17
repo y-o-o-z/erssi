@@ -1379,6 +1379,30 @@ void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *f
 			g_ptr_array_add(out->candidates, e2e_json_copy(g_ptr_array_index(cands, i)));
 		goto done;
 	}
+	/* the address of the change has another one waiting (a known key
+	   moved there, and a new key of its own): accepting either would
+	   settle the other too - nothing is guessed without the fingerprint */
+	if (picked->len == 1 && prefix == NULL) {
+		E2E_JSON *one = g_ptr_array_index(picked, 0);
+		GPtrArray *same = e2e_trust_changes(kr, e2e_json_get_string(one, "handle"));
+		gboolean other = FALSE;
+
+		for (i = 0; i < same->len && !other; i++) {
+			E2E_JSON *row = g_ptr_array_index(same, i);
+
+			other = g_strcmp0(e2e_json_get_string(row, "change"), e2e_json_get_string(one, "change")) != 0 ||
+			        g_strcmp0(e2e_json_get_string(row, "new_fp"), e2e_json_get_string(one, "new_fp")) != 0;
+		}
+		if (other) {
+			out->result = E2E_REVERIFY_AMBIGUOUS;
+			out->candidates = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_json_free);
+			for (i = 0; i < same->len; i++)
+				g_ptr_array_add(out->candidates, e2e_json_copy(g_ptr_array_index(same, i)));
+			g_ptr_array_unref(same);
+			goto done;
+		}
+		g_ptr_array_unref(same);
+	}
 	if (picked->len == 1)
 		chosen = e2e_json_copy(g_ptr_array_index(picked, 0));
 	if (chosen == NULL) {

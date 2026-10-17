@@ -6676,6 +6676,72 @@ static void test_raw_lines_gated(void)
 	peer_free(&a);
 }
 
+#define EVE "eve@127.0.0.1"
+
+/* alice's known key shows up at eve's address on #a (a forwarded
+   request), and eve's address presents a new key of its own on #b:
+   /e2e reverify, by alice's nick or eve's address, takes neither without
+   the fingerprint - it would accept a new key under alice's name, or
+   bind her nick to another key */
+static void test_reverify_mixed_changes(void)
+{
+	PEER me, a, eve, eve2, fwd;
+	E2E_REVERIFY rv;
+	GPtrArray *changes;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&eve, "eve", EVE, -1);
+	peer_init(&eve2, "eve", EVE, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	enable(&a, "#a", "auto-accept");
+	enable(&eve, "#b", "auto-accept");
+	give_key(&a, &me, "#a");
+	give_key(&eve, &me, "#b");
+	/* alice's request, forwarded by eve */
+	req = e2e_build_keyreq(a.kr, &a.id, "#a", BOB, &error);
+	fwd = a;
+	fwd.handle = EVE;
+	fwd.nick = "eve";
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &fwd, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	/* eve's address with a new key */
+	req = e2e_build_keyreq(eve2.kr, &eve2.id, "#b", BOB, &error);
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &eve2, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(me.kr, EVE);
+	g_assert_cmpuint(changes->len, ==, 2);
+	g_ptr_array_unref(changes);
+
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(me.kr, EVE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	e2e_reverify_clear(&rv);
+	/* nothing moved */
+	g_assert_cmpstr(path_str(me.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	g_assert_cmpstr(path_str(me.kr, "peers", eve.id.fp_hex, "last_handle"), ==, EVE);
+	g_assert_null(path_get(me.kr, "peers", eve2.id.fp_hex, NULL));
+	/* named by its fingerprint: that one, alice's key stays hers */
+	e2e_reverify(me.kr, EVE, NULL, eve2.id.fp_hex, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_INSTALLED);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(me.kr, "peers", eve2.id.fp_hex, "last_handle"), ==, EVE);
+	g_assert_cmpstr(path_str(me.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&eve);
+	peer_free(&eve2);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6695,6 +6761,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
+	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
