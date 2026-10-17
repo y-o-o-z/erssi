@@ -1951,7 +1951,26 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 		e2e_print_item(item, "import failed: %s", perr);
 		return;
 	}
-	kr = e2e_keyring_import(doc, &error);
+	/* a keyring file itself (a keyring.json.bak-<time> of /e2e reset
+	   -force or of an import): read and checked as the keyring is */
+	if (e2e_json_get(doc, "version") == NULL && e2e_json_get(doc, "peers") != NULL &&
+	    e2e_json_get(doc, "peers")->type == E2E_JSON_OBJECT) {
+		E2E_LOAD_STATUS status;
+		E2E_JSON *ident;
+
+		kr = e2e_keyring_load_checked(path, &status, &error);
+		ident = e2e_json_get(kr, "identity");
+		if (status != E2E_LOAD_OK || ident == NULL || ident->type != E2E_JSON_OBJECT) {
+			e2e_print_item(item, "import failed: %s is no usable keyring (%s)", path,
+			               error != NULL ? error : "no identity");
+			g_free(error);
+			e2e_json_free(kr);
+			e2e_json_free(doc);
+			return;
+		}
+	} else {
+		kr = e2e_keyring_import(doc, &error);
+	}
 	e2e_json_free(doc);
 	if (kr == NULL) {
 		e2e_print_item(item, "import failed: %s", error);

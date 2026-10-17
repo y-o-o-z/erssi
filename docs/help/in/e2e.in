@@ -124,8 +124,9 @@
                  new JSON file (mode 0600); an existing file or a symlink
                  is never overwritten.
     IMPORT:      REPLACES the whole keyring with the file's contents (no
-                 merging); the previous one is kept as
-                 keyring.json.bak-<time>. The key changes (REKEY) already
+                 merging) - an export, or a keyring file itself such as
+                 a keyring.json.bak-<time> (checked as the keyring is);
+                 the previous one is kept as keyring.json.bak-<time>. The key changes (REKEY) already
                  taken are part of erssi's exports; an export without them
                  (repartee's) starts their replay protection anew - an old
                  key change recorded by someone could then be taken once

@@ -290,6 +290,13 @@ def main():
         assert keyring(a)["identity"]["fp"] != before
         baks = list((a.home / "rpe2e").glob("keyring.json.bak-*"))
         assert baks and json.loads(baks[0].read_text())["identity"]["fp"] == before, baks
+        # the way back the message names
+        assert "/e2e import it to go back" in out, out
+        off = log_size(a)
+        a.type_and_wait(f"/e2e import {baks[0]}")
+        assert wait_log(a, off, "imported keyring from"), log_since(a, off)
+        assert keyring(a)["identity"]["fp"] == before
+        assert session(a, "bob2@127.0.0.1") == "trusted", keyring(a)
 
     def t_corrupt_keyring():
         """/load e2e on a corrupt keyring says so at once; a line typed

@@ -421,7 +421,7 @@ char *e2e_keyring_backup(const char *path, char **error)
 	struct stat st;
 	char *data, *bak;
 	size_t len;
-	int err;
+	int err = 0, n;
 
 	if (stat(path, &st) != 0 && errno == ENOENT)
 		return g_strdup("");
@@ -431,10 +431,16 @@ char *e2e_keyring_backup(const char *path, char **error)
 		return NULL;
 	}
 	bak = g_strdup_printf("%s.bak-%ld", path, (long) time(NULL));
-	if (!write_new(bak, data, len, &err)) {
-		*error = g_strdup(g_strerror(err));
+	/* two in one second (a reset, then the import of its backup): the
+	   later one gets a number, nothing is overwritten */
+	for (n = 1; !write_new(bak, data, len, &err); n++) {
 		g_free(bak);
 		bak = NULL;
+		if (err != EEXIST || n >= 100) {
+			*error = g_strdup(g_strerror(err));
+			break;
+		}
+		bak = g_strdup_printf("%s.bak-%ld.%d", path, (long) time(NULL), n);
 	}
 	e2e_wipe(data, len);
 	g_free(data);
