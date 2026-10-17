@@ -314,7 +314,23 @@ def main():
         log = chan_log(a)[start:]
         assert "[NOT SENT] refused while lost" in log, log
         assert log.index("[NOT SENT] refused while lost") < log.index("was NOT delivered"), log
-        assert "refused while lost" not in (work / "wire.log").read_text(errors="replace")
+        assert "your message to #test (marked [NOT SENT]) was NOT delivered" in log, log
+        # a line that waited in irssi's flood queue: its echo came first,
+        # the warning names it by its start
+        a.type_and_wait("/set cmds_max_at_once 1", "/set cmd_queue_speed 3s")
+        off = log_size(a)
+        a.type_and_wait("/reconnect")
+        assert wait_log(a, off, "has joined #test"), log_since(a, off)
+        time.sleep(4)
+        start = len(chan_log(a))
+        a.type_and_wait("/window goto #test", "first of two", "second of two waits in the queue")
+        assert harness.wait_until(lambda: chan_log(a)[start:].count("was NOT delivered") >= 2, WAIT), \
+            chan_log(a)[start:]
+        log = chan_log(a)[start:]
+        assert "shown above as if sent (\"second of two waits in the que\"), was NOT delivered" in log, log
+        a.type_and_wait("/set cmds_max_at_once 5", "/set cmd_queue_speed 5msec")
+        wire = (work / "wire.log").read_text(errors="replace")
+        assert "refused while lost" not in wire and "of two" not in wire
 
     def t_wire():
         """nothing of it went over the server in clear text; no sanitizer

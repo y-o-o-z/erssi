@@ -1180,7 +1180,8 @@ static gboolean own_line_take(const char *line)
    printed when the main loop is idle - after it either way. */
 typedef struct {
 	SERVER_REC *server;
-	char *target, *body, *warning;
+	char *target, *body, *warning, *start;
+	gboolean marked;
 } REFUSED_LINE;
 
 static GSList *refused_lines;
@@ -1190,6 +1191,8 @@ static void refused_line_free(REFUSED_LINE *rec)
 {
 	e2e_wipe(rec->body, strlen(rec->body));
 	g_free(rec->body);
+	e2e_wipe(rec->start, strlen(rec->start));
+	g_free(rec->start);
 	g_free(rec->target);
 	g_free(rec->warning);
 	g_free(rec);
@@ -1203,12 +1206,19 @@ static gboolean refused_idle(gpointer data)
 	refused_idle_id = 0;
 	for (tmp = list; tmp != NULL; tmp = tmp->next) {
 		REFUSED_LINE *rec = tmp->data;
+		/* its echo was marked, or (it waited in irssi's flood queue)
+		   came before and looks sent: named by its start then */
+		char *text = rec->marked
+			? g_strdup_printf("%s — your message to %s (marked [NOT SENT]) was NOT delivered",
+			                  rec->warning, rec->target)
+			: g_strdup_printf("%s — your message to %s, shown above as if sent (\"%s\"), was NOT delivered",
+			                  rec->warning, rec->target, rec->start);
 
 		if (g_slist_find(servers, rec->server) != NULL)
-			e2e_print_warning(e2e_notice_item(rec->server, rec->target, rec->target), "%s",
-			                  rec->warning);
+			e2e_print_warning(e2e_notice_item(rec->server, rec->target, rec->target), "%s", text);
 		else
-			e2e_print_warning(NULL, "%s", rec->warning);
+			e2e_print_warning(NULL, "%s", text);
+		g_free(text);
 		refused_line_free(rec);
 	}
 	g_slist_free(list);
@@ -1244,6 +1254,7 @@ static gboolean refused_echo(SERVER_REC *server, const char *target, const char 
 			e2e_wipe(rec->body, strlen(rec->body));
 			g_free(rec->body);
 			rec->body = g_strdup("\001");
+			rec->marked = TRUE;
 			return TRUE;
 		}
 	}
@@ -1292,8 +1303,18 @@ static void gate_refuse(SERVER_REC *server, GString *str, const char *item, cons
 	rec->server = server;
 	rec->target = g_strdup(item);
 	rec->body = g_strdup(body != NULL ? body : "");
-	rec->warning = g_strdup_printf("%s — your message to %s (marked [NOT SENT] where it is shown) was NOT delivered",
-	                               msg, item);
+	rec->warning = g_strdup(msg);
+	{
+		/* the start of the line, to name it (valid UTF-8, one line) */
+		char *clean = e2e_utf8_clean(rec->body, strlen(rec->body));
+		char *start = g_utf8_substring(clean, 0, 30);
+
+		rec->start = e2e_text_display(start);
+		e2e_wipe(clean, strlen(clean));
+		e2e_wipe(start, strlen(start));
+		g_free(clean);
+		g_free(start);
+	}
 	refused_lines = g_slist_prepend(refused_lines, rec);
 	if (refused_idle_id == 0)
 		refused_idle_id = g_idle_add(refused_idle, NULL);
