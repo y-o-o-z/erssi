@@ -1732,11 +1732,25 @@ else
 fi
 # a request that comes in: a new state, unasked
 # (alice drops a second KEYREQ of one sender and context within 10 s:
-# mallory's client also asks by itself when alice writes)
+# mallory's client also asks by itself when alice writes - and that
+# request of his waits 120 s for an answer, during which his
+# /e2e handshake is refused as already pending: it is dropped from his
+# keyring first)
 MARK=$(wc -l < "$STATE_LOG")
 say mallory "/window goto $CHAN"
 for try in 1 2; do
     sleep 11
+    python3 - "$WORK/mallory/rpe2e/keyring.json" <<'PY' || bad "the keyring edit for mallory's request failed"
+import json, os, sys
+p = sys.argv[1]
+k = json.load(open(p, encoding="utf-8"))
+k.get("pending", {}).pop("E2E\x1f#test|alice@127.0.0.1", None)
+tmp = p + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(k, fh)
+os.chmod(tmp, 0o600)
+os.replace(tmp, p)
+PY
     MALLORY_REQ_AT=$(date +%s)
     say mallory "/e2e handshake alice"
     wait_state "$MARK" '"handle":"mallory@127.0.0.1"' "" 20 && break
