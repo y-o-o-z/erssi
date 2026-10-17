@@ -6416,6 +6416,47 @@ static void test_export_seen_rekeys(void)
 	peer_free(&b);
 }
 
+/* revoked in one channel, the person writes in another where no key of
+   theirs is stored: lifting the revocation there lets the next key
+   exchange through (the warning names /e2e unrevoke) */
+static void test_unrevoke_peer(void)
+{
+	PEER a, b;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&a, "#b", "auto-accept");
+	enable(&b, "#a", "normal");
+	enable(&b, "#b", "normal");
+	give_key(&a, &b, "#a");
+	e2e_json_set_string(path_get(b.kr, "peers", a.id.fp_hex, NULL), "status", "revoked");
+	/* in #b her answer is refused */
+	req = e2e_build_keyreq(b.kr, &b.id, "#b", ALICE, &error);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	/* no session of hers in #b: nothing to trust there */
+	g_assert_cmpint(e2e_unrevoke(b.kr, ALICE, "#b", NULL), ==, 0);
+	g_assert_true(e2e_unrevoke_peer(b.kr, ALICE));
+	g_assert_false(e2e_unrevoke_peer(b.kr, ALICE));
+	/* the next exchange is taken */
+	req = e2e_build_keyreq(b.kr, &b.id, "#b", ALICE, &error);
+	g_assert_nonnull(req);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6432,6 +6473,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/replay", test_replay);
+	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);

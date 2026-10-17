@@ -86,7 +86,9 @@
                  longer read along; they are no longer accepted.
     UNREVOKE:    Restores trust in their session (only when a real key
                  from them is stored); to give them your key again,
-                 /E2E ACCEPT them.
+                 /E2E ACCEPT them. Where no key of theirs is stored, it
+                 lifts a revocation of the person, so that their next
+                 key exchange (their next message asks for it) is taken.
     FORGET:      Removes the person's sessions in the current channel or
                  query, and they are no longer accepted there; with -all
                  (at the start or at the end) - everything about them from

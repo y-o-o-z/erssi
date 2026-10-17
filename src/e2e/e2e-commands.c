@@ -1469,10 +1469,18 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 	if (!ok)
 		goto out;
 	if (!revoke && e2e_unrevoke(kr, handle, ctx, own) == 0) {
-		/* trusted without a key would show anything encrypted under
-		   the placeholder as genuine */
-		e2e_print_item(item, "cannot unrevoke %s on %s: no key from them is stored — wait for their key, or /e2e handshake %s",
-		               nick, shown(ctx), nick);
+		/* no key of theirs here: nothing is trusted (that would show
+		   anything encrypted under the placeholder as genuine), but a
+		   revocation of the person is lifted - else no key exchange
+		   with them could ever store one here */
+		if (e2e_unrevoke_peer(kr, handle)) {
+			e2e_save(kr);
+			e2e_print_item(item, "unrevoked %s: their key exchanges are taken again; no key from them is stored on %s yet - their next message there asks for it (or /e2e handshake %s)",
+			               nick, shown(ctx), nick);
+		} else {
+			e2e_print_item(item, "cannot unrevoke %s on %s: no key from them is stored — wait for their key, or /e2e handshake %s",
+			               nick, shown(ctx), nick);
+		}
 		goto out;
 	}
 	if (revoke) {

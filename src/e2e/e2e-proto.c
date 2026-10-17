@@ -2265,6 +2265,17 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 	return n;
 }
 
+gboolean e2e_unrevoke_peer(E2E_JSON *kr, const char *handle)
+{
+	E2E_JSON *peer;
+
+	e2e_find_peer_by_handle(kr, handle, &peer);
+	if (peer == NULL || strcmp(status_of(peer), "revoked") != 0)
+		return FALSE;
+	e2e_json_set_string(peer, "status", "trusted");
+	return TRUE;
+}
+
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp)
 {

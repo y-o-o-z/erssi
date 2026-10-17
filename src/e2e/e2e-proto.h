@@ -189,6 +189,9 @@ GPtrArray *e2e_rotate_for_damaged(E2E_JSON *kr, const char *ctx);
 /* /e2e unrevoke: the sessions of handle on ctx and own_ctx that hold a key
    are trusted again; how many (0: nothing changed) */
 int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx);
+/* the peer of handle is no longer revoked (its key exchanges are not
+   refused any more; no session is trusted by it); TRUE when it was */
+gboolean e2e_unrevoke_peer(E2E_JSON *kr, const char *handle);
 
 /* ---- the outbound gate ---- */
 
