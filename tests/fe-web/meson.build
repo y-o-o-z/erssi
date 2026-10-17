@@ -2,7 +2,7 @@
 # targets (src/fe-fuzz/fe-web): web clients on socketpairs, driven by the
 # real code of fe-web-server.c, with a stand-in TLS layer and clock.
 foreach name : ['output', 'socket', 'pacing', 'login', 'frames', 'unload', 'e2e',
-                'password', 'settings']
+                'password', 'settings', 'tls']
   exe = executable('test-fe-web-' + name,
     files('test-fe-web-' + name + '.c', 'fe-web-test.c'),
     link_with : fe_web_fuzz_link_with,
