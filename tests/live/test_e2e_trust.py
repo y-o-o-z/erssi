@@ -244,6 +244,24 @@ def main():
         assert seen, chan_log(a)[start:]
         assert "/e2e on" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_reset_force():
+        """/e2e reset on a keyring that is fine refuses and names -force;
+        -force starts over, keeps the old file and says what peers do"""
+        a = st["alice"]
+        before = keyring(a)["identity"]["fp"]
+        off = log_size(a)
+        a.type_and_wait("/e2e reset")
+        assert wait_log(a, off, "/e2e reset -force"), log_since(a, off)
+        assert keyring(a)["identity"]["fp"] == before
+        a.type_and_wait("/e2e reset -force")
+        assert wait_log(a, off, "a new keyring is started"), log_since(a, off)
+        out = log_since(a, off)
+        assert "/e2e reverify <your nick> and then /e2e handshake <your nick>" in out, out
+        assert "/e2e accept <nick>" in out, out
+        assert keyring(a)["identity"]["fp"] != before
+        baks = list((a.home / "rpe2e").glob("keyring.json.bak-*"))
+        assert baks and json.loads(baks[0].read_text())["identity"]["fp"] == before, baks
+
     def t_corrupt_keyring():
         """/load e2e on a corrupt keyring says so at once; a line typed
         then is shown marked [NOT SENT], the warning after it"""
@@ -282,7 +300,8 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_corrupt_keyring, t_wire])
+                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_reset_force,
+                      t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

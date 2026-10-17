@@ -151,10 +151,16 @@
                  use the old ones there instead: /E2E EXPORT, remove
                  that network's entries for the name from the file,
                  /E2E IMPORT it, then /E2E ADOPT).
-    RESET:       Only after a corrupt keyring was moved aside (see below):
+    RESET:       After a corrupt keyring was moved aside (see below):
                  starts a new keyring with a new identity. Encryption is
                  then off everywhere until /E2E ON, and your peers see a
-                 new key (/E2E REVERIFY on their side).
+                 new key: an erssi user runs /E2E REVERIFY <your nick>, a
+                 repartee or rpe2e.pl user /E2E REVERIFY <your nick> and
+                 then /E2E HANDSHAKE <your nick>; you /E2E ACCEPT their
+                 requests then (the new keyring has accepted nobody).
+                 On a keyring that is fine, only with -force (to start
+                 over on purpose); the old one is kept as
+                 keyring.json.bak-<time> (/E2E IMPORT it to go back).
 
 %9Description:%9
 

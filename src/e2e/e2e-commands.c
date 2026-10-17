@@ -2072,24 +2072,68 @@ static void cmd_adopt(WI_ITEM_REC *item)
 	e2e_json_free(kr);
 }
 
-/* SYNTAX: E2E RESET */
-static void cmd_reset(WI_ITEM_REC *item)
+#define RESET_PEERS "peers see a new key: an erssi user runs /e2e reverify <your nick>; a repartee or rpe2e.pl user /e2e reverify <your nick> and then /e2e handshake <your nick>. Their requests then wait for your /e2e accept <nick> (the new keyring has accepted nobody)"
+
+/* the new keyring is in place: what comes next, told */
+static void reset_done(WI_ITEM_REC *item, const E2E_IDENTITY *id, const char *kept)
+{
+	int dropped = e2e_drop_queued_privmsgs();
+
+	e2e_state_changed();
+	e2e_print_item(item, "a new keyring is started with a new identity (fingerprint %s). E2E is off everywhere until /e2e on; %s. %s",
+	               id->fp_hex, RESET_PEERS, kept);
+	if (dropped > 0)
+		e2e_print_item(item, "%d line(s) still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped",
+		               dropped);
+}
+
+/* SYNTAX: E2E RESET [-force] */
+static void cmd_reset(WI_ITEM_REC *item, char **args)
 {
 	E2E_LOAD_STATUS status;
 	E2E_IDENTITY id;
 	E2E_JSON *kr;
-	gboolean created;
-	char *error = NULL;
+	gboolean created, force = args[0] != NULL && strcmp(args[0], "-force") == 0;
+	char *error = NULL, *bak, *kept;
 
 	if (!e2e_keyring_is_lost()) {
 		kr = e2e_keyring_load_checked(e2e_keyring_file(), &status, &error);
 		e2e_json_free(kr);
-		if (status == E2E_LOAD_OK)
-			e2e_print_item(item, "nothing to reset: the keyring %s is fine", e2e_keyring_file());
-		else
+		if (status != E2E_LOAD_OK) {
 			e2e_print_item(item, "nothing to reset: the keyring %s exists but cannot be read (%s) — it is never replaced; fix it or move it aside",
 			               e2e_keyring_file(), error);
+			g_free(error);
+			return;
+		}
+		if (!force) {
+			e2e_print_item(item, "nothing to reset: the keyring %s is fine. To start over anyway with a new identity: /e2e reset -force (every peer then sees a new key; the old keyring is kept as a backup)",
+			               e2e_keyring_file());
+			return;
+		}
+		/* on purpose: the old file stays, as an import keeps it */
+		bak = e2e_keyring_backup(e2e_keyring_file(), &error);
+		if (bak == NULL) {
+			e2e_print_item(item, "reset refused: no backup of the keyring could be made (%s) — nothing changed",
+			               error);
+			g_free(error);
+			return;
+		}
+		kr = e2e_keyring_new();
+		if (!e2e_identity_get(kr, &id, TRUE, &created, &error)) {
+			e2e_print_item(item, "reset failed: %s", error);
+		} else {
+			if (e2e_keyring_save(e2e_keyring_file(), kr, &error)) {
+				kept = g_strdup_printf("The old keyring is kept as %s (/e2e import it to go back)", bak);
+				reset_done(item, &id, kept);
+				g_free(kept);
+			} else {
+				e2e_print_item(item, "reset failed: %s", error);
+			}
+			e2e_identity_wipe(&id);
+		}
+		g_free(bak);
 		g_free(error);
+		e2e_json_free(kr);
 		return;
 	}
 	kr = e2e_keyring_new();
@@ -2097,14 +2141,9 @@ static void cmd_reset(WI_ITEM_REC *item)
 		e2e_print_item(item, "reset failed: %s", error);
 	} else {
 		if (e2e_keyring_start_fresh(e2e_keyring_file(), kr, &error)) {
-			int dropped = e2e_drop_queued_privmsgs();
-
-			e2e_state_changed();
-			e2e_print_item(item, "a new keyring is started with a new identity (fingerprint %s). E2E is off everywhere until /e2e on; peers see a new key and need /e2e reverify <your nick>. The corrupt file stays as %s.corrupt-*",
-			               id.fp_hex, e2e_keyring_file());
-			if (dropped > 0)
-				e2e_print_item(item, "%d line(s) still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped",
-				               dropped);
+			kept = g_strdup_printf("The corrupt file stays as %s.corrupt-*", e2e_keyring_file());
+			reset_done(item, &id, kept);
+			g_free(kept);
 		} else {
 			e2e_print_item(item, "reset failed: %s", error);
 		}
@@ -2291,7 +2330,7 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 	} else if (strcmp(sub, "adopt") == 0) {
 		cmd_adopt(item);
 	} else if (strcmp(sub, "reset") == 0) {
-		cmd_reset(item);
+		cmd_reset(item, args);
 	} else {
 		e2e_print_item(item, "unknown subcommand");
 	}
