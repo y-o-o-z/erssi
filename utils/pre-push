@@ -255,6 +255,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         range=$(set -f; git rev-list "$tip" --not ${tracking:+--glob="$tracking*"} $UPSTREAM) || range=FAIL
     fi
     [ "$range" = FAIL ] && { bad "$local_ref: cannot list the pushed commits"; continue; }
+    # each commit once per push: the refs of one push (main and a dozen
+    # release tags) share most of their history
+    : >> "$tmpd/checked"
+    range=$(printf '%s\n' "$range" | awk -v f="$tmpd/checked" 'BEGIN { while ((getline l < f) > 0) seen[l] = 1 }
+        NF && !($0 in seen)')
+    [ -z "$range" ] || printf '%s\n' "$range" >> "$tmpd/checked"
     for c in $range; do
         who=$(git log -1 --format='%ae %ce' "$c")
         [ "$who" = "$EMAIL $EMAIL" ] || bad "$(git log -1 --format='%h %s' "$c"): author/committer $who"

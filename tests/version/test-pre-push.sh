@@ -235,6 +235,17 @@ mkdir "$r/.git/filter-repo"
 push 'a tag after git filter-repo' refused 'private data in the diff' -- refs/tags/note
 to=origin
 
+# a push of several refs checks each commit once
+newrepo
+cm -S --author='someone <someone@example.invalid>' -m 'x'
+git -C "$r" tag -a -m 'a note' note
+push 'main and a tag over one foreign commit' refused 'author/committer' -- main refs/tags/note
+if [ "$(printf '%s\n' "$out" | grep -c 'author/committer')" = 1 ]; then
+    pass "... named once"
+else
+    fail "... named once" "$(printf '%s' "$out" | tr '\n' '|')"
+fi
+
 # a push to a URL instead of a remote name: that remote's branches count
 newrepo
 cm -S -m 'x'
