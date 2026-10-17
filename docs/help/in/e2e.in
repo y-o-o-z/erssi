@@ -177,12 +177,13 @@
     says so; unload the script (/SCRIPT UNLOAD rpe2e, and remove it from
     scripts/autorun) to use the module. The script does not know the
     module's per-network entries (see Networks), so it would send a
-    channel or query that only the module set up in clear text: while
-    the script is loaded the module still stops such messages (they are
-    NOT sent, and you are told), lets bot commands out with a warning
-    only while e2e_bot_bypass is on, and warns once that the keyring has such entries. Going back to
-    rpe2e.pl after the module wrote them is a downgrade - unload the
-    script to send there encrypted; /E2E EXPORT keeps a copy.
+    channel or query that only the module set up in clear text: while the
+    script is loaded the module still stops such messages (they are NOT
+    sent, and you are told), lets bot commands out with a warning only
+    while e2e_bot_bypass is on, and warns once that the keyring has such
+    entries. Going back to rpe2e.pl after the module wrote them is a
+    downgrade - unload the script to send there encrypted; /E2E EXPORT
+    keeps a copy.
 
     Subcommands work in the context of the active window: in a channel
     window it is the channel, in a query window - the person identified by
@@ -225,31 +226,31 @@
     a block is also told in full, with the command to run, when it
     happens and at most once a minute while they write.
 
-    Your own key goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
-    auto-accept mode. Having their key is not enough - so in normal mode
-    each of you accepts the other once. A request for a channel is
-    announced in its window as "Pending key exchange from <nick>
-    (<ident@host>) for <network>:<name>" - reply there with /E2E ACCEPT
-    or /E2E DECLINE (alone, or with the ident@host shown); one for a query
-    as "... for a query", answered with /E2E ACCEPT <ident@host> from any
-    window of that network. Asked again, a request is announced at most
-    every 5 minutes, and /E2E PENDING lists every request that waits. Later requests from an accepted person are answered at once. Requests for a channel or
-    query where encryption is off are ignored, a request for a query must
-    come from the person it names, and each kind of request (KEYREQ,
-    KEYRSP, REKEY) from one person for one context is handled at most
-    every 10 s. A key change announced by a person (REKEY) only replaces
-    a key you already have from them (the key it replaces still opens
-    their messages for 2 minutes, for those sent just before it), and
-    each one is taken once (after
-    1024 of them from one person in one context the next key change goes
-    through a new key request instead). When your own key changes, only
-    people you accepted get the new one. At most 64 requests wait for
-    /E2E ACCEPT, at most 256 of your own key requests wait for an answer
-    and at most 256 people you never accepted are remembered, with their
-    keys; the oldest go first (people you accepted are always kept).
-    Messages of the module are prefixed with [E2E] (warnings in the
-    error colour); with /SET e2e_debug ON it also traces the key
-    exchange. Line breaks in a decrypted message are
+    Your own key goes only to people you accepted: /E2E ACCEPT, an
+    AUTOTRUST rule or auto-accept mode. Having their key is not enough -
+    so in normal mode each of you accepts the other once. A request for a
+    channel is announced in its window as "Pending key exchange from
+    <nick> (<ident@host>) for <network>:<name>" - reply there with /E2E
+    ACCEPT or /E2E DECLINE (alone, or with the ident@host shown); one for
+    a query as "... for a query", answered with /E2E ACCEPT <ident@host>
+    from any window of that network. Asked again, a request is announced
+    at most every 5 minutes, and /E2E PENDING lists every request that
+    waits. Later requests from an accepted person are answered at once.
+    Requests for a channel or query where encryption is off are ignored, a
+    request for a query must come from the person it names, and each kind
+    of request (KEYREQ, KEYRSP, REKEY) from one person for one context is
+    handled at most every 10 s. A key change announced by a person (REKEY)
+    only replaces a key you already have from them (the key it replaces
+    still opens their messages for 2 minutes, for those sent just before
+    it), and each one is taken once (after 1024 of them from one person in
+    one context the next key change goes through a new key request
+    instead). When your own key changes, only people you accepted get the
+    new one. At most 64 requests wait for /E2E ACCEPT, at most 256 of your
+    own key requests wait for an answer and at most 256 people you never
+    accepted are remembered, with their keys; the oldest go first (people
+    you accepted are always kept). Messages of the module are prefixed
+    with [E2E] (warnings in the error colour); with /SET e2e_debug ON it
+    also traces the key exchange. Line breaks in a decrypted message are
     shown as spaces.
 
     A message to a nick is not sent when encryption is on for that nick
@@ -309,18 +310,17 @@
     there - only that request, by its exact ident@host.
 
     Keyrings: a keyring that cannot be read is never overwritten, and
-    messages are not sent until it can be read again; the subcommands
-    (but HELP and IMPORT) refuse then, so that EXPORT never writes an
-    empty export and nothing claims a change that was not saved. One
-    that is not valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
+    messages are not sent until it can be read again; the subcommands (but
+    HELP and IMPORT) refuse then, so that EXPORT never writes an empty
+    export and nothing claims a change that was not saved. One that is not
+    valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
     state is then LOST: nothing is sent to any channel or query and
-    nothing is saved, also after a restart, until you
-    run /E2E RESET (a new keyring) or /E2E IMPORT a keyring export.
-    Which people you accepted is stored in keyring.json as "accepted"
-    (rpe2e.pl keeps it, exports do not carry it): with a keyring from
-    rpe2e.pl, repartee or an import, a person asking for your key again
-    needs one /E2E ACCEPT, and does not get your new key when it rotates
-    before that.
+    nothing is saved, also after a restart, until you run /E2E RESET (a
+    new keyring) or /E2E IMPORT a keyring export. Which people you
+    accepted is stored in keyring.json as "accepted" (rpe2e.pl keeps it,
+    exports do not carry it): with a keyring from rpe2e.pl, repartee or an
+    import, a person asking for your key again needs one /E2E ACCEPT, and
+    does not get your new key when it rotates before that.
 
     Channel names are compared as the server's CASEMAPPING compares
     them: ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the
@@ -359,24 +359,23 @@
 
     Known limitations: a server that names rfc1459, ascii or
     strict-rfc1459 but folds the bytes of another code page (koi8-r,
-    cp1251) is not covered: such names may be one channel to it and two
-    to erssi. NOTICEs, CTCPs other than ACTION, bot commands with
-    e2e_bot_bypass on and IRCv3 message tags are never encrypted. Nicks in ACCEPT, REVOKE, VERIFY
-    etc. are resolved with the last nick stored in the keyring, which
-    may meanwhile belong to someone else - check the ident@host the
-    command prints. A keyring written with real Unicode (repartee's
-    export) that stores a nick whose letters all fit Latin-1 (kótek) is
-    read as Latin-1 bytes, so neither erssi nor rpe2e.pl finds that nick
-    by it (one with other letters, żbik, is found). As in repartee, the
-    server can drop or reorder the parts of a long message (each part is
-    shown on its own). A part read before that the server delivers again
-    - in any spelling - is dropped while its timestamp is still taken
-    (5 minutes either way), with "repeated message from <nick> dropped"
-    (once a minute per sender); the last 4096 parts read are
-    remembered, so a flood can push an older one out, and after a
-    restart nothing is - a repeat within the 5 minutes of the timestamp
-    check is then shown again, as in repartee. A key request carries no
-    ident@host:
+    cp1251) is not covered: such names may be one channel to it and two to
+    erssi. NOTICEs, CTCPs other than ACTION, bot commands with
+    e2e_bot_bypass on and IRCv3 message tags are never encrypted. Nicks in
+    ACCEPT, REVOKE, VERIFY etc. are resolved with the last nick stored in
+    the keyring, which may meanwhile belong to someone else - check the
+    ident@host the command prints. A keyring written with real Unicode
+    (repartee's export) that stores a nick whose letters all fit Latin-1
+    (kótek) is read as Latin-1 bytes, so neither erssi nor rpe2e.pl finds
+    that nick by it (one with other letters, żbik, is found). As in
+    repartee, the server can drop or reorder the parts of a long message
+    (each part is shown on its own). A part read before that the server
+    delivers again - in any spelling - is dropped while its timestamp is
+    still taken (5 minutes either way), with "repeated message from <nick>
+    dropped" (once a minute per sender); the last 4096 parts read are
+    remembered, so a flood can push an older one out, and after a restart
+    nothing is - a repeat within the 5 minutes of the timestamp check is
+    then shown again, as in repartee. A key request carries no ident@host:
     someone who forwards your peer's request before the peer's first
     contact with you ties that key to their own address, and the peer's
     own request is then held back as a changed address until /E2E REVERIFY
