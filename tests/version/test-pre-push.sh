@@ -195,6 +195,22 @@ push 'a commit to another branch, before its pattern' ok -- HEAD:refs/heads/dev/
 printf 'secret-box\n' > "$PATTERNS"
 push 'the same commit, then to main of the same remote' ok -- HEAD:main
 
+# after a history rewrite our copies of the remote's branches are rewritten
+# too (git filter-repo): when they do not match what the remote reports,
+# they leave nothing out
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S -m 'signed'
+to=staging
+push 'signed main to a second remote' ok -- main
+git -C "$r" commit -q --amend -m 'rewritten, unsigned'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+push 'rewritten main over a rewritten copy of the remote main' refused 'not signed by the release key' -- --force main
+# ... also when the remote's old tip is gone from here (filter-repo prunes it)
+git -C "$r" reflog expire --expire=now --all && git -C "$r" gc -q --prune=now
+push 'the same, the remote tip not here any more' refused 'not signed by the release key' -- --force main
+to=origin
+
 # a push to a URL instead of a remote name: that remote's branches count
 newrepo
 cm -S -m 'x'
@@ -231,6 +247,21 @@ to=fresh
 push 'upstream history from a remote not named as upstream' refused 'author/committer' -- main
 git -C "$r" config prepush.upstream 'erssi-org theirs'
 push 'the same with prepush.upstream naming it' ok -- main
+# never a remote with the fork's own URL, or with the destination's (each
+# push to a new remote that does not have the history yet)
+fresh_remote() { git init -q --bare "$r.$1.git" && git -C "$r" remote add "$1" "$r.$1.git"; to=$1; }
+git -C "$r" remote set-url theirs https://github.com/y-o-o-z/erssi-dev.git
+fresh_remote fresh2
+push 'an upstream remote with the fork'"'"'s URL' refused 'author/committer' -- main
+git -C "$r" remote set-url theirs "$r.up"
+git -C "$r" remote set-url --push theirs git@github.com:Y-O-O-Z/erssi.git
+push '... as its push URL' refused 'author/committer' -- main
+git -C "$r" config --unset remote.theirs.pushurl
+fresh_remote fresh3
+git -C "$r" remote set-url theirs "$r.fresh3.git"
+push 'an upstream remote with the destination'"'"'s URL' refused 'author/committer' -- main
+git -C "$r" remote set-url theirs "$r.up"
+push 'the same upstream remote with its own URL again' ok -- main
 to=origin
 
 # main created on an empty remote: everything it gets is new to it
@@ -327,7 +358,15 @@ push 're-signing, a tag of an unsigned commit' refused 'release commit' -- --for
 git -C "$r" tag -f shellter-v2026.10.0 >/dev/null
 push 're-signing, a lightweight tag' refused 'must be annotated' -- --force refs/tags/shellter-v2026.10.0
 git -C "$r" reset -q --hard HEAD^
-git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+# the pins of this checkout (the new ones) still count: a re-signed tag on
+# another commit than they record is refused
+x=$(git -C "$r" rev-parse HEAD)
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$(git -C "$r" rev-parse HEAD^)" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'new pins'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 "$x" >/dev/null
+push 're-signing, a tag elsewhere than the new pins' refused 'shellter-install.sh records' -- --force refs/tags/shellter-v2026.10.0
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$x" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'new pins, right'
 push 're-signing, both named' ok 'PREPUSH_RETAG' -- --force refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
 push 're-signing, a named tag deleted' ok 'PREPUSH_RETAG' -- :refs/tags/shellter-v1.3.2
 unset PREPUSH_RETAG

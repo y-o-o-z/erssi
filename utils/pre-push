@@ -38,11 +38,16 @@
 #    PREPUSH_NO_PATTERNS=1 git push pushes once without this check.
 # What the remote has: what it reports for each pushed ref and our copies of
 # its branches (refs/remotes/<remote>/*; a push to a URL uses the remote of
-# that URL, if there is one). Push to a remote that has been fetched: to a
+# that URL, if there is one). The copies count only while they agree with
+# what the remote reports for the pushed branches: after a history rewrite
+# (git filter-repo rewrites refs/remotes/* too) or when the remote's tip is
+# not here, they are not used. Push to a remote that has been fetched: to a
 # new remote the whole history counts as new, except the branches of the
 # upstream projects' remotes - the remotes named in git config
 # prepush.upstream (a list of names; "upstream irssi" when it is not set),
-# whose commits are theirs and not checked.
+# whose commits are theirs and not checked. prepush.upstream must never name
+# a remote you push to: a remote whose URL is the fork's own
+# (github.com/y-o-o-z/...) or the destination's is never left out.
 # The hook's temporary files live in one directory, removed on exit and on
 # HUP, INT and TERM.
 # Skip in an emergency with: git push --no-verify - it skips every check
@@ -68,19 +73,32 @@ elif [ -n "$REMOTE" ]; then
 fi
 tracking=""
 [ -z "$remote_name" ] || tracking="refs/remotes/$remote_name/"
+bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
+warn() { printf 'pre-push: warning: %s\n' "$*" >&2; }
+# the URLs of a remote, lower case, one per line
+urls() { { git config --get-all "remote.$1.url"; git config --get-all "remote.$1.pushurl"; } 2>/dev/null | tr '[:upper:]' '[:lower:]'; }
+dest_urls=" $(printf '%s\n' "$REMOTE" | tr '[:upper:]' '[:lower:]') $( [ -z "$remote_name" ] || urls "$remote_name" | tr '\n' ' ')"
 # the branches of the upstream projects' remotes, as rev-list arguments
 # (remote names without blanks or glob characters only; expanded with
-# set -f)
+# set -f). Never the destination, nor a remote with the fork's own URL or
+# the destination's: their commits are exactly what must be checked.
 up_names=$(git config --get-all prepush.upstream 2>/dev/null) || up_names="upstream irssi"
 UPSTREAM=""
 for u in $up_names; do
     case "$u" in *[!A-Za-z0-9._-]*) continue ;; esac
     git config --get "remote.$u.url" >/dev/null 2>&1 || continue
     [ "$u" != "$remote_name" ] || continue
+    own=""
+    for x in $(urls "$u"); do
+        case "$x" in *github.com[:/]y-o-o-z/*) own=1 ;; esac
+        case "$dest_urls" in *" $x "*) own=1 ;; esac
+    done
+    if [ -n "$own" ]; then
+        warn "remote $u counts as upstream (prepush.upstream), but its URL is the fork's own or the destination's - its commits are checked"
+        continue
+    fi
     UPSTREAM="$UPSTREAM --glob=refs/remotes/$u/*"
 done
-bad() { printf 'pre-push: %s\n' "$*" >&2; fail=1; }
-warn() { printf 'pre-push: warning: %s\n' "$*" >&2; }
 # a release tag the one-time re-signing names (PREPUSH_RETAG)
 retag() { case " ${PREPUSH_RETAG:-} " in *" $1 "*) return 0 ;; esac; return 1; }
 # the commit shellter-install.sh at $1 records for the release $2
@@ -132,6 +150,25 @@ fi
 # prints "binary file matches" and the check sees nothing)
 private() { grep -a -iEf "$PATTERNS_CLEAN" | head -3; }
 
+# Our copies of the remote's branches count only while they agree with what
+# the remote reports for the pushed branches: a history rewrite moves
+# refs/remotes/* too (git filter-repo), and the copies would then leave out
+# exactly the rewritten commits. A remote tip that is not here, or that
+# differs from our copy, and none of the copies are used.
+cat > "$tmpd/refs"
+if [ -n "$tracking" ]; then
+    while read -r _ l_sha r_ref r_sha; do
+        if [ "$l_sha" = "$ZERO" ] || [ "$r_sha" = "$ZERO" ]; then continue; fi
+        case "$r_ref" in refs/heads/*) ;; *) continue ;; esac
+        mine=$(git rev-parse -q --verify "${tracking}${r_ref#refs/heads/}^{commit}" 2>/dev/null) || mine=""
+        if ! git cat-file -e "$r_sha^{commit}" 2>/dev/null || { [ -n "$mine" ] && [ "$mine" != "$r_sha" ]; }; then
+            warn "our copies of $remote_name's branches do not match what it reports for $r_ref - not used; everything not on an upstream remote is checked"
+            tracking=""
+            break
+        fi
+    done < "$tmpd/refs"
+fi
+
 pushed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
     # a release tag on the remote is never moved (git push --force) or
@@ -170,11 +207,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     pushed="$pushed $tip"
     # a release tag that the installer records - in this checkout or on the
     # remote's main - is created only on the recorded commit (a delete that
-    # skipped this hook, then the tag again elsewhere)
+    # skipped this hook, then the tag again elsewhere). A re-signed one
+    # (PREPUSH_RETAG) must be where this checkout's pins - the new ones -
+    # record it; the remote's main still has the old pins.
     case "$remote_ref" in
         refs/tags/shellter-v*)
-            if [ "$remote_sha" = "$ZERO" ] && ! retag "${remote_ref#refs/tags/}"; then
-                for at in HEAD ${tracking:+"${tracking}main"}; do
+            where=""
+            if retag "${remote_ref#refs/tags/}"; then
+                where=HEAD
+            elif [ "$remote_sha" = "$ZERO" ]; then
+                where="HEAD ${tracking:+${tracking}main}"
+            fi
+            if [ -n "$where" ]; then
+                for at in $where; do
                     p=$(pinned "$at" "${remote_ref#refs/tags/}")
                     [ -z "$p" ] || [ "$p" = "$tip" ] ||
                         { bad "$remote_ref: shellter-install.sh records $p for it ($at), not $tip - release tags never move"; break; }
@@ -211,13 +256,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # commit that the remote's main does not have yet, including those already
     # on another branch of the remote (the range above leaves them out). The
     # base is what the remote reports for main; when it is unknown here (main
-    # is created, or a force push without fetching), our last copy of that
-    # remote's main, and without one the whole history.
+    # is created), our last copy of that remote's main if it can be trusted
+    # (see above), and without one the whole history.
     if [ "$remote_ref" = refs/heads/main ]; then
         if [ "$remote_sha" != "$ZERO" ] && git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
             base=$remote_sha
         else
-            base=$(git rev-parse -q --verify "${tracking:-refs/remotes/$REMOTE/}main^{commit}" 2>/dev/null) || base=
+            base=""
+            [ -z "$tracking" ] || base=$(git rev-parse -q --verify "${tracking}main^{commit}" 2>/dev/null) || base=
         fi
         # shellcheck disable=SC2086 # $UPSTREAM: words, globbing off
         main_range=$(set -f; git rev-list "$tip" --not ${base:+"$base"} $UPSTREAM) ||
@@ -266,7 +312,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
             refs/tags/shellter-v*) bad "$remote_ref: release tags must be annotated and signed (git tag -s)" ;;
         esac
     fi
-done
+done < "$tmpd/refs"
 
 # every shipped version of startup and the themes must be in the list erssi
 # uses to tell an unchanged ~/.erssi copy from the user's own - checked for
