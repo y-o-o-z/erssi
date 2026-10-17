@@ -2183,6 +2183,26 @@ static void cmd_guide(WI_ITEM_REC *item)
 	e2e_json_free(kr);
 }
 
+/* the keyring exists but cannot be read (permissions, not a keyring):
+   said, TRUE - the command is not run on an empty stand-in */
+static gboolean keyring_unreadable(WI_ITEM_REC *item)
+{
+	E2E_LOAD_STATUS status;
+	E2E_JSON *kr;
+	char *error = NULL;
+
+	kr = e2e_keyring_load_checked(e2e_keyring_file(), &status, &error);
+	e2e_json_free(kr);
+	if (status != E2E_LOAD_READ_ERROR) {
+		g_free(error);
+		return FALSE;
+	}
+	e2e_print_warning(item, "the keyring %s cannot be read (%s) - nothing was done; fix the file (or /e2e import an export)",
+	                  e2e_keyring_file(), error != NULL ? error : "?");
+	g_free(error);
+	return TRUE;
+}
+
 static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	char **parts, **args, *sub;
@@ -2214,6 +2234,10 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 	    strcmp(sub, "reset") != 0 && strcmp(sub, "status") != 0 && strcmp(sub, "import") != 0) {
 		/* nothing may be saved over the lost state */
 		e2e_print_item(item, "%s", LOST_REFUSAL);
+	} else if (*sub != '\0' && strcmp(sub, "help") != 0 && strcmp(sub, "import") != 0 &&
+	           keyring_unreadable(item)) {
+		/* an empty keyring would stand in for it: an export of nothing,
+		   "done" for what was not saved */
 	} else if (*sub == '\0' || strcmp(sub, "help") == 0) {
 		cmd_guide(item);
 		e2e_print_item(item, "Encryption commands: on off mode fingerprint list status pending accept decline revoke unrevoke forget handshake verify reverify rotate export import autotrust adopt reset");

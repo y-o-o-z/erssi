@@ -293,7 +293,9 @@
     there - only that request, by its exact ident@host.
 
     Keyrings: a keyring that cannot be read is never overwritten, and
-    messages are not sent until it can be read again. One that is not
+    messages are not sent until it can be read again; the subcommands
+    (but HELP and IMPORT) refuse then, so that EXPORT never writes an
+    empty export and nothing claims a change that was not saved. One that is not
     valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
     state is then LOST: nothing is sent to any channel or query (except
     bot commands) and nothing is saved, also after a restart, until you

@@ -10,6 +10,7 @@ accepts it; after /e2e reverify <new address> his next message is read.
 Nothing of it crosses the server in clear text.
 Usage: test_e2e_trust.py <build dir> [<source dir>]"""
 import json
+import os
 import re
 import shutil
 import sys
@@ -183,6 +184,25 @@ def main():
         assert wait_chan(a, "secret three", start), chan_log(a)[start:]
         assert "not read" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_unreadable_keyring():
+        """a keyring that cannot be read: /e2e export writes no empty
+        export, /e2e rotate claims nothing - both say why"""
+        a = st["alice"]
+        ring = a.home / "rpe2e" / "keyring.json"
+        dest = work / "export.json"
+        ring.chmod(0)
+        try:
+            if os.access(ring, os.R_OK):
+                raise harness.SkipCase("the keyring stays readable (run as root?)")
+            off = log_size(a)
+            a.type_and_wait("/window goto #test", f"/e2e export {dest}", "/e2e rotate")
+            out = log_since(a, off)
+        finally:
+            ring.chmod(0o600)
+        assert out.count("cannot be read") == 2, out
+        assert "exported keyring" not in out and "rotation scheduled" not in out, out
+        assert not dest.exists()
+
     def t_wire():
         """nothing of it went over the server in clear text; no sanitizer
         reports"""
@@ -203,7 +223,7 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_wire])
+                      t_unreadable_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():
