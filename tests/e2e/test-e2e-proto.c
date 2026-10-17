@@ -6062,6 +6062,36 @@ static void test_reverify(void)
 	peer_free(&mallory);
 }
 
+/* /e2e decline and /e2e forget of someone who has our key: they get no
+   later key of ours, and the next rotation does not take them for
+   someone a keyring of rpe2e.pl left behind */
+static void test_stop_giving_key(void)
+{
+	PEER a, b;
+	E2E_GATE_RESULT g;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&b, &a, "#test");
+	g_assert_nonnull(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_true(e2e_stop_giving_key(b.kr, ALICE, "#test"));
+	g_assert_null(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	/* twice: nothing of theirs is left */
+	g_assert_false(e2e_stop_giving_key(b.kr, ALICE, "#test"));
+	/* a rotation then: no REKEY to her, and no warning about her */
+	e2e_json_set_int(path_get(b.kr, "outgoing", "#test", NULL), "pending_rotation", 1);
+	e2e_gate_decide(b.kr, TRUE, &b.id, NULL, "#test", "new key", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_null(g.notices);
+	g_assert_null(g.warnings);
+	e2e_gate_result_clear(&g);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6074,6 +6104,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/hidden-messages", test_hidden_messages);
 	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
 	g_test_add_func("/e2e/proto/reverify", test_reverify);
+	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);

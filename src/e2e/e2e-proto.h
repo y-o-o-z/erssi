@@ -140,6 +140,11 @@ GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const c
 gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex);
 /* /e2e revoke, decline, forget: handle no longer gets our key for ctx */
 void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);
+/* the same, and handle is no recipient of our key for ctx any more (no
+   REKEY reaches them): TRUE when they had it - accepted or a recipient.
+   Our key is not rotated (as in repartee): what they hold reads our
+   messages there until it rotates (/e2e revoke, /e2e rotate). */
+gboolean e2e_stop_giving_key(E2E_JSON *kr, const char *handle, const char *ctx);
 
 typedef enum {
 	E2E_ACCEPT_SENT,	/* a pending request answered: *rsp (and *reciprocal) */

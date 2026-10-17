@@ -73,8 +73,13 @@
                  LIST shows it, and /E2E DECLINE <ident@host> (or alone)
                  in that query removes it.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
-                 existing session gets the revoked status and the person
-                 is no longer accepted.
+                 existing session gets the revoked status (their messages
+                 are not read, and their key is not asked for again) and
+                 the person is no longer accepted: they get none of your
+                 later keys. Your key is not rotated (as in repartee): if
+                 they had it, they can read your messages there until it
+                 changes - you are told so; /E2E ROTATE there (or REVOKE)
+                 makes a new one.
     REVOKE:      Withdraws trust in the current channel or query and
                  schedules a rotation of your key, so that person can no
                  longer read along; they are no longer accepted.
@@ -82,8 +87,11 @@
                  from them is stored); to give them your key again,
                  /E2E ACCEPT them.
     FORGET:      Removes the person's sessions in the current channel or
-                 query; with -all (at the start or at the end) - everything
-                 about them from the keyring.
+                 query, and they are no longer accepted there; with -all
+                 (at the start or at the end) - everything about them from
+                 the keyring. As with DECLINE, your key is not rotated: a
+                 key of yours they hold still reads your messages until
+                 /E2E ROTATE (or REVOKE) there.
     VERIFY:      Shows the start of your fingerprint and of the person's -
                  to compare over another channel (e.g. by phone).
     REVERIFY:    Accepts a trust change that blocks the person's key

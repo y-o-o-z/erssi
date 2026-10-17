@@ -1217,12 +1217,26 @@ out:
 	e2e_json_free(kr);
 }
 
+/* they no longer get our key, but what they hold still reads us (our key
+   is not rotated, as in repartee): said, with what changes that */
+static void tell_key_kept(WI_ITEM_REC *item, const char *who, const char *where)
+{
+	if (where != NULL)
+		e2e_print_warning(item, "%s still holds your current key for %s and can read your messages there until it changes: /e2e rotate there makes a new one, which only the people you accepted get (/e2e revoke %s does that and revokes them too)",
+		                  shown_text(who), shown(where), shown_text(who));
+	else
+		e2e_print_warning(item, "%s still holds your current keys where they had them and can read your messages there until those change: /e2e rotate in those channels and queries makes new ones, which only the people you accepted get",
+		                  shown_text(who));
+}
+
 /* /e2e decline of handle in ctx, picked already: its request goes, its
-   session is revoked and its acceptance forgotten; saved, told */
+   session is revoked, its acceptance forgotten and it is no recipient of
+   our key any more; saved, told */
 static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *handle,
                            const char *nick)
 {
 	E2E_JSON *row;
+	gboolean had;
 	char *k;
 
 	k = g_strconcat(handle, "|", ctx, NULL);
@@ -1231,10 +1245,12 @@ static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, con
 	row = incoming_row(kr, handle, ctx);
 	if (row != NULL)
 		e2e_json_set_string(row, "status", "revoked");
-	e2e_forget_acceptance(kr, handle, ctx);
+	had = e2e_stop_giving_key(kr, handle, ctx);
 	e2e_save(kr);
 	e2e_print_item(item, "declined %s (%s) on %s", shown_text(nick != NULL ? nick : handle),
 	               shown_text(handle), shown(ctx));
+	if (had)
+		tell_key_kept(item, nick != NULL ? nick : handle, ctx);
 }
 
 /* SYNTAX: E2E DECLINE [<nick>|<ident@host>] */
@@ -1423,7 +1439,7 @@ out:
 static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 {
 	E2E_JSON *kr, *out, *peer;
-	char *handle, *ctx, *own = NULL, *k;
+	char *handle, *ctx, *own = NULL;
 	gboolean ok;
 
 	if (nick == NULL) {
@@ -1445,12 +1461,9 @@ static void cmd_revoke(WI_ITEM_REC *item, const char *nick, gboolean revoke)
 	}
 	if (revoke) {
 		set_incoming_trust(kr, handle, ctx, own, "revoked");
-		e2e_forget_acceptance(kr, handle, ctx);
 		/* the peer must not read along any more: drop it from the REKEY
 		   list and rotate our key */
-		k = g_strconcat(ctx, "|", handle, NULL);
-		e2e_json_remove(e2e_json_get(kr, "outgoing_recipients"), k);
-		g_free(k);
+		e2e_stop_giving_key(kr, handle, ctx);
 		out = e2e_json_get(e2e_json_get(kr, "outgoing"), ctx);
 		if (out != NULL)
 			e2e_json_set_int(out, "pending_rotation", 1);
@@ -1479,7 +1492,7 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 	};
 	E2E_JSON *kr;
 	guint n = g_strv_length(args);
-	gboolean all = FALSE, ok, refused;
+	gboolean all = FALSE, ok, refused, had;
 	const char *who, *fp;
 	char *handle = NULL, *ctx = NULL, *own = NULL;
 	int i, removed = 0;
@@ -1503,6 +1516,20 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 		goto out;
 	}
 	if (all) {
+		GPtrArray *keys = e2e_json_keys(e2e_json_get(kr, "outgoing_recipients"));
+		char *tail = g_strconcat("|", handle, NULL), *head = g_strconcat(handle, "|", NULL);
+		gboolean had = FALSE;
+
+		/* had our key somewhere: a recipient, or accepted */
+		for (i = 0; i < (int) keys->len && !had; i++)
+			had = g_str_has_suffix(g_ptr_array_index(keys, i), tail);
+		g_ptr_array_unref(keys);
+		keys = e2e_json_keys(e2e_json_get(kr, "accepted"));
+		for (i = 0; i < (int) keys->len && !had; i++)
+			had = g_str_has_prefix(g_ptr_array_index(keys, i), head);
+		g_ptr_array_unref(keys);
+		g_free(tail);
+		g_free(head);
 		fp = e2e_find_peer_by_handle(kr, handle, NULL);
 		if (fp != NULL) {
 			char *copy = g_strdup(fp);
@@ -1516,6 +1543,8 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 		filter_trust_changes(kr, handle, NULL);
 		e2e_save(kr);
 		e2e_print_item(item, "forgot %s (%s) globally — removed %d row(s)", who, handle, removed);
+		if (had)
+			tell_key_kept(item, who, NULL);
 		goto out;
 	}
 	ctx = resolve_ctx(kr, item, who, &refused);
@@ -1528,9 +1557,11 @@ static void cmd_forget(WI_ITEM_REC *item, char **args)
 	if (!ok)
 		goto out;
 	delete_rows(kr, handle, ctx, own);
-	e2e_forget_acceptance(kr, handle, ctx);
+	had = e2e_stop_giving_key(kr, handle, ctx);
 	e2e_save(kr);
 	e2e_print_item(item, "forgotten %s on %s", who, shown(ctx));
+	if (had)
+		tell_key_kept(item, who, ctx);
 out:
 	g_free(own);
 	g_free(ctx);

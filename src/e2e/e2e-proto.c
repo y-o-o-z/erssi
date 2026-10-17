@@ -430,6 +430,19 @@ void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx)
 	g_free(k);
 }
 
+gboolean e2e_stop_giving_key(E2E_JSON *kr, const char *handle, const char *ctx)
+{
+	char *k = pipe_key(handle, ctx);
+	gboolean had = e2e_json_get(e2e_json_get(kr, "accepted"), k) != NULL;
+
+	e2e_json_remove(e2e_json_get(kr, "accepted"), k);
+	g_free(k);
+	k = pipe_key(ctx, handle);
+	had |= e2e_json_remove(e2e_json_get(kr, "outgoing_recipients"), k);
+	g_free(k);
+	return had;
+}
+
 /* the oldest member of an object by an integer field of it (NULL: the
    member is the integer) */
 static char *oldest_member(const E2E_JSON *obj, const char *field)
