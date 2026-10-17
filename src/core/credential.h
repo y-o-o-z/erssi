@@ -93,6 +93,9 @@ CredentialContext credential_string_to_context(const char *str);
 const char *credential_storage_mode_to_string(CredentialStorageMode mode);
 
 /* Cryptographic functions */
+/* TRUE when value is in the form credential_encrypt() writes (or an older
+ * version wrote); anything else is plain text */
+gboolean credential_is_encrypted(const char *value);
 char *credential_encrypt(const char *plaintext, const char *password);
 char *credential_decrypt(const char *encrypted_data, const char *password);
 gboolean credential_crypto_init(void);

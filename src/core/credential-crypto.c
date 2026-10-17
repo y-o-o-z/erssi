@@ -37,6 +37,13 @@
 #define CREDENTIAL_IV_SIZE 16
 #define CREDENTIAL_PBKDF2_ITERATIONS 100000
 
+/* An encrypted value is "erssi-enc1:" + salt_hex:iv_hex:ciphertext_base64.
+ * Without the prefix a value is plain text, even when it holds ':' (a
+ * password may). Versions before 2026.10.3 wrote the same value without
+ * the prefix; it is still read when it has exactly that shape (see
+ * credential_legacy_encrypted()), which a password does not by chance. */
+#define CREDENTIAL_PREFIX "erssi-enc1:"
+
 /* === Funkcje pomocnicze === */
 
 static char *bytes_to_hex(const unsigned char *bytes, size_t len)
@@ -208,7 +215,57 @@ static char *decrypt_aes256_cbc_openssl(const char *ciphertext_b64, const unsign
 	return result;
 }
 
+static gboolean is_lower_hex(const char *str, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		if (!g_ascii_isxdigit(str[i]) || g_ascii_isupper(str[i]))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* A value written by an older version: the salt and IV in lower-case hex
+ * of their exact sizes, then the AES-256-CBC ciphertext in padded base64,
+ * which decodes to a whole number of 16-byte blocks. */
+static gboolean credential_legacy_encrypted(const char *value)
+{
+	const char *b64;
+	size_t len, pad, i, decoded;
+
+	if (strlen(value) < CREDENTIAL_SALT_SIZE * 2 + 1 + CREDENTIAL_IV_SIZE * 2 + 1)
+		return FALSE;
+	if (!is_lower_hex(value, CREDENTIAL_SALT_SIZE * 2) ||
+	    value[CREDENTIAL_SALT_SIZE * 2] != ':')
+		return FALSE;
+	value += CREDENTIAL_SALT_SIZE * 2 + 1;
+	if (!is_lower_hex(value, CREDENTIAL_IV_SIZE * 2) || value[CREDENTIAL_IV_SIZE * 2] != ':')
+		return FALSE;
+	b64 = value + CREDENTIAL_IV_SIZE * 2 + 1;
+
+	len = strlen(b64);
+	if (len == 0 || len % 4 != 0)
+		return FALSE;
+	pad = 0;
+	if (b64[len - 1] == '=')
+		pad = b64[len - 2] == '=' ? 2 : 1;
+	for (i = 0; i < len - pad; i++) {
+		if (!g_ascii_isalnum(b64[i]) && b64[i] != '+' && b64[i] != '/')
+			return FALSE;
+	}
+	decoded = len / 4 * 3 - pad;
+	return decoded >= 16 && decoded % 16 == 0;
+}
+
 /* === Public functions === */
+
+gboolean credential_is_encrypted(const char *value)
+{
+	if (value == NULL)
+		return FALSE;
+	return g_str_has_prefix(value, CREDENTIAL_PREFIX) || credential_legacy_encrypted(value);
+}
 
 char *credential_encrypt(const char *plaintext, const char *password)
 {
@@ -241,8 +298,7 @@ char *credential_encrypt(const char *plaintext, const char *password)
 	salt_hex = bytes_to_hex(salt, sizeof(salt));
 	iv_hex = bytes_to_hex(iv, sizeof(iv));
 
-	/* Format: salt_hex:iv_hex:encrypted_base64 */
-	result = g_strdup_printf("%s:%s:%s", salt_hex, iv_hex, encrypted);
+	result = g_strdup_printf(CREDENTIAL_PREFIX "%s:%s:%s", salt_hex, iv_hex, encrypted);
 
 	/* Secure cleanup */
 	memset(key, 0, sizeof(key));
@@ -264,11 +320,11 @@ char *credential_decrypt(const char *encrypted_data, const char *password)
 	g_return_val_if_fail(encrypted_data != NULL, NULL);
 	g_return_val_if_fail(password != NULL, NULL);
 
-	/* Check if data is in encrypted format */
-	if (strchr(encrypted_data, ':') == NULL) {
-		/* Probably plaintext */
+	/* a value that is not encrypted is plain text, ':' or not */
+	if (!credential_is_encrypted(encrypted_data))
 		return g_strdup(encrypted_data);
-	}
+	if (g_str_has_prefix(encrypted_data, CREDENTIAL_PREFIX))
+		encrypted_data += strlen(CREDENTIAL_PREFIX);
 
 	/* Parse salt:iv:encrypted */
 	parts = g_strsplit(encrypted_data, ":", 3);

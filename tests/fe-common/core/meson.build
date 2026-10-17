@@ -249,3 +249,24 @@ test('test-theme-formats test', test_test_theme_formats,
   env : test_env,
   args : ['--tap'] + shipped_themes,
   protocol : 'tap')
+
+test_test_credential = executable('test-credential',
+  files(
+    'test-credential.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential test', test_test_credential,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
