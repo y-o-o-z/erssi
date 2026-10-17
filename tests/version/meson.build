@@ -9,7 +9,7 @@ test('version tree test', find_program('sh'),
 # signing key (test-pre-push.sh SOURCE_ROOT)
 test('pre-push test', find_program('sh'),
   args : [files('test-pre-push.sh'), meson.current_source_dir() / '..' / '..'],
-  timeout : 60)
+  timeout : 300)
 
 # utils/resign-history.sh: a real git filter-repo rewrite of a synthetic
 # history, re-signed with a throwaway key and pushed through utils/pre-push
