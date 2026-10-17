@@ -297,6 +297,32 @@ static void test_notice_made_query_not_exempt(void)
 	g_assert_cmpint(delivered, ==, 0);
 }
 
+/* the answer can be an ACTION, sent back by a bouncer (from another of
+ * its clients, or as echo-message) */
+static void test_answer_as_action_passes(void)
+{
+	pm("friend", "~friend@h.example.invalid", "hej");
+	signal_emit("event privmsg", 4, server, "friend :\001ACTION macha\001", "user",
+		    "user@h.example.invalid");
+	start_flood();
+
+	delivered = 0;
+	pm("friend", "~friend@h.example.invalid", "nic");
+	g_assert_cmpint(delivered, ==, 1);
+}
+
+/* or a NOTICE, sent back the same way */
+static void test_answer_as_notice_passes(void)
+{
+	pm("friend", "~friend@h.example.invalid", "hej");
+	signal_emit("event notice", 4, server, "friend :hej", "user", "user@h.example.invalid");
+	start_flood();
+
+	delivered = 0;
+	pm("friend", "~friend@h.example.invalid", "nic");
+	g_assert_cmpint(delivered, ==, 1);
+}
+
 static void test_server_message(void)
 {
 	pm("irc.example.invalid", NULL, "server notice");
@@ -423,6 +449,8 @@ int main(int argc, char **argv)
 	add("/anti-floodnet/answered-query-passes", test_answered_query_passes);
 	add("/anti-floodnet/answer-from-bouncer-passes", test_answer_from_bouncer_passes);
 	add("/anti-floodnet/notice-made-query-not-exempt", test_notice_made_query_not_exempt);
+	add("/anti-floodnet/answer-as-action-passes", test_answer_as_action_passes);
+	add("/anti-floodnet/answer-as-notice-passes", test_answer_as_notice_passes);
 	add("/anti-floodnet/server-message", test_server_message);
 	add("/anti-floodnet/window-capped", test_window_capped);
 	add("/anti-floodnet/blocked-patterns-capped", test_blocked_patterns_capped);

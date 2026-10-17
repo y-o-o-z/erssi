@@ -586,10 +586,11 @@ static void sig_message_own_private(SERVER_REC *server, const char *msg,
     mark_written(server, target);
 }
 
-/* Our own message sent back by a bouncer, or by a server with echo-message */
-static void sig_message_private(SERVER_REC *server, const char *msg,
-                                const char *nick, const char *address,
-                                const char *target)
+/* Our own message, ACTION or notice sent back by a bouncer (from another
+ * of its clients too), or by a server with echo-message */
+static void sig_message_echo(SERVER_REC *server, const char *msg,
+                             const char *nick, const char *address,
+                             const char *target)
 {
     if (IS_IRC_SERVER(server) && nick != NULL && server->nick != NULL &&
         IRC_SERVER(server)->nick_comp_func(nick, server->nick) == 0)
@@ -654,7 +655,9 @@ void irc_anti_floodnet_init(void)
     signal_add_last("message own_private", (SIGNAL_FUNC) sig_message_own_private);
     signal_add_last("message irc own_action", (SIGNAL_FUNC) sig_message_own_private);
     signal_add_last("message irc own_notice", (SIGNAL_FUNC) sig_message_own_private);
-    signal_add_last("message private", (SIGNAL_FUNC) sig_message_private);
+    signal_add_last("message private", (SIGNAL_FUNC) sig_message_echo);
+    signal_add_last("message irc action", (SIGNAL_FUNC) sig_message_echo);
+    signal_add_last("message irc notice", (SIGNAL_FUNC) sig_message_echo);
     signal_add("setup changed", (SIGNAL_FUNC) sig_settings_changed);
 
     /* Add command */
@@ -686,7 +689,9 @@ void irc_anti_floodnet_deinit(void)
     signal_remove("message own_private", (SIGNAL_FUNC) sig_message_own_private);
     signal_remove("message irc own_action", (SIGNAL_FUNC) sig_message_own_private);
     signal_remove("message irc own_notice", (SIGNAL_FUNC) sig_message_own_private);
-    signal_remove("message private", (SIGNAL_FUNC) sig_message_private);
+    signal_remove("message private", (SIGNAL_FUNC) sig_message_echo);
+    signal_remove("message irc action", (SIGNAL_FUNC) sig_message_echo);
+    signal_remove("message irc notice", (SIGNAL_FUNC) sig_message_echo);
     signal_remove("setup changed", (SIGNAL_FUNC) sig_settings_changed);
     clear_incoming();
 
