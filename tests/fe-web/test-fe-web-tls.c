@@ -348,6 +348,8 @@ static void test_handshake_with_pin(void)
 	for (n = 0; n < G_N_ELEMENTS(names); n++) {
 		TLS_PAIR p;
 		char buf[6] = "";
+		char *out;
+		int ret, i;
 
 		pair_new(&p, cert_path, names[n]);
 		if (!pair_handshake(&p))
@@ -363,6 +365,21 @@ static void test_handshake_with_pin(void)
 		client_read(&p, buf, 5);
 		g_assert_cmpstr(buf, ==, "world");
 
+		/* the client goes away without a close_notify: an ordinary
+		 * disconnect, read as 0 without a notice, and no SSL_shutdown
+		 * after it. On a Unix socket (as here and with fe_web_socket)
+		 * the alert OpenSSL then tries to send fails at once with
+		 * EPIPE. */
+		close(p.fd);
+		p.fd = -1;
+		ret = -2;
+		for (i = 0; i < 1000 && ret == -2; i++)
+			ret = fe_web_ssl_read(p.server, buf, sizeof(buf));
+		g_assert_cmpint(ret, ==, 0);
+		g_assert_true(p.server->failed);
+		out = fe_web_fuzz_take_printed();
+		g_assert_cmpstr(out, ==, "");
+		g_free(out);
 		pair_free(&p);
 	}
 	g_free(fe_web_fuzz_take_printed());

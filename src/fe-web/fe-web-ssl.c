@@ -484,6 +484,23 @@ int fe_web_ssl_accept(FE_WEB_SSL_CHANNEL *ssl_chan)
 	return -1;
 }
 
+/* Does an OpenSSL error say only that the peer went away: an EOF without
+ * close_notify (OpenSSL 3 reports it so), or a write - the alert OpenSSL
+ * sends after that EOF - to a peer that is gone, which on a Unix socket
+ * fails at once with EPIPE */
+static gboolean ssl_error_is_disconnect(unsigned long e)
+{
+	if (e == 0)
+		return FALSE;
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+	if (ERR_GET_LIB(e) == ERR_LIB_SSL &&
+	    ERR_GET_REASON(e) == SSL_R_UNEXPECTED_EOF_WHILE_READING)
+		return TRUE;
+#endif
+	return ERR_GET_LIB(e) == ERR_LIB_SYS &&
+	       (ERR_GET_REASON(e) == EPIPE || ERR_GET_REASON(e) == ECONNRESET);
+}
+
 /* Read data from SSL channel */
 int fe_web_ssl_read(FE_WEB_SSL_CHANNEL *ssl_chan, char *buf, int len)
 {
@@ -535,14 +552,13 @@ int fe_web_ssl_read(FE_WEB_SSL_CHANNEL *ssl_chan, char *buf, int len)
 		return 0;
 	}
 
-#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
-	if (ssl_err == SSL_ERROR_SSL &&
-	    ERR_GET_REASON(ERR_peek_last_error()) == SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+	/* the first error is what happened; later ones may come from the
+	 * alert sent after it */
+	if (ssl_err == SSL_ERROR_SSL && ssl_error_is_disconnect(ERR_peek_error())) {
 		ssl_chan->failed = 1;
 		ERR_clear_error();
 		return 0;
 	}
-#endif
 
 	if (ssl_err == SSL_ERROR_SYSCALL) {
 		ssl_chan->failed = 1;
