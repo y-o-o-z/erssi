@@ -90,8 +90,12 @@ afterwards](#what-installed-copies-do-afterwards)).
      changed an upstream commit, and names the original commit. Before
      rewriting, check each word that a rule replaces:
      `git -C ~/src/erssi log --remotes=upstream --remotes=irssi -i -G 'WORD' --oneline`
-     must print nothing. Otherwise narrow the rule, e.g.
-     `regex:word(?!N)==>other`.
+     must print nothing. Otherwise narrow the rule, for example
+     `regex:word(?!N)==>other`, and check the narrowed form. `-G` takes a
+     POSIX regex, so write it as an extended one:
+     `git -C ~/src/erssi log --remotes=upstream --remotes=irssi -i -E -G 'word([^N]|$)' --oneline`
+     must print nothing. The script's refusal in step 4 is the final
+     check either way.
    - **`--replace-text` changes releases**, so step 4 then needs
      `--allow-changes`. The script lists, per release, every changed file
      with its line counts and first lines. Read that list, and stop if
@@ -144,13 +148,19 @@ afterwards](#what-installed-copies-do-afterwards)).
    - adds back the remotes of the old clone that are missing (`origin`,
      `staging`, with their push URLs), and deletes our copies of their
      branches (`refs/remotes/<remote>/*`, which filter-repo rewrote);
-   - lists the other branches of those remotes that still hold the old
-     history, as the old clone knows them. Such a branch keeps serving what
-     the rewrite removed. If it holds commits whose content changed or was
-     dropped, it says so and prints the delete command, for example `git
-     push staging --delete dev/2026.10`. A branch with old ids but
-     unchanged content gets "rebase it onto the new main, or delete it".
-     Commits outside this rewrite, such as `gh-pages`, get "check them";
+   - looks at the other branches of those remotes, as the old clone knows
+     them:
+     - A branch that holds commits whose content the rewrite changed or
+       dropped keeps serving what was removed. The script names it with
+       the delete command, for example `git push staging --delete
+       dev/2026.10`.
+     - A branch with commits that this rewrite did not see (only on
+       staging, say) gets "check them for what was removed".
+     - Branches whose content is unchanged, such as `gh-pages` (the web
+       site), the `upstream/*` bases of pull requests to erssi-org, or a
+       feature branch that never touched the removed files, are named
+       once as "content unchanged … no action needed". Do not delete or
+       rebase them;
    - prints the push commands.
 
    After any error, start again from step 2 with a new clone.
@@ -160,8 +170,10 @@ afterwards](#what-installed-copies-do-afterwards)).
    dates: `git for-each-ref refs/tags/shellter-v* --format='%(refname:short) %(taggerdate)'`.
 
 6. **Push to staging first, then to origin**, with the commands it
-   printed. Before that, deal with every branch it listed in step 4:
-   delete it, or rewrite it and push it again the same way. The push of
+   printed. Before that, deal with every branch it listed in step 4 as
+   holding changed or dropped commits: delete it, or rewrite it and push it
+   again the same way. Look through the "check them" branches. Leave the
+   branches it called "no action needed" alone. The push of
    `main` and the tags does not change the other branches. GitHub can
    serve old commits by id until it collects them; only GitHub support
    can purge them sooner.

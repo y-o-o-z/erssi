@@ -128,8 +128,18 @@ git -C "$tmp/old" config --add remote.origin.pushurl "$tmp/origin.git"
 for rr in origin staging; do
     git -C "$tmp/old" push -q "$rr" main 'refs/tags/shellter-v*:refs/tags/shellter-v*' 2>/dev/null || { echo "FAIL setup push"; exit 1; }
 done
-# a branch on staging with the old history
+# a branch on staging with the old history; on origin a site branch of its
+# own history and a branch on upstream with a commit that never touched the
+# dropped file: content unchanged, never to be deleted
 git -C "$tmp/old" push -q staging main:refs/heads/dev/x 2>/dev/null
+site=$(printf 'site\n' | git -C "$tmp/old" hash-object -w --stdin)
+site=$(printf '100644 blob %s\tindex.html\n' "$site" | git -C "$tmp/old" mktree)
+site=$(echo 'the site' | git -C "$tmp/old" commit-tree -S "$site")
+git -C "$tmp/old" push -q origin "$site:refs/heads/gh-pages" 2>/dev/null
+git -C "$tmp/old" checkout -q -b feat/z upstream/main
+fc 'feat: z' z 'z'
+git -C "$tmp/old" checkout -q main
+git -C "$tmp/old" push -q origin feat/z 2>/dev/null
 git -C "$tmp/old" fetch -q origin && git -C "$tmp/old" fetch -q staging
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
@@ -202,13 +212,18 @@ check "... executable" [ -x "$new/.git/hooks/pre-push" ]
 check "staging's other branch with the old history named" \
     grep -qF "staging/dev/x: " "$tmp/out"
 check "... with the command to delete it" grep -qF "git push staging --delete dev/x" "$tmp/out"
+check "branches with unchanged content: no action needed" \
+    grep -qF "content unchanged - nothing removed is on them; no action needed: origin/feat/z origin/gh-pages" "$tmp/out"
+# shellcheck disable=SC2317 # called through check
+no_delete() { ! grep -qF -e "--delete gh-pages" -e "--delete feat/z" "$tmp/out"; }
+check "... never a delete command for them" no_delete
 check "origin added back" [ "$(git -C "$new" config --get remote.origin.url)" = "$tmp/origin.git" ]
 check "... with its push URL" [ "$(git -C "$new" config --get remote.origin.pushurl)" = "$tmp/origin.git" ]
 check "staging kept" [ "$(git -C "$new" config --get remote.staging.url)" = "$tmp/staging.git" ]
 check "no stale copies of their branches" [ -z "$(git -C "$new" for-each-ref refs/remotes/origin refs/remotes/staging)" ]
 cmd_staging="PREPUSH_RETAG='shellter-v2026.10.0 shellter-v2026.10.1' git push --atomic --force staging main 'refs/tags/shellter-v*:refs/tags/shellter-v*'"
 check "the push to staging printed" grep -qF "  $cmd_staging" "$tmp/out"
-check "... before origin" [ "$(grep -n 'git push' "$tmp/out" | head -n 1 | grep -c staging)" = 1 ]
+check "... before origin" [ "$(grep 'git push --atomic' "$tmp/out" | head -n 1 | grep -c ' staging main ')" = 1 ]
 
 # --- the printed pushes, through the release hook -------------------------
 for rr in staging origin; do

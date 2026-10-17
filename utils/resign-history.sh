@@ -348,6 +348,7 @@ for u in $up_names; do
     oldup="$oldup --glob=refs/remotes/$u/*"
 done
 : > "$tmp/branches"
+: > "$tmp/unchanged"
 for r in $targets; do
     for b in $(git -C "$OLD" for-each-ref --format='%(refname)' "refs/remotes/$r/"); do
         name=${b#refs/remotes/"$r"/}
@@ -360,16 +361,22 @@ for r in $targets; do
         x=$(($(wc -l < "$tmp/bc" | tr -d ' ') - o))
         if [ "$c" -gt 0 ]; then
             echo "  $r/$name: $c commits whose content the rewrite changed or dropped - rewrite this branch too, or delete it: git push $r --delete $name" >> "$tmp/branches"
-        elif [ "$o" -gt 0 ]; then
-            echo "  $r/$name: $o commits of the old history (content unchanged, old ids) - rebase it onto the new main, or delete it: git push $r --delete $name" >> "$tmp/branches"
         elif [ "$x" -gt 0 ]; then
             echo "  $r/$name: $x commits outside this rewrite (another history) - check them for what was removed" >> "$tmp/branches"
+        else
+            # every commit of it in the rewrite, none changed or dropped: it
+            # holds nothing the rewrite removed (an orphan site branch, a
+            # branch based on upstream) - not to be deleted or rebased
+            echo "$r/$name" >> "$tmp/unchanged"
         fi
     done
 done
 if [ -s "$tmp/branches" ]; then
     say "other branches of the remotes that hold old history (from $OLD's copies; GitHub may serve old commits by id until it collects them):"
     cat "$tmp/branches"
+fi
+if [ -s "$tmp/unchanged" ]; then
+    say "other branches, content unchanged - nothing removed is on them; no action needed: $(tr '\n' ' ' < "$tmp/unchanged")"
 fi
 
 say "done. Check, then push - staging first, then origin (each runs utils/pre-push):"
