@@ -280,13 +280,12 @@ void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format
 	theme = window_get_theme(wctx);
 	out = format_get_text_theme(theme, MODULE_NAME, &dest, format_id, text);
 
-	if (out != NULL && *out != '\0') {
+	/* an empty format (a theme that hides these entries) draws nothing:
+	   the raw text is not written instead - it would bypass the filter
+	   and the clip of draw_formatted(), and a channel name from the
+	   server may hold control characters (ESC) */
+	if (out != NULL && *out != '\0')
 		draw_formatted(tw, x, y, out, max_width);
-	} else {
-		/* Fallback: display plain text if theme formatting fails */
-		term_move(tw, x, y);
-		term_addstr(tw, text ? text : "");
-	}
 	g_free(out);
 }
 
@@ -330,14 +329,9 @@ void draw_str_themed_2params(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, in
 
 	out = format_get_text_theme_charargs(theme, MODULE_NAME, &dest, format_id, args);
 
-	if (out != NULL && *out != '\0') {
+	/* empty: nothing, as in draw_str_themed() */
+	if (out != NULL && *out != '\0')
 		draw_formatted(tw, x, y, out, max_width);
-	} else {
-		/* Fallback: display plain text if theme formatting fails */
-		term_move(tw, x, y);
-		term_addstr(tw, param1 ? param1 : "");
-		term_addstr(tw, param2 ? param2 : "");
-	}
 	g_free(out);
 }
 

@@ -3,10 +3,14 @@
 - A panel is at least 6 columns wide: with /SET sidepanel_left_width 1
   the names were drawn over the first columns of the main window, with
   sidepanel_right_width 1 the nicks wrapped past the last column.
+- A theme that sets a side panel format to "" hides those entries: before,
+  the raw window name or nick was written instead, unclipped and with the
+  control characters a server can put in a channel name (ESC included).
 Usage: test_panel_draw.py <build dir> [<source dir>]"""
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -16,6 +20,15 @@ block = harness.block
 
 WAIT = 10
 COLS, ROWS = 120, 40
+
+LEFT_FORMATS = ("sidepanel_header", "sidepanel_item", "sidepanel_item_selected",
+                "sidepanel_item_nick_mention", "sidepanel_item_query_msg",
+                "sidepanel_item_activity", "sidepanel_item_events", "sidepanel_item_highlight")
+RIGHT_FORMATS = tuple(f"sidepanel_nick_{r}_status" for r in ("owner", "admin", "op", "halfop", "voice", "normal"))
+# every entry of both panels hidden
+HIDDEN_THEME = 'formats = { "fe-text" = { ' + " ".join(f'{f} = "";' for f in LEFT_FORMATS + RIGHT_FORMATS) + " }; };\n"
+
+ESC_CHANNEL = "#esc\x1b]52;c;QUJD\x07x"
 
 
 def main():
@@ -81,6 +94,25 @@ def main():
         assert harness.wait_until(lambda: main_area(e) == (0, COLS - 15), WAIT, interval=0.2), main_area(e)
         e.quit()
 
+    def t_hidden_entries():
+        # a theme that hides every entry: the panels stay empty, also
+        # for a channel whose name has an escape sequence in it
+        e = new("hidden", extra_theme=HIDDEN_THEME)
+        e.type_and_wait("/set sidepanel_right_auto_hide off")
+        mark = e.mark()
+        with harness.Client(st["port"], "srv") as c:
+            c.send(f"TESTRAW hidden x :{':hidden!u@127.0.0.1 JOIN :' + ESC_CHANNEL}")
+            assert harness.wait_until(lambda: "#esc" in log_text(e), WAIT), "the join never arrived"
+        e.type_and_wait("/window goto #test")
+        out = e.output_since(mark) + redraw(e)
+        assert b"\x1b]52" not in out, "a channel name's escape sequence reached the terminal"
+        rows = e.screen()
+        left = [r[:14] for r in rows[1:ROWS - 2]]
+        right = [r[COLS - 14:] for r in rows[1:ROWS - 2]]
+        assert all(not r.strip() for r in left), left
+        assert all(not r.strip() for r in right), right
+        e.quit()
+
     def t_sanitizers():
         reports = [p for e in st["all"] for p in e.sanitizer_reports()]
         for p in reports:
@@ -88,7 +120,7 @@ def main():
         assert reports == [], reports
 
     try:
-        harness.main([t_install, t_width_lower_bound, t_sanitizers])
+        harness.main([t_install, t_width_lower_bound, t_hidden_entries, t_sanitizers])
     finally:
         for e in st["all"]:
             e.kill()
