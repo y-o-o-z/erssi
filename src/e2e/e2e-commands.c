@@ -519,6 +519,46 @@ static guint enabled_count(const E2E_JSON *kr)
 	return n;
 }
 
+/* the key exchanges a trust change blocks (e2e_trust_changes) - of ctx
+   (a query's: of its address too), NULL: all - one line each, with the
+   command that settles it; how many */
+static guint print_trust_changes(WI_ITEM_REC *item, const E2E_JSON *kr, const char *ctx)
+{
+	GPtrArray *changes = e2e_trust_changes(kr, NULL);
+	const char *wire = ctx != NULL ? e2e_ctx_wire(ctx) : NULL;
+	guint i, n = 0;
+
+	for (i = 0; i < changes->len; i++) {
+		const E2E_JSON *row = g_ptr_array_index(changes, i);
+		const char *h = str_or(e2e_json_get_string(row, "handle"), "?");
+		const char *c = str_or(e2e_json_get_string(row, "channel"), "");
+		const char *change = str_or(e2e_json_get_string(row, "change"), "");
+		const char *fp = str_or(e2e_json_get_string(row, "new_fp"), "");
+		E2E_JSON *peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
+		const char *nick = e2e_json_get_string(row, "nick");
+
+		if (ctx != NULL && strcmp(c, ctx) != 0 && !(*wire == '@' && strcmp(h, wire + 1) == 0))
+			continue;
+		if (nick == NULL)
+			nick = str_or(e2e_json_get_string(peer, "last_nick"), "?");
+		if (strcmp(change, "handle_changed") == 0)
+			e2e_print_warning(item, "  blocked: %s (%s) on %s - the known key %.16s appeared under this new address (it was %s): /e2e reverify %s if it is the same person",
+			                  shown_text(nick), shown_text(h), shown(c), fp,
+			                  shown_text(str_or(e2e_json_get_string(peer, "last_handle"), "?")),
+			                  shown_text(h));
+		else if (strcmp(change, "fingerprint_changed") == 0)
+			e2e_print_warning(item, "  blocked: %s (%s) on %s - the key has CHANGED (old %.16s, new %.16s): compare it with them, then /e2e reverify %s",
+			                  shown_text(nick), shown_text(h), shown(c),
+			                  str_or(e2e_json_get_string(row, "old_fp"), "?"), fp, shown_text(h));
+		else
+			e2e_print_warning(item, "  blocked: %s (%s) on %s - revoked (key %.16s): /e2e unrevoke %s",
+			                  shown_text(nick), shown_text(h), shown(c), fp, shown_text(nick));
+		n++;
+	}
+	g_ptr_array_unref(changes);
+	return n;
+}
+
 /* SYNTAX: E2E STATUS */
 static void cmd_status(WI_ITEM_REC *item)
 {
@@ -548,6 +588,14 @@ static void cmd_status(WI_ITEM_REC *item)
 		               old->str);
 	g_string_free(on, TRUE);
 	g_string_free(old, TRUE);
+	{
+		GPtrArray *changes = e2e_trust_changes(kr, NULL);
+
+		if (changes->len > 0)
+			e2e_print_warning(item, "key exchanges blocked by a trust change (their messages are not read):");
+		g_ptr_array_unref(changes);
+		print_trust_changes(item, kr, NULL);
+	}
 	if (e2e_keyring_is_lost())
 		e2e_print_item(item, "%s", LOST_REFUSAL);
 	e2e_json_free(kr);
@@ -700,6 +748,8 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		g_ptr_array_unref(keys);
 		if (print_damaged(item, kr, NULL) > 0)
 			any = TRUE;
+		if (print_trust_changes(item, kr, NULL) > 0)
+			any = TRUE;
 		rotate_damaged(item, kr, NULL);
 		if (!any)
 			e2e_print_item(item, "(no remembered E2E state)");
@@ -755,6 +805,8 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		any = TRUE;
 	}
 	g_ptr_array_unref(pending);
+	if (print_trust_changes(item, kr, ctx) > 0)
+		any = TRUE;
 	if (!any)
 		e2e_print_item(item, "no peers");
 	e2e_net_clear(&net);
@@ -861,6 +913,8 @@ static void cmd_pending(WI_ITEM_REC *item)
 	bad = e2e_pending_damaged(kr);
 	if (all->len == 0)
 		e2e_print_item(item, "No key requests wait for /e2e accept.");
+	/* what waits for /e2e reverify or /e2e unrevoke instead */
+	print_trust_changes(item, kr, NULL);
 	for (i = 0; i < bad->len; i++) {
 		E2E_PENDING *p = g_ptr_array_index(bad, i);
 
@@ -1521,71 +1575,171 @@ out:
 	e2e_json_free(kr);
 }
 
-/* SYNTAX: E2E REVERIFY <nick> */
-static void cmd_reverify(WI_ITEM_REC *item, const char *nick)
+/* the connected server of the network ctx belongs to: server when it is,
+   else the first one that is */
+static gboolean server_has_ctx(SERVER_REC *server, const char *ctx)
 {
-	E2E_JSON *kr, *applied = NULL, *peer;
-	GPtrArray *taken;
-	const char *old_fp;
-	char *handle;
+	E2E_NET net;
+	gboolean on;
+
+	if (server == NULL || !IS_IRC_SERVER(server) || !server->connected)
+		return FALSE;
+	e2e_server_net(server, &net);
+	on = e2e_ctx_on_net(ctx, &net);
+	e2e_net_clear(&net);
+	return on;
+}
+
+static SERVER_REC *server_of_ctx(SERVER_REC *server, const char *ctx)
+{
+	GSList *tmp;
+
+	if (server_has_ctx(server, ctx))
+		return server;
+	for (tmp = servers; tmp != NULL; tmp = tmp->next)
+		if (server_has_ctx(tmp->data, ctx))
+			return tmp->data;
+	return NULL;
+}
+
+/* after /e2e reverify: the key of handle asked for again where the
+   blocked exchanges were (E2E on there), so that their next message
+   reads; told */
+static void reverify_keyreqs(SERVER_REC *server, WI_ITEM_REC *item, E2E_JSON *kr,
+                             const E2E_REVERIFY *r)
+{
+	E2E_IDENTITY id;
+	gboolean have_id = FALSE, sent = FALSE;
 	guint i;
 
-	if (nick == NULL) {
-		e2e_print_item(item, "usage: /e2e reverify <nick>");
+	if (r->nick == NULL || !nick_sendable(r->nick))
 		return;
-	}
-	kr = e2e_load();
-	handle = resolve_handle(kr, nick);
-	if (handle == NULL) {
-		e2e_print_item(item, "cannot resolve handle for %s", nick);
-		e2e_json_free(kr);
-		return;
-	}
-	taken = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_json_free);
-	filter_trust_changes(kr, handle, taken);
-	/* what was accepted was the old key */
-	delete_handle_keys(e2e_json_get(kr, "accepted"), handle);
-	for (i = 0; i < taken->len && applied == NULL; i++) {
-		E2E_JSON *row = g_ptr_array_index(taken, i);
+	for (i = 0; i < r->ctxs->len; i++) {
+		const char *ctx = g_ptr_array_index(r->ctxs, i);
+		SERVER_REC *srv = server_of_ctx(server, ctx);
+		char *kreq_ctx, *cfg, *wire, *error = NULL;
+		gboolean on;
+		E2E_NET net;
 
-		if (g_strcmp0(e2e_json_get_string(row, "change"), "fingerprint_changed") == 0 &&
-		    e2e_json_get_string(row, "new_pubkey") != NULL &&
-		    e2e_json_get_string(row, "new_fp") != NULL)
-			applied = row;
-	}
-	if (applied != NULL) {
-		old_fp = e2e_json_get_string(applied, "old_fp");
-		if (old_fp != NULL)
-			e2e_json_remove(e2e_json_get(kr, "peers"), old_fp);
-		delete_handle_keys(e2e_json_get(kr, "incoming"), handle);
-		delete_handle_keys(e2e_json_get(kr, "outgoing_recipients"), handle);
-		peer = e2e_json_new(E2E_JSON_OBJECT);
-		e2e_json_set_string(peer, "pk", e2e_json_get_string(applied, "new_pubkey"));
-		e2e_json_set_string(peer, "last_handle", handle);
-		e2e_json_set_string(peer, "last_nick", nick);
-		e2e_json_set_int(peer, "first_seen", e2e_now());
-		e2e_json_set_int(peer, "last_seen", e2e_now());
-		e2e_json_set_string(peer, "status", "trusted");
-		e2e_json_set(e2e_json_get(kr, "peers"), e2e_json_get_string(applied, "new_fp"), peer);
-		e2e_save(kr);
-		e2e_print_item(item, "reverified %s: accepted new key fp=%.16s", nick,
-		               e2e_json_get_string(applied, "new_fp"));
-	} else {
-		old_fp = e2e_find_peer_by_handle(kr, handle, NULL);
-		if (old_fp != NULL) {
-			char *copy = g_strdup(old_fp);
-
-			e2e_json_remove(e2e_json_get(kr, "peers"), copy);
-			g_free(copy);
+		if (srv == NULL)
+			continue;
+		/* a query: E2E on with that address, the key asked for the
+		   direction to us ("@<own>") */
+		if (e2e_is_channel(e2e_ctx_wire(ctx))) {
+			on = e2e_ctx_enabled(kr, ctx);
+		} else {
+			e2e_server_net(srv, &net);
+			wire = g_strconcat("@", r->handle, NULL);
+			cfg = e2e_ctx_find(kr, &net, wire);
+			on = cfg != NULL && e2e_ctx_enabled(kr, cfg);
+			g_free(cfg);
+			g_free(wire);
+			e2e_net_clear(&net);
 		}
-		delete_handle_keys(e2e_json_get(kr, "incoming"), handle);
-		delete_handle_keys(e2e_json_get(kr, "outgoing_recipients"), handle);
-		e2e_save(kr);
-		e2e_print_item(item, "reverified %s: purged stale state; re-handshake to TOFU-pin the new key",
-		               nick);
+		if (!on)
+			continue;
+		kreq_ctx = own_ctx(kr, srv, ctx);
+		if (kreq_ctx == NULL)
+			continue;
+		if (!have_id && !(have_id = e2e_ensure_identity(kr, &id))) {
+			g_free(kreq_ctx);
+			break;
+		}
+		wire = e2e_build_keyreq(kr, &id, kreq_ctx, r->handle, &error);
+		if (wire != NULL) {
+			e2e_send_notice(srv, r->nick, wire);
+			e2e_print_item(item, "KEYREQ sent to %s for %s - their messages there are read once they answer",
+			               shown_text(r->nick), shown(ctx));
+			sent = TRUE;
+		} else {
+			e2e_print_item(item, "no KEYREQ to %s for %s: %s", shown_text(r->nick), shown(ctx),
+			               error);
+		}
+		g_free(error);
+		g_free(wire);
+		g_free(kreq_ctx);
 	}
-	g_ptr_array_unref(taken);
-	g_free(handle);
+	if (have_id)
+		e2e_identity_wipe(&id);
+	if (sent)
+		e2e_save(kr);
+}
+
+/* the contexts where the session of a blocked answer is trusted now */
+static void print_installed(WI_ITEM_REC *item, const E2E_REVERIFY *r)
+{
+	guint i;
+
+	for (i = 0; i < r->installed->len; i++)
+		e2e_print_item(item, "their messages on %s are read again", shown(g_ptr_array_index(r->installed, i)));
+}
+
+/* SYNTAX: E2E REVERIFY <nick>|<ident@host> [<fingerprint>] */
+static void cmd_reverify(SERVER_REC *server, WI_ITEM_REC *item, char **args)
+{
+	E2E_REVERIFY r;
+	E2E_JSON *kr;
+	const char *who = args[0], *fp = who != NULL ? args[1] : NULL;
+	char *live = NULL;
+	guint i;
+
+	if (who == NULL) {
+		e2e_print_item(item, "usage: /e2e reverify <nick>|<ident@host> [<fingerprint>]");
+		return;
+	}
+	if (item != NULL)
+		server = item->server;
+	kr = e2e_load();
+	/* a nick: where it is now first (the keyring knows where it was) */
+	if (strchr(who, '@') == NULL && server != NULL)
+		live = e2e_resolve_dm_handle(server, NULL, who);
+	e2e_reverify(kr, who, live, fp, &r);
+	switch (r.result) {
+	case E2E_REVERIFY_REBOUND:
+		e2e_save(kr);
+		e2e_print_item(item, "reverified %s: key %.16s is %s now (it was %s)",
+		               shown_text(r.nick != NULL ? r.nick : who), r.fp, shown_text(r.handle),
+		               shown_text(r.old_handle != NULL ? r.old_handle : "?"));
+		print_installed(item, &r);
+		reverify_keyreqs(server, item, kr, &r);
+		break;
+	case E2E_REVERIFY_INSTALLED:
+		e2e_save(kr);
+		e2e_print_item(item, "reverified %s: accepted new key fp=%.16s", shown_text(r.nick != NULL ? r.nick : who),
+		               r.fp);
+		print_installed(item, &r);
+		reverify_keyreqs(server, item, kr, &r);
+		break;
+	case E2E_REVERIFY_AMBIGUOUS:
+	case E2E_REVERIFY_NO_MATCH:
+		e2e_print_item(item, r.result == E2E_REVERIFY_AMBIGUOUS
+		               ? "reverify %s: more than one change waits - nothing changed; name the key: /e2e reverify <ident@host> <fingerprint>"
+		               : "reverify %s: no change waits with that fingerprint - nothing changed",
+		               shown_text(who));
+		for (i = 0; i < r.candidates->len; i++) {
+			E2E_JSON *row = g_ptr_array_index(r.candidates, i);
+
+			e2e_print_item(item, "  %s  %s  fp=%.16s", shown_text(str_or(e2e_json_get_string(row, "handle"), "?")),
+			               str_or(e2e_json_get_string(row, "change"), "?"),
+			               shown_text(str_or(e2e_json_get_string(row, "new_fp"), "")));
+		}
+		break;
+	case E2E_REVERIFY_STALE:
+		e2e_save(kr);
+		e2e_print_item(item, "reverify %s: the key of that change (%.16s) was forgotten since - the record is removed, nothing else changed",
+		               shown_text(who), r.fp);
+		break;
+	case E2E_REVERIFY_PURGED:
+		e2e_save(kr);
+		e2e_print_item(item, "reverified %s: purged stale state of %s; re-handshake to TOFU-pin the new key",
+		               shown_text(who), shown_text(r.handle));
+		break;
+	case E2E_REVERIFY_NOTHING:
+		e2e_print_item(item, "reverify %s: no key change waits and nothing is stored for it", shown_text(who));
+		break;
+	}
+	e2e_reverify_clear(&r);
+	g_free(live);
 	e2e_json_free(kr);
 }
 
@@ -2045,7 +2199,7 @@ static void cmd_e2e(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 	} else if (strcmp(sub, "verify") == 0) {
 		cmd_verify(item, args[0]);
 	} else if (strcmp(sub, "reverify") == 0) {
-		cmd_reverify(item, args[0]);
+		cmd_reverify(server, item, args);
 	} else if (strcmp(sub, "rotate") == 0) {
 		cmd_rotate(item);
 	} else if (strcmp(sub, "export") == 0) {

@@ -5854,6 +5854,214 @@ static void test_trust_change_notices(void)
 	peer_free(&mallory);
 }
 
+/* alice (auto-accept) and bob (normal) read each other on #test, then
+   alice comes back as ALICE2 with the same key: bob's request for her
+   key under the new address is answered, and the answer is blocked */
+static void handle_change_setup(PEER *a, PEER *b)
+{
+	E2E_IN_RESULT r;
+	char *wire, *rsp = NULL, *recip = NULL;
+
+	peer_init(a, "alice", ALICE, -1);
+	peer_init(b, "bob", BOB, -1);
+	enable(a, "#test", "auto-accept");
+	enable(b, "#test", "auto-accept");
+	give_key(a, b, "#test");
+	give_key(b, a, "#test");
+	enable(b, "#test", "normal");
+	a->handle = ALICE2;
+	wire = wire_from(a, "#test", "still me");
+	decrypt_from(b, a, "#test", wire, &r);
+	g_assert_nonnull(r.keyreq);
+	g_hash_table_remove_all(a->stamps);
+	deliver_keyreq(a, b, r.keyreq, ALICE2, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(b, a, rsp));
+	e2e_in_result_clear(&r);
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
+}
+
+/* /e2e reverify accepts the change that waits: a known key at a new
+   address is moved there (what it was accepted for with it), a new key
+   at a known address replaces the old one; asked for the key again, the
+   peer's next message reads */
+static void test_reverify(void)
+{
+	PEER a, b, mallory;
+	E2E_REVERIFY rv;
+	E2E_IN_RESULT r;
+	GPtrArray *changes;
+	char *wire, *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	handle_change_setup(&a, &b);
+	g_assert_nonnull(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	g_assert_nonnull(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	/* by the nick: where it is now (live) is the address of the change */
+	e2e_reverify(b.kr, "alice", ALICE2, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpstr(rv.handle, ==, ALICE2);
+	g_assert_cmpstr(rv.old_handle, ==, ALICE);
+	g_assert_cmpstr(rv.fp, ==, a.id.fp_hex);
+	g_assert_cmpstr(rv.nick, ==, "alice");
+	/* the session of her blocked answer is hers now: nothing to ask */
+	g_assert_cmpuint(rv.installed->len, ==, 1);
+	g_assert_cmpstr(g_ptr_array_index(rv.installed, 0), ==, "#test");
+	g_assert_cmpuint(rv.ctxs->len, ==, 0);
+	e2e_reverify_clear(&rv);
+	/* the key is the new address's, with what it was accepted for and
+	   given; the old sessions are gone, nothing waits any more */
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE2);
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	g_assert_cmpstr(path_str(b.kr, "accepted", ALICE2 "|#test", "fp"), ==, a.id.fp_hex);
+	g_assert_null(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_cmpstr(path_str(b.kr, "outgoing_recipients", "#test|" ALICE2, "handle"), ==, ALICE2);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpstr(path_str(b.kr, "incoming", ALICE2 "|#test", "status"), ==, "trusted");
+	changes = e2e_trust_changes(b.kr, NULL);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "pending_trust_change")), ==, 0);
+	/* her next message reads */
+	wire = wire_from(&a, "#test", "read me now");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "read me now");
+	e2e_in_result_clear(&r);
+	g_free(wire);
+	/* a new exchange with the new address is no change any more */
+	req = e2e_build_keyreq(b.kr, &b.id, "#test", ALICE2, &error);
+	g_assert_nonnull(req);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE2, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	wire = wire_from(&a, "#test", "read me again");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "read me again");
+	e2e_in_result_clear(&r);
+	g_free(wire);
+	/* and her requests from there are answered: she was accepted */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* by the new address, and by the old one (the address the key is at) */
+	handle_change_setup(&a, &b);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+	handle_change_setup(&a, &b);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpstr(rv.handle, ==, ALICE2);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* blocked only as her own request (no answer of hers kept): the
+	   key is asked for again where it was */
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&a, &b, "#test");
+	give_key(&b, &a, "#test");
+	a.handle = ALICE2;
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpuint(rv.installed->len, ==, 0);
+	g_assert_cmpuint(rv.ctxs->len, ==, 1);
+	g_assert_cmpstr(g_ptr_array_index(rv.ctxs, 0), ==, "#test");
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* two new addresses claim the key: by the old one nothing is
+	   guessed; by one of them, that one */
+	handle_change_setup(&a, &b);
+	a.handle = "alice3@127.0.0.1";
+	wire = wire_from(&a, "#test", "x");
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_nonnull(r.keyreq);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, r.keyreq, a.handle, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(&b, &a, rsp));
+	e2e_in_result_clear(&r);
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	e2e_reverify(b.kr, "alice3@127.0.0.1", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, "alice3@127.0.0.1");
+	peer_free(&a);
+	peer_free(&b);
+
+	/* a new key at a known address: installed in place of the old one */
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&a, &b, "#test");
+	give_key(&b, &a, "#test");
+	peer_init(&mallory, "alice", ALICE, -1);
+	req = e2e_build_keyreq(mallory.kr, &mallory.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &mallory, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	/* a fingerprint that is not the new key's: nothing changes */
+	e2e_reverify(b.kr, ALICE, NULL, "0000", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NO_MATCH);
+	g_assert_cmpuint(rv.candidates->len, ==, 1);
+	e2e_reverify_clear(&rv);
+	g_assert_nonnull(path_get(b.kr, "peers", a.id.fp_hex, NULL));
+	e2e_reverify(b.kr, ALICE, NULL, mallory.id.fp_hex, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_INSTALLED);
+	g_assert_cmpstr(rv.old_fp, ==, a.id.fp_hex);
+	e2e_reverify_clear(&rv);
+	g_assert_null(path_get(b.kr, "peers", a.id.fp_hex, NULL));
+	g_assert_cmpstr(path_str(b.kr, "peers", mallory.id.fp_hex, "last_handle"), ==, ALICE);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	/* nothing waits any more: the address's data goes */
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_PURGED);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NOTHING);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+	peer_free(&mallory);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5865,6 +6073,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/trust-changes", test_trust_changes);
 	g_test_add_func("/e2e/proto/hidden-messages", test_hidden_messages);
 	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
+	g_test_add_func("/e2e/proto/reverify", test_reverify);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);

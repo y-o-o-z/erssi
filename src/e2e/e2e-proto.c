@@ -1101,6 +1101,370 @@ static gboolean check_peer(E2E_JSON *kr, const char *fp_hex, const unsigned char
 	}
 }
 
+/* ---- /e2e reverify ---- */
+
+/* the members "<handle>|..." and "...|<handle>" of store; how many */
+static int remove_handle_rows(E2E_JSON *store, const char *handle)
+{
+	GPtrArray *keys = e2e_json_keys(store), *doomed = g_ptr_array_new_with_free_func(g_free);
+	char *head = g_strconcat(handle, "|", NULL), *tail = g_strconcat("|", handle, NULL);
+	guint i;
+	int n = 0;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+
+		if (g_str_has_prefix(k, head) || g_str_has_suffix(k, tail))
+			g_ptr_array_add(doomed, g_strdup(k));
+	}
+	for (i = 0; i < doomed->len; i++)
+		n += e2e_json_remove(store, g_ptr_array_index(doomed, i));
+	g_ptr_array_unref(doomed);
+	g_ptr_array_unref(keys);
+	g_free(head);
+	g_free(tail);
+	return n;
+}
+
+/* the trust change rows filed under handle go (every one, or only those
+   of change and fp) */
+static void drop_trust_rows(E2E_JSON *kr, const char *handle, const char *change, const char *fp)
+{
+	E2E_JSON *list = e2e_json_get(kr, "pending_trust_change");
+	guint i;
+
+	for (i = 0; list != NULL && list->type == E2E_JSON_ARRAY && i < list->array->len;) {
+		E2E_JSON *row = g_ptr_array_index(list->array, i);
+
+		if (g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0 &&
+		    (change == NULL || g_strcmp0(e2e_json_get_string(row, "change"), change) == 0) &&
+		    (fp == NULL || g_strcmp0(e2e_json_get_string(row, "new_fp"), fp) == 0))
+			g_ptr_array_remove_index(list->array, i);
+		else
+			i++;
+	}
+}
+
+/* the acceptances ("<from>|<ctx>") and recipient rows ("<ctx>|<from>") of
+   fp in channels move to handle to: the same key, the same person */
+static void move_channel_rows(E2E_JSON *kr, const char *from, const char *to, const char *fp)
+{
+	E2E_JSON *accepted = e2e_json_get(kr, "accepted");
+	E2E_JSON *recipients = e2e_json_get(kr, "outgoing_recipients");
+	GPtrArray *keys;
+	guint i;
+
+	keys = e2e_json_keys(accepted);
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *row = e2e_json_get(accepted, k);
+		char *h, *c, *nk;
+
+		if (!split_pipe(k, &h, &c))
+			continue;
+		if (strcmp(h, from) == 0 && e2e_is_channel(e2e_ctx_wire(c)) &&
+		    g_strcmp0(e2e_json_get_string(row, "fp"), fp) == 0) {
+			nk = pipe_key(to, c);
+			e2e_json_set(accepted, nk, e2e_json_copy(row));
+			e2e_json_remove(accepted, k);
+			g_free(nk);
+		}
+		g_free(h);
+		g_free(c);
+	}
+	g_ptr_array_unref(keys);
+	keys = e2e_json_keys(recipients);
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *row = e2e_json_get(recipients, k), *copy;
+		const char *c = e2e_json_get_string(row, "channel");
+		char *nk;
+
+		if (c == NULL || g_strcmp0(e2e_json_get_string(row, "handle"), from) != 0 ||
+		    !e2e_is_channel(e2e_ctx_wire(c)) ||
+		    g_strcmp0(e2e_json_get_string(row, "fingerprint"), fp) != 0)
+			continue;
+		copy = e2e_json_copy(row);
+		e2e_json_set_string(copy, "handle", to);
+		nk = pipe_key(c, to);
+		e2e_json_remove(recipients, k);
+		e2e_json_set(recipients, nk, copy);
+		g_free(nk);
+	}
+	g_ptr_array_unref(keys);
+}
+
+/* the address of a peer row is no peer's but fp's */
+static void detach_others(E2E_JSON *kr, const char *handle, const char *fp)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	guint i;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *peer = e2e_json_get(peers, k);
+
+		if (strcmp(k, fp) != 0 && g_strcmp0(e2e_json_get_string(peer, "last_handle"), handle) == 0)
+			e2e_json_remove(peer, "last_handle");
+	}
+	g_ptr_array_unref(keys);
+}
+
+static void add_ctx_once(GPtrArray *ctxs, const char *ctx)
+{
+	guint i;
+
+	if (ctx == NULL)
+		return;
+	for (i = 0; i < ctxs->len; i++)
+		if (strcmp(g_ptr_array_index(ctxs, i), ctx) == 0)
+			return;
+	g_ptr_array_add(ctxs, g_strdup(ctx));
+}
+
+static void set_session(E2E_JSON *kr, const char *handle, const char *ctx,
+                        const char *fp_hex, const unsigned char key[32], const char *status);
+
+/* the sessions kept with the records of the change accepted (KEYRSPs
+   that were blocked) are installed; the contexts without one are asked
+   again (out->ctxs) */
+static void install_kept_sessions(E2E_JSON *kr, GPtrArray *rows, const char *handle,
+                                  const char *fp, E2E_REVERIFY *out)
+{
+	static const unsigned char zero[32] = { 0 };
+	guint i;
+
+	for (i = 0; i < rows->len; i++) {
+		E2E_JSON *row = g_ptr_array_index(rows, i);
+		const char *ctx = e2e_json_get_string(row, "channel");
+		unsigned char key[32];
+
+		if (ctx == NULL || g_strcmp0(e2e_json_get_string(row, "new_fp"), fp) != 0 ||
+		    g_strcmp0(e2e_json_get_string(row, "handle"), handle) != 0)
+			continue;
+		if (b64_member(row, "session_sk", key, 32) && !e2e_mem_equal(key, zero, 32)) {
+			set_session(kr, handle, ctx, fp, key, "trusted");
+			add_ctx_once(out->installed, ctx);
+		}
+		e2e_wipe(key, sizeof(key));
+	}
+	for (i = 0; i < rows->len; i++) {
+		E2E_JSON *row = g_ptr_array_index(rows, i);
+		const char *ctx = e2e_json_get_string(row, "channel");
+		guint j;
+		gboolean done = FALSE;
+
+		if (ctx == NULL || g_strcmp0(e2e_json_get_string(row, "new_fp"), fp) != 0 ||
+		    g_strcmp0(e2e_json_get_string(row, "handle"), handle) != 0)
+			continue;
+		for (j = 0; j < out->installed->len && !done; j++)
+			done = strcmp(g_ptr_array_index(out->installed, j), ctx) == 0;
+		if (!done)
+			add_ctx_once(out->ctxs, ctx);
+	}
+}
+
+/* the changes waiting that name one of targets: filed under it, else (when
+   none is) a handle change away from it */
+static GPtrArray *reverify_candidates(const E2E_JSON *kr, char **targets)
+{
+	GPtrArray *all = e2e_trust_changes(kr, NULL), *out = g_ptr_array_new();
+	int pass, t;
+	guint i;
+
+	for (pass = 0; pass < 2 && out->len == 0; pass++) {
+		for (i = 0; i < all->len; i++) {
+			const E2E_JSON *row = g_ptr_array_index(all, i);
+			const char *h = e2e_json_get_string(row, "handle"), *want;
+			gboolean match = FALSE;
+
+			if (pass == 1) {
+				/* where the key is now */
+				if (g_strcmp0(e2e_json_get_string(row, "change"), "handle_changed") != 0)
+					continue;
+				h = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "peers"),
+				                                     e2e_json_get_string(row, "new_fp")),
+				                        "last_handle");
+			}
+			for (t = 0; !match && (want = targets[t]) != NULL; t++)
+				match = g_strcmp0(h, want) == 0;
+			if (match)
+				g_ptr_array_add(out, (gpointer) row);
+		}
+	}
+	g_ptr_array_unref(all);
+	return out;
+}
+
+void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *fp_prefix,
+                  E2E_REVERIFY *out)
+{
+	GPtrArray *cands, *picked;
+	E2E_JSON *chosen = NULL, *peer;
+	const char *targets[4] = { NULL, NULL, NULL, NULL }, *fp, *handle;
+	char *prefix = fp_prefix != NULL ? g_ascii_strdown(fp_prefix, -1) : NULL, *cached = NULL;
+	int nt = 0;
+	guint i, j;
+
+	memset(out, 0, sizeof(*out));
+	out->ctxs = g_ptr_array_new_with_free_func(g_free);
+	out->installed = g_ptr_array_new_with_free_func(g_free);
+	if (strchr(who, '@') != NULL)
+		targets[nt++] = who;
+	if (live != NULL && *live != '\0')
+		targets[nt++] = live;
+	/* a copy: the peer row it is in may go */
+	if (strchr(who, '@') == NULL && e2e_find_handle_by_nick(kr, who) != NULL)
+		targets[nt++] = cached = g_strdup(e2e_find_handle_by_nick(kr, who));
+	if (nt == 0) {
+		out->result = E2E_REVERIFY_NOTHING;
+		g_free(prefix);
+		return;
+	}
+	cands = reverify_candidates(kr, (char **) targets);
+	/* what can be accepted: one key at one address (the same change seen
+	   in several channels is one) */
+	picked = g_ptr_array_new();
+	for (i = 0; i < cands->len; i++) {
+		E2E_JSON *row = g_ptr_array_index(cands, i);
+		const char *change = e2e_json_get_string(row, "change");
+		gboolean dup = FALSE;
+
+		fp = e2e_json_get_string(row, "new_fp");
+		if (strcmp(change, "revoked") == 0 ||
+		    (strcmp(change, "fingerprint_changed") == 0 && e2e_json_get_string(row, "new_pubkey") == NULL))
+			continue;
+		if (prefix != NULL && !g_str_has_prefix(fp, prefix))
+			continue;
+		for (j = 0; j < picked->len && !dup; j++) {
+			E2E_JSON *p = g_ptr_array_index(picked, j);
+
+			dup = strcmp(e2e_json_get_string(p, "new_fp"), fp) == 0 &&
+			      strcmp(e2e_json_get_string(p, "handle"), e2e_json_get_string(row, "handle")) == 0;
+		}
+		if (!dup)
+			g_ptr_array_add(picked, row);
+	}
+	if (picked->len > 1 || (prefix != NULL && picked->len == 0 && cands->len > 0)) {
+		out->result = picked->len > 1 ? E2E_REVERIFY_AMBIGUOUS : E2E_REVERIFY_NO_MATCH;
+		out->candidates = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_json_free);
+		for (i = 0; i < cands->len; i++)
+			g_ptr_array_add(out->candidates, e2e_json_copy(g_ptr_array_index(cands, i)));
+		goto done;
+	}
+	if (picked->len == 1)
+		chosen = e2e_json_copy(g_ptr_array_index(picked, 0));
+	if (chosen == NULL) {
+		/* nothing to accept: the address starts anew (a revoked peer's
+		   record goes with it - /e2e unrevoke answers that one) */
+		handle = targets[0];
+		out->handle = g_strdup(handle);
+		fp = e2e_find_peer_by_handle(kr, handle, NULL);
+		if (fp != NULL) {
+			char *copy = g_strdup(fp);
+
+			out->removed += e2e_json_remove(e2e_json_get(kr, "peers"), copy);
+			g_free(copy);
+		}
+		out->removed += remove_handle_rows(e2e_json_get(kr, "accepted"), handle);
+		out->removed += remove_handle_rows(e2e_json_get(kr, "incoming"), handle);
+		out->removed += remove_handle_rows(e2e_json_get(kr, "outgoing_recipients"), handle);
+		for (i = 0; i < cands->len; i++)
+			out->removed++;
+		drop_trust_rows(kr, handle, NULL, NULL);
+		out->result = out->removed > 0 ? E2E_REVERIFY_PURGED : E2E_REVERIFY_NOTHING;
+		goto done;
+	}
+	handle = e2e_json_get_string(chosen, "handle");
+	fp = e2e_json_get_string(chosen, "new_fp");
+	out->handle = g_strdup(handle);
+	out->fp = g_strdup(fp);
+	out->nick = g_strdup(e2e_json_get_string(chosen, "nick"));
+	if (strcmp(e2e_json_get_string(chosen, "change"), "handle_changed") == 0) {
+		const char *was;
+
+		peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
+		if (peer == NULL) {
+			drop_trust_rows(kr, handle, "handle_changed", fp);
+			out->result = E2E_REVERIFY_STALE;
+			goto done;
+		}
+		was = e2e_json_get_string(peer, "last_handle");
+		out->old_handle = g_strdup(was);
+		if (out->nick == NULL)
+			out->nick = g_strdup(e2e_json_get_string(peer, "last_nick"));
+		/* the sessions of either address are set up anew; what this
+		   key was accepted for and given in channels stays its own */
+		if (was != NULL && strcmp(was, handle) != 0) {
+			move_channel_rows(kr, was, handle, fp);
+			remove_handle_rows(e2e_json_get(kr, "incoming"), was);
+		}
+		remove_handle_rows(e2e_json_get(kr, "incoming"), handle);
+		remove_handle_rows(e2e_json_get(kr, "pending"), handle);
+		/* the standing of the key is carried over, never raised */
+		e2e_json_set_string(peer, "last_handle", handle);
+		if (out->nick != NULL)
+			e2e_json_set_string(peer, "last_nick", out->nick);
+		e2e_json_set_int(peer, "last_seen", e2e_now());
+		detach_others(kr, handle, fp);
+		install_kept_sessions(kr, cands, handle, fp, out);
+		out->result = E2E_REVERIFY_REBOUND;
+	} else {
+		const char *old = e2e_json_get_string(chosen, "old_fp");
+
+		out->old_fp = g_strdup(old);
+		if (old != NULL) {
+			peer = e2e_json_get(e2e_json_get(kr, "peers"), old);
+			if (out->nick == NULL)
+				out->nick = g_strdup(e2e_json_get_string(peer, "last_nick"));
+			if (g_strcmp0(e2e_json_get_string(peer, "last_handle"), handle) == 0)
+				e2e_json_remove(e2e_json_get(kr, "peers"), old);
+		}
+		/* what was accepted, given and read was the old key */
+		remove_handle_rows(e2e_json_get(kr, "accepted"), handle);
+		remove_handle_rows(e2e_json_get(kr, "incoming"), handle);
+		remove_handle_rows(e2e_json_get(kr, "outgoing_recipients"), handle);
+		remove_handle_rows(e2e_json_get(kr, "pending"), handle);
+		peer = e2e_json_new(E2E_JSON_OBJECT);
+		e2e_json_set_string(peer, "pk", e2e_json_get_string(chosen, "new_pubkey"));
+		e2e_json_set_string(peer, "last_handle", handle);
+		if (out->nick != NULL)
+			e2e_json_set_string(peer, "last_nick", out->nick);
+		e2e_json_set_int(peer, "first_seen", e2e_now());
+		e2e_json_set_int(peer, "last_seen", e2e_now());
+		e2e_json_set_string(peer, "status", "trusted");
+		e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
+		detach_others(kr, handle, fp);
+		install_kept_sessions(kr, cands, handle, fp, out);
+		out->result = E2E_REVERIFY_INSTALLED;
+	}
+	/* one key chosen for the address: the other claims to it go */
+	drop_trust_rows(kr, handle, NULL, NULL);
+done:
+	e2e_json_free(chosen);
+	g_ptr_array_unref(picked);
+	g_ptr_array_unref(cands);
+	g_free(prefix);
+	g_free(cached);
+}
+
+void e2e_reverify_clear(E2E_REVERIFY *r)
+{
+	g_free(r->handle);
+	g_free(r->old_handle);
+	g_free(r->fp);
+	g_free(r->old_fp);
+	g_free(r->nick);
+	if (r->ctxs != NULL)
+		g_ptr_array_unref(r->ctxs);
+	if (r->installed != NULL)
+		g_ptr_array_unref(r->installed);
+	if (r->candidates != NULL)
+		g_ptr_array_unref(r->candidates);
+	memset(r, 0, sizeof(*r));
+}
+
 /* $kr->{peers}{$fp} = { %$peer, pk, last_handle, [last_nick], first_seen //
    now, last_seen, status }; status NULL keeps the old one (or "pending") */
 static void update_peer(E2E_JSON *kr, const char *fp_hex, const unsigned char pub[32],
@@ -1635,8 +1999,18 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 		goto out;
 	ok = FALSE;
 	fp_hex = e2e_fingerprint_hex(rsp->pub);
-	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, nick, ctx, &change))
+	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, nick, ctx, &change)) {
+		/* the session their key signed, kept with the record: accepted
+		   by /e2e reverify, it is used at once - a new exchange could be
+		   dropped by their rate limit or come only with their next
+		   message */
+		if (change == CHANGE_HANDLE || change == CHANGE_FINGERPRINT) {
+			E2E_JSON *list = e2e_json_get(kr, "pending_trust_change");
+
+			set_b64(g_ptr_array_index(list->array, list->array->len - 1), "session_sk", key, 32);
+		}
 		goto out;
+	}
 	update_peer(kr, fp_hex, rsp->pub, sender_handle, nick, "trusted");
 	set_session(kr, sender_handle, ctx, fp_hex, key, "trusted");
 	ok = TRUE;

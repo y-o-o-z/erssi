@@ -372,6 +372,56 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
    reverify, /e2e unrevoke, /e2e forget since) is left out. Of handle,
    or all for NULL; the newest first. The rows are kr's. */
 GPtrArray *e2e_trust_changes(const E2E_JSON *kr, const char *handle);
+
+typedef enum {
+	E2E_REVERIFY_REBOUND,	/* a known key at a new address: it is that address's now */
+	E2E_REVERIFY_INSTALLED,	/* a new key at a known address: trusted there now */
+	E2E_REVERIFY_AMBIGUOUS,	/* several changes wait: listed, nothing done */
+	E2E_REVERIFY_NO_MATCH,	/* none of them has the fingerprint given: listed, nothing done */
+	E2E_REVERIFY_STALE,	/* the key of the change was forgotten since: the record goes */
+	E2E_REVERIFY_PURGED,	/* nothing to accept: the data of the address went */
+	E2E_REVERIFY_NOTHING	/* nothing to accept, nothing stored */
+} E2E_REVERIFY_RESULT;
+
+typedef struct {
+	E2E_REVERIFY_RESULT result;
+	char *handle;		/* the address now (REBOUND: the new one) */
+	char *old_handle;	/* REBOUND: where the key was */
+	char *fp;		/* REBOUND, INSTALLED, STALE: the fingerprint accepted */
+	char *old_fp;		/* INSTALLED: the key it replaces */
+	char *nick;		/* the peer's nick, as last seen (or NULL) */
+	GPtrArray *installed;	/* REBOUND, INSTALLED: the contexts where a session
+				   from the blocked answer is trusted now */
+	GPtrArray *ctxs;	/* REBOUND, INSTALLED: the other contexts of the
+				   blocked exchanges, to ask for the key again */
+	GPtrArray *candidates;	/* AMBIGUOUS, NO_MATCH: copies of the rows waiting */
+	int removed;		/* PURGED: rows removed */
+} E2E_REVERIFY;
+
+/*
+ /e2e reverify: the user accepts the trust change that waits for an
+ address (e2e_trust_changes). who is what the user typed, an ident@host
+ or a nick; live the nick's address now (a query, a common channel), or
+ NULL; fp_prefix the start of the fingerprint to accept (any case) or
+ NULL. A change filed under one of the addresses (who, live, then the
+ keyring's for the nick) is taken first, else a handle change away from
+ one of them. Exactly one change must be in question:
+  - a handle change: the key is moved to the new address - its acceptance
+    and recipient rows of channels go with it, the sessions of the old
+    and of the new address go (a new key exchange sets them up), another
+    key bound to the new address loses it;
+  - a key change: the old key of the address goes with its sessions,
+    acceptances and recipients, the new one is trusted there;
+ the session of a blocked KEYRSP (kept with its record, signed by that
+ key) is trusted then, so the next message reads; every change filed
+ under the address goes. Without one (or with a
+ revoked peer only, which /e2e unrevoke answers) the address's data goes:
+ its peer, sessions and recipients, so that a new exchange starts anew.
+ The caller saves and frees out (e2e_reverify_clear).
+*/
+void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *fp_prefix,
+                  E2E_REVERIFY *out);
+void e2e_reverify_clear(E2E_REVERIFY *r);
 /* plain marked "\017 (E2E key of <via>)" - the formatting reset first,
    inside the \001 of an ACTION; control bytes of via shown as '?' */
 char *e2e_plain_with_via(const char *plain, const char *via);

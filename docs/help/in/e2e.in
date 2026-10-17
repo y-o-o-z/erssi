@@ -86,9 +86,22 @@
                  about them from the keyring.
     VERIFY:      Shows the start of your fingerprint and of the person's -
                  to compare over another channel (e.g. by phone).
-    REVERIFY:    After the person's key has changed (the exchange is then
-                 blocked), accepts the new key; without a recorded change
-                 it clears the old data and a new exchange is needed.
+    REVERIFY:    Accepts a trust change that blocks the person's key
+                 exchange - you are told of it in the window (and their
+                 messages say so), /E2E STATUS, LIST and PENDING list
+                 what waits. A known key under a new ident@host (they
+                 came back from another host): the key is moved to the
+                 new address, with the channels it was accepted for. A
+                 new key at a known address (a reinstall - or someone
+                 else: compare fingerprints first): the new key replaces
+                 the old one. Name the new ident@host, the nick, or the
+                 old address; when more than one change waits, nothing is
+                 guessed - they are listed, and a second argument, the
+                 start of the fingerprint, picks one. Then their key is
+                 asked for again (KEYREQ) where encryption is on, so their
+                 next message is read. Without a recorded change it clears
+                 the old data of that address and a new exchange is
+                 needed. A revoked person is answered by UNREVOKE.
     ROTATE:      Schedules a rotation of your key in the current channel
                  or query; the new key is created with the next message and
                  sent to trusted people.
@@ -186,8 +199,11 @@
     rejected: ...]" in red when it does not open with their key, its time
     is more than 5 minutes off, or you declined or revoked them here (then
     nothing is requested), and the reason when a key exchange of theirs
-    is blocked (a new address, a new key, revoked - see REVERIFY). Your own key
-    goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
+    is blocked (a new address, a new key, revoked - see REVERIFY); such
+    a block is also told in full, with the command to run, when it
+    happens and at most once a minute while they write.
+
+    Your own key goes only to people you accepted: /E2E ACCEPT, an AUTOTRUST rule or
     auto-accept mode. Having their key is not enough - so in normal mode
     each of you accepts the other once. A request for a channel is
     announced in its window as "Pending key exchange from <nick>
@@ -369,6 +385,7 @@
     /E2E ACCEPT alice
     /E2E DECLINE mallory@host.example.org
     /E2E VERIFY alice
+    /E2E REVERIFY alice@new.example.org
     /E2E MODE auto-accept
     /E2E LIST -all
     /E2E FORGET -all bob
