@@ -1751,6 +1751,123 @@ static void show_placeholder(SERVER_REC *server, const char *target, const char 
 	g_free(data);
 }
 
+/* ---- plain text where E2E is on ---- */
+
+/* the storage contexts of the keyring with E2E on, and those with a
+   config at all - ASCII lower case - as the file was when last read:
+   a plain line is looked up without parsing the keyring (and its keys)
+   for every message */
+static GHashTable *plain_enabled, *plain_configured;
+static struct stat plain_stat;
+static gboolean plain_valid, plain_ok;
+
+static void plain_configs_load(void)
+{
+	E2E_LOAD_STATUS status;
+	struct stat st;
+	E2E_JSON *kr;
+	GPtrArray *keys;
+	char *error = NULL;
+	guint i;
+
+	if (keyring_file == NULL || stat(keyring_file, &st) != 0) {
+		/* no keyring: E2E is on nowhere */
+		plain_valid = FALSE;
+		plain_ok = TRUE;
+		if (plain_enabled != NULL) {
+			g_hash_table_remove_all(plain_enabled);
+			g_hash_table_remove_all(plain_configured);
+		}
+		return;
+	}
+	if (plain_valid && e2e_same_file(&st, &plain_stat))
+		return;
+	if (plain_enabled == NULL) {
+		plain_enabled = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+		plain_configured = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	}
+	g_hash_table_remove_all(plain_enabled);
+	g_hash_table_remove_all(plain_configured);
+	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	g_free(error);
+	plain_ok = status == E2E_LOAD_OK;
+	keys = e2e_json_keys(e2e_json_get(kr, "channels"));
+	for (i = 0; plain_ok && i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+
+		g_hash_table_add(plain_configured, g_ascii_strdown(k, -1));
+		if (e2e_ctx_enabled(kr, k))
+			g_hash_table_add(plain_enabled, g_ascii_strdown(k, -1));
+	}
+	g_ptr_array_unref(keys);
+	e2e_json_free(kr);
+	plain_stat = st;
+	plain_valid = TRUE;
+}
+
+/* E2E is on for wire on net: its own config, or an old one where old
+   ones are used */
+static gboolean plain_enabled_for(const E2E_NET *net, const char *wire)
+{
+	char *scoped = e2e_ctx_scoped(net, wire), *low, *bare;
+	gboolean on = FALSE;
+
+	if (scoped != NULL) {
+		low = g_ascii_strdown(scoped, -1);
+		if (g_hash_table_contains(plain_configured, low))
+			on = g_hash_table_contains(plain_enabled, low);
+		else if (net->legacy_ok) {
+			bare = g_ascii_strdown(wire, -1);
+			on = g_hash_table_contains(plain_enabled, bare);
+			g_free(bare);
+		}
+		g_free(low);
+	}
+	g_free(scoped);
+	return on;
+}
+
+/* A PRIVMSG that is no RPE2E message, where E2E is on (e2e_mark_plain):
+   "[plain] " in the warning colour before its text (inside an ACTION),
+   passed on like the message itself, so that a line in clear text - sent
+   by someone without E2E, or put there by the server - does not look like
+   a decrypted one. Not for our own lines or other CTCPs (never
+   encrypted). Must be called from the "event privmsg" emission. */
+static void mark_plain(SERVER_REC *server, const char *data, const char *sp, const char *text,
+                       const char *nick, const char *address)
+{
+	char **readings, *target, *wire, *newdata;
+	gboolean on;
+	E2E_NET net;
+
+	if (!settings_get_bool("e2e_mark_plain") || nick == NULL || *nick == '\0' ||
+	    is_own_nick(server, nick) || (text[0] == '\001' && strncmp(text, "\001ACTION ", 8) != 0))
+		return;
+	plain_configs_load();
+	if (!plain_ok || g_hash_table_size(plain_enabled) == 0)
+		return;
+	target = g_strndup(data, sp - data);
+	readings = e2e_channel_readings(target);
+	if (readings[0] != NULL)
+		wire = g_strdup(readings[0]);
+	else
+		wire = address != NULL && *address != '\0' ? g_strconcat("@", address, NULL) : NULL;
+	e2e_server_net(server, &net);
+	on = wire != NULL && plain_enabled_for(&net, wire);
+	e2e_net_clear(&net);
+	if (on) {
+		if (text[0] == '\001')
+			newdata = g_strdup_printf("%s :\001ACTION \00304[plain]\017 %s", target, text + 8);
+		else
+			newdata = g_strdup_printf("%s :\00304[plain]\017 %s", target, text);
+		signal_continue(4, server, newdata, nick, address);
+		g_free(newdata);
+	}
+	g_free(wire);
+	g_strfreev(readings);
+	g_free(target);
+}
+
 static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *nick,
                               const char *address)
 {
@@ -1776,14 +1893,19 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	if (*text == ':')
 		text++;
 	/* the keyring is read only for well-formed RPE2E messages: anyone can
-	   send "+RPE2E01 x", and it must not make us create or move files */
-	if (strncmp(text, E2E_WIRE_PREFIX, strlen(E2E_WIRE_PREFIX)) != 0)
+	   send "+RPE2E01 x", and it must not make us create or move files;
+	   plain text where E2E is on is marked as such */
+	if (strncmp(text, E2E_WIRE_PREFIX, strlen(E2E_WIRE_PREFIX)) != 0) {
+		mark_plain(server, data, sp, text, nick, address);
 		return;
+	}
 	{
 		E2E_WIRE *w = e2e_wire_parse(text);
 
-		if (w == NULL)
+		if (w == NULL) {
+			mark_plain(server, data, sp, text, nick, address);
 			return;
+		}
 		e2e_wire_free(w);
 	}
 	if (nick == NULL)
@@ -2088,6 +2210,7 @@ void e2e_core_init(void)
 	theme_register(e2e_formats);
 	settings_add_bool("e2e", "e2e_debug", FALSE);
 	settings_add_bool("e2e", "e2e_bot_bypass", FALSE);
+	settings_add_bool("e2e", "e2e_mark_plain", TRUE);
 	read_settings();
 
 	keyring_dir = g_build_filename(get_irssi_dir(), "rpe2e", NULL);
@@ -2217,6 +2340,12 @@ void e2e_core_deinit(void)
 	g_hash_table_destroy(keyreq_out);
 	g_hash_table_destroy(keyreq_in);
 	g_hash_table_destroy(trust_notice);
+	if (plain_enabled != NULL) {
+		g_hash_table_destroy(plain_enabled);
+		g_hash_table_destroy(plain_configured);
+	}
+	plain_enabled = plain_configured = NULL;
+	plain_valid = FALSE;
 	e2e_replay_free(replay);
 	replay = NULL;
 	g_hash_table_destroy(pending_notice);

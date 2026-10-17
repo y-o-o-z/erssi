@@ -345,6 +345,18 @@
     apart (for example #a[b and #a{b), is shown with "(E2E key of
     #a[b)": the server may have moved it from that channel.
 
+    What E2E protects: the text of PRIVMSGs (and /ME) to a channel or
+    query with encryption on - nobody without the keys, the server
+    included, can read it, or change it unnoticed. Not protected: who
+    talks to whom and when (nicks, addresses, channel names, times and
+    the length of messages are visible to the server), NOTICEs, CTCPs
+    other than ACTION, and bot commands while e2e_bot_bypass is on.
+    A line in clear text in such a channel or query - from someone
+    without E2E, or put there by a hostile server under any nick - is
+    shown with "[plain]" in red before its text, so that it does not
+    look like a decrypted one (/SET e2e_mark_plain OFF turns that off;
+    your own lines are never marked).
+
     Known limitations: a server that names rfc1459, ascii or
     strict-rfc1459 but folds the bytes of another code page (koi8-r,
     cp1251) is not covered: such names may be one channel to it and two

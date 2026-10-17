@@ -198,6 +198,25 @@ def main():
                                   (work / "wire.log").read_text(errors="replace"), WAIT)
         assert wait_log(a, off, "bot-style message to #test sent in CLEARTEXT"), log_since(a, off)
 
+    def t_plain_marked():
+        """a line in clear text where E2E is on is marked "[plain]" (it
+        could be anyone's, or the server's); off with e2e_mark_plain; our
+        own lines are not marked"""
+        a, k = st["alice"], st["bob"]
+        start = len(chan_log(a))
+        k.type_and_wait("/window goto #test", "/e2e off")
+        say(k, "in clear text")
+        assert wait_chan(a, "[plain] in clear text", start), chan_log(a)[start:]
+        a.type_and_wait("/set e2e_mark_plain off")
+        say(k, "unmarked clear text")
+        assert wait_chan(a, "unmarked clear text", start), chan_log(a)[start:]
+        assert "[plain] unmarked" not in chan_log(a)[start:]
+        a.type_and_wait("/set e2e_mark_plain on")
+        k.type_and_wait("/window goto #test", "/e2e on")
+        say(a, "encrypted from alice")
+        assert wait_chan(k, "encrypted from alice"), chan_log(k)[-500:]
+        assert "[plain]" not in chan_log(a)[start:].split("unmarked clear text")[1], chan_log(a)[start:]
+
     def t_unreadable_keyring():
         """a keyring that cannot be read: /e2e export writes no empty
         export, /e2e rotate claims nothing - both say why; a message
@@ -243,7 +262,7 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_bot_lines, t_unreadable_keyring, t_wire])
+                      t_bot_lines, t_plain_marked, t_unreadable_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():
