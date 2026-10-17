@@ -39,6 +39,15 @@ ANTI_FLOODNET_REC *floodnet = NULL;
 
 static guint protection_tag = 0;
 
+/* The sender of the private message being handled right now. A query
+ * created while it is handled was opened by that message. */
+static IRC_SERVER_REC *incoming_server = NULL;
+static char *incoming_nick = NULL;
+
+/* Query flag (module data): the other side opened the query and you have
+ * not written in it yet */
+#define QUERY_OPENED_BY_SENDER GINT_TO_POINTER(1)
+
 /* Read settings from irssi configuration */
 static void read_settings(void)
 {
@@ -367,6 +376,17 @@ void check_protection_status(void)
     }
 }
 
+/* Someone you talk to: a query you opened, one that was there before
+ * their message, or one you wrote in. A query their own message opened
+ * is not enough - the first bots of a flood get theirs before protection
+ * starts, and their next messages would pass. */
+static gboolean is_query_partner(IRC_SERVER_REC *server, const char *nick)
+{
+    QUERY_REC *query = query_find(SERVER(server), nick);
+
+    return query != NULL && MODULE_DATA(query) != QUERY_OPENED_BY_SENDER;
+}
+
 /* Main message flood detection */
 void check_message_flood(IRC_SERVER_REC *server, const char *nick,
                          const char *address, const char *text)
@@ -380,7 +400,7 @@ void check_message_flood(IRC_SERVER_REC *server, const char *nick,
         return;
 
     /* Someone you already talk to is not a floodnet */
-    if (query_find(SERVER(server), nick) != NULL)
+    if (is_query_partner(server, nick))
         return;
 
     /* Check protection status first */
@@ -470,6 +490,68 @@ void check_message_flood(IRC_SERVER_REC *server, const char *nick,
     g_free(userhost);
 }
 
+static void clear_incoming(void)
+{
+    g_free(incoming_nick);
+    incoming_nick = NULL;
+    incoming_server = NULL;
+}
+
+/* A private message to us from a client */
+static gboolean is_private_to_us(IRC_SERVER_REC *server, const char *target,
+                                 const char *nick, const char *address)
+{
+    /* a message from a server or service has no user@host */
+    return nick != NULL && address != NULL && *address != '\0' &&
+        server->nick != NULL && g_ascii_strcasecmp(target, server->nick) == 0;
+}
+
+/* You wrote to nick: an open query with them is a conversation now */
+static void mark_written(SERVER_REC *server, const char *target)
+{
+    QUERY_REC *query;
+
+    if (!IS_IRC_SERVER(server) || target == NULL)
+        return;
+
+    query = query_find(server, target);
+    if (query != NULL)
+        MODULE_DATA_UNSET(query);
+}
+
+/* Added first, so it runs before the handlers that turn the message (or a
+ * CTCP ACTION) into a query */
+static void sig_event_privmsg_first(IRC_SERVER_REC *server, const char *data,
+                                    const char *nick, const char *address)
+{
+    char *params, *target, *text;
+
+    clear_incoming();
+    if (!IS_IRC_SERVER(server))
+        return;
+
+    params = event_get_params(data, 2, &target, &text);
+    if (is_private_to_us(server, target, nick, address)) {
+        incoming_server = server;
+        incoming_nick = g_strdup(nick);
+    }
+    g_free(params);
+}
+
+/* A handler that stops the signal (one for a CTCP does) skips this; the
+ * sender then stays until the next private message or until the server is
+ * gone, and can only flag an automatic query with that very nick. */
+static void sig_event_privmsg_last(void)
+{
+    clear_incoming();
+}
+
+static void sig_server_disconnected(SERVER_REC *server)
+{
+    if (server == SERVER(incoming_server))
+        clear_incoming();
+}
+
 /* Signal handlers for PRIVMSG */
 static void sig_event_privmsg(IRC_SERVER_REC *server, const char *data,
                               const char *nick, const char *address)
@@ -481,14 +563,35 @@ static void sig_event_privmsg(IRC_SERVER_REC *server, const char *data,
 
     params = event_get_params(data, 2, &target, &text);
 
-    /* Check if this is a private message to us - from a client: a
-     * message from a server or service has no user@host */
-    if (nick != NULL && address != NULL && *address != '\0' &&
-        server->nick != NULL && g_ascii_strcasecmp(target, server->nick) == 0) {
+    if (is_private_to_us(server, target, nick, address)) {
         check_message_flood(server, nick, address, text);
     }
 
     g_free(params);
+}
+
+static void sig_query_created(QUERY_REC *query, gpointer automatic)
+{
+    if (GPOINTER_TO_INT(automatic) && incoming_nick != NULL &&
+        query->server == SERVER(incoming_server) &&
+        incoming_server->nick_comp_func(query->name, incoming_nick) == 0)
+        MODULE_DATA_SET(query, QUERY_OPENED_BY_SENDER);
+}
+
+static void sig_message_own_private(SERVER_REC *server, const char *msg,
+                                    const char *target)
+{
+    mark_written(server, target);
+}
+
+/* Our own message sent back by a bouncer, or by a server with echo-message */
+static void sig_message_private(SERVER_REC *server, const char *msg,
+                                const char *nick, const char *address,
+                                const char *target)
+{
+    if (IS_IRC_SERVER(server) && nick != NULL && server->nick != NULL &&
+        IRC_SERVER(server)->nick_comp_func(nick, server->nick) == 0)
+        mark_written(server, target);
 }
 
 /* Initialize anti-floodnet module */
@@ -538,7 +641,16 @@ void irc_anti_floodnet_init(void)
     nick_flood_init();
 
     /* Add signal handlers */
+    signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_first);
     signal_add("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
+    signal_add_last("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_last);
+    signal_add("query created", (SIGNAL_FUNC) sig_query_created);
+    signal_add("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
+    /* last: by then the front end has made the query for your message */
+    signal_add_last("message own_private", (SIGNAL_FUNC) sig_message_own_private);
+    signal_add_last("message irc own_action", (SIGNAL_FUNC) sig_message_own_private);
+    signal_add_last("message irc own_notice", (SIGNAL_FUNC) sig_message_own_private);
+    signal_add_last("message private", (SIGNAL_FUNC) sig_message_private);
     signal_add("setup changed", (SIGNAL_FUNC) sig_settings_changed);
 
     /* Add command */
@@ -550,6 +662,8 @@ void irc_anti_floodnet_init(void)
 /* Cleanup anti-floodnet module */
 void irc_anti_floodnet_deinit(void)
 {
+    GSList *tmp;
+
     if (!floodnet)
         return;
 
@@ -558,8 +672,22 @@ void irc_anti_floodnet_deinit(void)
     nick_flood_deinit();
 
     /* Remove signal handlers */
+    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_first);
     signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
+    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_last);
+    signal_remove("query created", (SIGNAL_FUNC) sig_query_created);
+    signal_remove("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
+    signal_remove("message own_private", (SIGNAL_FUNC) sig_message_own_private);
+    signal_remove("message irc own_action", (SIGNAL_FUNC) sig_message_own_private);
+    signal_remove("message irc own_notice", (SIGNAL_FUNC) sig_message_own_private);
+    signal_remove("message private", (SIGNAL_FUNC) sig_message_private);
     signal_remove("setup changed", (SIGNAL_FUNC) sig_settings_changed);
+    clear_incoming();
+
+    /* the flag's key is a string of this module: it must not outlive an
+     * unload */
+    for (tmp = queries; tmp != NULL; tmp = tmp->next)
+        MODULE_DATA_UNSET((QUERY_REC *) tmp->data);
 
     /* Remove command */
     command_unbind("floodnet", (SIGNAL_FUNC) cmd_floodnet_status);

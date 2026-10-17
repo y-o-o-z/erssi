@@ -116,7 +116,8 @@ loaded on demand (`/script load <name>`, or a symlink in
 
 - **Anti-floodnet without collateral damage** — counts different senders,
   so one person pasting lines is no longer a flood; never filters people you
-  have a query with; ends protection on its own; bounded memory; no crash on
+  have a query with (unless their own message opened it and you have not
+  answered); ends protection on its own; bounded memory; no crash on
   messages from servers.
 - **Sidepanels** — turning a panel off or changing its width gives the space
   back; a terminal narrower than the panels (a phone over ssh) keeps a

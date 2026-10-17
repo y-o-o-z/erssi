@@ -1,7 +1,7 @@
 /*
  * Tests for the anti-floodnet module: it counts senders, not messages,
- * spares the people you talk to, caps its memory and lets go of a server
- * that is gone.
+ * spares the people you talk to (but not a query the flood itself opened),
+ * caps its memory and lets go of a server that is gone.
  */
 #include <irssi/src/common.h>
 #include <irssi/src/core/args.h>
@@ -31,6 +31,9 @@ void irc_core_deinit(void);
 /* irc-session.c */
 void irc_session_init(void);
 void irc_session_deinit(void);
+
+/* fe-common-irc.c */
+void fe_common_irc_init(void);
 
 #define MODULE_NAME "tests"
 
@@ -93,6 +96,9 @@ static void set_up(void)
 
 static void tear_down(void)
 {
+	/* a query would come back with the next test's server, of the same tag */
+	while (queries != NULL)
+		query_destroy(queries->data);
 	if (server != NULL) {
 		server->connection_lost = FALSE;
 		server_disconnect(server);
@@ -174,7 +180,7 @@ static void test_same_text_three_senders(void)
 	g_assert_cmpint(delivered, ==, 4);
 }
 
-static void test_query_partner_passes(void)
+static void start_flood(void)
 {
 	int i;
 	char nick[8], addr[64];
@@ -185,10 +191,90 @@ static void test_query_partner_passes(void)
 		pm(nick, addr, "KUP TANIO www.spam.example");
 	}
 	g_assert_true(floodnet->in_protection_mode);
+}
 
-	irc_query_create(server->tag, "friend", TRUE);
+/* a query the user opened with /QUERY */
+static void test_query_partner_passes(void)
+{
+	start_flood();
+
+	irc_query_create(server->tag, "friend", FALSE);
 	delivered = 0;
 	pm("friend", "~friend@h.example.invalid", "cze");
+	g_assert_cmpint(delivered, ==, 1);
+}
+
+/* a query that was there before, such as one a restored layout made */
+static void test_earlier_query_passes(void)
+{
+	irc_query_create(server->tag, "friend", TRUE);
+	start_flood();
+
+	delivered = 0;
+	pm("friend", "~friend@h.example.invalid", "cze");
+	g_assert_cmpint(delivered, ==, 1);
+}
+
+/* With the default autocreate_query_level, every message that gets
+ * through opens a query with its sender. The first bots of a flood get
+ * through before protection starts; their queries must not let the rest
+ * of their flood in. */
+static void test_flood_made_query_not_exempt(void)
+{
+	int i;
+	char nick[8], addr[64];
+
+	start_flood();
+	g_assert_nonnull(query_find(server, "fn1"));
+
+	delivered = 0;
+	for (i = 1; i <= 5; i++) {
+		g_snprintf(nick, sizeof(nick), "fn%d", i);
+		g_snprintf(addr, sizeof(addr), "~fn%d@h%d.example.invalid", i, i);
+		pm(nick, addr, line_n(i));
+	}
+	g_assert_cmpint(delivered, ==, 0);
+}
+
+/* the same for the duplicate rule, with senders that have an ident */
+static void test_flood_made_query_duplicate_text(void)
+{
+	pm("x1", "x1@h1.example.invalid", "hello");
+	pm("x2", "x2@h2.example.invalid", "hi");
+	pm("a", "a@h3.example.invalid", "spam");
+	pm("b", "b@h4.example.invalid", "spam");
+	pm("c", "c@h5.example.invalid", "spam");
+	g_assert_true(floodnet->in_protection_mode);
+	g_assert_nonnull(query_find(server, "a"));
+
+	delivered = 0;
+	pm("a", "a@h3.example.invalid", "spam");
+	pm("b", "b@h4.example.invalid", "spam");
+	g_assert_cmpint(delivered, ==, 0);
+}
+
+/* someone who opened a query and got an answer is someone you talk to */
+static void test_answered_query_passes(void)
+{
+	pm("friend", "~friend@h.example.invalid", "hej");
+	g_assert_nonnull(query_find(server, "friend"));
+	signal_emit("message own_private", 4, server, "hej, co tam?", "friend", "friend");
+	start_flood();
+
+	delivered = 0;
+	pm("friend", "~friend@h.example.invalid", "nic");
+	g_assert_cmpint(delivered, ==, 1);
+}
+
+/* the answer can also come back from a bouncer as our own message */
+static void test_answer_from_bouncer_passes(void)
+{
+	pm("friend", "~friend@h.example.invalid", "hej");
+	signal_emit("event privmsg", 4, server, "friend :hej, co tam?", "user", "user@h.example.invalid");
+	start_flood();
+
+	delivered = 0;
+	pm("friend", "~friend@h.example.invalid", "nic");
 	g_assert_cmpint(delivered, ==, 1);
 }
 
@@ -304,6 +390,12 @@ int main(int argc, char **argv)
 	add("/anti-floodnet/same-text-one-sender", test_same_text_one_sender);
 	add("/anti-floodnet/same-text-three-senders", test_same_text_three_senders);
 	add("/anti-floodnet/query-partner-passes", test_query_partner_passes);
+	add("/anti-floodnet/earlier-query-passes", test_earlier_query_passes);
+	add("/anti-floodnet/flood-made-query-not-exempt", test_flood_made_query_not_exempt);
+	add("/anti-floodnet/flood-made-query-duplicate-text",
+	    test_flood_made_query_duplicate_text);
+	add("/anti-floodnet/answered-query-passes", test_answered_query_passes);
+	add("/anti-floodnet/answer-from-bouncer-passes", test_answer_from_bouncer_passes);
 	add("/anti-floodnet/server-message", test_server_message);
 	add("/anti-floodnet/window-capped", test_window_capped);
 	add("/anti-floodnet/blocked-patterns-capped", test_blocked_patterns_capped);
@@ -322,6 +414,10 @@ int main(int argc, char **argv)
 	core_init();
 	irc_core_init();
 	fe_common_core_init();
+	/* fe-events turns a private message into a query, as in the client */
+	fe_common_irc_init();
+	settings_set_level("autocreate_query_level", "MSGS");
+	signal_emit("setup changed", 0);
 	irc_anti_floodnet_init();
 	signal_emit("irssi init finished", 0);
 	signal_add_last("event privmsg", (SIGNAL_FUNC) probe);
