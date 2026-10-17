@@ -197,24 +197,6 @@ void clear_window_full(TERM_WINDOW *tw, int width, int height)
 	}
 }
 
-void draw_border_vertical(TERM_WINDOW *tw, int width, int height, int right_border)
-{
-	int y;
-	int x = right_border ? width - 1 : 0;
-	if (!tw)
-		return;
-	/* Use blue color to match default theme's window_border = "%B│%N"
-	 * Note: irssi color 1 = blue (maps to ANSI 4), irssi color 4 = red */
-	term_set_color(tw, 1);  /* Blue (irssi color 1) - matches %B in theme */
-	for (y = 0; y < height; y++) {
-		term_move(tw, x, y);
-		/* Use Unicode box drawing character for continuous vertical line */
-		term_addstr(tw, "│");
-	}
-	/* Reset color after drawing border */
-	term_set_color(tw, ATTR_RESET);
-}
-
 typedef struct {
 	TERM_WINDOW *tw;
 	int x, y;
@@ -651,10 +633,8 @@ void draw_left_contents(SP_MAINWIN_CTX *ctx)
 	/* Clean up */
 	free_sorted_window_list(sort_list);
 
-	/* Always draw the right border of the left panel for consistent visual separation.
-	 * Previously this was conditional on right panel existence, but that created
-	 * inconsistent UI when auto-hide mode hides the right panel in non-channel windows. */
-	draw_border_vertical(tw, width, height, 1);
+	/* the border (the panel's last column) is the theme's
+	   {window_border}, drawn by draw_panel_borders() after the panels */
 
 	/* Scroll markers in the column next to the border */
 	lines_changed += draw_scroll_markers(tw, wctx, width - 2, 0, height, has_more_above,
@@ -1087,8 +1067,6 @@ void draw_right_contents(SP_MAINWIN_CTX *ctx)
 		}
 		ctx->right_gaps_dirty = FALSE;
 	}
-
-	draw_border_vertical(tw, width, height, 0);
 
 	/* Only mark dirty if something changed */
 	if (lines_changed > 0) {

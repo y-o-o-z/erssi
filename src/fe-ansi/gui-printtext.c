@@ -167,12 +167,37 @@ void gui_printtext_after(TEXT_DEST_REC *dest, LINE_REC *prev, const char *str)
 	gui_printtext_after_time(dest, prev, str, 0);
 }
 
+/* The border character of the theme on a terminal that is not UTF-8: a
+   UTF-8 one (the shipped themes have "│") would reach it as its bytes, C1
+   controls there, and only the first of them is kept (the length of a
+   string is in bytes there). It is "|" instead, as the side panels draw
+   "+" for the ellipsis. A byte that is no UTF-8 is the terminal's own
+   character and stays. */
+static void window_border_ascii(char *border)
+{
+	char *chr, *next;
+	gunichar value;
+
+	if (term_type == TERM_TYPE_UTF8)
+		return;
+	chr = border + format_real_length(border, 0);
+	if ((unsigned char) *chr < 0x80)
+		return;
+	value = g_utf8_get_char_validated(chr, -1);
+	if (value == (gunichar) -1 || value == (gunichar) -2)
+		return;
+	next = g_utf8_next_char(chr);
+	*chr = '|';
+	memmove(chr + 1, next, strlen(next) + 1);
+}
+
 void gui_printtext_window_border(int x, int y)
 {
 	char *v0, *v1;
 	int len;
 	if (current_theme != NULL) {
 		v1 = theme_format_expand(current_theme, "{window_border} ");
+		window_border_ascii(v1);
 		len = format_real_length(v1, 1);
 		v1[len] = '\0';
 	}

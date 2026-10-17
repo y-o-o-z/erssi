@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """What the side panels draw stays inside them and fits the terminal.
+- The border between a panel and the main windows is the theme's
+  {window_border}, drawn once: before, a hard-coded UTF-8 "│" was drawn
+  first, also on a terminal that is not UTF-8 (where its bytes 0x94 0x82
+  are C1 controls). On such a terminal a border character that is not
+  ASCII is drawn as "|".
 - A panel is at least 6 columns wide: with /SET sidepanel_left_width 1
   the names were drawn over the first columns of the main window, with
   sidepanel_right_width 1 the nicks wrapped past the last column.
@@ -10,7 +15,6 @@ Usage: test_panel_draw.py <build dir> [<source dir>]"""
 import shutil
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -20,6 +24,11 @@ block = harness.block
 
 WAIT = 10
 COLS, ROWS = 120, 40
+BOX = "│"
+BOX_UTF8 = BOX.encode()
+
+# the default theme with a box-drawing border
+BOXES_THEME = 'abstracts = { window_border = "%B' + BOX + '%N"; };\n'
 
 LEFT_FORMATS = ("sidepanel_header", "sidepanel_item", "sidepanel_item_selected",
                 "sidepanel_item_nick_mention", "sidepanel_item_query_msg",
@@ -77,6 +86,34 @@ def main():
         st["ircd"] = harness.Ircd(work)
         st["port"] = st["ircd"].start()
 
+    def t_border_once_from_theme():
+        # the default theme's border is "|": no "│" reaches the terminal
+        e = new("utf8")
+        out = redraw(e)
+        assert BOX_UTF8 not in out, "a border not from the theme was drawn"
+        rows = e.screen()
+        assert rows[2][14] == "|" and rows[2][COLS - 15] == "|", rows[2]
+        # a theme with "│": that is the border
+        e.home.joinpath("test.theme").write_text(BOXES_THEME)
+        e.type_and_wait("/set theme test")
+        redraw(e)
+        rows = e.screen()
+        assert rows[2][14] == BOX and rows[2][COLS - 15] == BOX, rows[2]
+        e.quit()
+
+    def t_border_not_utf8():
+        # a terminal that is not UTF-8: no UTF-8 box character, the
+        # theme's "│" drawn as "|" (before, only its first byte was left
+        # of it)
+        env = {"LANG": "C", "LC_ALL": "C"}
+        e = new("latin1", env=env, extra_theme=BOXES_THEME)
+        e.type_and_wait("/set term_charset ISO-8859-1")
+        out = redraw(e)
+        assert BOX_UTF8 not in out, "UTF-8 box characters sent to a terminal that is not UTF-8"
+        rows = e.screen()
+        assert rows[2][14] == "|" and rows[2][COLS - 15] == "|", rows[2]
+        e.quit()
+
     def t_width_lower_bound():
         e = new("narrow")
         e.type_and_wait("/set sidepanel_right_auto_hide off")
@@ -120,7 +157,8 @@ def main():
         assert reports == [], reports
 
     try:
-        harness.main([t_install, t_width_lower_bound, t_hidden_entries, t_sanitizers])
+        harness.main([t_install, t_border_once_from_theme, t_border_not_utf8, t_width_lower_bound,
+                      t_hidden_entries, t_sanitizers])
     finally:
         for e in st["all"]:
             e.kill()
