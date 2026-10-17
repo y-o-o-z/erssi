@@ -16,7 +16,8 @@ foreach c : ['ascii', 'utf8',
     'src-foreign', 'src-writable', 'src-shared-parent', 'acl-bsd',
     'userns', 'userns-kernel',
     'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both',
-    'stale-nexus']
+    'stale-nexus',
+    'release-signature', 'release-newest', 'release-pinned', 'update']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)

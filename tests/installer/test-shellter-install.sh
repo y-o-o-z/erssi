@@ -33,6 +33,7 @@ find_tool() {
 find_tool git >/dev/null || { echo "skip: no git"; exit 77; }
 SCRIPT=$(find_tool script) || SCRIPT=""
 UNSHARE=$(find_tool unshare) || UNSHARE=""
+KEYGEN=$(find_tool ssh-keygen) || KEYGEN=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
 stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
@@ -100,7 +101,9 @@ EOF
 [ "$1" != --version ] || { echo 1.13.2; exit 0; }
 if [ "$1" = -C ] && [ "${3:-}" = install ]; then
     p=$(cat "$2/prefix") && mkdir -p "$p/bin" || exit 1
-    printf '#!/bin/sh\necho "erssi 9.9.9 (20261010 1200)"\n' > "$p/bin/erssi" && chmod 755 "$p/bin/erssi"
+    # the version of the checkout (release_commit), 9.9.9 without one
+    v=9.9.9; [ ! -f "$2/../VERSION" ] || v=$(cat "$2/../VERSION")
+    printf '#!/bin/sh\necho "erssi %s (20261010 1200)"\n' "$v" > "$p/bin/erssi" && chmod 755 "$p/bin/erssi"
 fi
 exit 0
 EOF
@@ -334,6 +337,124 @@ no_grep() { ! grep -q "$1" "$2"; }
 none_exist() { for f in "$@"; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; done; }
 # shellcheck disable=SC2317
 no_link() { [ ! -e "$HOME/.local/bin/erssi" ] && [ ! -L "$HOME/.local/bin/erssi" ]; }
+
+# ── release signatures ───────────────────────────────────────────────
+# A throwaway release key ($W/key; $W/other is somebody else's): $INSTALLER
+# is a copy of the installer under test whose RELEASE_SIGNER and the
+# fingerprint signed_tag() checks are those of $W/key, and whose RELEASES
+# are the lines of $W/releases. The signatures are real (ssh-keygen, which
+# joins the tools in PATH); the test repository gets commits and tags.
+release_key() {
+    [ -n "$KEYGEN" ] || { echo "skip: no ssh-keygen"; exit 77; }
+    # shellcheck disable=SC2046 # "2 47" -> $1 $2
+    set -- $(git --version | sed -n 's/^git version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    { [ "${1:-0}" -gt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -ge 34 ]; }; } ||
+        { echo "skip: git before 2.34 cannot check SSH signatures"; exit 77; }
+    ln -s "$KEYGEN" "$W/bin/ssh-keygen"
+    if ! { ssh-keygen -q -t ed25519 -N '' -C release -f "$W/key" &&
+            ssh-keygen -q -t ed25519 -N '' -C other -f "$W/other"; }; then
+        echo "FAIL $CASE: ssh-keygen"; exit 1
+    fi
+    : > "$W/releases"
+    patch_installer
+}
+# $INSTALLER from the installer under test, $W/key and $W/releases. The
+# release key and its fingerprint are read from the installer and must be
+# there once each, so that a new key there cannot leave this copy trusting
+# the real one.
+patch_installer() {
+    old_key=$(sed -n "s/^RELEASE_SIGNER='[^ ]* namespaces=\"git\" \([^ ]* [^ ']*\).*/\1/p" "$SRC/shellter-install.sh")
+    old_fp=$(sed -n 's/.* with ED25519 key \(SHA256:[A-Za-z0-9+/]*\)\$.*/\1/p' "$SRC/shellter-install.sh")
+    new_key=$(cut -d' ' -f1,2 "$W/key.pub")
+    new_fp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
+    if ! { [ -n "$old_key" ] && [ -n "$old_fp" ] &&
+            [ "$(grep -cF "$old_key" "$SRC/shellter-install.sh")" = 1 ] &&
+            [ "$(grep -cF "$old_fp" "$SRC/shellter-install.sh")" = 1 ]; }; then
+        echo "FAIL $CASE: the release key or its fingerprint not found once in the installer"; exit 1
+    fi
+    INSTALLER=$W/inst.sh
+    # literal replacements (a key holds / and +); RELEASES from the file
+    awk -v ok="$old_key" -v nk="$new_key" -v of="$old_fp" -v nf="$new_fp" -v rel="$W/releases" '
+        function swap(s, a, b,   i) {
+            i = index(s, a)
+            return i ? substr(s, 1, i - 1) b substr(s, i + length(a)) : s
+        }
+        skip && /^"$/ { skip = 0 }
+        skip { next }
+        /^RELEASES="$/ { print; while ((getline l < rel) > 0) print l; close(rel); skip = 1; next }
+        { print swap(swap($0, ok, nk), of, nf) }' "$SRC/shellter-install.sh" > "$INSTALLER" || exit 1
+    if ! { grep -qF "$new_key" "$INSTALLER" && grep -qF "$new_fp" "$INSTALLER" && ! grep -qF "$old_fp" "$INSTALLER"; }; then
+        echo "FAIL $CASE: the throwaway key did not replace the release key"; exit 1
+    fi
+}
+# release_commit VERSION: a commit in the test repository whose checkout
+# installs as erssi VERSION (the stand-in ninja reads VERSION); prints it
+release_commit() {
+    printf '%s\n' "$1" > "$W/repo/VERSION"
+    git -C "$W/repo" add VERSION &&
+        git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            commit -q --allow-empty -m "erssi $1" && git -C "$W/repo" rev-parse HEAD
+}
+# rtag TAG COMMIT [KEY]: the annotated tag TAG on COMMIT, signed by $W/key
+# (or KEY), replacing a tag of that name
+rtag() {
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="${3:-$W/key}" tag -f -s -m "$1" "$1" "$2" > /dev/null
+}
+# the installer under test with ARGS, from the test repository
+run_release() {
+    sh "$INSTALLER" --repo "$W/repo" --no-test "$@" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+}
+# an installed erssi VERSION in $W/p, built from COMMIT [installed as REF]
+release_prefix() {
+    fake_prefix "$W/p" "$1"
+    printf 'COMMIT=%s\n' "$2" >> "$W/p/share/irssi/shellter-install.conf"
+    [ -z "${3:-}" ] || printf 'REF=%s\n' "$3" >> "$W/p/share/irssi/shellter-install.conf"
+}
+run_update() {
+    sh "$INSTALLER" --update --no-test --prefix "$W/p" "$@" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+}
+# fn SCRIPT ARGS...: SCRIPT (with ARGS as "$@") in a shell that has the
+# installer under test loaded, REPO the test repository; the output in
+# $W/fn.out and $W/fn.err, the code in RC
+fn() {
+    # shellcheck disable=SC2016 # run by sh
+    REPO=$W/repo SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init; LOG=/dev/null; s=$2; shift 2; eval "$s"' \
+        sh "$INSTALLER" "$@" > "$W/fn.out" 2> "$W/fn.err"
+    RC=$?
+}
+# st TAG [NAME]: TAG fetched into a new repository and checked by
+# signed_tag as the release NAME (default TAG)
+st() {
+    rm -rf "$W/st" && git init -q "$W/st" || exit 1
+    # shellcheck disable=SC2016 # run by fn
+    fn 'fetch_ref "$1" "$2" && signed_tag "$1" "$3"' "$W/st" "$1" "${2:-$1}"
+}
+# a gpg that accepts every signature and logs that it ran, as one with an
+# OpenPGP key of the signer in the user's keyring would: never to be asked
+gpg_accepts_all() {
+    gfp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
+    {
+        printf '#!/bin/sh\n'
+        # shellcheck disable=SC2016 # the stand-in script
+        printf 'echo ran >> "$TEST_W/ran-gpg"\n'
+        printf 'echo "[GNUPG:] NEWSIG"\necho "[GNUPG:] GOODSIG 0123456789ABCDEF release"\n'
+        printf 'echo "[GNUPG:] VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2026-10-01 0 4 0 22 8 00 0123456789ABCDEF0123456789ABCDEF01234567"\n'
+        printf 'echo "[GNUPG:] TRUST_ULTIMATE 0 pgp"\n'
+        printf "echo 'Good \"git\" signature for 136268860+y-o-o-z@users.noreply.github.com with ED25519 key %s'\n" "$gfp"
+        printf 'exit 0\n'
+    } | stand gpg
+    use_tool gpg
+    for t in gpg2 gpgsm; do cp "$W/stand/gpg" "$W/shim/$t"; done
+}
+# ptag TAG COMMIT: TAG as an annotated tag with an OpenPGP signature block
+ptag() {
+    o=$(printf 'object %s\ntype commit\ntag %s\ntagger test <test@example.invalid> 1790000000 +0000\n\n%s\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n=AAAA\n-----END PGP SIGNATURE-----\n' \
+        "$2" "$1" "$1" | git -C "$W/repo" hash-object -t tag -w --stdin) &&
+        git -C "$W/repo" update-ref "refs/tags/$1" "$o"
+}
 
 # the ten spinner frames as the installer draws them (sourced only when it
 # can be loaded without running main)
@@ -1213,6 +1334,138 @@ stale-nexus)
     check "nexus.theme gone from the prefix" none_exist "$P/share/irssi/themes/nexus.theme"
     check "another theme kept" [ -f "$P/share/irssi/themes/shellter.theme" ]
     check "a copy in the home kept" [ -f "$HOME/.erssi/nexus.theme" ]
+    ;;
+release-signature)
+    # signed_tag: an annotated tag of that name with an SSH signature by the
+    # release key, nothing else
+    release_key
+    c=$(release_commit 2026.10.2)
+    rtag shellter-v2026.10.2 "$c"
+    st shellter-v2026.10.2
+    check "signed by the release key: verified" [ "$RC" = 0 ]
+    rtag shellter-v2026.10.3 "$c" "$W/other"
+    st shellter-v2026.10.3
+    check "signed by another key: refused" [ "$RC" = 1 ]
+    git -C "$W/repo" tag shellter-v2026.10.4 "$c"
+    st shellter-v2026.10.4
+    check "lightweight tag: refused" [ "$RC" = 1 ]
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -m x shellter-v2026.10.5 "$c"
+    st shellter-v2026.10.5
+    check "annotated, unsigned: refused" [ "$RC" = 1 ]
+    # a validly signed tag object of another release, published under this
+    # name: the name inside the signed object counts
+    rtag shellter-v2026.10.9 "$c"
+    git -C "$W/repo" update-ref refs/tags/shellter-v2026.10.6 "$(git -C "$W/repo" rev-parse shellter-v2026.10.9)"
+    st shellter-v2026.10.6
+    check "signed object of another tag name: refused" [ "$RC" = 1 ]
+    st shellter-v2026.10.9
+    check "... the same object under its own name: verified" [ "$RC" = 0 ]
+    st shellter-v2026.10.2 shellter-v2026.10.3
+    check "a verified tag checked as another release: refused" [ "$RC" = 1 ]
+    # an OpenPGP signature, with a gpg in PATH that accepts anything
+    gpg_accepts_all
+    ptag shellter-v2026.10.7 "$c"
+    st shellter-v2026.10.7
+    check "OpenPGP-signed tag: refused" [ "$RC" = 1 ]
+    check "... gpg never ran" none_exist "$W/ran-gpg"
+    st shellter-v2026.10.2
+    check "the good tag with that gpg in PATH: still verified" [ "$RC" = 0 ]
+    ;;
+release-newest)
+    # newest_signed: the newest release newer than the installed one that
+    # the release key signed; unsigned ones are named and skipped, five at most
+    release_key
+    ns() { fn 'newest_signed "$@"' "$W/work" "$@"; }
+    git init -q "$W/work"
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3" "$W/other"
+    ns 2026.10.1 "$c1"
+    check "a newer signed release: found" [ "$RC" = 0 ]
+    check "... shellter-v2026.10.2 and its tag object" \
+        [ "$(cat "$W/fn.out")" = "shellter-v2026.10.2 $(git -C "$W/repo" rev-parse shellter-v2026.10.2)" ]
+    check "... the unsigned newer one named" \
+        grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key - skipped' "$W/fn.err"
+    ns 2026.10.2 "$c2"
+    check "the installed one is the newest signed: code 0" [ "$RC" = 0 ]
+    check "... nothing printed" [ ! -s "$W/fn.out" ]
+    # four unsigned newer releases are skipped, the fifth gives up
+    for v in 4 5 6; do rtag "shellter-v2026.10.$v" "$c3" "$W/other"; done
+    ns 2026.10.1 "$c1"
+    check "four unsigned newer: the signed one found" [ "$(cut -d' ' -f1 "$W/fn.out")" = shellter-v2026.10.2 ]
+    rtag shellter-v2026.10.7 "$c3" "$W/other"
+    ns 2026.10.1 "$c1"
+    check "five unsigned newer: gives up" [ "$RC" = 1 ]
+    check "... nothing printed" [ ! -s "$W/fn.out" ]
+    check "... and says so" grep -q 'five unsigned newer tags - giving up (report it)' "$W/fn.err"
+    # a repository that cannot be reached
+    mv "$W/repo" "$W/repo.away"
+    ns 2026.10.1 "$c1"
+    mv "$W/repo.away" "$W/repo"
+    check "no repository: code 2" [ "$RC" = 2 ]
+    ;;
+release-pinned)
+    # an install of a recorded release: the tag must point to the recorded
+    # commit and carry the release key's signature
+    release_key
+    c2=$(release_commit 2026.10.2)
+    c3=$(release_commit 2026.10.3)
+    printf 'shellter-v2026.10.2 %s signed\n' "$c2" > "$W/releases"
+    patch_installer
+    rtag shellter-v2026.10.2 "$c2"
+    run_release
+    check "the newest recorded release: installed" [ "$RC" = 0 ]
+    check "... signed and the commit recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    check "... version 2026.10.2" grep -q 'erssi Shellter Edition 2026.10.2 is installed' "$W/out"
+    check "... the commit kept" grep -qx "COMMIT=$c2" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
+    # moved to another commit, even signed by the release key: refused
+    rtag shellter-v2026.10.2 "$c3"
+    run_release
+    check "tag moved to another commit: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.2 points to $c3, but this installer expects $c2 - refusing to build" "$W/out"
+    check "... nothing built" no_grep 'Building' "$W/out"
+    # on the recorded commit, signed by another key: refused
+    rtag shellter-v2026.10.2 "$c2" "$W/other"
+    run_release --ref shellter-v2026.10.2
+    check "signed by another key: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'shellter-v2026.10.2 does not carry a valid signature by the erssi Shellter release key - refusing to build' "$W/out"
+    # without ssh-keygen: a warning, and the commit is still checked
+    rm -f "$W/bin/ssh-keygen"
+    run_release
+    check "no ssh-keygen: installed" [ "$RC" = 0 ]
+    check "... with a warning" grep -q 'signatures cannot be checked here' "$W/out"
+    check "... the commit recorded" grep -q 'Downloading.*ok.*commit recorded' "$W/out"
+    git -C "$W/repo" tag -f shellter-v2026.10.2 "$c3" > /dev/null
+    run_release
+    check "no ssh-keygen, tag moved: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.2 points to $c3, but this installer expects $c2" "$W/out"
+    ;;
+update)
+    # erssi --update: the newest release signed by the release key is built
+    # and installed into the same prefix
+    release_key
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    run_update --check
+    check "--check: update available" [ "$RC" = 0 ]
+    check "... named" grep -q 'Update available: 2026.10.1 -> 2026.10.2' "$W/out"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi"
+    run_update
+    check "update: done" [ "$RC" = 0 ]
+    check "... signed" grep -q 'Finding the release.*shellter-v2026.10.2 - signed by the erssi Shellter release key' "$W/out"
+    check "... updated" grep -q 'Updated: 2026.10.1 -> 2026.10.2' "$W/out"
+    check "... the new erssi" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    check "... its commit kept" grep -qx "COMMIT=$c2" "$W/p/share/irssi/shellter-install.conf"
+    run_update --check
+    check "again: up to date" grep -q 'erssi Shellter Edition 2026.10.2 is up to date' "$W/out"
+    # a newer release signed by another key: named, not offered
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3" "$W/other"
+    run_update --check
+    check "newer, signed by another key: up to date" grep -q 'is up to date' "$W/out"
+    check "... named" grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key' "$W/out"
+    run_update
+    check "... not built" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
