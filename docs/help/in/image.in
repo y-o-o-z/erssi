@@ -39,7 +39,9 @@
     configuration directory. The file of a shown image is deleted again 30
     seconds after it was displayed, and files older than 7 days are removed.
     After each download and every 30 minutes the oldest files are removed
-    while the cache is larger than image_preview_cache_size. Only the
+    while the cache is larger than image_preview_cache_size; files
+    written more recently than image_preview_timeout and one minute ago
+    are not removed for that. Only the
     cache's own files are deleted: other files, directories and symbolic
     links in image_cache are left alone, and links are not followed.
 
@@ -62,8 +64,10 @@
             The time limit of a download.
         image_preview_cache_size (default: 100M)
             The largest size of the cache. When it is bigger, the oldest
-            files are removed until it fits; the image just downloaded
-            stays.
+            files are removed until it fits. Files written within
+            image_preview_timeout and one minute more (downloads in
+            progress, images not shown yet) stay, so the cache can be
+            over the limit for a while.
         image_preview_debug (default: OFF)
             Writes a debug log, including every clicked URL, to
             image-preview-debug.log in the configuration directory.

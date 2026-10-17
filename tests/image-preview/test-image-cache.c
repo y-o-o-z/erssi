@@ -1,8 +1,10 @@
 /*
  * The image preview cache (image-preview/image-preview-cache.c, compiled
  * into this test) keeps to image_preview_cache_size: the oldest files are
- * removed until the cache fits, the image just downloaded stays, and only
- * the cache's own regular files directly in its directory are touched;
+ * removed until the cache fits, the image just downloaded and the files
+ * written within the download time limit (downloads in progress, images
+ * not shown yet) stay, and only the cache's own regular files directly in
+ * its directory are touched;
  * other files, directories and symlinks (and what they point to) are left
  * alone.
  */
@@ -25,6 +27,13 @@ int settings_get_size(const char *key)
 {
 	g_assert_cmpstr(key, ==, IMAGE_PREVIEW_CACHE_SIZE);
 	return size_limit;
+}
+
+/* image_preview_timeout 60s: files written in the last 120 seconds stay */
+int settings_get_time(const char *key)
+{
+	g_assert_cmpstr(key, ==, IMAGE_PREVIEW_TIMEOUT);
+	return 60 * 1000;
 }
 
 void image_preview_debug_print(const char *fmt, ...)
@@ -114,9 +123,9 @@ static void teardown(void)
 static void test_size_limit(void)
 {
 	setup();
-	make_file(HASH("1") ".png", 1024, 300);
-	make_file(HASH("2") ".jpg", 1024, 200);
-	make_file(HASH("3") ".img", 1024, 100);
+	make_file(HASH("1") ".png", 1024, 3000);
+	make_file(HASH("2") ".jpg", 1024, 2000);
+	make_file(HASH("3") ".img", 1024, 1000);
 
 	size_limit = 4096;
 	image_cache_cleanup();
@@ -147,29 +156,77 @@ static void test_size_limit(void)
 	teardown();
 }
 
-/* the image that was just downloaded stays, even when it is the oldest or
- * alone over the limit */
+/* the image that was just downloaded stays, even alone over the limit, and
+ * so do other new files: only older ones make room */
 static void test_keep_new_file(void)
 {
 	char *path;
 
 	setup();
-	make_file(HASH("a") ".gif", 2048, 500);
-	make_file(HASH("b") ".gif", 1024, 50);
+	make_file(HASH("1") ".gif", 1024, 1000);
+	make_file(HASH("2") ".gif", 1024, 900);
+	/* another download still being written, an image not shown yet */
+	make_file(HASH("3") ".gif", 1024, 100);
+	make_file(HASH("4") ".gif", 1024, 5);
+	/* just downloaded */
+	make_file(HASH("a") ".gif", 2048, 0);
 	size_limit = 1024;
 
 	path = cache_file(HASH("a") ".gif");
 	image_cache_enforce_limit(path);
 	g_free(path);
 	g_assert_true(exists(HASH("a") ".gif"));
+	g_assert_false(exists(HASH("1") ".gif"));
+	g_assert_false(exists(HASH("2") ".gif"));
+	g_assert_true(exists(HASH("3") ".gif"));
+	g_assert_true(exists(HASH("4") ".gif"));
+	g_assert_cmpint(cache_stats.total_size, ==, 4096);
+	g_assert_cmpint(cache_stats.entry_count, ==, 3);
+	teardown();
+
+	/* the kept file stays when it is the oldest one too */
+	setup();
+	make_file(HASH("a") ".gif", 2048, 1000);
+	make_file(HASH("b") ".gif", 1024, 500);
+	size_limit = 1024;
+	path = cache_file(HASH("a") ".gif");
+	image_cache_enforce_limit(path);
+	g_free(path);
+	g_assert_true(exists(HASH("a") ".gif"));
 	g_assert_false(exists(HASH("b") ".gif"));
-	g_assert_cmpint(cache_stats.total_size, ==, 2048);
 
 	/* a path outside the cache keeps nothing in it */
 	path = g_build_filename(outside, HASH("a") ".gif", NULL);
 	image_cache_enforce_limit(path);
 	g_free(path);
 	g_assert_false(exists(HASH("a") ".gif"));
+	teardown();
+}
+
+/* the periodic cleanup leaves new files alone too, and removes them for
+ * size once they are old enough */
+static void test_recent_files(void)
+{
+	struct utimbuf times;
+	char *path;
+
+	setup();
+	make_file(HASH("5") ".png", 2048, 110);
+	make_file(HASH("6") ".png", 2048, 30);
+	size_limit = 1024;
+	image_cache_cleanup();
+	g_assert_true(exists(HASH("5") ".png"));
+	g_assert_true(exists(HASH("6") ".png"));
+	g_assert_cmpint(cache_stats.total_size, ==, 4096);
+
+	/* the first one, a few minutes later */
+	path = cache_file(HASH("5") ".png");
+	times.actime = times.modtime = time(NULL) - 130;
+	g_assert_cmpint(utime(path, &times), ==, 0);
+	g_free(path);
+	image_cache_cleanup();
+	g_assert_false(exists(HASH("5") ".png"));
+	g_assert_true(exists(HASH("6") ".png"));
 	teardown();
 }
 
@@ -214,7 +271,7 @@ static void test_foreign_entries(void)
 	subdir = cache_file(HASH("9") ".img");
 	g_assert_cmpint(g_mkdir(subdir, 0700), ==, 0);
 
-	make_file(HASH("0") ".png", 1024, 10);
+	make_file(HASH("0") ".png", 1024, 1000);
 
 	size_limit = 512;
 	image_cache_cleanup();
@@ -252,6 +309,7 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/image-cache/size_limit", test_size_limit);
 	g_test_add_func("/image-cache/keep_new_file", test_keep_new_file);
+	g_test_add_func("/image-cache/recent_files", test_recent_files);
 	g_test_add_func("/image-cache/age", test_age);
 	g_test_add_func("/image-cache/foreign_entries", test_foreign_entries);
 

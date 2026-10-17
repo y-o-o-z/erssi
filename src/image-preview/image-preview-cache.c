@@ -379,8 +379,17 @@ static void cache_file_free(CACHE_FILE_REC *rec)
 
 /* Removes files older than 7 days, then the oldest files until the cache
  * is no larger than image_preview_cache_size. keep_name, when not NULL, is
- * a file that stays (the image that was just downloaded to be shown). Only
- * regular files with the cache's own names directly in the cache
+ * a file that stays (the image that was just downloaded to be shown).
+ *
+ * For the size limit only files last written longer ago than a download
+ * may take (image_preview_timeout) and one minute more are removed. Newer
+ * ones are downloads still in progress, or images downloaded a moment ago
+ * and not shown yet (a shown image's file is removed 30 seconds after it
+ * was displayed): they stay, even when that leaves the cache over the
+ * limit, which a later cleanup then brings down. So a new image larger
+ * than the limit is kept and shown, and only older files make room.
+ *
+ * Only regular files with the cache's own names directly in the cache
  * directory are looked at; symlinks are neither followed nor removed. */
 static void cache_cleanup(const char *keep_name)
 {
@@ -390,6 +399,7 @@ static void cache_cleanup(const char *keep_name)
 	time_t now;
 	int max_age_seconds;
 	gint64 max_size_bytes, total;
+	time_t recent;
 	GSList *files = NULL;
 	GSList *l;
 	int count;
@@ -401,6 +411,7 @@ static void cache_cleanup(const char *keep_name)
 	now = time(NULL);
 	max_age_seconds = 7 * 24 * 60 * 60;  /* 7 days default */
 	max_size_bytes = settings_get_size(IMAGE_PREVIEW_CACHE_SIZE);
+	recent = now - settings_get_time(IMAGE_PREVIEW_TIMEOUT) / 1000 - 60;
 
 	/* Collect all files with their stats */
 	total = 0;
@@ -435,6 +446,9 @@ static void cache_cleanup(const char *keep_name)
 	for (l = files; l != NULL && total > max_size_bytes; l = l->next) {
 		CACHE_FILE_REC *rec = l->data;
 
+		/* sorted by age: everything from here on is newer */
+		if (rec->mtime >= recent)
+			break;
 		if (g_strcmp0(rec->name, keep_name) == 0)
 			continue;
 		if (unlinkat(dirfd(dir), rec->name, 0) == 0 || errno == ENOENT) {
