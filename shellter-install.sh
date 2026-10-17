@@ -78,7 +78,7 @@ erssi Shellter Edition - install and update
                  newer than the installed one (also for an erssi installed
                  from a branch or a commit with --ref)
   --check        with --update: only report whether an update is available
-  --prefix DIR   install here (default ~/.local/opt/erssi)
+  --prefix DIR   install here, an absolute path (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
   --ref REF      release tag, branch or full commit SHA (default: newest
                  verified release)
@@ -461,6 +461,13 @@ while [ $# -gt 0 ]; do
         *) echo "shellter-install.sh: unknown option $1 (--help)" >&2; exit 2 ;;
     esac
 done
+# meson takes only an absolute prefix (it would fail after the download), and
+# the ~/.local/bin link and the conf need one that does not depend on the
+# current directory
+case "$PREFIX" in
+    /*) ;;
+    *) echo "shellter-install.sh: --prefix needs an absolute path, e.g. --prefix $HOME/opt/erssi (--help)" >&2; exit 2 ;;
+esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
 [ "$UPDATE" = 0 ] || [ -z "$REF" ] || { echo "shellter-install.sh: --update takes the newest signed release; for a given one use --ref without --update" >&2; exit 2; }
 

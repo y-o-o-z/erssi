@@ -587,6 +587,20 @@ link-system-prefix)
     check "in PATH: no PATH hint" no_grep "not in PATH" "$W/out"
     check "in PATH: still no link" no_link
     ;;
+relative-prefix)
+    # a relative --prefix: refused before anything is made or downloaded
+    # (meson needs an absolute one, and the link would point nowhere)
+    mkdir -p "$W/cwd"
+    (cd "$W/cwd" && sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --prefix opt/erssi) > "$W/out" 2>&1 < /dev/null
+    RC=$?
+    check "refused" [ "$RC" = 2 ]
+    check "... named" grep -qF -- '--prefix needs an absolute path' "$W/out"
+    check "... nothing made" none_exist "$W/cwd/opt" "$HOME/.local/src/erssi" "$HOME/.local/src/erssi.lock"
+    (cd "$W/cwd" && sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --prefix ./opt) > "$W/out" 2>&1 < /dev/null
+    check "./ refused too" [ $? = 2 ]
+    run_install --prefix "$W/abs/erssi"
+    check "an absolute prefix: installed" [ "$RC" = 0 ]
+    ;;
 link-root)
     # root (id -u 0, a home owned by root): no link, whatever the prefix
     # shellcheck disable=SC2016 # stand-in scripts

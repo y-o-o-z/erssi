@@ -10,7 +10,7 @@ test('installer versions test (shellter-v1.3.10)', find_program('sh'),
 # shellter-install.sh with stand-in tools, a local repository and a temporary
 # HOME (test-shellter-install.sh SOURCE_ROOT CASE)
 foreach c : ['ascii', 'utf8',
-    'link-home', 'link-system-prefix', 'link-root', 'link-same-dir',
+    'link-home', 'link-system-prefix', 'link-root', 'link-same-dir', 'relative-prefix',
     'lock-before-venv', 'lock-held-during-venv',
     'freebsd-base-openssl', 'freebsd-no-openssl',
     'src-foreign', 'src-writable', 'src-shared-parent', 'acl-bsd',

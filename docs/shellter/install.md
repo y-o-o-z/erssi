@@ -45,7 +45,7 @@ shown when a step fails. Works on Linux and FreeBSD.
 
 | Option | What it does |
 |---|---|
-| `--prefix` | Where erssi is installed (default `~/.local/opt/erssi`). |
+| `--prefix` | Where erssi is installed, an absolute path (default `~/.local/opt/erssi`). |
 | `--ref <tag\|branch\|commit>` | What to build. Anything that is not a recorded release is built with a warning; a commit as the full SHA. |
 | `--src` | The source directory (default `~/.local/src/erssi`). |
 | `--no-test` | Skip the test suite (`--test` runs it again). |
