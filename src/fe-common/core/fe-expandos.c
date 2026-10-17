@@ -362,58 +362,53 @@ static int get_persistent_nick_color(const char *nick, void *item, SERVER_REC *s
 	return color_index;
 }
 
-/* Main hash coloring expando - replaces nick with colored version */
+/* The nick of the message in its hash colour, cut to the nick column when
+ * that is on (as $nicktrunc). With nick_hash_color_enabled off it is the
+ * same nick without a colour: a theme that shows the nick with
+ * $nickcolored must not lose it when the colouring is switched off. */
 static char *expando_nickcolored(SERVER_REC *server, void *item, int *free_ret)
 {
-	const char *display_nick;
+	char *display_nick;
+	int nick_free = FALSE;
 	int palette_size;
 	gchar **palette;
 	int color_index;
+	GString *raw;
+	const char *p;
 	char *result;
-	char *raw_format;
-	
-	if (!settings_get_bool("nick_hash_color_enabled") || !nick_context_valid || !current_nick) {
+
+	if (!nick_context_valid || current_nick == NULL)
 		return "";
-	}
-	
-	/* Get nick to display - use nicktrunc if nick_column_enabled */
-	if (settings_get_bool("nick_column_enabled")) {
-		int temp_free = FALSE;
-		display_nick = expando_nicktrunc(server, item, &temp_free);
-		/* Handle memory correctly - always make our own copy */
-		if (temp_free && display_nick) {
-			/* nicktrunc allocated memory, take ownership */
-			char *temp_nick = g_strdup(display_nick);
-			g_free((char*)display_nick);
-			display_nick = temp_nick;
-		} else {
-			/* nicktrunc didn't allocate, make our own copy */
-			display_nick = display_nick ? g_strdup(display_nick) : g_strdup("");
-		}
-	} else {
-		display_nick = g_strdup(current_nick ? current_nick : "");
-	}
-	
-	/* Parse color palette */
-	palette = parse_color_palette(settings_get_str("nick_hash_colors"), &palette_size);
-	
-	/* Get persistent color index for this nick */
-	color_index = get_persistent_nick_color(current_nick, item, server);
-	
-	if (palette == NULL || palette_size <= 0 || color_index < 0 || color_index >= palette_size) {
-		g_strfreev(palette);
-		*free_ret = TRUE;
-		return (char *)display_nick;
+
+	display_nick = expando_nicktrunc(server, item, &nick_free);
+	if (!settings_get_bool("nick_hash_color_enabled")) {
+		*free_ret = nick_free;
+		return display_nick;
 	}
 
-	/* Return colored nick with proper formatting */
-	*free_ret = TRUE;
-	raw_format = g_strdup_printf("%%%s%%_%s%%_%%n", palette[color_index], display_nick);
-	result = format_string_expand(raw_format, NULL);
-	g_free(raw_format);
-	
+	palette = parse_color_palette(settings_get_str("nick_hash_colors"), &palette_size);
+	color_index = get_persistent_nick_color(current_nick, item, server);
+	if (color_index < 0 || color_index >= palette_size) {
+		g_strfreev(palette);
+		*free_ret = nick_free;
+		return display_nick;
+	}
+
+	raw = g_string_new(NULL);
+	g_string_append_printf(raw, "%%%s%%_", palette[color_index]);
+	for (p = display_nick; *p != '\0'; p++) {
+		if (*p == '%')
+			g_string_append_c(raw, '%'); /* literal %, not a format code */
+		g_string_append_c(raw, *p);
+	}
+	g_string_append(raw, "%_%n");
+	result = format_string_expand(raw->str, NULL);
+
+	g_string_free(raw, TRUE);
 	g_strfreev(palette);
-	g_free((char*)display_nick);
+	if (nick_free)
+		g_free(display_nick);
+	*free_ret = TRUE;
 	return result;
 }
 

@@ -2,7 +2,7 @@
  * Tests for the nick column expandos of fe-expandos.c: $nickalign pads the
  * mode and the nick to nick_column_width terminal cells, $nicktrunc cuts a
  * nick that does not fit on a character boundary and adds "+", and
- * $nickcolored shows the nick also when nick hash colouring is off.
+ * $nickcolored shows that nick also when nick hash colouring is off.
  */
 #include <irssi/src/common.h>
 #include <irssi/src/core/args.h>
@@ -185,6 +185,43 @@ static void test_column_off(void)
 	g_free(align);
 }
 
+/* $nickcolored is the nick of $nicktrunc, in a colour only while nick hash
+ * colouring is on: every combination of the two settings shows the nick */
+static void test_nickcolored(void)
+{
+	static const char *const nicks[] = { "alice", "a_rather_long_nick", "żółćżółćżółćżółć" };
+	int i, hash, column;
+
+	set_charset("UTF-8");
+	for (hash = 0; hash < 2; hash++) {
+		for (column = 0; column < 2; column++) {
+			settings_set_bool("nick_hash_color_enabled", hash);
+			set_column(column, 13);
+			for (i = 0; i < (int) G_N_ELEMENTS(nicks); i++) {
+				char *colored, *trunc, *plain;
+
+				colored = expand(nicks[i], "@", "$nickcolored");
+				trunc = expand(nicks[i], "@", "$nicktrunc");
+				plain = strip_codes(colored);
+				if (g_strcmp0(plain, trunc) != 0)
+					g_test_message("hash %d, column %d: \"%s\" gave \"%s\"", hash,
+					               column, nicks[i], plain);
+				g_assert_cmpstr(plain, ==, trunc);
+				g_assert_cmpstr(plain, !=, "");
+				/* coloured only with hashing on */
+				if (hash)
+					g_assert_cmpstr(colored, !=, plain);
+				else
+					g_assert_cmpstr(colored, ==, plain);
+				g_free(colored);
+				g_free(trunc);
+				g_free(plain);
+			}
+		}
+	}
+	settings_set_bool("nick_hash_color_enabled", TRUE);
+}
+
 /* outside a message the expandos are empty, not the nick of the last one */
 static void test_outside_message(void)
 {
@@ -193,14 +230,16 @@ static void test_outside_message(void)
 	set_column(TRUE, 13);
 	update_nick_context("alice", "@");
 	clear_nick_context();
-	ret = parse_special_string("[$nicktrunc][$nickalign][$nickmode]", NULL, NULL, "", NULL,
-	                           0);
-	g_assert_cmpstr(ret, ==, "[][][]");
+	ret = parse_special_string("[$nicktrunc][$nickalign][$nickmode][$nickcolored]", NULL,
+	                           NULL, "", NULL, 0);
+	g_assert_cmpstr(ret, ==, "[][][][]");
 	g_free(ret);
 
 	set_column(FALSE, 13);
-	ret = parse_special_string("[$nicktrunc]", NULL, NULL, "", NULL, 0);
-	g_assert_cmpstr(ret, ==, "[]");
+	settings_set_bool("nick_hash_color_enabled", FALSE);
+	ret = parse_special_string("[$nicktrunc][$nickcolored]", NULL, NULL, "", NULL, 0);
+	g_assert_cmpstr(ret, ==, "[][]");
+	settings_set_bool("nick_hash_color_enabled", TRUE);
 	g_free(ret);
 }
 
@@ -214,6 +253,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/nick_column/every_boundary", test_every_boundary);
 	g_test_add_func("/nick_column/not_utf8_terminal", test_not_utf8_terminal);
 	g_test_add_func("/nick_column/column_off", test_column_off);
+	g_test_add_func("/nick_column/nickcolored", test_nickcolored);
 	g_test_add_func("/nick_column/outside_message", test_outside_message);
 
 	test_home_setup();
