@@ -1602,6 +1602,7 @@ update-branch)
     run_release --ref main --prefix "$W/q"
     check "install from a branch: done" [ "$RC" = 0 ]
     check "... main recorded" grep -qx "REF=main" "$W/q/share/irssi/shellter-install.conf"
+    check "... said to be unverified" grep -q 'main is not a release - built as is, not verified' "$W/out"
     ;;
 saved-settings)
     # --no-test and --clean are kept for the next install and erssi
@@ -1627,6 +1628,7 @@ saved-settings)
     check "--help names --test" grep -q -- '^  --test ' "$W/out"
     check "--help names --no-clean" grep -q -- '^  --no-clean ' "$W/out"
     check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
+    check "... and what is verified" grep -q '^What is verified: ' "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

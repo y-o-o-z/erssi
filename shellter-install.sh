@@ -17,7 +17,11 @@
 # the recorded commit, so neither a moved nor a newly pushed tag changes what
 # gets installed; a release marked "signed" must also carry a valid SSH
 # signature by the key below (git verify-tag; needs git 2.34+ and
-# ssh-keygen). --ref main (or any other ref) is built as is, with a warning.
+# ssh-keygen; without them only the recorded commit is checked, with a
+# warning). --ref main (or any other ref) is built as is, unverified, with a
+# warning. This script itself is trusted as it was downloaded: the key and
+# the commits below are what everything else is checked against
+# (docs/shellter/install.md: "What the installer verifies").
 #
 # Update (--update): the newest release on the repository that carries a
 # valid signature by the key below - the key of the installed copy, so a
@@ -88,6 +92,14 @@ erssi Shellter Edition - install and update
   --clean        remove the build directory afterwards (small disk quotas)
   --no-clean     keep the build directory (the default)
   --yes          as root: install the missing packages without asking
+
+What is verified: a recorded release (the default) is built only if its
+tag is signed by the release key this script carries and points to the
+commit it records; without ssh-keygen or git 2.34+ only the commit, with a
+warning. Any other --ref is built unverified, with a warning. --update
+takes only a newer release signed by the key of the installed copy. This
+script itself is trusted as downloaded; to check it first, see "What the
+installer verifies" in docs/shellter/install.md.
 
 --src, --repo, --no-test/--test and --clean/--no-clean are kept in
 <prefix>/share/irssi/shellter-install.conf and used again by the next

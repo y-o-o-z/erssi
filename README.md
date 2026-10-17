@@ -36,6 +36,12 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
   that its tag points to the recorded commit and carries a valid signature
   by the release key, runs the test suite and installs to
   `~/.local/opt/erssi`, linked as `~/.local/bin/erssi`.
+- The downloaded script itself is trusted as it is: it carries the release
+  key and the recorded commits that everything after it is checked
+  against. Without ssh-keygen (or with git before 2.34) only the recorded
+  commit is checked, and any other `--ref` is built unverified, with a
+  warning. How to check the script first, and what each mode verifies:
+  [What the installer verifies](docs/shellter/install.md#what-the-installer-verifies).
 - Works on Linux and FreeBSD. Options: `--prefix`, `--ref`, `--src`,
   `--no-test`, `--clean`, `--yes`.
 - erssi keeps its configuration in `~/.erssi/`, so it runs side by side
@@ -52,8 +58,8 @@ erssi --update           # build and install it
 ```
 
 `--update` takes the newest release on GitHub that carries a valid
-signature by the release key, builds, tests and installs it into the same
-prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
+signature by the release key of the installed copy and is a newer version,
+builds, tests and installs it into the same prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
 (no `--update`): run the install command again; your `~/.erssi/config` is
 kept and the Shellter look stays.
 
