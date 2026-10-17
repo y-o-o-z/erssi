@@ -105,10 +105,13 @@
                  new address, with the channels it was accepted for. A
                  new key at a known address (a reinstall - or someone
                  else: compare fingerprints first): the new key replaces
-                 the old one. Name the new ident@host, the nick, or the
-                 old address; when more than one change waits, nothing is
-                 guessed - they are listed, and a second argument, the
-                 start of the fingerprint, picks one. Then their key is
+                 the old one. Name the new ident@host, the nick (only a
+                 key you trust that is known as that nick counts - not who
+                 holds the nick now - and a nick known at several
+                 addresses is refused), or the old address; when more
+                 than one change waits, nothing is guessed - they are
+                 listed, and a second argument, at least 8 hex digits of
+                 the fingerprint, picks one. Then their key is
                  asked for again (KEYREQ) where encryption is on, so their
                  next message is read. Without a recorded change it clears
                  the old data of that address and a new exchange is

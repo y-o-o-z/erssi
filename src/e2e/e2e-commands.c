@@ -1804,6 +1804,16 @@ static void cmd_reverify(SERVER_REC *server, WI_ITEM_REC *item, char **args)
 		e2e_print_item(item, "reverified %s: purged stale state of %s; re-handshake to TOFU-pin the new key",
 		               shown_text(who), shown_text(r.handle));
 		break;
+	case E2E_REVERIFY_NICK_AMBIGUOUS:
+		e2e_print_item(item, "reverify %s: the nick names trusted keys at several addresses - nothing changed; name one: /e2e reverify <ident@host>",
+		               shown_text(who));
+		for (i = 0; i < r.candidates->len; i++)
+			e2e_print_item(item, "  %s", shown_text(str_or(e2e_json_get_string(g_ptr_array_index(r.candidates, i), "handle"), "?")));
+		break;
+	case E2E_REVERIFY_BAD_FP:
+		e2e_print_item(item, "reverify %s: give at least 8 hex digits of the fingerprint to accept - nothing changed",
+		               shown_text(who));
+		break;
 	case E2E_REVERIFY_NOTHING:
 		e2e_print_item(item, "reverify %s: no key change waits and nothing is stored for it", shown_text(who));
 		break;

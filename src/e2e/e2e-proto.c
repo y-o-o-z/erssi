@@ -1116,12 +1116,23 @@ static gboolean check_peer(E2E_JSON *kr, const char *fp_hex, const unsigned char
 		                            nick, old);
 		g_free(old);
 		return FALSE;
-	case CHANGE_FINGERPRINT:
+	case CHANGE_FINGERPRINT: {
+		E2E_JSON *was = e2e_json_get(e2e_json_get(kr, "peers"), old_fp);
+
+		/* the key of the address was only seen asking - never read, never
+		   accepted: a new request, no identity that changed; the old key
+		   no longer stands for the address */
+		if (strcmp(status_of(was), "pending") == 0) {
+			e2e_json_remove(was, "last_handle");
+			*change = CHANGE_NEW;
+			return TRUE;
+		}
 		old = g_strdup(old_fp);
 		record_pending_trust_change(kr, handle, ctx, "fingerprint_changed", pub, old, fp_hex,
 		                            nick, NULL);
 		g_free(old);
 		return FALSE;
+	}
 	default:
 		return TRUE;
 	}
@@ -1291,6 +1302,35 @@ static void install_kept_sessions(E2E_JSON *kr, GPtrArray *rows, const char *han
 	}
 }
 
+static const char *str_or_empty(const char *s)
+{
+	return s != NULL ? s : "";
+}
+
+/* the addresses of the keys we trust known as nick (ASCII case), each once */
+static GPtrArray *trusted_addresses_of(const E2E_JSON *kr, const char *nick)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers), *out = g_ptr_array_new();
+	guint i, j;
+
+	for (i = 0; i < keys->len; i++) {
+		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
+		const char *h = e2e_json_get_string(peer, "last_handle");
+		gboolean dup = FALSE;
+
+		if (h == NULL || *h == '\0' || strcmp(status_of(peer), "trusted") != 0 ||
+		    g_ascii_strcasecmp(str_or_empty(e2e_json_get_string(peer, "last_nick")), nick) != 0)
+			continue;
+		for (j = 0; j < out->len && !dup; j++)
+			dup = strcmp(g_ptr_array_index(out, j), h) == 0;
+		if (!dup)
+			g_ptr_array_add(out, (gpointer) h);
+	}
+	g_ptr_array_unref(keys);
+	return out;
+}
+
 /* the changes waiting that name one of targets: filed under it, else (when
    none is) a handle change away from it */
 static GPtrArray *reverify_candidates(const E2E_JSON *kr, char **targets)
@@ -1336,19 +1376,60 @@ void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *f
 	memset(out, 0, sizeof(*out));
 	out->ctxs = g_ptr_array_new_with_free_func(g_free);
 	out->installed = g_ptr_array_new_with_free_func(g_free);
-	if (strchr(who, '@') != NULL)
+	/* a fingerprint is named by enough of it to tell keys apart */
+	if (prefix != NULL && (strlen(prefix) < 8 || strspn(prefix, "0123456789abcdef") != strlen(prefix))) {
+		out->result = E2E_REVERIFY_BAD_FP;
+		g_free(prefix);
+		return;
+	}
+	(void) live;
+	if (strchr(who, '@') != NULL) {
 		targets[nt++] = who;
-	if (live != NULL && *live != '\0')
-		targets[nt++] = live;
-	/* a copy: the peer row it is in may go */
-	if (strchr(who, '@') == NULL && e2e_find_handle_by_nick(kr, who) != NULL)
-		targets[nt++] = cached = g_strdup(e2e_find_handle_by_nick(kr, who));
+	} else {
+		/* a nick, only through a key we trust known as that nick (who
+		   holds the nick now proves nothing), one address only; a
+		   copy: the peer row it is in may go */
+		GPtrArray *addrs = trusted_addresses_of(kr, who);
+
+		if (addrs->len > 1) {
+			out->result = E2E_REVERIFY_NICK_AMBIGUOUS;
+			out->candidates = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_json_free);
+			for (i = 0; i < addrs->len; i++) {
+				E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+
+				e2e_json_set_string(row, "handle", g_ptr_array_index(addrs, i));
+				g_ptr_array_add(out->candidates, row);
+			}
+			g_ptr_array_unref(addrs);
+			g_free(prefix);
+			return;
+		}
+		if (addrs->len == 1)
+			targets[nt++] = cached = g_strdup(g_ptr_array_index(addrs, 0));
+		g_ptr_array_unref(addrs);
+	}
 	if (nt == 0) {
 		out->result = E2E_REVERIFY_NOTHING;
 		g_free(prefix);
 		return;
 	}
 	cands = reverify_candidates(kr, (char **) targets);
+	/* by a nick: only a change of a key we trust known as that nick */
+	if (strchr(who, '@') == NULL) {
+		for (i = 0; i < cands->len;) {
+			E2E_JSON *row = g_ptr_array_index(cands, i);
+			const char *change = e2e_json_get_string(row, "change");
+			E2E_JSON *peer = e2e_json_get(e2e_json_get(kr, "peers"),
+			                              e2e_json_get_string(row, g_strcmp0(change, "handle_changed") == 0
+			                                                       ? "new_fp" : "old_fp"));
+
+			if (strcmp(status_of(peer), "trusted") == 0 &&
+			    g_ascii_strcasecmp(str_or_empty(e2e_json_get_string(peer, "last_nick")), who) == 0)
+				i++;
+			else
+				g_ptr_array_remove_index(cands, i);
+		}
+	}
 	/* what can be accepted: one key at one address (the same change seen
 	   in several channels is one) */
 	picked = g_ptr_array_new();

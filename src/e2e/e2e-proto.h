@@ -419,7 +419,10 @@ typedef enum {
 	E2E_REVERIFY_NO_MATCH,	/* none of them has the fingerprint given: listed, nothing done */
 	E2E_REVERIFY_STALE,	/* the key of the change was forgotten since: the record goes */
 	E2E_REVERIFY_PURGED,	/* nothing to accept: the data of the address went */
-	E2E_REVERIFY_NOTHING	/* nothing to accept, nothing stored */
+	E2E_REVERIFY_NOTHING,	/* nothing to accept, nothing stored */
+	E2E_REVERIFY_NICK_AMBIGUOUS,	/* the nick names keys at several addresses:
+					   candidates have their "handle" */
+	E2E_REVERIFY_BAD_FP	/* the fingerprint given is not 8 or more hex digits */
 } E2E_REVERIFY_RESULT;
 
 typedef struct {
@@ -441,10 +444,12 @@ typedef struct {
  /e2e reverify: the user accepts the trust change that waits for an
  address (e2e_trust_changes). who is what the user typed, an ident@host
  or a nick; live the nick's address now (a query, a common channel), or
- NULL; fp_prefix the start of the fingerprint to accept (any case) or
- NULL. A change filed under one of the addresses (who, live, then the
- keyring's for the nick) is taken first, else a handle change away from
- one of them. Exactly one change must be in question:
+ NULL - not used: who holds a nick now proves nothing; fp_prefix the
+ start of the fingerprint to accept (any case) or NULL. A nick names the
+ address of the key we trust known as it - refused when there are
+ several - and only a change of such a key; an address names its own
+ changes first, else a handle change away from it. A fingerprint is 8 or
+ more hex digits. Exactly one change must be in question:
   - a handle change: the key is moved to the new address - its acceptance
     and recipient rows of channels go with it, the sessions of the old
     and of the new address go (a new key exchange sets them up), another

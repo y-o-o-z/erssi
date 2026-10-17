@@ -6135,6 +6135,12 @@ static void test_reverify(void)
 	g_free(req);
 	/* a fingerprint that is not the new key's: nothing changes */
 	e2e_reverify(b.kr, ALICE, NULL, "0000", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_BAD_FP);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, "0000000x", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_BAD_FP);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, "00000000", &rv);
 	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NO_MATCH);
 	g_assert_cmpuint(rv.candidates->len, ==, 1);
 	e2e_reverify_clear(&rv);
@@ -6886,6 +6892,68 @@ static void test_accept_dm_leaves_no_row(void)
 	peer_free(&b);
 }
 
+#define ZED "zed@z.example"
+
+/* /e2e reverify <nick> goes only through keys we trust known as that nick
+   and refuses a nick known at several addresses; a new key at an address
+   whose key was only seen asking is a new request, not a changed
+   identity */
+static void test_reverify_nick_rules(void)
+{
+	PEER me, a, zed, zed2, a2;
+	E2E_REVERIFY rv;
+	GPtrArray *changes;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	enable(&a, "#a", "auto-accept");
+	give_key(&a, &me, "#a");
+	/* a stranger takes the nick and asks with a key, then another key */
+	peer_init(&zed, "alice", ZED, -1);
+	peer_init(&zed2, "alice", ZED, -1);
+	req = e2e_build_keyreq(zed.kr, &zed.id, "#a", BOB, &error);
+	deliver_keyreq(&me, &zed, req, BOB, &rsp, &recip);
+	g_free(req);
+	g_assert_cmpstr(path_str(me.kr, "peers", zed.id.fp_hex, "status"), ==, "pending");
+	req = e2e_build_keyreq(zed2.kr, &zed2.id, "#b", BOB, &error);
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &zed2, req, BOB, &rsp, &recip);
+	g_free(req);
+	/* a new request, no identity change */
+	changes = e2e_trust_changes(me.kr, NULL);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	g_assert_nonnull(path_get(me.kr, "pending_inbound", ZED "|#b", NULL));
+	g_assert_null(path_str(me.kr, "peers", zed.id.fp_hex, "last_handle"));
+	/* by the nick: alice's trusted key only; nothing of zed's moves */
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, !=, E2E_REVERIFY_INSTALLED);
+	g_assert_cmpint(rv.result, !=, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(me.kr, "peers", zed2.id.fp_hex, "status"), ==, "pending");
+	/* two trusted keys known as alice at two addresses: refused */
+	peer_init(&a2, "alice", "alice@other.example", -1);
+	enable(&a2, "#a", "auto-accept");
+	give_key(&a, &me, "#a");
+	give_key(&a2, &me, "#a");
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NICK_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	g_assert_nonnull(path_get(me.kr, "peers", a.id.fp_hex, NULL));
+	g_assert_nonnull(path_get(me.kr, "peers", a2.id.fp_hex, NULL));
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&a2);
+	peer_free(&zed);
+	peer_free(&zed2);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6908,6 +6976,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
 	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
 	g_test_add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
+	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
