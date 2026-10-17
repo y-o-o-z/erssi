@@ -22,8 +22,9 @@
                                 before,
                    auto-accept  the key is sent back automatically,
                    quiet        requests from people whose key you do
-                                not have are dropped silently; the
-                                others wait for /E2E ACCEPT.
+                                not have are dropped silently (nothing
+                                of theirs is stored); the others wait
+                                for /E2E ACCEPT.
     FINGERPRINT: The full fingerprint of your key (creates the key if it
                  does not exist).
     STATUS:      Fingerprint, number of incoming sessions and number of

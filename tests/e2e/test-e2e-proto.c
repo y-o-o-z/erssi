@@ -303,12 +303,20 @@ static void test_handshake_modes(void)
 	g_assert_null(rsp);
 	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 0);
 
-	/* quiet: ignored as well, the peer is remembered */
+	/* quiet: ignored as well, and nothing of the stranger is stored */
 	enable(&b, "#test", "quiet");
-	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	{
+		char *before = e2e_keyring_snapshot(b.kr), *after;
+
+		deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+		after = e2e_keyring_snapshot(b.kr);
+		g_assert_cmpstr(before, ==, after);
+		g_free(before);
+		g_free(after);
+	}
 	g_assert_null(rsp);
 	g_assert_null(path_get(b.kr, "pending_inbound", ALICE "|#test", NULL));
-	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 1);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 0);
 
 	/* auto-accept: KEYRSP and our own KEYREQ back */
 	enable(&b, "#test", "auto-accept");

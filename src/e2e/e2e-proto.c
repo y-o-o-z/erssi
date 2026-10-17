@@ -1892,7 +1892,6 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	fp_hex = e2e_fingerprint_hex(req->pub);
 	if (!check_peer(kr, fp_hex, req->pub, sender_handle, nick, ctx, &change))
 		goto out;
-	update_peer(kr, fp_hex, req->pub, sender_handle, nick, NULL);
 
 	autotrust = e2e_autotrust_matches(kr, sender_handle, ctx);
 	mode = e2e_json_get_string(cfg, "mode");
@@ -1900,7 +1899,16 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		mode = "normal";
 	if (autotrust)
 		mode = "auto-accept";
+	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
+	trusted = is_trusted(sess);
+	/* quiet: a stranger's request is dropped silently - before anything
+	   of theirs is stored (a peer slot, a keyring write) */
+	if (strcmp(mode, "quiet") == 0 && !trusted &&
+	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
+		goto out;
+	update_peer(kr, fp_hex, req->pub, sender_handle, nick, NULL);
 	k = pipe_key(sender_handle, ctx);
+	/* read again: update_peer may prune the rows of other peers */
 	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
 	trusted = is_trusted(sess);
 	/* Our key goes only to someone the user accepted (/e2e accept,
@@ -1910,9 +1918,6 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   then, see the header). */
 	if (strcmp(mode, "auto-accept") != 0 &&
 	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex)) {
-		/* quiet: a stranger's request is dropped silently */
-		if (strcmp(mode, "quiet") == 0 && !trusted)
-			goto out;
 		/* waits for /e2e accept; a session with their key is kept */
 		if (!trusted) {
 			unsigned char zero[32] = { 0 };
