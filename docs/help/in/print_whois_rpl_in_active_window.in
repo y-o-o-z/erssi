@@ -1,0 +1,24 @@
+%9Setting:%9
+
+    print_whois_rpl_in_active_window (boolean; default: ON)
+
+%9Description:%9
+
+    Prints WHOIS and WHOWAS replies in the active window.
+
+    print_whois_rpl_in_server_window comes first: when it is ON and the
+    network has a status window (named after the server tag), the replies
+    go there. Otherwise this setting puts them in the window you are
+    looking at.
+
+    With both settings OFF the replies go to the usual window: a query
+    with the nick, or the window that matches the message level.
+
+%9Examples:%9
+
+    /SET print_whois_rpl_in_active_window on
+    /SET print_whois_rpl_in_active_window off
+
+%9See also:%9
+
+    SET, WHOIS, WHOWAS, PRINT_WHOIS_RPL_IN_SERVER_WINDOW

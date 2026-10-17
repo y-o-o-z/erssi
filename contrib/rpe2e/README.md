@@ -10,8 +10,9 @@ script switches to the module without new keys: unload the script
 is loaded the module stays inactive.
 
 This directory holds `rpe2e-from-repartee`, which moves an identity from
-repartee itself into that keyring. The module is a port of the MIT-licensed
-`rpe2e.pl`; the licence text is in [LICENSE](LICENSE).
+repartee itself into that keyring. The tool and its tests are the Shellter
+team's own, GPL-2.0-or-later like erssi. The module is a port of the
+MIT-licensed `rpe2e.pl`; [LICENSE](LICENSE) is that script's licence text.
 
 ## Moving keys from repartee
 
@@ -50,7 +51,8 @@ with its next undecryptable message).
 
 - `python3 test_rpe2e_from_repartee.py` — migration on a synthetic repartee
   database (real libsodium keys, AES-256-GCM secrets), including rejection
-  of a wrong key and inconsistent data.
+  of a wrong key and inconsistent data. `meson test` runs it as
+  `rpe2e-from-repartee`; it is skipped without libsodium.
 - The module itself is tested by `meson test` (`tests/e2e`, `src/fe-fuzz/e2e`);
   `tests/e2e/live-interop.sh` runs it live against repartee's `rpe2e.pl`
   when `RPE2E_SCRIPT` points to a copy of the script.

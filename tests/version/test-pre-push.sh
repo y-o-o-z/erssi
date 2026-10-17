@@ -133,7 +133,7 @@ newrepo
 cm -S --author='someone <someone@example.invalid>' -m 'x'
 push 'foreign author' refused 'author/committer' -- main
 
-# --- commit signatures (M6) -----------------------------------------------
+# --- commit signatures ----------------------------------------------------
 newrepo
 cm -m 'unsigned'
 push 'unsigned commit to main' refused 'not signed by the release key' -- main
@@ -213,7 +213,7 @@ git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'release tag for the delete' ok -- refs/tags/shellter-v2026.10.0
 push 'delete a release tag' ok -- :refs/tags/shellter-v2026.10.0
 
-# --- release tags (M5) ----------------------------------------------------
+# --- release tags ---------------------------------------------------------
 newrepo
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'signed release tag' ok -- refs/tags/shellter-v2026.10.0
@@ -247,7 +247,7 @@ newrepo
 git -C "$r" tag -s -m 'a tree' shellter-v2026.10.0 'HEAD^{tree}'
 push 'release tag of a tree' refused 'does not point to a commit' -- refs/tags/shellter-v2026.10.0
 
-# --- private patterns (M7) ------------------------------------------------
+# --- private patterns -----------------------------------------------------
 newrepo
 printf '#chan\n' > "$PATTERNS"
 LINE='join #chan now'; cm -S -m 'x'; LINE=
@@ -290,7 +290,7 @@ printf '(\n' > "$PATTERNS"
 cm -S -m 'x'
 push 'invalid pattern' refused 'invalid pattern' -- main
 
-# --- temporary files (M8) -------------------------------------------------
+# --- temporary files ------------------------------------------------------
 newrepo
 cm -S -m 'x'
 export STUB_MESON_INT=1

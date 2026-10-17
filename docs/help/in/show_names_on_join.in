@@ -1,0 +1,23 @@
+%9Setting:%9
+
+    show_names_on_join (boolean; default: ON)
+
+%9Description:%9
+
+    Prints the nick list of a channel when you join it.
+
+    The list is a count line ("Total of N nicks ...") and, below it, the
+    table of nicks. show_names_on_join_limit and show_names_on_join_alone
+    choose when only the count line is printed. Channels that come back
+    after /UPGRADE print nothing.
+
+    With the setting OFF a join prints no list; /NAMES still prints it.
+
+%9Examples:%9
+
+    /SET show_names_on_join on
+    /SET show_names_on_join off
+
+%9See also:%9
+
+    SET, NAMES, SHOW_NAMES_ON_JOIN_LIMIT, SHOW_NAMES_ON_JOIN_ALONE

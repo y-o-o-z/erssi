@@ -96,6 +96,9 @@ Build/
 .cache/
 build
 build/
+# Extra build directories, such as README's Build-asan
+/Build-*/
+/build-*/
 .specstory/
 .cursor/
 .cursorindexingignore

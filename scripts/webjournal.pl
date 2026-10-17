@@ -54,8 +54,8 @@ use Fcntl qw(O_WRONLY O_APPEND O_CREAT);
 
 our $VERSION = '1.2.5';
 our %IRSSI = (
-    authors     => 'yooz',
-    contact     => 'https://github.com/y-o-o-z',
+    authors     => 'the Shellter team',
+    contact     => 'https://shellter.me',
     name        => 'webjournal',
     description => 'Journal of erssi windows (channels, queries, Notices, Mentions, status) for the web client',
     license     => 'MIT',
