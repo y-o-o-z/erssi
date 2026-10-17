@@ -692,6 +692,26 @@ if want_fuzzer
   endif
 endif
 
+# irssi's signal system calls every handler through the one generic
+# SIGNAL_FUNC type (signals.c), with the arguments its signal carries: that
+# is irssi's signal ABI, used by all modules and scripts, not a mistake.
+# clang's -fsanitize=function (part of -fsanitize=undefined since clang 17)
+# stops at the first signal emitted, so the fuzz targets and README's
+# Build-asan built with clang could not run at all. It is turned off for
+# every build whose compiler knows it - a no-op without the sanitizer; the
+# rest of UBSan stays on. Meson puts these arguments after b_sanitize but
+# before CFLAGS, so a sanitizer given in CFLAGS needs its own
+# -fno-sanitize=function after it.
+no_sanitize_function = cc.get_supported_arguments('-fno-sanitize=function')
+add_project_arguments(no_sanitize_function, language : 'c')
+cflags_joined = ' '.join(get_option('c_args'))
+if (no_sanitize_function.length() > 0 and cflags_joined.contains('-fsanitize=')
+    and (cflags_joined.contains('undefined') or cflags_joined.contains('function'))
+    and not cflags_joined.contains('-fno-sanitize=function'))
+  warning('CFLAGS turn on -fsanitize=function, which stops at irssi\'s first signal: ' +
+          'add -fno-sanitize=function at their end')
+endif
+
 ##############
 # irssi-1.pc #
 ##############
