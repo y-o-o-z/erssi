@@ -167,6 +167,138 @@ push 'unsigned commit to a second remote' ok -- HEAD:refs/heads/dev/y
 to=origin
 push 'the same unsigned commit, then to main of the first' refused 'not signed by the release key' -- HEAD:main
 
+# the author, AI-trailer and private-data checks cover every commit the
+# remote pushed to does not have, also one already on another remote: a
+# pattern added after the commit went to staging ...
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+LINE='host secret-box.example.lan'; cm -S -m 'x'; LINE=
+to=staging
+push 'a commit to a second remote, before its pattern' ok -- HEAD:main
+printf 'secret-box\n' > "$PATTERNS"
+to=origin
+push 'the same commit, then to the first, with the pattern' refused 'private data in the diff' -- HEAD:main
+
+# ... or a push to staging that skipped the hook
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S --author='someone <someone@example.invalid>' -m 'x'
+to=staging
+push 'foreign author to a second remote, --no-verify' ok -- --no-verify HEAD:main
+to=origin
+push 'the same commit, then to the first' refused 'author/committer' -- HEAD:main
+
+# a commit the remote has on another branch is not new to it
+newrepo
+LINE='host secret-box.example.lan'; cm -S -m 'x'; LINE=
+push 'a commit to another branch, before its pattern' ok -- HEAD:refs/heads/dev/z
+printf 'secret-box\n' > "$PATTERNS"
+push 'the same commit, then to main of the same remote' ok -- HEAD:main
+
+# after a history rewrite our copies of the remote's branches are rewritten
+# too (git filter-repo): when they do not match what the remote reports,
+# they leave nothing out
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S -m 'signed'
+to=staging
+push 'signed main to a second remote' ok -- main
+# signed, so that only the commit checks (private data) can refuse it
+printf 'secret-box\n' >> "$PATTERNS"
+echo 'host secret-box.example.lan' >> "$r/f" && git -C "$r" add f
+git -C "$r" commit -q -S --amend -m 'rewritten, signed'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+push 'rewritten main over a rewritten copy of the remote main' refused 'private data in the diff' -- --force main
+git -C "$r" commit -q --amend -m 'rewritten, unsigned'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+# ... also when the remote's old tip is gone from here (filter-repo prunes it)
+git -C "$r" reflog expire --expire=now --all && git -C "$r" gc -q --prune=now
+push 'the same, the remote tip not here any more' refused 'not signed by the release key' -- --force main
+to=origin
+
+# ... and for a new branch or tags only, where the remote reports no tip to
+# compare: a copy that no longer contains its previous commit (reflog) ...
+newrepo
+git init -q --bare "$r.staging.git" && git -C "$r" remote add staging "$r.staging.git"
+cm -S -m 'signed'
+to=staging
+push 'signed main to a second remote' ok -- main
+printf 'secret-box\n' >> "$PATTERNS"
+echo 'host secret-box.example.lan' >> "$r/f" && git -C "$r" add f
+git -C "$r" commit -q -S --amend -m 'rewritten'
+git -C "$r" update-ref refs/remotes/staging/main HEAD
+push 'a new branch over a rewritten copy' refused 'private data in the diff' -- HEAD:refs/heads/x
+# ... or, with no reflog left, a repository git filter-repo rewrote
+git -C "$r" reflog expire --expire=now --all
+git -C "$r" tag note HEAD
+mkdir "$r/.git/filter-repo"
+push 'a tag after git filter-repo' refused 'private data in the diff' -- refs/tags/note
+to=origin
+
+# a push of several refs checks each commit once
+newrepo
+cm -S --author='someone <someone@example.invalid>' -m 'x'
+git -C "$r" tag -a -m 'a note' note
+push 'main and a tag over one foreign commit' refused 'author/committer' -- main refs/tags/note
+if [ "$(printf '%s\n' "$out" | grep -c 'author/committer')" = 1 ]; then
+    pass "... named once"
+else
+    fail "... named once" "$(printf '%s' "$out" | tr '\n' '|')"
+fi
+
+# a push to a URL instead of a remote name: that remote's branches count
+newrepo
+cm -S -m 'x'
+to=$r.git
+push 'signed commit to main by URL' ok -- HEAD:main
+to=origin
+cm -S --author='someone <someone@example.invalid>' -m 'theirs'
+push 'foreign author to a branch, --no-verify' ok -- --no-verify HEAD:refs/heads/dev/f
+to=$r.git
+push 'a new branch by URL over what the remote has' ok -- HEAD:refs/heads/dev/g
+to=origin
+
+# commits of the upstream projects (irssi, erssi-org) are theirs: on a
+# remote that does not have them yet they are not checked
+upstream_repo() {   # a repository with one commit by someone else, as remote $1
+    git init -q "$r.up" &&
+        echo up > "$r.up/u" && git -C "$r.up" add u &&
+        git -C "$r.up" -c user.name=up -c user.email=up@example.invalid commit -q -m 'upstream' &&
+        git -C "$r" remote add "$1" "$r.up" && git -C "$r" fetch -q "$1" 2>/dev/null &&
+        git -C "$r" merge -q -S --allow-unrelated-histories -m 'merge upstream' "$1/main" >/dev/null
+}
+newrepo
+upstream_repo upstream
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+to=fresh
+push 'upstream history to a new remote' ok -- main
+push 'upstream history as a new branch' ok -- HEAD:refs/heads/dev/u
+to=origin
+
+newrepo
+upstream_repo theirs
+git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
+to=fresh
+push 'upstream history from a remote not named as upstream' refused 'author/committer' -- main
+git -C "$r" config prepush.upstream 'erssi-org theirs'
+push 'the same with prepush.upstream naming it' ok -- main
+# never a remote with the fork's own URL, or with the destination's (each
+# push to a new remote that does not have the history yet)
+fresh_remote() { git init -q --bare "$r.$1.git" && git -C "$r" remote add "$1" "$r.$1.git"; to=$1; }
+git -C "$r" remote set-url theirs https://github.com/y-o-o-z/erssi-dev.git
+fresh_remote fresh2
+push 'an upstream remote with the fork'"'"'s URL' refused 'author/committer' -- main
+git -C "$r" remote set-url theirs "$r.up"
+git -C "$r" remote set-url --push theirs git@github.com:Y-O-O-Z/erssi.git
+push '... as its push URL' refused 'author/committer' -- main
+git -C "$r" config --unset remote.theirs.pushurl
+fresh_remote fresh3
+git -C "$r" remote set-url theirs "$r.fresh3.git"
+push 'an upstream remote with the destination'"'"'s URL' refused 'author/committer' -- main
+git -C "$r" remote set-url theirs "$r.up"
+push 'the same upstream remote with its own URL again' ok -- main
+to=origin
+
 # main created on an empty remote: everything it gets is new to it
 newrepo
 git init -q --bare "$r.fresh.git" && git -C "$r" remote add fresh "$r.fresh.git"
@@ -204,19 +336,75 @@ cm -m 'unsigned'
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'release tag and unsigned main in one push' refused 'not signed by the release key' -- refs/tags/shellter-v2026.10.0 main
 
-# deletes create nothing on the remote and pass
+# a deleted branch: nothing is created on the remote
 newrepo
 cm -m 'unsigned'
 push 'branch for the delete' ok -- HEAD:refs/heads/dev/x
 push 'delete a branch' ok -- :refs/heads/dev/x
-git -C "$r" tag -s -m 'release' shellter-v2026.10.0
-push 'release tag for the delete' ok -- refs/tags/shellter-v2026.10.0
-push 'delete a release tag' ok -- :refs/tags/shellter-v2026.10.0
 
 # --- release tags ---------------------------------------------------------
 newrepo
 git -C "$r" tag -s -m 'release' shellter-v2026.10.0
 push 'signed release tag' ok -- refs/tags/shellter-v2026.10.0
+
+newrepo
+cm -m 'unsigned'
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'signed release tag of an unsigned commit' refused 'release commit' -- refs/tags/shellter-v2026.10.0
+
+# a release tag on the remote is never moved or deleted, even signed and
+# forced; nor is one that shellter-install.sh records pushed on another
+# commit (a delete that skipped the hook, then the tag again)
+newrepo
+base=$(git -C "$r" rev-parse HEAD)
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+push 'release tag for the move' ok -- refs/tags/shellter-v2026.10.0
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$base" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'pin'
+cm -S -m 'a fix'
+push 'the pin and the fix to main' ok -- main
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+push 'release tag moved' refused 'release tags never move' -- --force refs/tags/shellter-v2026.10.0
+push 'release tag deleted' refused 'release tags are never deleted' -- :refs/tags/shellter-v2026.10.0
+push 'release tag deleted, the hook skipped' ok -- --no-verify :refs/tags/shellter-v2026.10.0
+push 'release tag pushed again on another commit' refused 'shellter-install.sh records' -- refs/tags/shellter-v2026.10.0
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 "$base" >/dev/null
+push 'release tag pushed again on its recorded commit' ok -- refs/tags/shellter-v2026.10.0
+
+# a one-time re-signing: PREPUSH_RETAG names the release tags that may move
+# or be deleted; every other check still runs
+newrepo
+git -C "$r" tag -s -m 'release' shellter-v2026.10.0
+git -C "$r" tag -s -m 'release' shellter-v1.3.2
+push 'release tags for the re-signing' ok -- refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+cm -S -m 'rewritten'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+git -C "$r" tag -f -s -m 'release' shellter-v1.3.2 >/dev/null
+export PREPUSH_RETAG=shellter-v2026.10.1
+push 're-signing, another tag named' refused 'release tags never move' -- --force refs/tags/shellter-v2026.10.0
+export PREPUSH_RETAG=shellter-v2026.10.0
+push 're-signing, only one of two tags named' refused 'shellter-v1.3.2: release tags never move' -- --force refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+export PREPUSH_RETAG='shellter-v2026.10.0 shellter-v1.3.2'
+git -C "$r" tag -f -s -u "$tmp/other" -m 'release' shellter-v2026.10.0 >/dev/null
+push 're-signing, a tag signed by another key' refused 'not signed by the release key' -- --force refs/tags/shellter-v2026.10.0
+cm -m 'unsigned'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 >/dev/null
+push 're-signing, a tag of an unsigned commit' refused 'release commit' -- --force refs/tags/shellter-v2026.10.0
+git -C "$r" tag -f shellter-v2026.10.0 >/dev/null
+push 're-signing, a lightweight tag' refused 'must be annotated' -- --force refs/tags/shellter-v2026.10.0
+git -C "$r" reset -q --hard HEAD^
+# the pins of this checkout (the new ones) still count: a re-signed tag on
+# another commit than they record is refused
+x=$(git -C "$r" rev-parse HEAD)
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$(git -C "$r" rev-parse HEAD^)" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'new pins'
+git -C "$r" tag -f -s -m 'release' shellter-v2026.10.0 "$x" >/dev/null
+push 're-signing, a tag elsewhere than the new pins' refused 'shellter-install.sh records' -- --force refs/tags/shellter-v2026.10.0
+printf 'RELEASES="\nshellter-v2026.10.0 %s signed\n"\n' "$x" > "$r/shellter-install.sh"
+git -C "$r" add shellter-install.sh && git -C "$r" commit -qS -m 'new pins, right'
+push 're-signing, both named' ok 'PREPUSH_RETAG' -- --force refs/tags/shellter-v2026.10.0 refs/tags/shellter-v1.3.2
+push 're-signing, a named tag deleted' ok 'PREPUSH_RETAG' -- :refs/tags/shellter-v1.3.2
+unset PREPUSH_RETAG
 
 newrepo
 git -C "$r" tag shellter-v2026.10.0

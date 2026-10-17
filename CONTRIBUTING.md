@@ -41,5 +41,10 @@ there.
 - Describe the user-visible change in the pull request; the release notes
   in [NEWS](NEWS) are written when a release is made.
 
+Releases are made by the Shellter team with the release hook
+`utils/pre-push`; the rules and the procedures (a release, and the
+one-time re-signing of the release tags) are in
+[docs/shellter/releasing.md](docs/shellter/releasing.md).
+
 Contributions are accepted under the GNU General Public License, version
 2 or later, like the rest of the code.

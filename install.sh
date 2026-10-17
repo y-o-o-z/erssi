@@ -283,12 +283,19 @@ create_symlinks() {
            return 1
        }
 
-       ln -sf "$bin_path" "$HOME/.local/bin/erssi" || {
-           print_error "Failed to create symlink"
-           return 1
-       }
+       # Installed to ~/.local, the binary is ~/.local/bin/erssi itself: no
+       # link. ln -sf would link it to itself - GNU ln refuses, the BSDs'
+       # and macOS's ln removes the binary first.
+       if [[ "$(cd "$install_path/bin" && pwd -P)" == "$(cd "$HOME/.local/bin" && pwd -P)" ]]; then
+           print_success "Installed: $bin_path"
+       else
+           ln -sf "$bin_path" "$HOME/.local/bin/erssi" || {
+               print_error "Failed to create symlink"
+               return 1
+           }
 
-       print_success "Created symlink: $HOME/.local/bin/erssi -> $bin_path"
+           print_success "Created symlink: $HOME/.local/bin/erssi -> $bin_path"
+       fi
 
        # Add to PATH if not already there
        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
@@ -308,8 +315,6 @@ show_completion_message() {
 
    if [[ "$install_path" == "/opt/erssi" ]]; then
        echo "  • Symlink: /usr/local/bin/erssi"
-   else
-       echo "  • Symlink: $HOME/.local/bin/erssi"
    fi
 
    echo ""

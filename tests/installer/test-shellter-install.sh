@@ -33,6 +33,7 @@ find_tool() {
 find_tool git >/dev/null || { echo "skip: no git"; exit 77; }
 SCRIPT=$(find_tool script) || SCRIPT=""
 UNSHARE=$(find_tool unshare) || UNSHARE=""
+KEYGEN=$(find_tool ssh-keygen) || KEYGEN=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
 stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
@@ -100,7 +101,9 @@ EOF
 [ "$1" != --version ] || { echo 1.13.2; exit 0; }
 if [ "$1" = -C ] && [ "${3:-}" = install ]; then
     p=$(cat "$2/prefix") && mkdir -p "$p/bin" || exit 1
-    printf '#!/bin/sh\necho "erssi 9.9.9 (20261010 1200)"\n' > "$p/bin/erssi" && chmod 755 "$p/bin/erssi"
+    # the version of the checkout (release_commit), 9.9.9 without one
+    v=9.9.9; [ ! -f "$2/../VERSION" ] || v=$(cat "$2/../VERSION")
+    printf '#!/bin/sh\necho "erssi %s (20261010 1200)"\n' "$v" > "$p/bin/erssi" && chmod 755 "$p/bin/erssi"
 fi
 exit 0
 EOF
@@ -249,6 +252,18 @@ esac
 EOF
     use_tool ls id
 }
+# The setup guard once more, as a member of a shared group (another_user,
+# FAKE_GROUP_NAME=staff). A directory above $W that the user's private group
+# can write to (mode 770, e.g. made under umask 007) passes as private for
+# the user, but not for a shared group: there the installer stops at that
+# directory before it reaches the one a case is about. 1 in that case.
+# Used by the case src-writable-named, which is skipped then.
+private_for_shared_group() {
+    # shellcheck disable=SC2016 # run by sh
+    FAKE_GROUP_NAME=staff SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init
+            owner() { ls -ldn "$1" 2>/dev/null | awk "{print \$3}"; }
+            safe_path "$2"' sh "$SRC/shellter-install.sh" "$W" > /dev/null 2>&1
+}
 foreign() { for f in "$@"; do printf '%s 4242 -\n' "$f" >> "$W/lsfake"; done; }
 fake_owner() { printf '%s %s -\n' "$1" "$2" >> "$W/lsfake"; }
 fake_mode() { printf '%s - %s\n' "$1" "$2" >> "$W/lsfake"; }
@@ -314,6 +329,131 @@ none_exist() { for f in "$@"; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; don
 # shellcheck disable=SC2317
 no_link() { [ ! -e "$HOME/.local/bin/erssi" ] && [ ! -L "$HOME/.local/bin/erssi" ]; }
 
+# ── release signatures ───────────────────────────────────────────────
+# A throwaway release key ($W/key; $W/other is somebody else's): $INSTALLER
+# is a copy of the installer under test whose RELEASE_SIGNER and the
+# fingerprint signed_tag() checks are those of $W/key, and whose RELEASES
+# are the lines of $W/releases. The signatures are real (ssh-keygen, which
+# joins the tools in PATH); the test repository gets commits and tags.
+release_key() {
+    [ -n "$KEYGEN" ] || { echo "skip: no ssh-keygen"; exit 77; }
+    # shellcheck disable=SC2046 # "2 47" -> $1 $2
+    set -- $(git --version | sed -n 's/^git version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    { [ "${1:-0}" -gt 2 ] || { [ "${1:-0}" -eq 2 ] && [ "${2:-0}" -ge 34 ]; }; } ||
+        { echo "skip: git before 2.34 cannot check SSH signatures"; exit 77; }
+    ln -s "$KEYGEN" "$W/bin/ssh-keygen"
+    if ! { ssh-keygen -q -t ed25519 -N '' -C release -f "$W/key" &&
+            ssh-keygen -q -t ed25519 -N '' -C other -f "$W/other"; }; then
+        echo "FAIL $CASE: ssh-keygen"; exit 1
+    fi
+    : > "$W/releases"
+    patch_installer
+}
+# $INSTALLER from the installer under test, $W/key and $W/releases. The
+# release key and its fingerprint are read from the installer and must be
+# there once each, so that a new key there cannot leave this copy trusting
+# the real one.
+patch_installer() {
+    old_key=$(sed -n "s/^RELEASE_SIGNER='[^ ]* namespaces=\"git\" \([^ ]* [^ ']*\).*/\1/p" "$SRC/shellter-install.sh")
+    old_fp=$(sed -n 's/.* with ED25519 key \(SHA256:[A-Za-z0-9+/]*\)\$.*/\1/p' "$SRC/shellter-install.sh")
+    new_key=$(cut -d' ' -f1,2 "$W/key.pub")
+    new_fp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
+    if ! { [ -n "$old_key" ] && [ -n "$old_fp" ] &&
+            [ "$(grep -cF "$old_key" "$SRC/shellter-install.sh")" = 1 ] &&
+            [ "$(grep -cF "$old_fp" "$SRC/shellter-install.sh")" = 1 ]; }; then
+        echo "FAIL $CASE: the release key or its fingerprint not found once in the installer"; exit 1
+    fi
+    INSTALLER=$W/inst.sh
+    # literal replacements (a key holds / and +); RELEASES from the file
+    awk -v ok="$old_key" -v nk="$new_key" -v of="$old_fp" -v nf="$new_fp" -v rel="$W/releases" '
+        function swap(s, a, b,   i) {
+            i = index(s, a)
+            return i ? substr(s, 1, i - 1) b substr(s, i + length(a)) : s
+        }
+        skip && /^"$/ { skip = 0 }
+        skip { next }
+        /^RELEASES="$/ { print; while ((getline l < rel) > 0) print l; close(rel); skip = 1; next }
+        { print swap(swap($0, ok, nk), of, nf) }' "$SRC/shellter-install.sh" > "$INSTALLER" || exit 1
+    if ! { grep -qF "$new_key" "$INSTALLER" && grep -qF "$new_fp" "$INSTALLER" && ! grep -qF "$old_fp" "$INSTALLER"; }; then
+        echo "FAIL $CASE: the throwaway key did not replace the release key"; exit 1
+    fi
+}
+# release_commit VERSION: a commit in the test repository whose checkout
+# installs as erssi VERSION (the stand-in ninja reads VERSION); prints it
+release_commit() {
+    printf '%s\n' "$1" > "$W/repo/VERSION"
+    git -C "$W/repo" add VERSION &&
+        git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            commit -q --allow-empty -m "erssi $1" && git -C "$W/repo" rev-parse HEAD
+}
+# rtag TAG COMMIT [KEY]: the annotated tag TAG on COMMIT, signed by $W/key
+# (or KEY), replacing a tag of that name
+rtag() {
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="${3:-$W/key}" tag -f -s -m "$1" "$1" "$2" > /dev/null
+}
+# the installer under test with ARGS, from the test repository
+run_release() {
+    sh "$INSTALLER" --repo "$W/repo" --no-test "$@" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+}
+# an installed erssi VERSION in $W/p, built from COMMIT [installed as REF]
+release_prefix() {
+    fake_prefix "$W/p" "$1"
+    printf 'COMMIT=%s\n' "$2" >> "$W/p/share/irssi/shellter-install.conf"
+    [ -z "${3:-}" ] || printf 'REF=%s\n' "$3" >> "$W/p/share/irssi/shellter-install.conf"
+}
+run_update() {
+    sh "$INSTALLER" --update --no-test --prefix "$W/p" "$@" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+}
+# fn SCRIPT ARGS...: SCRIPT (with ARGS as "$@") in a shell that has the
+# installer under test loaded, REPO the test repository; the output in
+# $W/fn.out and $W/fn.err, the code in RC
+fn() {
+    # shellcheck disable=SC2016 # run by sh
+    REPO=$W/repo SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init; LOG=/dev/null; s=$2; shift 2; eval "$s"' \
+        sh "$INSTALLER" "$@" > "$W/fn.out" 2> "$W/fn.err"
+    RC=$?
+}
+# st TAG [NAME]: TAG fetched into a new repository and checked by
+# signed_tag as the release NAME (default TAG)
+st() {
+    rm -rf "$W/st" && git init -q "$W/st" || exit 1
+    # shellcheck disable=SC2016 # run by fn
+    fn 'fetch_ref "$1" "$2" && signed_tag "$1" "$3"' "$W/st" "$1" "${2:-$1}"
+}
+# a gpg that accepts every signature and logs that it ran, as one with an
+# OpenPGP key of the signer in the user's keyring would: never to be asked
+gpg_accepts_all() {
+    gfp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
+    {
+        printf '#!/bin/sh\n'
+        # shellcheck disable=SC2016 # the stand-in script
+        printf 'echo ran >> "$TEST_W/ran-gpg"\n'
+        printf 'echo "[GNUPG:] NEWSIG"\necho "[GNUPG:] GOODSIG 0123456789ABCDEF release"\n'
+        printf 'echo "[GNUPG:] VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2026-10-01 0 4 0 22 8 00 0123456789ABCDEF0123456789ABCDEF01234567"\n'
+        printf 'echo "[GNUPG:] TRUST_ULTIMATE 0 pgp"\n'
+        printf "echo 'Good \"git\" signature for 136268860+y-o-o-z@users.noreply.github.com with ED25519 key %s'\n" "$gfp"
+        printf 'exit 0\n'
+    } | stand gpg
+    use_tool gpg
+    for t in gpg2 gpgsm; do cp "$W/stand/gpg" "$W/shim/$t"; done
+}
+# git whose fetch fails while FAKE_FETCH_FAIL=1 (the network gone after
+# ls-remote, a server error)
+fetch_fails() {
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nif [ "${FAKE_FETCH_FAIL:-}" = 1 ]; then\n    for a in "$@"; do [ "$a" != fetch ] || { echo "fatal: unable to access the repository" >&2; exit 128; }; done\nfi\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+}
+# ptag TAG COMMIT: TAG as an annotated tag with an OpenPGP signature block
+ptag() {
+    o=$(printf 'object %s\ntype commit\ntag %s\ntagger test <test@example.invalid> 1790000000 +0000\n\n%s\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n=AAAA\n-----END PGP SIGNATURE-----\n' \
+        "$2" "$1" "$1" | git -C "$W/repo" hash-object -t tag -w --stdin) &&
+        git -C "$W/repo" update-ref "refs/tags/$1" "$o"
+}
+
 # the ten spinner frames as the installer draws them (sourced only when it
 # can be loaded without running main)
 spinner() {
@@ -334,6 +474,9 @@ ascii)
     check "fails in Finding the release" grep -q 'Finding the release.*failed' "$W/out"
     check "output is ASCII only" ascii_only "$W/out"
     check "header with an ASCII separator" grep -qF 'erssi Shellter Edition - update' "$W/out"
+    check "names the current installer, for this prefix" \
+        grep -qF "curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh -s -- --prefix $W/p" "$W/out"
+    check "... not a release of its own" no_grep '[-]-ref shellter-v' "$W/out"
     check "ASCII spinner" [ "$(spinner)" = '|/-\|/-\|/' ]
     # no locale command and no locale variables: ASCII as well
     rm -f "$W/shim/locale"
@@ -434,6 +577,20 @@ link-system-prefix)
     check "in PATH: start erssi" grep -q 'start  *erssi ' "$W/out"
     check "in PATH: no PATH hint" no_grep "not in PATH" "$W/out"
     check "in PATH: still no link" no_link
+    ;;
+relative-prefix)
+    # a relative --prefix: refused before anything is made or downloaded
+    # (meson needs an absolute one, and the link would point nowhere)
+    mkdir -p "$W/cwd"
+    (cd "$W/cwd" && sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --prefix opt/erssi) > "$W/out" 2>&1 < /dev/null
+    RC=$?
+    check "refused" [ "$RC" = 2 ]
+    check "... named" grep -qF -- '--prefix needs an absolute path' "$W/out"
+    check "... nothing made" none_exist "$W/cwd/opt" "$HOME/.local/src/erssi" "$HOME/.local/src/erssi.lock"
+    (cd "$W/cwd" && sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --prefix ./opt) > "$W/out" 2>&1 < /dev/null
+    check "./ refused too" [ $? = 2 ]
+    run_install --prefix "$W/abs/erssi"
+    check "an absolute prefix: installed" [ "$RC" = 0 ]
     ;;
 link-root)
     # root (id -u 0, a home owned by root): no link, whatever the prefix
@@ -660,7 +817,10 @@ EOF
     ;;
 src-writable)
     # a venv or source directory other users can write to: refused; group
-    # write by the user's own private group (no other members, no ACL): allowed
+    # write by the user's own private group (no other members, no ACL):
+    # allowed. Which directory the shared-group refusals name: the case
+    # src-writable-named (a directory above $W that the user's group can
+    # write to is refused first)
     no_meson_python
     another_user
     V=$HOME/.local/src/erssi.venv
@@ -670,7 +830,6 @@ src-writable)
     run_install
     unset FAKE_GROUP_NAME
     check "group-writable venv, shared group: refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "$V can be changed by other users" "$W/out"
     check "... nothing run" none_exist "$W/ran-venv" "$W/py.log"
     run_install
     check "group-writable venv, private group: installed" [ "$RC" = 0 ]
@@ -719,7 +878,31 @@ src-writable)
     unset FAKE_GROUP_NAME
     umask 022
     check "umask 007, shared group: refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "$HOME/.local/src is writable by other users - choose a --src under a directory only you can write" "$W/out"
+    ;;
+src-writable-named)
+    # the two shared-group refusals of src-writable name the directory
+    # they are about; skipped where a directory above $W is writable by the
+    # user's group, as a shared group is refused there first
+    no_meson_python
+    another_user
+    if ! private_for_shared_group; then
+        echo "skip: a directory above $W is writable by your group - a shared group is refused there first (it runs with a TMPDIR whose directories above are not group-writable)"
+        exit 77
+    fi
+    V=$HOME/.local/src/erssi.venv
+    plant_venv "$V"
+    chmod g+w "$V"
+    FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
+    run_install
+    check "group-writable venv, shared group: refused" [ "$RC" = 1 ]
+    check "... the venv named" grep -qF "$V can be changed by other users" "$W/out"
+    rm -rf "$HOME/.local/src"
+    umask 007
+    run_install
+    umask 022
+    unset FAKE_GROUP_NAME
+    check "umask 007, shared group: refused" [ "$RC" = 1 ]
+    check "... ~/.local/src named" grep -qF "$HOME/.local/src is writable by other users - choose a --src under a directory only you can write" "$W/out"
     ;;
 src-shared-parent)
     # a directory others can write to, even sticky like /tmp: refused
@@ -1190,6 +1373,277 @@ stale-nexus)
     check "nexus.theme gone from the prefix" none_exist "$P/share/irssi/themes/nexus.theme"
     check "another theme kept" [ -f "$P/share/irssi/themes/shellter.theme" ]
     check "a copy in the home kept" [ -f "$HOME/.erssi/nexus.theme" ]
+    ;;
+release-signature)
+    # signed_tag: an annotated tag of that name with an SSH signature by the
+    # release key, nothing else
+    release_key
+    c=$(release_commit 2026.10.2)
+    rtag shellter-v2026.10.2 "$c"
+    st shellter-v2026.10.2
+    check "signed by the release key: verified" [ "$RC" = 0 ]
+    rtag shellter-v2026.10.3 "$c" "$W/other"
+    st shellter-v2026.10.3
+    check "signed by another key: refused" [ "$RC" = 1 ]
+    git -C "$W/repo" tag shellter-v2026.10.4 "$c"
+    st shellter-v2026.10.4
+    check "lightweight tag: refused" [ "$RC" = 1 ]
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -m x shellter-v2026.10.5 "$c"
+    st shellter-v2026.10.5
+    check "annotated, unsigned: refused" [ "$RC" = 1 ]
+    # a validly signed tag object of another release, published under this
+    # name: the name inside the signed object counts
+    rtag shellter-v2026.10.9 "$c"
+    git -C "$W/repo" update-ref refs/tags/shellter-v2026.10.6 "$(git -C "$W/repo" rev-parse shellter-v2026.10.9)"
+    st shellter-v2026.10.6
+    check "signed object of another tag name: refused" [ "$RC" = 1 ]
+    st shellter-v2026.10.9
+    check "... the same object under its own name: verified" [ "$RC" = 0 ]
+    st shellter-v2026.10.2 shellter-v2026.10.3
+    check "a verified tag checked as another release: refused" [ "$RC" = 1 ]
+    # an OpenPGP signature, with a gpg in PATH that accepts anything
+    gpg_accepts_all
+    ptag shellter-v2026.10.7 "$c"
+    st shellter-v2026.10.7
+    check "OpenPGP-signed tag: refused" [ "$RC" = 1 ]
+    check "... gpg never ran" none_exist "$W/ran-gpg"
+    st shellter-v2026.10.2
+    check "the good tag with that gpg in PATH: still verified" [ "$RC" = 0 ]
+    ;;
+release-newest)
+    # newest_signed: the newest release newer than the installed one that
+    # the release key signed; unsigned ones are named and skipped, five at most
+    release_key
+    ns() { fn 'newest_signed "$@"' "$W/work" "$@"; }
+    git init -q "$W/work"
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3" "$W/other"
+    ns 2026.10.1 "$c1"
+    check "a newer signed release: found" [ "$RC" = 0 ]
+    check "... shellter-v2026.10.2 and its tag object" \
+        [ "$(cat "$W/fn.out")" = "shellter-v2026.10.2 $(git -C "$W/repo" rev-parse shellter-v2026.10.2)" ]
+    check "... the unsigned newer one named" \
+        grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key - skipped' "$W/fn.err"
+    # a download that fails is not an unsigned release
+    fetch_fails
+    FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
+    check "download fails: code 3" [ "$RC" = 3 ]
+    check "... the release named" [ "$(cat "$W/fn.out")" = shellter-v2026.10.3 ]
+    check "... not called unsigned" no_grep 'not signed' "$W/fn.err"
+    ns 2026.10.2 "$c2"
+    check "the installed one is the newest signed: code 0" [ "$RC" = 0 ]
+    check "... nothing printed" [ ! -s "$W/fn.out" ]
+    # four unsigned newer releases are skipped, the fifth gives up
+    for v in 4 5 6; do rtag "shellter-v2026.10.$v" "$c3" "$W/other"; done
+    ns 2026.10.1 "$c1"
+    check "four unsigned newer: the signed one found" [ "$(cut -d' ' -f1 "$W/fn.out")" = shellter-v2026.10.2 ]
+    rtag shellter-v2026.10.7 "$c3" "$W/other"
+    ns 2026.10.1 "$c1"
+    check "five unsigned newer: gives up" [ "$RC" = 1 ]
+    check "... nothing printed" [ ! -s "$W/fn.out" ]
+    check "... and says so" grep -q 'five unsigned newer tags - giving up (report it)' "$W/fn.err"
+    # a repository that cannot be reached
+    mv "$W/repo" "$W/repo.away"
+    ns 2026.10.1 "$c1"
+    mv "$W/repo.away" "$W/repo"
+    check "no repository: code 2" [ "$RC" = 2 ]
+    ;;
+release-pinned)
+    # an install of a recorded release: the tag must point to the recorded
+    # commit and carry the release key's signature
+    release_key
+    c2=$(release_commit 2026.10.2)
+    c3=$(release_commit 2026.10.3)
+    printf 'shellter-v2026.10.2 %s signed\n' "$c2" > "$W/releases"
+    patch_installer
+    rtag shellter-v2026.10.2 "$c2"
+    run_release
+    check "the newest recorded release: installed" [ "$RC" = 0 ]
+    check "... signed and the commit recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    check "... version 2026.10.2" grep -q 'erssi Shellter Edition 2026.10.2 is installed' "$W/out"
+    check "... the commit kept" grep -qx "COMMIT=$c2" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
+    check "... and the release" grep -qx "REF=shellter-v2026.10.2" "$HOME/.local/opt/erssi/share/irssi/shellter-install.conf"
+    # moved to another commit, even signed by the release key: refused
+    rtag shellter-v2026.10.2 "$c3"
+    run_release
+    check "tag moved to another commit: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.2 points to $c3, but this installer expects $c2 - refusing to build" "$W/out"
+    check "... nothing built" no_grep 'Building' "$W/out"
+    # on the recorded commit, signed by another key: refused
+    rtag shellter-v2026.10.2 "$c2" "$W/other"
+    run_release --ref shellter-v2026.10.2
+    check "signed by another key: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'shellter-v2026.10.2 does not carry a valid signature by the erssi Shellter release key - refusing to build' "$W/out"
+    # without ssh-keygen: a warning, and the commit is still checked
+    rm -f "$W/bin/ssh-keygen"
+    run_release
+    check "no ssh-keygen: installed" [ "$RC" = 0 ]
+    check "... with a warning" grep -q 'signatures cannot be checked here' "$W/out"
+    check "... the commit recorded" grep -q 'Downloading.*ok.*commit recorded' "$W/out"
+    git -C "$W/repo" tag -f shellter-v2026.10.2 "$c3" > /dev/null
+    run_release
+    check "no ssh-keygen, tag moved: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.2 points to $c3, but this installer expects $c2" "$W/out"
+    ;;
+update)
+    # erssi --update: the newest release signed by the release key is built
+    # and installed into the same prefix
+    release_key
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    # the download fails: said so, neither "unsigned" nor "up to date"
+    fetch_fails
+    FAKE_FETCH_FAIL=1; export FAKE_FETCH_FAIL
+    run_update --check
+    check "download fails, --check: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    check "... not called unsigned" no_grep 'not signed' "$W/out"
+    check "... not up to date" no_grep 'up to date' "$W/out"
+    run_update
+    check "download fails, --update: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi/Build"
+    check "... nothing installed" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.1 (20250101 1200)" ]
+    unset FAKE_FETCH_FAIL
+    run_update --check
+    check "--check: update available" [ "$RC" = 0 ]
+    check "... named" grep -q 'Update available: 2026.10.1 -> 2026.10.2' "$W/out"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi/Build"
+    run_update
+    check "update: done" [ "$RC" = 0 ]
+    check "... signed" grep -q 'Finding the release.*shellter-v2026.10.2 - signed by the erssi Shellter release key' "$W/out"
+    check "... updated" grep -q 'Updated: 2026.10.1 -> 2026.10.2' "$W/out"
+    check "... the new erssi" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    check "... its commit kept" grep -qx "COMMIT=$c2" "$W/p/share/irssi/shellter-install.conf"
+    check "... and the release" grep -qx "REF=shellter-v2026.10.2" "$W/p/share/irssi/shellter-install.conf"
+    run_update --check
+    check "again: up to date" grep -q 'erssi Shellter Edition 2026.10.2 is up to date' "$W/out"
+    # a newer release signed by another key: named, not offered
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3" "$W/other"
+    run_update --check
+    check "newer, signed by another key: up to date" grep -q 'is up to date' "$W/out"
+    check "... named" grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key' "$W/out"
+    run_update
+    check "... not built" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    # a release this installer records, on another commit than recorded
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    printf 'shellter-v2026.10.4 %s signed\n' "$c3" > "$W/releases"
+    patch_installer
+    run_update
+    check "recorded release on another commit: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "shellter-v2026.10.4 points to $c4, but this installer expects $c3 - refusing to build" "$W/out"
+    check "... not installed" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.2 (20261010 1200)" ]
+    printf 'shellter-v2026.10.4 %s signed\n' "$c4" > "$W/releases"
+    patch_installer
+    run_update
+    check "on the recorded commit: updated" grep -q 'Updated: 2026.10.2 -> 2026.10.4' "$W/out"
+    check "... signed and recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    ;;
+update-same-version)
+    # Release tags never move: a signed tag of the installed release that
+    # now points to another commit is reported, never installed - a newer
+    # commit (a tag moved by mistake) or an older one (a mirror serving the
+    # previous tag object: a rollback)
+    release_key
+    c3=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c3"
+    old_tag=$(git -C "$W/repo" rev-parse shellter-v2026.10.2)
+    c4=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c4"
+    release_prefix 2026.10.2 "$c4" shellter-v2026.10.2
+    git -C "$W/repo" update-ref refs/tags/shellter-v2026.10.2 "$old_tag"
+    moved="the release tag shellter-v2026.10.2 now points to a different commit than the installed one - not updating; report it"
+    run_update --check
+    check "older tag object of the installed release, --check: no update" [ "$RC" = 0 ]
+    check "... reported" grep -qF "$moved" "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    run_update
+    check "... --update: nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$c4" "$W/p/share/irssi/shellter-install.conf"
+    # the tag moved on to a newer commit: the same
+    c5=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c5"
+    run_update
+    check "tag moved to a newer commit: reported" grep -qF "$moved" "$W/out"
+    check "... nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$c4" "$W/p/share/irssi/shellter-install.conf"
+    # an install from before REF was recorded: a release, as an update or
+    # an install without --ref made it
+    release_prefix 2026.10.2 "$c4"
+    run_update --check
+    check "no REF recorded: reported" grep -qF "$moved" "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    # the tag where it was: nothing to say
+    rtag shellter-v2026.10.2 "$c4"
+    run_update --check
+    check "the tag on the installed commit: up to date" grep -q 'erssi Shellter Edition 2026.10.2 is up to date' "$W/out"
+    check "... nothing reported" no_grep 'different commit' "$W/out"
+    # the installed release cannot be downloaded: said so
+    fetch_fails
+    FAKE_FETCH_FAIL=1 run_update --check
+    check "download of the installed release fails: failed" [ "$RC" = 1 ]
+    check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
+    ;;
+update-branch)
+    # an erssi installed from a branch (--ref main): main keeps the version
+    # of the last release until the next one, so a release of that version
+    # is not an update - only a newer version is
+    release_key
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    cm=$(release_commit 2026.10.2)
+    release_prefix 2026.10.2 "$cm" main
+    run_update --check
+    check "release of the same version, --check: nothing to do" [ "$RC" = 0 ]
+    check "... named" grep -qF 'Installed from main; newest release is 2026.10.2, not newer than the installed 2026.10.2 - nothing to do.' "$W/out"
+    check "... no changes offered" no_grep 'available' "$W/out"
+    check "... nothing reported" no_grep 'different commit' "$W/out"
+    run_update
+    check "... --update: nothing built" no_grep 'Building' "$W/out"
+    check "... the installed commit kept" grep -qx "COMMIT=$cm" "$W/p/share/irssi/shellter-install.conf"
+    # an older release only: nothing either
+    release_prefix 2026.10.3 "$cm" main
+    run_update --check
+    check "release older than the branch: nothing to do" grep -qF 'newest release is 2026.10.2, not newer than the installed 2026.10.3' "$W/out"
+    # a newer release: offered, and an update makes it a release install
+    release_prefix 2026.10.2 "$cm" main
+    c3=$(release_commit 2026.10.3); rtag shellter-v2026.10.3 "$c3"
+    run_update --check
+    check "newer release, --check: offered" grep -q 'Update available: 2026.10.2 -> 2026.10.3' "$W/out"
+    check "... from main" grep -qF 'Installed from main; newest release is 2026.10.3.' "$W/out"
+    run_update
+    check "... --update: updated" grep -q 'Updated: 2026.10.2 -> 2026.10.3' "$W/out"
+    check "... the release recorded" grep -qx "REF=shellter-v2026.10.3" "$W/p/share/irssi/shellter-install.conf"
+    check "... its commit" grep -qx "COMMIT=$c3" "$W/p/share/irssi/shellter-install.conf"
+    # an install records what it was installed from
+    run_release --ref main --prefix "$W/q"
+    check "install from a branch: done" [ "$RC" = 0 ]
+    check "... main recorded" grep -qx "REF=main" "$W/q/share/irssi/shellter-install.conf"
+    check "... said to be unverified" grep -q 'main is not a release - built as is, not verified' "$W/out"
+    ;;
+saved-settings)
+    # --no-test and --clean are kept for the next install and erssi
+    # --update; --test and --no-clean undo them
+    CONF=$HOME/.local/opt/erssi/share/irssi/shellter-install.conf
+    run_install --clean
+    check "--no-test: saved" grep -qx 'TESTS=0' "$CONF"
+    check "--clean: saved" grep -qx 'CLEAN=1' "$CONF"
+    check "... build directory removed" none_exist "$HOME/.local/src/erssi/Build"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main > "$W/out" 2>&1 < /dev/null
+    check "again without them: still no tests" grep -q 'Testing *- skipped' "$W/out"
+    check "... still clean" none_exist "$HOME/.local/src/erssi/Build"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test --no-clean > "$W/out" 2>&1 < /dev/null
+    check "--test --no-clean: installed" [ $? = 0 ]
+    check "... the tests ran" grep -q 'Testing *ok' "$W/out"
+    check "... the build directory kept" [ -f "$HOME/.local/src/erssi/Build/build.ninja" ]
+    check "... --test saved" grep -qx 'TESTS=1' "$CONF"
+    check "... --no-clean saved" grep -qx 'CLEAN=0' "$CONF"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main > "$W/out" 2>&1 < /dev/null
+    check "again without them: the tests run" grep -q 'Testing *ok' "$W/out"
+    check "... the build directory kept" [ -f "$HOME/.local/src/erssi/Build/build.ninja" ]
+    sh "$SRC/shellter-install.sh" --help > "$W/out" 2>&1
+    check "--help names --test" grep -q -- '^  --test ' "$W/out"
+    check "--help names --no-clean" grep -q -- '^  --no-clean ' "$W/out"
+    check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
+    check "... and what is verified" grep -q '^What is verified: ' "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

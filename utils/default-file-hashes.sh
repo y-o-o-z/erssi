@@ -17,17 +17,21 @@ REF=${1:-}
 OUT=${2:-$ROOT/src/fe-ansi/default-files-known.h}
 cd "$ROOT"
 tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-list() {    # commit -> "name hash" of its startup and themes
-    git ls-tree -r --name-only "$1" -- startup themes | grep -E '^(startup|themes/[^/]+\.theme)$' |
-    while read -r f; do
-        printf '%s %s\n' "${f##*/}" "$(git show "$1:$f" | sha256sum | cut -d' ' -f1)"
-    done
+trap 'rm -f "$tmp" "$tmp.blobs"' EXIT
+blobs() {   # commit -> "name blob" of its startup and themes
+    git ls-tree -r "$1" -- startup themes | awk -F '\t' '$2 ~ /^(startup|themes\/[^\/]+\.theme)$/ {
+        split($1, m, " "); n = $2; sub(/.*\//, "", n); print n, m[3] }'
 }
-for c in $(git log --format=%H "${REF:-HEAD}" -- startup themes); do list "$c"; done > "$tmp"
-if [ -n "$REF" ]; then
-    list "$REF" >> "$tmp"
-else
+# every version once: the same blob in many commits is hashed one time
+{
+    for c in $(git log --format=%H "${REF:-HEAD}" -- startup themes); do blobs "$c"; done
+    [ -z "$REF" ] || blobs "$REF"
+} | sort -u > "$tmp.blobs"
+while read -r name blob; do
+    printf '%s %s\n' "$name" "$(git cat-file blob "$blob" | sha256sum | cut -d' ' -f1)"
+done < "$tmp.blobs" > "$tmp"
+rm -f "$tmp.blobs"
+if [ -z "$REF" ]; then
     for f in startup themes/*.theme; do
         printf '%s %s\n' "${f##*/}" "$(sha256sum < "$f" | cut -d' ' -f1)"
     done >> "$tmp"
