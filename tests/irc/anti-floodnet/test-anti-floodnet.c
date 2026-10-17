@@ -99,6 +99,9 @@ static void tear_down(void)
 	/* a query would come back with the next test's server, of the same tag */
 	while (queries != NULL)
 		query_destroy(queries->data);
+	settings_set_level("autocreate_query_level", "MSGS");
+	settings_set_int("anti_floodnet_time_window", 0);
+	signal_emit("setup changed", 0);
 	if (server != NULL) {
 		server->connection_lost = FALSE;
 		server_disconnect(server);
@@ -289,6 +292,13 @@ static void test_window_capped(void)
 {
 	int i;
 	char nick[16], addr[64], text[32];
+
+	/* only the cap counts here: no 600 query windows to slow the loop
+	 * down, and no message so old that it leaves the window on a busy
+	 * machine */
+	settings_set_level("autocreate_query_level", "");
+	settings_set_int("anti_floodnet_time_window", 3600);
+	signal_emit("setup changed", 0);
 
 	for (i = 0; i < 600; i++) {
 		g_snprintf(nick, sizeof(nick), "n%d", i);
