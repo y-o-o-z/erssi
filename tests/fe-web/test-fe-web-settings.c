@@ -161,6 +161,40 @@ static void test_other_set_does_not_retry(void)
 	teardown();
 }
 
+/* An fe_web_ /SET that changes nothing (no value: it only prints the
+ * setting; a name that does not exist; an option that does not exist, so
+ * the command fails) asks for no retry later: not at the next unrelated
+ * /SET, nor at a "setup changed" from elsewhere (/RELOAD, a script) */
+static void test_set_without_change_retries_nothing_later(void)
+{
+	static const char *const sets[] = { "fe_web_enabled", "fe_web_no_such_setting 1",
+		                            "-no_such_option fe_web_enabled ON" };
+	gsize i;
+	char *out;
+
+	setup();
+	out = run("set", "fe_web_enabled ON");
+	assert_printed(out, REFUSED);
+	g_free(out);
+	for (i = 0; i < G_N_ELEMENTS(sets); i++) {
+		out = run("set", sets[i]);
+		assert_not_printed(out, REFUSED);
+		g_free(out);
+		signal_emit("setup changed", 0);
+		fe_web_fuzz_iterate(20);
+		out = fe_web_fuzz_take_printed();
+		assert_not_printed(out, REFUSED);
+		g_free(out);
+
+		out = run("set", sets[i]);
+		g_free(out);
+		out = run("set", "beep_msg_level HILIGHT");
+		assert_not_printed(out, REFUSED);
+		g_free(out);
+	}
+	teardown();
+}
+
 /* No "stopped" for a server that never started */
 static void test_no_stopped_without_start(void)
 {
@@ -195,6 +229,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/settings/toggle-and-other-settings-retry",
 	                test_toggle_and_other_settings_retry);
 	g_test_add_func("/fe-web/settings/other-set-does-not-retry", test_other_set_does_not_retry);
+	g_test_add_func("/fe-web/settings/set-without-change-retries-nothing-later",
+	                test_set_without_change_retries_nothing_later);
 	g_test_add_func("/fe-web/settings/no-stopped-without-start",
 	                test_no_stopped_without_start);
 
