@@ -800,7 +800,21 @@ static void cmd_list(WI_ITEM_REC *item, char **args)
 		match = *wire == '@' ? strcmp(handle, wire + 1) == 0 && channel != NULL &&
 		                       e2e_ctx_on_net(channel, &net)
 		                     : g_strcmp0(channel, ctx) == 0;
-		if (match) {
+		/* a query: the session of their messages to us is under our
+		   own address - not named, it is the query's; a keyless row
+		   with no request waiting is a leftover of an answered one */
+		if (match && *wire == '@' && !e2e_session_has_key(row)) {
+			char *k = g_strconcat(handle, "|", channel, NULL);
+
+			match = e2e_json_get(e2e_json_get(kr, "pending_inbound"), k) != NULL;
+			g_free(k);
+		}
+		if (match && *wire == '@') {
+			e2e_print_item(item, "  %s  fp=%.16s  status=%s", shown_text(handle),
+			               shown_text(str_or(e2e_json_get_string(row, "fp"), "")),
+			               session_label(kr, handle, channel, row));
+			any = TRUE;
+		} else if (match) {
 			e2e_print_item(item, "  %s on %s  fp=%.16s  status=%s", shown_text(handle), shown(channel),
 			               shown_text(str_or(e2e_json_get_string(row, "fp"), "")),
 			               session_label(kr, handle, channel, row));

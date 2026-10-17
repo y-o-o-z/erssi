@@ -2300,6 +2300,11 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 			return E2E_ACCEPT_FAILED;
 		}
 		e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
+		/* a query's sessions are under "@<own>": the keyless row the
+		   request left under the peer's context would stay forever */
+		if (!e2e_is_channel(wire) &&
+		    !e2e_session_has_key(e2e_json_get(e2e_json_get(kr, "incoming"), k)))
+			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
 		g_free(k);
 		fp_hex = e2e_fingerprint_hex(pub);
 		mark_accepted(kr, handle, ctx, fp_hex, "accept");

@@ -6815,6 +6815,32 @@ static void test_auto_keyreq_limits(void)
 	peer_free(&clone);
 }
 
+/* a query's request, accepted: the keyless row it left under the
+   peer's context goes (the query's sessions are under "@<own>"; /e2e list
+   showed it as "pending" for good) */
+static void test_accept_dm_leaves_no_row(void)
+{
+	PEER a, b;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&b, "@" ALICE, "normal");
+	req = e2e_build_keyreq(a.kr, &a.id, "@" ALICE, BOB, &error);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|@" ALICE, NULL));
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "@" ALICE, "@" BOB, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_SENT);
+	g_assert_nonnull(rsp);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|@" ALICE, NULL));
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6836,6 +6862,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
 	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
 	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
+	g_test_add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
