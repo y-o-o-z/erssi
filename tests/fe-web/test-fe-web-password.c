@@ -116,6 +116,17 @@ static void test_query(void)
 	                ==, 0);
 	g_assert_cmpint(verify("/?password=wrong", "Authorization: Bearer " TEST_PASSWORD "\r\n"),
 	                ==, 1);
+	/* an Authorization header without a usable password is a wrong
+	 * password: the query is read only when there is no such header */
+	g_assert_cmpint(verify("/?password=" TEST_PASSWORD, "Authorization: Bearer \r\n"), ==, 0);
+	g_assert_cmpint(verify("/?password=" TEST_PASSWORD, "Authorization: Bearer  \t\r\n"), ==, 0);
+	g_assert_cmpint(verify("/?password=" TEST_PASSWORD, "Authorization:\r\n"), ==, 0);
+	g_assert_cmpint(verify("/?password=" TEST_PASSWORD, "authorization: Basic eDp5\r\n"), ==, 0);
+	/* a request target has no fragment (RFC 9112 3.2): what follows a '#'
+	 * is not part of the query */
+	g_assert_cmpint(verify("/?a=1#&password=" TEST_PASSWORD, ""), ==, 0);
+	g_assert_cmpint(verify("/#?password=" TEST_PASSWORD, ""), ==, 0);
+	g_assert_cmpint(verify("/?password=" TEST_PASSWORD "#x", ""), ==, 0);
 }
 
 /* the query of the request line only: "?password=" anywhere else in the

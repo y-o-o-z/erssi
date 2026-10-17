@@ -360,8 +360,9 @@ static void fe_web_close_client_flushed(WEB_CLIENT_REC *client)
 }
 
 /* The "password" parameter of the query in the request line, percent-
- * decoded; NULL when there is none, or when it has a broken %-escape or an
- * escaped NUL. '+' stays a plus (RFC 3986 gives it no meaning in a query,
+ * decoded; NULL when there is none, when it has a broken %-escape or an
+ * escaped NUL, or when the target has a '#' (a request target has no
+ * fragment, RFC 9112 3.2). '+' stays a plus (RFC 3986 gives it no meaning in a query,
  * and clients that did not encode the password sent it as a plus). */
 static char *query_password(const char *data)
 {
@@ -377,6 +378,8 @@ static char *query_password(const char *data)
 	target_end = memchr(target, ' ', line_end - target);
 	if (target_end == NULL)
 		target_end = line_end;
+	if (memchr(target, '#', target_end - target) != NULL)
+		return NULL;
 	p = memchr(target, '?', target_end - target);
 	if (p == NULL)
 		return NULL;
@@ -397,16 +400,19 @@ static char *query_password(const char *data)
  * line and headers). It is accepted in two places:
  *  - an "Authorization: Bearer <password>" header, the way to send it:
  *    it stays out of the URL and so out of anything that logs URLs;
- *  - when there is no such header, the "password" parameter of the query
- *    (GET /?password=<percent-encoded password>), because NexusIRC as
- *    published (kofany/nexus, server/feWebClient/feWebSocket.ts) still
- *    sends it there. A URL can end up in the logs of proxies and tunnels.
+ *  - when the request has no Authorization header at all (one without a
+ *    Bearer password is a wrong password), the "password" parameter of
+ *    the query (GET /?password=<percent-encoded password>), because
+ *    NexusIRC as published (kofany/nexus, server/feWebClient/feWebSocket.ts)
+ *    still sends it there. A URL can end up in the logs of proxies and
+ *    tunnels.
  * One password per request, compared in time independent of its value. */
 static int fe_web_verify_password(const char *data)
 {
 	const char *configured_password;
 	char *password = NULL;
 	gboolean from_header = FALSE;
+	gboolean have_header = FALSE;
 	int result = 0;
 
 	configured_password = settings_get_str("fe_web_password");
@@ -424,13 +430,16 @@ static int fe_web_verify_password(const char *data)
 		const char *headers = strstr(data, "\r\n");
 		const char *h = headers;
 
-		while (h != NULL && password == NULL) {
+		/* the first Authorization header is the one read */
+		while (h != NULL && !have_header) {
 			h += 2;
 			if (strncmp(h, "\r\n", 2) == 0)
 				break;  /* end of headers */
 			if (g_ascii_strncasecmp(h, "Authorization:", 14) == 0) {
 				const char *v = h + 14;
 				const char *end = strstr(v, "\r\n");
+
+				have_header = TRUE;
 
 				while (*v == ' ' || *v == '\t')
 					v++;
@@ -449,8 +458,8 @@ static int fe_web_verify_password(const char *data)
 		}
 	}
 
-	/* otherwise the query of the request line */
-	if (password == NULL)
+	/* without one, the query of the request line */
+	if (!have_header)
 		password = query_password(data);
 
 	/* Verify password: compare digests, in time independent of where
