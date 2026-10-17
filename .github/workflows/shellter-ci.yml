@@ -89,7 +89,7 @@ jobs:
         run: |
           sh -n shellter-install.sh
           dash -n shellter-install.sh
-          shellcheck -s sh -S style shellter-install.sh tests/installer/*.sh tests/version/test-pre-push.sh utils/pre-push utils/default-file-hashes.sh utils/check-version.sh
+          shellcheck -s sh -S style shellter-install.sh tests/installer/*.sh tests/version/test-pre-push.sh tests/version/test-resign-history.sh utils/pre-push utils/resign-history.sh utils/default-file-hashes.sh utils/check-version.sh
       - name: Every pinned release points to its commit
         run: |
           git fetch --tags --force -q origin

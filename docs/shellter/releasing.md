@@ -39,129 +39,162 @@ Back to the [README](../../README.md).
 
 ## Re-signing the release tags
 
-This is done once, when every release tag has to be made again on
-another commit. The typical case is a history rewrite that drops files
-from the history: it gives every later commit a new id, and it drops the
-commits' signatures. The content of each release must stay what it was,
+This is done once, when every release tag has to be made again on another
+commit. The typical case is a history rewrite with `git filter-repo` that
+drops files from the history. The rewrite gives every later commit a new
+id and strips every signature: from the commits, so the fork's commits
+must be signed again, and from the tags, which turns signed tags into
+plain annotated ones. The content of each release must stay what it was,
 except for what the rewrite removed.
 
-### 1. Sign the rewritten history again
+`utils/resign-history.sh` (POSIX sh) does the whole job between the
+rewrite and the push, and it refuses at the first doubt. Nothing is
+pushed by it. `tests/version/test-resign-history.sh` runs it end to end
+on a synthetic history: a real `git filter-repo`, then the pushes it
+prints, through the release hook.
 
-Every rewritten commit on `main` must carry a valid signature by the
-release key again. Without that, the push of `main` and of the tags is
-refused ("not signed by the release key", "the release commit … is not
-signed"). Commits of the upstream projects keep their ids if the rewrite
-does not touch them. They are not checked as long as their remotes
-(`upstream`, `irssi`, or those in `git config prepush.upstream`) are
-fetched.
+You need git 2.34 or newer, `git filter-repo`, and the release key as
+`user.signingkey` with `gpg.format=ssh`. Do it right after a release,
+before the release is announced (see [What installed copies do
+afterwards](#what-installed-copies-do-afterwards)).
 
-### 2. Find the new commit of each release
+### Steps
 
-Use the rewrite tool's map. For git filter-repo that is
-`.git/filter-repo/commit-map`, with one "old new" line per commit. List
-each release as "tag old new":
+1. **The old history.** In your working clone (`~/src/erssi` below),
+   bring everything up to date and check that `main` is GitHub's:
 
-```sh
-for t in $(git tag -l 'shellter-v*'); do
-    old=$(git rev-parse "$t^{commit}")
-    new=$(awk -v o="$old" '$1 == o { print $2 }' .git/filter-repo/commit-map)
-    echo "$t $old $new"
-done > ../retag.txt
-```
+   ```sh
+   cd ~/src/erssi
+   git fetch origin && git fetch --tags --force origin && git fetch staging
+   git fetch upstream && git fetch irssi
+   git status --short && test "$(git rev-parse main)" = "$(git rev-parse origin/main)" && echo ok
+   ```
 
-Every line needs a new commit. Then check that each release changed only
-by the removed files:
+   The script only reads this clone. It takes from it: the release tags,
+   with their commits, messages, taggers and dates; the pins in
+   `shellter-install.sh` at `main`; the trees the rewritten releases are
+   compared with; and the remotes to add back.
 
-```sh
-while read -r t old new; do echo "== $t"; git diff --stat "$old" "$new"; done < ../retag.txt
-```
+2. **A fresh clone, rewritten.**
 
-### 3. Re-sign the tags, each with the message it had
+   ```sh
+   git clone https://github.com/y-o-o-z/erssi.git ~/erssi-rewrite && cd ~/erssi-rewrite
+   git filter-repo --invert-paths --path FILE-TO-DROP     # your filter; no --force on a fresh clone
+   ```
 
-```sh
-while read -r t old new; do
-    msg=$(git cat-file tag "$t" | sed -n '/^$/,$p' | sed '1d; /^-----BEGIN SSH SIGNATURE-----/,$d')
-    git tag -f -s -m "$msg" "$t" "$new"
-done < ../retag.txt
-```
+3. **The upstream projects, fetched again.** filter-repo removes `origin`.
+   The upstream commits have to be here with their original ids:
 
-Check them the way the installer does:
+   ```sh
+   git remote add upstream "$(git -C ~/src/erssi remote get-url upstream)" && git fetch upstream
+   git remote add irssi "$(git -C ~/src/erssi remote get-url irssi)" && git fetch irssi
+   ```
 
-```sh
-v() { git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
-        -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers "$@"; }
-while read -r t old new; do
-    v verify-tag "$t" && v verify-commit "$t^{commit}" || echo "BAD $t"
-    case "$t" in shellter-v1.*) ;; *) sh utils/check-version.sh "$t" "$t" ;; esac
-done < ../retag.txt
-```
+4. **The re-signing.**
 
-### 4. Change the pins in shellter-install.sh
+   ```sh
+   sh ~/src/erssi/utils/resign-history.sh ~/src/erssi
+   ```
 
-In `RELEASES`, replace the commit of every re-signed release with its new
-commit:
+   In order, the script:
+   - maps the old commits to the rewritten ones
+     (`.git/filter-repo/commit-map`). It checks that the rewritten `main`
+     is the rewrite of the old `main`, that every release tag agrees with
+     its pin, and that every release tree is the old one with files
+     removed and nothing changed or added (`--allow-changes` lists such
+     changes instead of refusing);
+   - makes every fork commit again: the commits that are not on the
+     branches of `upstream` or `irssi` (or of the remotes in
+     `git config prepush.upstream`). Each one is made with
+     `git commit-tree -S`, on the same tree, with the same author and
+     committer (name, e-mail, date) and message, and with its parents
+     mapped, so merges keep both parents. Upstream commits keep their
+     original ids. Then it moves the branches;
+   - makes every release tag again as an annotated tag signed by the
+     release key, on the new commit of its release, with its old message,
+     tagger and tagger date, and checks the tag and the commit;
+   - makes one signed commit on `main`, "shellter-install.sh, docs: commit
+     ids of the re-signed history". It holds the new pins and maps the
+     fork commit ids cited in the `.md` files and `NEWS`, such as
+     `docs/UPSTREAM.md`, to the new ids;
+   - adds back the remotes of the old clone that are missing (`origin`,
+     `staging`, with their push URLs), deletes our copies of their
+     branches (`refs/remotes/<remote>/*`, which filter-repo rewrote), and
+     prints the push commands.
 
-```sh
-while read -r t old new; do sed -i "s/^$t $old /$t $new /" shellter-install.sh; done < ../retag.txt
-git diff shellter-install.sh        # one changed line per release, nothing else
-```
+   After any error, start again from step 2 with a new clone.
 
-Make a signed commit: `shellter-install.sh: pins of the re-signed release
-tags`. In the body, say why the tags were re-signed.
+5. **Look before pushing.** Run `git log --oneline -5` and `git show HEAD`
+   (the new pins and the mapped ids). Also check that the tags have their
+   dates: `git for-each-ref refs/tags/shellter-v* --format='%(refname:short) %(taggerdate)'`.
 
-### 5. Push main and the tags in one atomic push, with the override
+6. **Push to staging first, then to origin**, with the commands it
+   printed:
 
-`PREPUSH_RETAG` names exactly the tags that may move. The hook prints a
-warning for each of them and still runs every other check: the tag
-signature, the name inside the tag, the signature of the release commit,
-`check-version.sh`, author, AI trailers and private data. A tag it does
-not name is still refused.
+   ```sh
+   PREPUSH_RETAG='shellter-v1.3.2 … shellter-v2026.10.3' git push --atomic --force staging main 'refs/tags/shellter-v*:refs/tags/shellter-v*'
+   PREPUSH_RETAG='shellter-v1.3.2 … shellter-v2026.10.3' git push --atomic --force origin main 'refs/tags/shellter-v*:refs/tags/shellter-v*'
+   ```
 
-```sh
-PREPUSH_RETAG=$(awk '{ printf "%s ", $1 }' ../retag.txt) \
-    git push --atomic --force staging main 'refs/tags/shellter-v*:refs/tags/shellter-v*'
-PREPUSH_RETAG=$(awk '{ printf "%s ", $1 }' ../retag.txt) \
-    git push --atomic --force origin main 'refs/tags/shellter-v*:refs/tags/shellter-v*'
-```
+   The release hook runs with every check:
+   - our copies of the remote's branches are gone, and the remote's old
+     tip is not in this clone, so every fork commit is checked: author, AI
+     trailers, private data and signature;
+   - each tag must be signed, name itself, and be on a signed commit;
+   - each tag must be where the new pins record it;
+   - `check-version.sh` runs for each tag.
 
-`--atomic` moves `main`, with the new pins, together with the tags. That
-way `curl … | sh` never sees pins and tags that disagree. Until both are
-on GitHub, the installer refuses the release ("points to …, but this
-installer expects …"), and so does the CI job "Every pinned release
-points to its commit".
+   `PREPUSH_RETAG` only lets the named tags move, with a warning for each
+   one. `--atomic` moves `main` (the new pins) and the tags together.
 
-### 6. Check from outside
+7. **Wait a few minutes, then check from outside.**
+   raw.githubusercontent.com serves `shellter-install.sh` from a cache. For
+   a few minutes after the push, `curl … | sh` can still get the old pins
+   and refuse the moved release ("points to …, but this installer expects
+   …"). It fails closed. After that:
+   - the CI job "Every pinned release points to its commit" passes;
+   - `verify-tag` passes in a new clone;
+   - `curl … | sh -s -- --prefix ~/erssi-check --src ~/erssi-check-src`
+     installs the newest release with "signed · commit recorded"; remove
+     both directories afterwards.
 
-In a fresh clone:
+8. **Publish the next PATCH release soon** (see below).
 
-- the CI job "Every pinned release points to its commit" passes;
-- `git verify-tag` passes for each release tag (with the options of
-  step 3);
-- `curl … | sh` into a temporary prefix installs the newest release with
-  "signed · commit recorded".
+### Commit ids that go stale
+
+- **Commit messages.** filter-repo rewrites the abbreviated ids inside
+  commit messages to its own new ids, and the re-signing gives the commits
+  new ids again. The ids in the messages of rewritten commits then name
+  nothing. They are left as they are.
+- **Documentation.** The ids cited in the `.md` files and `NEWS` are
+  mapped by the script. Its mapping of `docs/UPSTREAM.md` should be read
+  over in step 5.
+- **Outside the repository.** Ids in issues, pull requests and links keep
+  naming the old commits.
+- **Other tags.** Tags that are not release tags and sit on rewritten
+  commits are left as filter-repo made them. The script names them, and
+  they are not pushed.
 
 ### What installed copies do afterwards
 
 `erssi --update` runs the installer of the installed release, so what
 users see depends on their version:
 
-- **2026.10.3 and newer.** `erssi --check-update` and `--update` print
-  "the release tag shellter-vX now points to a different commit than the
-  installed one - not updating; report it" for the installed release, and
-  install nothing. This lasts until a newer release is out. So publish the
-  next PATCH release soon after the re-signing, and say in its notes that
-  the warning was expected. Updating to that release records the new
+- **The release just made (2026.10.3), installed before the
+  re-signing.** `erssi --check-update` and `--update` print "the release
+  tag shellter-vX now points to a different commit than the installed one
+  - not updating; report it", and they install nothing. This lasts until a
+  newer release is out, so re-sign before announcing the release and
+  publish the next PATCH soon after. The update to it records the new
   commit, and the warning stops.
-- **2026.10.2 and older** (1.3.10, 2026.10.0 to 2026.10.2). Their
-  installer counts a signed tag of the installed version on another
-  commit as an update. `erssi --check-update` says "Changes to X
-  available", and `erssi --update` rebuilds the same release from the
-  re-signed tag. It checks the signature and does not check the pin. This
-  happens once; then the new commit is recorded.
+- **2026.10.2 and older (1.3.10, 2026.10.0 to 2026.10.2).** For them the
+  re-signed 2026.10.3 is an ordinary newer release. `erssi --update`
+  installs it after checking its signature. Their installer records no
+  commit for 2026.10.3, so it does not check one.
 - **New installs** with `curl … | sh` take `main`'s installer with the new
-  pins and work as before. A saved copy of an older installer refuses the
-  re-signed releases ("points to …, but this installer expects …"):
-  download the installer again.
+  pins, after the cache window of step 7. A saved copy of an older
+  installer refuses the re-signed releases ("points to …, but this
+  installer expects …"): download the installer again.
 - **Clones** keep the old tags until `git fetch --tags --force`. Until
-  then, the test "installer versions test (shellter-v1.3.10)" is skipped
-  as a stale tag.
+  then the test "installer versions test (shellter-v1.3.10)" is skipped as
+  a stale tag.
