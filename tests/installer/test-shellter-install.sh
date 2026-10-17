@@ -249,6 +249,27 @@ esac
 EOF
     use_tool ls id
 }
+# The setup guard once more, as a member of a shared group (another_user,
+# FAKE_GROUP_NAME=staff). A directory above $W that the user's private group
+# can write to (mode 770, e.g. made under umask 007) passes as private for
+# the user, but not for a shared group: there the installer stops at that
+# directory before it reaches the one a case is about. 1 in that case.
+private_for_shared_group() {
+    # shellcheck disable=SC2016 # run by sh
+    FAKE_GROUP_NAME=staff SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; ui_init
+            owner() { ls -ldn "$1" 2>/dev/null | awk "{print \$3}"; }
+            safe_path "$2"' sh "$SRC/shellter-install.sh" "$W" > /dev/null 2>&1
+}
+# check_named DESCRIPTION FILE...: the refusal names the directory (grep -qF),
+# unless a directory above $W stops a shared-group run first
+# (SHARED_PRIVATE=0); the exit code and "nothing run" are checked either way
+check_named() {
+    if [ "${SHARED_PRIVATE:-1}" = 1 ]; then
+        check "$1" grep -qF "$2" "$W/out"
+    else
+        pass "$1: skipped, a directory above $W is writable by your group (a shared group is refused there first)"
+    fi
+}
 foreign() { for f in "$@"; do printf '%s 4242 -\n' "$f" >> "$W/lsfake"; done; }
 fake_owner() { printf '%s %s -\n' "$1" "$2" >> "$W/lsfake"; }
 fake_mode() { printf '%s - %s\n' "$1" "$2" >> "$W/lsfake"; }
@@ -664,13 +685,15 @@ src-writable)
     no_meson_python
     another_user
     V=$HOME/.local/src/erssi.venv
+    SHARED_PRIVATE=1
+    private_for_shared_group || SHARED_PRIVATE=0
     plant_venv "$V"
     chmod g+w "$V"
     FAKE_GROUP_NAME=staff; export FAKE_GROUP_NAME
     run_install
     unset FAKE_GROUP_NAME
     check "group-writable venv, shared group: refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "$V can be changed by other users" "$W/out"
+    check_named "... named" "$V can be changed by other users"
     check "... nothing run" none_exist "$W/ran-venv" "$W/py.log"
     run_install
     check "group-writable venv, private group: installed" [ "$RC" = 0 ]
@@ -719,7 +742,7 @@ src-writable)
     unset FAKE_GROUP_NAME
     umask 022
     check "umask 007, shared group: refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "$HOME/.local/src is writable by other users - choose a --src under a directory only you can write" "$W/out"
+    check_named "... named" "$HOME/.local/src is writable by other users - choose a --src under a directory only you can write"
     ;;
 src-shared-parent)
     # a directory others can write to, even sticky like /tmp: refused
