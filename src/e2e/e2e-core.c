@@ -596,7 +596,7 @@ E2E_JSON *e2e_load_full(gboolean *lost)
 	                       e2e_now() - lost_notice_at >= 60)) {
 		if (status == E2E_LOAD_LOST)
 			lost_notice_at = e2e_now();
-		e2e_print_item(NULL, "%s", notice);
+		e2e_print_warning(NULL, "%s", notice);
 	}
 	g_free(notice);
 	return kr;
@@ -616,7 +616,7 @@ gboolean e2e_save(const E2E_JSON *kr)
 		e2e_state_changed();
 		return TRUE;
 	}
-	e2e_print_item(NULL, "%s", error);
+	e2e_print_warning(NULL, "%s", error);
 	g_free(error);
 	return FALSE;
 }
@@ -627,14 +627,14 @@ gboolean e2e_ensure_identity(E2E_JSON *kr, E2E_IDENTITY *id)
 	char *error = NULL;
 
 	if (!e2e_identity_get(kr, id, TRUE, &created, &error)) {
-		e2e_print_item(NULL, "no identity loaded: %s", error);
+		e2e_print_warning(NULL, "no identity loaded: %s", error);
 		g_free(error);
 		return FALSE;
 	}
 	/* an identity that cannot be stored would be a throw-away key peers
 	   pin and then see change */
 	if (created && !e2e_save(kr)) {
-		e2e_print_item(NULL, "cannot store a new E2E identity in %s", keyring_file);
+		e2e_print_warning(NULL, "cannot store a new E2E identity in %s", keyring_file);
 		e2e_json_set(kr, "identity", e2e_json_new(E2E_JSON_NULL));
 		e2e_identity_wipe(id);
 		return FALSE;
@@ -959,8 +959,8 @@ void e2e_tell_damaged(void *item, const GPtrArray *found)
 		char *who = e2e_text_display(g_ptr_array_index(found, i));
 		char *where = e2e_ctx_display(g_ptr_array_index(found, i + 1));
 
-		e2e_print_item(item, "a damaged entry: %s was accepted for the query %s of another address (a request rpe2e.pl kept) and may hold your key - it rotates with your next message there, the new one reaches only that query's peer; /e2e decline %s in that query removes the entry",
-		               who, where, who);
+		e2e_print_warning(item, "a damaged entry: %s was accepted for the query %s of another address (a request rpe2e.pl kept) and may hold your key - it rotates with your next message there, the new one reaches only that query's peer; /e2e decline %s in that query removes the entry",
+		                  who, where, who);
 		g_free(who);
 		g_free(where);
 	}
@@ -1111,8 +1111,8 @@ static gboolean own_line_take(const char *line)
 static void gate_refuse(SERVER_REC *server, GString *str, const char *item, const char *msg)
 {
 	/* irssi already showed the line: say that it was not delivered */
-	e2e_print_item(e2e_notice_item(server, item, item),
-	               "%s — the message shown above was NOT delivered", msg);
+	e2e_print_warning(e2e_notice_item(server, item, item),
+	                  "%s — the message shown above was NOT delivered", msg);
 	e2e_wipe(str->str, str->len);
 	g_string_truncate(str, 0);
 	signal_stop();
@@ -1136,7 +1136,7 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 	msg = e2e_gate_multiline(kr, status == E2E_LOAD_OK, &net, str->str, len, resolve_cb, server);
 	e2e_net_clear(&net);
 	if (msg != NULL) {
-		e2e_print_item(NULL, "%s", msg);
+		e2e_print_warning(NULL, "%s", msg);
 		e2e_wipe(str->str, str->len);
 		g_string_truncate(str, 0);
 		signal_stop();
@@ -1462,7 +1462,7 @@ static void native_gate(SERVER_REC *server, GString *str)
 	case E2E_GATE_BYPASS:
 		/* the clear-text bot command goes out unchanged */
 		if (res.message != NULL)
-			e2e_print_item(e2e_notice_item(server, target, target), "%s", res.message);
+			e2e_print_warning(e2e_notice_item(server, target, target), "%s", res.message);
 		break;
 	case E2E_GATE_REFUSE:
 		gate_refuse(server, str, target, res.message);
@@ -1471,8 +1471,8 @@ static void native_gate(SERVER_REC *server, GString *str)
 		if (res.save_needed)
 			e2e_save(kr);
 		for (i = 0; res.warnings != NULL && i < res.warnings->len; i++)
-			e2e_print_item(e2e_notice_item(server, res.ctx, target), "%s",
-			               (char *) g_ptr_array_index(res.warnings, i));
+			e2e_print_warning(e2e_notice_item(server, res.ctx, target), "%s",
+			                  (char *) g_ptr_array_index(res.warnings, i));
 		lines = g_ptr_array_new_with_free_func(g_free);
 		/* a REKEY reaches each recipient before the first chunk under
 		   the new key */
@@ -1557,11 +1557,11 @@ static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crl
 	                          &msg, &target);
 	e2e_net_clear(&net);
 	if (action == E2E_GATE_REFUSE) {
-		e2e_print_item(e2e_notice_item(server, target, target), "%s", msg);
+		e2e_print_warning(e2e_notice_item(server, target, target), "%s", msg);
 		g_string_truncate(str, 0);
 		signal_stop();
 	} else if (msg != NULL) {
-		e2e_print_item(e2e_notice_item(server, target, target), "%s", msg);
+		e2e_print_warning(e2e_notice_item(server, target, target), "%s", msg);
 	}
 	g_free(msg);
 	g_free(target);
