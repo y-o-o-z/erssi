@@ -2,7 +2,8 @@
 
 # Fuzz targets for what the e2e module parses: RPE2E wire messages, the
 # key exchange CTCPs, IRC lines and CASEMAPPING folds (wire), keyring.json
-# and /e2e import files with what is read out of them (keyring).
+# and /e2e import files with what is read out of them (keyring), and the
+# handlers that peers drive with what they leave in one keyring (handlers).
 #
 # With -Dwith-fuzzer=yes each is a libFuzzer binary (e2e-<name>-fuzz), and
 # `meson test` runs that binary over corpus/<name> with -runs=0: every
@@ -13,7 +14,7 @@
 # linked with replay.c and `meson test` runs that over corpus/<name>: the
 # seeds and the inputs of fixed crashes.
 
-e2e_fuzz_targets = ['wire', 'keyring']
+e2e_fuzz_targets = ['wire', 'keyring', 'handlers']
 
 foreach name : e2e_fuzz_targets
   corpus = meson.current_source_dir() / 'corpus' / name

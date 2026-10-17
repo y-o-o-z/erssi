@@ -86,9 +86,10 @@ static void check_wire(const char *text)
 		fprintf(stderr, "wire re-encoding differs: %s\n", enc);
 		abort();
 	}
-	/* a forged message must not open under some key */
+	/* a forged message must not open under a key nobody used (all
+	   zero); the length of what opens is the length told */
 	pt = e2e_wire_decrypt(w, key, "#fuzz", &len);
-	if (pt != NULL && strlen(pt) > len)
+	if (pt != NULL)
 		abort();
 	g_free(pt);
 	e2e_wire_free(again);
