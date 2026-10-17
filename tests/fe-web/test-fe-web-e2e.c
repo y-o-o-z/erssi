@@ -618,7 +618,7 @@ static void test_action_needs_login(void)
 }
 
 /* what an "e2e action" handler runs still runs inside fe-web's input
- * handling: /UNLOAD of fe-web is refused (R-E4) */
+ * handling: /UNLOAD of fe-web is refused there too */
 static void emit_unload(void)
 {
 	signal_emit("command unload", 3, "web", NULL, NULL);

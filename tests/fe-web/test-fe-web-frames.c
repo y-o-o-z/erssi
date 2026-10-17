@@ -294,7 +294,7 @@ static void test_masked_text_answered(void)
 	fe_web_fuzz_client_free(c);
 }
 
-/* Review Focus: one read holds an unmasked frame and then masked ones;
+/* One read holds an unmasked frame and then masked ones;
  * nothing after the refusal is handled (no pong, no answer) */
 static void test_nothing_after_refusal(void)
 {

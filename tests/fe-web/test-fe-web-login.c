@@ -472,7 +472,7 @@ static void test_tcp6_loopback_key_is_uid(void)
 	assert_loopback_key("::1", AF_INET6, "::1", "ip:loopback");
 }
 
-/* Review Focus: fe_web_bind :: and a client on 127.0.0.1 (the peer is
+/* fe_web_bind :: and a client on 127.0.0.1 (the peer is
  * ::ffff:127.0.0.1) */
 static void test_tcp_dual_stack_key_is_uid(void)
 {
