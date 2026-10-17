@@ -143,7 +143,7 @@ Details and moving from `rpe2e.pl`:
 The network-facing parts were reviewed, fuzzed and tested under
 sanitizers.
 
-- **Web frontend (fe-web)** — the password in a header, never in a URL; wrong passwords paced per peer; limits on login, clients and frames.
+- **Web frontend (fe-web)** — the password in a header (the URL form NexusIRC sends still works); wrong passwords paced per peer; limits on login, clients and frames.
 - **Image preview** — http and https only, public addresses only, a hard size limit.
 - **Configuration** — `~/.erssi/config` is written readable only by you.
 - **Hardened build** — PIE, stack protector, stack clash protection, `FORTIFY_SOURCE=2`, full RELRO.

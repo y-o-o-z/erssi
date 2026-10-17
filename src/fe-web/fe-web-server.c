@@ -359,15 +359,52 @@ static void fe_web_close_client_flushed(WEB_CLIENT_REC *client)
 	output_watch_update(client);
 }
 
-/* Verify password from handshake request
- * Password MUST be provided in query parameter: GET /?password=secret HTTP/1.1
- */
+/* The "password" parameter of the query in the request line, percent-
+ * decoded; NULL when there is none, or when it has a broken %-escape or an
+ * escaped NUL. '+' stays a plus (RFC 3986 gives it no meaning in a query,
+ * and clients that did not encode the password sent it as a plus). */
+static char *query_password(const char *data)
+{
+	const char *line_end, *target, *target_end, *p;
+
+	line_end = strstr(data, "\r\n");
+	if (line_end == NULL)
+		return NULL;
+	target = memchr(data, ' ', line_end - data);
+	if (target == NULL)
+		return NULL;
+	target++;
+	target_end = memchr(target, ' ', line_end - target);
+	if (target_end == NULL)
+		target_end = line_end;
+	p = memchr(target, '?', target_end - target);
+	if (p == NULL)
+		return NULL;
+
+	for (p++; p < target_end;) {
+		const char *param_end = memchr(p, '&', target_end - p);
+
+		if (param_end == NULL)
+			param_end = target_end;
+		if (param_end - p >= 9 && memcmp(p, "password=", 9) == 0)
+			return g_uri_unescape_segment(p + 9, param_end, NULL);
+		p = param_end + 1;
+	}
+	return NULL;
+}
+
+/* Check the password of an upgrade request (NUL-terminated, the request
+ * line and headers). It is accepted in two places:
+ *  - an "Authorization: Bearer <password>" header, the way to send it:
+ *    it stays out of the URL and so out of anything that logs URLs;
+ *  - when there is no such header, the "password" parameter of the query
+ *    (GET /?password=<percent-encoded password>), because NexusIRC as
+ *    published (kofany/nexus, server/feWebClient/feWebSocket.ts) still
+ *    sends it there. A URL can end up in the logs of proxies and tunnels.
+ * One password per request, compared in time independent of its value. */
 static int fe_web_verify_password(const char *data)
 {
 	const char *configured_password;
-	char *password_param;
-	char *password_start;
-	char *password_end;
 	char *password = NULL;
 	gboolean from_header = FALSE;
 	int result = 0;
@@ -412,17 +449,9 @@ static int fe_web_verify_password(const char *data)
 		}
 	}
 
-	/* Otherwise the query parameter (?password=...), as older web clients send */
-	password_param = password != NULL ? NULL : strstr(data, "?password=");
-	if (password_param != NULL) {
-		password_start = password_param + strlen("?password=");
-		password_end = strpbrk(password_start, " &\r\n");
-		if (password_end != NULL) {
-			password = g_strndup(password_start, password_end - password_start);
-		} else {
-			password = g_strdup(password_start);
-		}
-	}
+	/* otherwise the query of the request line */
+	if (password == NULL)
+		password = query_password(data);
 
 	/* Verify password: compare digests, in time independent of where
 	 * the first difference is */

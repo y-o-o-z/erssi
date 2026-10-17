@@ -36,7 +36,11 @@
             ~/.erssi/fe-web.sock.
         fe_web_password (default: empty)
             The password a client must give. The server refuses to start
-            while it is empty.
+            while it is empty. A client sends it in an "Authorization:
+            Bearer" header of its upgrade request; without that header,
+            the "password" parameter of the URL (/?password=..., percent-
+            encoded) is accepted too, as NexusIRC sends it. A URL can end
+            up in the logs of proxies, so the header is the better way.
 
     Connections always use TLS (wss://) with a self-signed certificate,
     and the messages are additionally encrypted with AES-256-GCM using a

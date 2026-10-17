@@ -134,6 +134,8 @@ def main():
     write("handshake", "bearer", request("bearer") + SPLIT + ping + frame(8, b"\x03\xe8"))
     write("handshake", "bearer-and-query", request("query").replace(
         b"Upgrade: websocket", b"authorization:\tBearer " + PASSWORD + b"\r\nUpgrade: websocket"))
+    write("handshake", "query-percent-encoded",
+          request("query", password=b"fuzz%2dpass%77ord") + SPLIT + ping)
     write("handshake", "wrong-password", request("query", password=b"guess"))
     write("handshake", "no-password", request(None))
     write("handshake", "lowercase-key", request("bearer", key_header=b"sec-websocket-key"))
