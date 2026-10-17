@@ -281,6 +281,22 @@ static void test_answer_from_bouncer_passes(void)
 	g_assert_cmpint(delivered, ==, 1);
 }
 
+/* a private NOTICE opens a query too when autocreate_query_level has
+ * NOTICES */
+static void test_notice_made_query_not_exempt(void)
+{
+	settings_set_level("autocreate_query_level", "MSGS NOTICES");
+	signal_emit("setup changed", 0);
+
+	signal_emit("event notice", 4, server, "user :KUP TANIO", "nb", "~nb@h.example.invalid");
+	g_assert_nonnull(query_find(server, "nb"));
+	start_flood();
+
+	delivered = 0;
+	pm("nb", "~nb@h.example.invalid", "KUP TANIO 2");
+	g_assert_cmpint(delivered, ==, 0);
+}
+
 static void test_server_message(void)
 {
 	pm("irc.example.invalid", NULL, "server notice");
@@ -406,6 +422,7 @@ int main(int argc, char **argv)
 	    test_flood_made_query_duplicate_text);
 	add("/anti-floodnet/answered-query-passes", test_answered_query_passes);
 	add("/anti-floodnet/answer-from-bouncer-passes", test_answer_from_bouncer_passes);
+	add("/anti-floodnet/notice-made-query-not-exempt", test_notice_made_query_not_exempt);
 	add("/anti-floodnet/server-message", test_server_message);
 	add("/anti-floodnet/window-capped", test_window_capped);
 	add("/anti-floodnet/blocked-patterns-capped", test_blocked_patterns_capped);

@@ -39,8 +39,8 @@ ANTI_FLOODNET_REC *floodnet = NULL;
 
 static guint protection_tag = 0;
 
-/* The sender of the private message being handled right now. A query
- * created while it is handled was opened by that message. */
+/* The sender of the private message or notice being handled right now. A
+ * query created while it is handled was opened by that message. */
 static IRC_SERVER_REC *incoming_server = NULL;
 static char *incoming_nick = NULL;
 
@@ -519,9 +519,10 @@ static void mark_written(SERVER_REC *server, const char *target)
         MODULE_DATA_UNSET(query);
 }
 
-/* Added first, so it runs before the handlers that turn the message (or a
- * CTCP ACTION) into a query */
-static void sig_event_privmsg_first(IRC_SERVER_REC *server, const char *data,
+/* Added first on "event privmsg" and "event notice", so it runs before the
+ * handlers that turn the message (a CTCP ACTION too) or the notice into a
+ * query */
+static void sig_event_message_first(IRC_SERVER_REC *server, const char *data,
                                     const char *nick, const char *address)
 {
     char *params, *target, *text;
@@ -539,9 +540,10 @@ static void sig_event_privmsg_first(IRC_SERVER_REC *server, const char *data,
 }
 
 /* A handler that stops the signal (one for a CTCP does) skips this; the
- * sender then stays until the next private message or until the server is
- * gone, and can only flag an automatic query with that very nick. */
-static void sig_event_privmsg_last(void)
+ * sender then stays until the next private message or notice or until the
+ * server is gone, and can only flag an automatic query with that very
+ * nick. */
+static void sig_event_message_last(void)
 {
     clear_incoming();
 }
@@ -641,9 +643,11 @@ void irc_anti_floodnet_init(void)
     nick_flood_init();
 
     /* Add signal handlers */
-    signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_first);
+    signal_add_first("event privmsg", (SIGNAL_FUNC) sig_event_message_first);
+    signal_add_first("event notice", (SIGNAL_FUNC) sig_event_message_first);
     signal_add("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
-    signal_add_last("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_last);
+    signal_add_last("event privmsg", (SIGNAL_FUNC) sig_event_message_last);
+    signal_add_last("event notice", (SIGNAL_FUNC) sig_event_message_last);
     signal_add("query created", (SIGNAL_FUNC) sig_query_created);
     signal_add("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
     /* last: by then the front end has made the query for your message */
@@ -672,9 +676,11 @@ void irc_anti_floodnet_deinit(void)
     nick_flood_deinit();
 
     /* Remove signal handlers */
-    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_first);
+    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_message_first);
+    signal_remove("event notice", (SIGNAL_FUNC) sig_event_message_first);
     signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg);
-    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_privmsg_last);
+    signal_remove("event privmsg", (SIGNAL_FUNC) sig_event_message_last);
+    signal_remove("event notice", (SIGNAL_FUNC) sig_event_message_last);
     signal_remove("query created", (SIGNAL_FUNC) sig_query_created);
     signal_remove("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
     signal_remove("message own_private", (SIGNAL_FUNC) sig_message_own_private);
