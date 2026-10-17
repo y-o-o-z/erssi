@@ -63,7 +63,17 @@ typedef struct {
 	LINE_REC *line;
 	WINDOW_REC *window;
 	gboolean is_page_url;
+	guint tag;               /* its g_timeout_add() source */
 } RetryData;
+
+/* A failed download is tried once more after this delay */
+#ifndef IMAGE_FETCH_RETRY_DELAY_MS
+#define IMAGE_FETCH_RETRY_DELAY_MS 3000
+#endif
+
+/* Retries waiting for their timer, so that cancelling and
+ * image_fetch_deinit() can remove the timers and free them */
+static GSList *pending_retries = NULL;
 
 /* Forward declarations */
 static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char *error);
@@ -669,11 +679,46 @@ static void ensure_processing_timer(void)
 	}
 }
 
+static void retry_data_free(RetryData *retry)
+{
+	g_free(retry->url);
+	g_free(retry->cache_path);
+	g_free(retry);
+}
+
+/* Starts the timer of a retry */
+static void schedule_retry(RetryData *retry)
+{
+	retry->tag = g_timeout_add(IMAGE_FETCH_RETRY_DELAY_MS, retry_fetch_callback, retry);
+	pending_retries = g_slist_prepend(pending_retries, retry);
+}
+
+/* Removes the timers of the waiting retries of url (all when NULL) */
+static void cancel_retries(const char *url)
+{
+	GSList *tmp, *next;
+
+	for (tmp = pending_retries; tmp != NULL; tmp = next) {
+		RetryData *retry = tmp->data;
+
+		next = tmp->next;
+		if (url != NULL && g_strcmp0(retry->url, url) != 0)
+			continue;
+		if (retry->tag != 0)
+			g_source_remove(retry->tag);
+		pending_retries = g_slist_delete_link(pending_retries, tmp);
+		retry_data_free(retry);
+	}
+}
+
 /* Retry timer callback - starts a new fetch after 3 second delay */
 static gboolean retry_fetch_callback(gpointer user_data)
 {
 	RetryData *retry = user_data;
 	IMAGE_PREVIEW_REC *preview;
+
+	pending_retries = g_slist_remove(pending_retries, retry);
+	retry->tag = 0;
 
 	image_preview_debug_print("RETRY: timer fired, starting retry for %s", retry->url);
 
@@ -681,9 +726,7 @@ static gboolean retry_fetch_callback(gpointer user_data)
 	preview = image_preview_get(retry->line);
 	if (preview == NULL) {
 		image_preview_debug_print("RETRY: preview record gone, aborting");
-		g_free(retry->url);
-		g_free(retry->cache_path);
-		g_free(retry);
+		retry_data_free(retry);
 		return FALSE;
 	}
 
@@ -708,9 +751,7 @@ static gboolean retry_fetch_callback(gpointer user_data)
 		}
 	}
 
-	g_free(retry->url);
-	g_free(retry->cache_path);
-	g_free(retry);
+	retry_data_free(retry);
 	return FALSE;  /* Don't repeat timer */
 }
 
@@ -785,7 +826,7 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 				retry->is_page_url = TRUE;  /* It was a page URL */
 
 				/* Schedule retry in 3 seconds */
-				g_timeout_add(3000, retry_fetch_callback, retry);
+				schedule_retry(retry);
 
 				/* Remove from active fetches so retry can proceed */
 				if (active_fetches != NULL) {
@@ -881,7 +922,7 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 				retry->is_page_url = (url_type != URL_TYPE_DIRECT_IMAGE);
 
 				/* Schedule retry in 3 seconds */
-				g_timeout_add(3000, retry_fetch_callback, retry);
+				schedule_retry(retry);
 
 				/* Keep fetch_pending true so we don't trigger error state */
 				preview->fetch_pending = TRUE;
@@ -1157,7 +1198,10 @@ void image_fetch_cancel(const char *url)
 {
 	IMAGE_FETCH_REC *fetch;
 
-	if (active_fetches == NULL || url == NULL)
+	if (url == NULL)
+		return;
+	cancel_retries(url);
+	if (active_fetches == NULL)
 		return;
 
 	fetch = g_hash_table_lookup(active_fetches, url);
@@ -1172,6 +1216,7 @@ void image_fetch_cancel_all(void)
 	GHashTableIter iter;
 	gpointer key, value;
 
+	cancel_retries(NULL);
 	if (active_fetches == NULL)
 		return;
 
@@ -1216,6 +1261,9 @@ void image_fetch_deinit(void)
 		g_source_remove(curl_timer_tag);
 		curl_timer_tag = 0;
 	}
+
+	/* and the retries still waiting: their lines and windows go away */
+	cancel_retries(NULL);
 
 	/* Clear active fetches */
 	if (active_fetches != NULL) {
