@@ -670,6 +670,7 @@ static time_t fake_now = 0;
 static gboolean fake_peer_other = FALSE;
 static char *mkdir_first_dir = NULL;
 static int mkdir_first_mode = 0;
+static void (*after_mkdir)(const char *dir) = NULL;
 
 void fe_web_fuzz_fake_peer_other_uid(gboolean on)
 {
@@ -681,6 +682,11 @@ void fe_web_fuzz_mkdir_first(const char *dir, int mode)
 	g_free(mkdir_first_dir);
 	mkdir_first_dir = g_strdup(dir);
 	mkdir_first_mode = mode;
+}
+
+void fe_web_fuzz_after_mkdir(void (*fn)(const char *dir))
+{
+	after_mkdir = fn;
 }
 
 #ifdef __linux__
@@ -711,6 +717,8 @@ static int fe_web_fuzz_getpeereid(int fd, uid_t *uid, gid_t *gid)
 
 static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode)
 {
+	int ret, saved_errno;
+
 	if (mkdir_first_dir != NULL) {
 		char *first = mkdir_first_dir;
 
@@ -719,7 +727,18 @@ static int fe_web_fuzz_mkdir_with_parents(const char *dir, int mode)
 		chmod(first, mkdir_first_mode);
 		g_free(first);
 	}
-	return g_mkdir_with_parents(dir, mode);
+	ret = g_mkdir_with_parents(dir, mode);
+	if (ret == 0 && after_mkdir != NULL) {
+		void (*fn)(const char *dir) = after_mkdir;
+
+		/* the swap itself must not touch errno: it is what
+		 * fe-web-server.c sees after a successful mkdir */
+		saved_errno = errno;
+		after_mkdir = NULL;
+		fn(dir);
+		errno = saved_errno;
+	}
+	return ret;
 }
 
 /* connect() and flock() of fe-web-server.c: 0 is the real call, else it

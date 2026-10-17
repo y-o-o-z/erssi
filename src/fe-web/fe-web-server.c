@@ -1359,9 +1359,13 @@ static gboolean socket_dir_check(const char *path)
 		return FALSE;
 	}
 	if (lstat(dir, &st) < 0) {
-		if (errno != ENOENT || (errno = 0, g_mkdir_with_parents(dir, 0700) < 0) ||
-		    lstat(dir, &st) < 0 || !S_ISDIR(st.st_mode) || st.st_uid != getuid() ||
-		    chmod(dir, 0700) < 0 || lstat(dir, &st) < 0) {
+		/* errno is cleared after the mkdir: g_mkdir_with_parents() can
+		 * succeed and still leave the ENOENT of its check for a missing
+		 * parent, which would then be shown as the reason a directory
+		 * that is not ours was refused */
+		if (errno != ENOENT || g_mkdir_with_parents(dir, 0700) < 0 ||
+		    (errno = 0, lstat(dir, &st) < 0) || !S_ISDIR(st.st_mode) ||
+		    st.st_uid != getuid() || chmod(dir, 0700) < 0 || lstat(dir, &st) < 0) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 			          "fe-web: Not starting: directory %s of fe_web_socket: %s", dir,
 			          errno ? g_strerror(errno) : "not created as a directory of yours");

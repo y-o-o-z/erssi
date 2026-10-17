@@ -190,7 +190,7 @@ char *fe_web_message_to_json(WEB_MESSAGE_REC *msg);
 char *fe_web_escape_json(const char *str);
 char *fe_web_generate_message_id(void);
 
-/* JSON parsing */
+/* Members of the top-level object of a client message (fe-web-json.c) */
 char *fe_web_json_get_string(const char *json, const char *key);
 int fe_web_json_get_int(const char *json, const char *key, int default_value);
 int fe_web_json_has_key(const char *json, const char *key);

@@ -122,6 +122,10 @@ void fe_web_fuzz_fake_peer_other_uid(gboolean on);
  * with 'mode' (chmod after mkdir): another user who wins the race */
 void fe_web_fuzz_mkdir_first(const char *dir, int mode);
 
+/* After the next g_mkdir_with_parents() of fe-web-server.c succeeds, 'fn'
+ * runs with its directory: something that swaps it right after */
+void fe_web_fuzz_after_mkdir(void (*fn)(const char *dir));
+
 /* connect() of fe-web-server.c fails with 'err' (the check of an old
  * socket file); 0 means the real connect() */
 void fe_web_fuzz_fake_connect_errno(int err);

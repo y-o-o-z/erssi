@@ -53,7 +53,7 @@ void textbuffer_destroy(TEXT_BUFFER_REC *buffer)
 	textbuffer_remove_all_lines(buffer);
 	g_string_free(buffer->cur_text, TRUE);
 	for (tmp = buffer->cur_info; tmp != NULL; tmp = tmp->next) {
-		LINE_INFO_REC *info = buffer->cur_info->data;
+		LINE_INFO_REC *info = tmp->data;
 		textbuffer_line_info_free1(info);
 		g_free(info);
 	}

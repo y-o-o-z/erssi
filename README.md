@@ -166,6 +166,10 @@ meson test -C Build-asan                          # the same tests under ASan an
 
 - Tests run with `HOME` inside the build directory, so building and testing
   never writes into your own `~/.erssi`.
+- With clang, UBSan's `-fsanitize=function` check is left out: irssi's
+  signals call every handler through one generic function type by design.
+  A sanitizer given in `CFLAGS` instead of `-Db_sanitize` needs
+  `-fno-sanitize=function` at the end of `CFLAGS` (meson warns about it).
 - Changes are kept in topic commits that explain the problem they solve, so
   upstream merges stay reviewable.
 - `utils/pre-push` is the release hook of the Shellter team (it enforces

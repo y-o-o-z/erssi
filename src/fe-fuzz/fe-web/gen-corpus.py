@@ -85,6 +85,24 @@ MESSAGES = [
     b'{"id":"x","type":"unknown"}',
 ]
 
+# Lookups read only the top-level object of a message: a nested key of the
+# same name, a key inside a string, an escaped quote or key, a name given
+# twice (the last counts), nesting at and past the limit (64 levels), and
+# what follows the object
+JSON_SHAPES = [
+    ("json-nested-type",
+     b'{"metadata":{"type":"command"},"command":"/echo nested","type":"ping","id":"n"}'),
+    ("json-nested-array", b'{"list":[{"type":"command"},"type"],"type":"ping"}'),
+    ("json-key-in-string", b'{"text":"\\"type\\":\\"command\\"","type":"ping"}'),
+    ("json-escaped-quotes", b'{"t\\"ype":"command","x":"\\\\","type":"ping"}'),
+    ("json-escaped-key", b'{"\\u0074ype":"ping","id":"e"}'),
+    ("json-duplicate", b'{"type":"command","command":"/echo dup","type":"ping"}'),
+    ("json-deep", b'{"a":' + b"[" * 63 + b"0" + b"]" * 63 + b',"type":"ping"}'),
+    ("json-too-deep", b'{"a":' + b"[" * 64 + b"0" + b"]" * 64 + b',"type":"ping"}'),
+    ("json-very-deep", b'{"a":' + b"[{\"a\":" * 5000 + b',"type":"ping"}'),
+    ("json-trailing", b'{"type":"ping"}{"type":"command","command":"/echo x"}'),
+]
+
 IRC_LINES = [
     b"001 me :Welcome",
     b"005 me CHANTYPES=# PREFIX=(ohv)@%+ CHANMODES=beI,k,l,imnpst :are supported",
@@ -169,6 +187,8 @@ def main():
     # message: the JSON alone
     for i, msg in enumerate(MESSAGES):
         write("message", "%02d" % i, msg)
+    for name, msg in JSON_SHAPES:
+        write("message", name, msg)
     # a web client's accept of a key request (docs/fe-web-e2e.md), and one
     # fe-web refuses before the e2e module sees it
     write("message", "e2e-action",
