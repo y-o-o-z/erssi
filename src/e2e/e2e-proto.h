@@ -158,6 +158,12 @@ guint e2e_prune_prev_keys(E2E_JSON *kr);
    go, with the keyless session row stored with them; how many */
 #define E2E_PENDING_INBOUND_TTL (24 * 3600)
 guint e2e_prune_old_requests(E2E_JSON *kr);
+/* Once per keyring (the member E2E_CONFIRM_MIGRATED marks it): the keys
+   trusted in a keyring of an erssi before 2026.10.3, of rpe2e.pl or of an
+   import count as confirmed - their owners were trusted before the caps
+   knew the difference. TRUE when it ran (the caller saves). */
+#define E2E_CONFIRM_MIGRATED "confirmed_migrated"
+gboolean e2e_migrate_confirmed(E2E_JSON *kr);
 /* our pending KEYREQ of ctx to handle goes (it was not sent) */
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
 /* the key at handle is one the user confirmed (/e2e accept, autotrust,

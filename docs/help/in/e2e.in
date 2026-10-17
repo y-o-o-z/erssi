@@ -124,13 +124,13 @@
                  new JSON file (mode 0600); an existing file or a symlink
                  is never overwritten.
     IMPORT:      REPLACES the whole keyring with the file's contents (no
-                 merging) - an export, or a keyring file itself such as
-                 a keyring.json.bak-<time> (checked as the keyring is);
-                 the previous one is kept as keyring.json.bak-<time>. The key changes (REKEY) already
-                 taken are part of erssi's exports; an export without them
-                 (repartee's) starts their replay protection anew - an old
-                 key change recorded by someone could then be taken once
-                 more.
+                 merging) - an export, or a keyring file itself such as a
+                 keyring.json.bak-<time> (checked as the keyring is); the
+                 previous one is kept as keyring.json.bak-<time>. The key
+                 changes (REKEY) already taken are part of erssi's
+                 exports; an export without them (repartee's) starts
+                 their replay protection anew - an old key change
+                 recorded by someone could then be taken once more.
     AUTOTRUST:   Without an argument or with LIST - the list of rules. ADD
                  adds a rule: the scope is "global" or an exact channel
                  name (or "@ident@host" of a query), the pattern is
@@ -227,17 +227,19 @@
     goes to them at most every 30 s for each channel or query, at most 3
     in 10 s to everyone together - people you confirmed (/E2E ACCEPT, an
     AUTOTRUST rule, /E2E REVERIFY, /E2E UNREVOKE, an exchange you started
-    with /E2E HANDSHAKE) are not held back by that - and only while
-    encryption is on here; their answer lets you read their next
-    messages), "[E2E rejected: ...]" in red when it does not open with
-    their key (their current key is then requested - their REKEY may not
-    have reached you) or you declined or revoked them here (then nothing
-    is requested), "too old to verify" when its time is more than 5
-    minutes off (history a bouncer plays back - your own lines too - a
-    replay, or a clock far off), and the reason when a key exchange of
-    theirs is blocked (a new address, a new key, revoked - see REVERIFY);
-    such a block is also told in full, with the command to run, when it
-    happens and at most once a minute while they write.
+    with /E2E HANDSHAKE; and, once, every key trusted in a keyring of an
+    erssi before 2026.10.3, of rpe2e.pl or of an import, when this version
+    first reads it) are not held back by that - and only while encryption
+    is on here; their answer lets you read their next messages), "[E2E
+    rejected: ...]" in red when it does not open with their key (their
+    current key is then requested - their REKEY may not have reached you)
+    or you declined or revoked them here (then nothing is requested), "too
+    old to verify" when its time is more than 5 minutes off (history a
+    bouncer plays back - your own lines too - a replay, or a clock far
+    off), and the reason when a key exchange of theirs is blocked (a new
+    address, a new key, revoked - see REVERIFY); such a block is also told
+    in full, with the command to run, when it happens and at most once a
+    minute while they write.
 
     Your own key goes only to people you accepted: /E2E ACCEPT, an
     AUTOTRUST rule or auto-accept mode. Having their key is not enough -

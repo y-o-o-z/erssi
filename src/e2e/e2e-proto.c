@@ -2627,6 +2627,26 @@ guint e2e_prune_old_requests(E2E_JSON *kr)
 	return n;
 }
 
+gboolean e2e_migrate_confirmed(E2E_JSON *kr)
+{
+	E2E_JSON *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys;
+	guint i;
+
+	if (kr == NULL || e2e_json_get(kr, E2E_CONFIRM_MIGRATED) != NULL)
+		return FALSE;
+	keys = e2e_json_keys(peers);
+	for (i = 0; i < keys->len; i++) {
+		E2E_JSON *peer = e2e_json_get(peers, g_ptr_array_index(keys, i));
+
+		if (strcmp(status_of(peer), "trusted") == 0)
+			e2e_json_set_int(peer, "confirmed", 1);
+	}
+	g_ptr_array_unref(keys);
+	e2e_json_set_int(kr, E2E_CONFIRM_MIGRATED, e2e_now());
+	return TRUE;
+}
+
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
 {
 	char *k = pending_key(ctx, handle);

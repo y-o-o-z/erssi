@@ -7195,6 +7195,33 @@ static void test_stranger_backlog(void)
 	peer_free(&me);
 }
 
+/* a keyring of before (or of rpe2e.pl, an import): its trusted keys count
+   as confirmed, once - a key trusted afterwards by itself does not */
+static void test_migrate_confirmed(void)
+{
+	PEER me, a, b2;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&me, "#a", "normal");
+	give_key(&a, &me, "#a");
+	g_assert_false(e2e_handle_confirmed(me.kr, ALICE));
+	g_assert_true(e2e_migrate_confirmed(me.kr));
+	g_assert_true(e2e_handle_confirmed(me.kr, ALICE));
+	g_assert_nonnull(e2e_json_get(me.kr, E2E_CONFIRM_MIGRATED));
+	/* once */
+	g_assert_false(e2e_migrate_confirmed(me.kr));
+	peer_init(&b2, "carol", CAROL, -1);
+	enable(&b2, "#a", "auto-accept");
+	give_key(&b2, &me, "#a");
+	g_assert_false(e2e_migrate_confirmed(me.kr));
+	g_assert_false(e2e_handle_confirmed(me.kr, CAROL));
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&b2);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -7221,6 +7248,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
 	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
 	g_test_add_func("/e2e/proto/stranger-backlog", test_stranger_backlog);
+	g_test_add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
