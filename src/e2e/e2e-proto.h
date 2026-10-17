@@ -40,6 +40,8 @@
 #define E2E_MAX_PENDING_OUT             256
 #define E2E_MAX_TRUST_CHANGES           128
 #define E2E_MAX_SEEN_REKEYS             1024
+/* seconds the key a REKEY replaced still opens chunks */
+#define E2E_PREV_KEY_GRACE              120
 
 /* seconds since the epoch; tests replace it */
 extern gint64 (*e2e_now)(void);
@@ -367,7 +369,7 @@ typedef enum {
 typedef struct {
 	E2E_IN_ACTION action;
 	E2E_IN_WHY why;		/* DROP: why */
-	E2E_IN_ASK ask;		/* E2E_IN_WHY_NO_SESSION */
+	E2E_IN_ASK ask;		/* E2E_IN_WHY_NO_SESSION, _REJECTED */
 	char *reason;		/* E2E_IN_WHY_REJECTED: what was wrong, for the user */
 	gint64 skew;		/* E2E_IN_WHY_STALE: now - its time */
 	gboolean own;		/* our own line relayed back */

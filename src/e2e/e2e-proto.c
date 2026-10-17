@@ -1528,6 +1528,32 @@ static void set_session(E2E_JSON *kr, const char *handle, const char *ctx,
 	g_free(k);
 }
 
+/* A REKEY replaces the trusted session of handle and ctx: the key it
+   replaces is kept with the new row for E2E_PREV_KEY_GRACE seconds
+   ("prev_sk", "prev_until"), so the chunks the peer sent under it just
+   before (they may arrive after the REKEY NOTICE) still open, as in
+   repartee; then it goes (wiped with its node). Only a key of the same
+   fingerprint is kept. Local only: nothing of it is on the wire. */
+static void set_session_after_rekey(E2E_JSON *kr, const char *handle, const char *ctx,
+                                    const char *fp_hex, const unsigned char key[32])
+{
+	char *k = pipe_key(handle, ctx);
+	E2E_JSON *old = e2e_json_get(e2e_json_get(kr, "incoming"), k), *row;
+	unsigned char prev[32];
+	gboolean keep;
+
+	keep = is_trusted(old) && g_strcmp0(e2e_json_get_string(old, "fp"), fp_hex) == 0 &&
+	       b64_member(old, "sk", prev, 32) && !e2e_mem_equal(prev, key, 32);
+	set_session(kr, handle, ctx, fp_hex, key, "trusted");
+	if (keep) {
+		row = e2e_json_get(e2e_json_get(kr, "incoming"), k);
+		set_b64(row, "prev_sk", prev, 32);
+		e2e_json_set_int(row, "prev_until", e2e_now() + E2E_PREV_KEY_GRACE);
+	}
+	e2e_wipe(prev, sizeof(prev));
+	g_free(k);
+}
+
 /* ---- key exchange ---- */
 
 static char *frame(const E2E_HANDSHAKE *hs)
@@ -2157,7 +2183,7 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	if (!ok)
 		goto out;
 	update_peer(kr, fp_hex, rk->pub, sender_handle, nick, "trusted");
-	set_session(kr, sender_handle, ctx, fp_hex, key, "trusted");
+	set_session_after_rekey(kr, sender_handle, ctx, fp_hex, key);
 out:
 	e2e_wipe(key, sizeof(key));
 	g_free(ctx);
@@ -3377,6 +3403,27 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 	return done;
 }
 
+/* the key a REKEY replaced, while its grace lasts (set_session_after_rekey) */
+static gboolean try_decrypt_prev(const E2E_WIRE *w, const E2E_JSON *row, E2E_IN_RESULT *res)
+{
+	E2E_JSON *prev;
+	gboolean ok;
+	char *ctx;
+
+	if (row == NULL || e2e_json_get_string(row, "prev_sk") == NULL ||
+	    e2e_json_get_int(row, "prev_until", 0) < e2e_now())
+		return FALSE;
+	/* try_decrypt reads "sk" of a trusted row */
+	prev = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(prev, "sk", e2e_json_get_string(row, "prev_sk"));
+	e2e_json_set_string(prev, "status", "trusted");
+	ctx = g_strdup(res->ctx);
+	ok = try_decrypt(w, prev, ctx, res);
+	g_free(ctx);
+	e2e_json_free(prev);
+	return ok;
+}
+
 /* No session of the sender for res->ctx: an automatic KEYREQ (res->keyreq)
    when E2E is on here - at most every E2E_KEYREQ_MIN_INTERVAL per handle,
    none while ours waits for its answer; what became of it */
@@ -3640,7 +3687,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		res->ask = keyreq_for_wire(kr, id, p, is_dm, res);
 		goto out;
 	}
-	if (!try_decrypt(w, row, res->ctx, res)) {
+	if (!try_decrypt(w, row, res->ctx, res) && !try_decrypt_prev(w, row, res)) {
 		GPtrArray *changes = e2e_trust_changes(kr, p->handle);
 
 		res->debug = g_strdup_printf("decrypt failed for (%s,%s)", p->handle,
@@ -3652,8 +3699,19 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		} else {
 			res->why = E2E_IN_WHY_REJECTED;
 			res->reason = g_strdup("it does not open with their key (encrypted with another key of theirs, or changed on the way)");
+			/* most likely they rotated and their REKEY did not reach
+			   us: their current key is asked for (rate-limited, as
+			   for a missing key); a forged chunk costs one request */
+			res->ask = keyreq_for_wire(kr, id, p, is_dm, res);
 		}
 		g_ptr_array_unref(changes);
+	}
+	/* a key kept after a REKEY whose time is over goes */
+	if (row != NULL && e2e_json_get(row, "prev_sk") != NULL &&
+	    e2e_json_get_int(row, "prev_until", 0) < e2e_now()) {
+		e2e_json_remove(row, "prev_sk");
+		e2e_json_remove(row, "prev_until");
+		res->save_needed = TRUE;
 	}
 out:
 	/* read before: the server sent the same chunk again */
@@ -3743,8 +3801,15 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 		                      who, addr, who);
 		break;
 	case E2E_IN_WHY_REJECTED:
-		out = g_strdup_printf("[E2E rejected: %s - /e2e handshake %s asks for their current key]",
-		                      res->reason != NULL ? res->reason : "it cannot be read", who);
+		if (res->ask == E2E_IN_ASK_SENT)
+			out = g_strdup_printf("[E2E rejected: %s - their current key requested]",
+			                      res->reason != NULL ? res->reason : "it cannot be read");
+		else if (res->ask == E2E_IN_ASK_RECENT || res->ask == E2E_IN_ASK_WAITING)
+			out = g_strdup_printf("[E2E rejected: %s - their current key requested, waiting for the answer]",
+			                      res->reason != NULL ? res->reason : "it cannot be read");
+		else
+			out = g_strdup_printf("[E2E rejected: %s - /e2e handshake %s asks for their current key]",
+			                      res->reason != NULL ? res->reason : "it cannot be read", who);
 		break;
 	case E2E_IN_WHY_STALE: {
 		gint64 s = res->skew < 0 ? -res->skew : res->skew;

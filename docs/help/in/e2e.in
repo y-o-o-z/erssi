@@ -214,8 +214,10 @@
     key requested]" when there is no session with them yet (a key request
     goes to them at most every 30 s, and only while encryption is on
     here; their answer lets you read their next messages), "[E2E
-    rejected: ...]" in red when it does not open with their key or you
-    declined or revoked them here (then nothing is requested), "too old
+    rejected: ...]" in red when it does not open with their key (their
+    current key is then requested - their REKEY may not have reached
+    you) or you declined or revoked them here (then nothing is
+    requested), "too old
     to verify" when its time is more than 5 minutes off (history a
     bouncer plays back - your own lines too - a replay, or a clock far
     off), and the reason when a key exchange of theirs
@@ -236,7 +238,9 @@
     come from the person it names, and each kind of request (KEYREQ,
     KEYRSP, REKEY) from one person for one context is handled at most
     every 10 s. A key change announced by a person (REKEY) only replaces
-    a key you already have from them, and each one is taken once (after
+    a key you already have from them (the key it replaces still opens
+    their messages for 2 minutes, for those sent just before it), and
+    each one is taken once (after
     1024 of them from one person in one context the next key change goes
     through a new key request instead). When your own key changes, only
     people you accepted get the new one. At most 64 requests wait for

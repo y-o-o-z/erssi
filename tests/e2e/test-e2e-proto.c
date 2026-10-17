@@ -3041,13 +3041,15 @@ static void test_legacy_single_network(void)
 		fake_now = 1791564129;
 		in_params(&in, &a, "bob", BOB, "#other", &net_one);
 		e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
-		/* the AAD is "#test": not this channel's message */
+		/* the AAD is "#test": not this channel's message (bob's key
+		   is asked for, under the old row where it is) */
 		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
-		g_assert_false(r.save_needed);
 		e2e_in_result_clear(&r);
 	}
 	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|#other", NULL));
 	g_assert_null(path_get(a.kr, "incoming", BOB "|E2E\x1f#other", NULL));
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f#other|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "channels", "E2E\x1f#other", NULL));
 	peer_free(&a);
 }
 
@@ -5707,8 +5709,11 @@ static void test_hidden_messages(void)
 		decrypt_from(&b, &a, "#test", bad, &r);
 		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
 		g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
-		g_assert_null(r.keyreq);
+		/* (their key may have changed without us: asked for) */
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		g_assert_nonnull(r.keyreq);
 		assert_placeholder(&b, &a, &r, "[E2E rejected: it does not open with their key");
+		assert_placeholder(&b, &a, &r, "- their current key requested]");
 		e2e_in_result_clear(&r);
 		g_free(bad);
 	}
@@ -5755,6 +5760,7 @@ static void test_hidden_messages(void)
 	fake_now += E2E_TS_TOLERANCE + 100;
 
 	/* declined here: not read and not asked again, said so */
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "#test|" ALICE);
 	e2e_json_set_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "status", "revoked");
 	g_hash_table_remove_all(b.stamps);
 	decrypt_from(&b, &a, "#test", wire, &r);
@@ -6518,6 +6524,94 @@ static void test_unrevoke_peer(void)
 	peer_free(&b);
 }
 
+/* alice rotates: her REKEY reaches bob or it does not */
+static char *rotate_wire(PEER *a, const char *chan, const char *text, char **rekey)
+{
+	E2E_GATE_RESULT g;
+	char *wire;
+
+	e2e_json_set_int(path_get(a->kr, "outgoing", chan, NULL), "pending_rotation", 1);
+	e2e_gate_decide(a->kr, TRUE, &a->id, NULL, chan, text, no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_nonnull(g.notices);
+	*rekey = unframe(g_ptr_array_index(g.notices, 1));
+	wire = g_strdup(g_ptr_array_index(g.wires, 0));
+	e2e_gate_result_clear(&g);
+	return wire;
+}
+
+/* A REKEY that did not reach us: her next chunk does not open, and her
+   current key is asked for at once (rate-limited) - her answer sets it
+   up. A REKEY that did: the key it replaced still opens what she sent
+   just before, for E2E_PREV_KEY_GRACE seconds. */
+static void test_rekey_lost_and_late(void)
+{
+	PEER a, b;
+	E2E_IN_RESULT r;
+	char *before, *after, *rekey, *rsp = NULL, *recip = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+
+	/* the REKEY is lost */
+	after = rotate_wire(&a, "#test", "after a lost rekey", &rekey);
+	g_free(rekey);
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+	g_assert_nonnull(r.keyreq);
+	{
+		char *body = unframe(r.keyreq);
+
+		g_hash_table_remove_all(a.stamps);
+		e2e_handle_keyreq(a.kr, &a.id, a.stamps, NULL, BOB, "bob", body, ALICE, &rsp, &recip);
+		g_free(body);
+	}
+	e2e_in_result_clear(&r);
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	/* the next chunk again: asked a moment ago, not again */
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	g_free(after);
+
+	/* the REKEY arrives, a chunk under the key before comes after it */
+	before = wire_from(&a, "#test", "sent just before");
+	after = rotate_wire(&a, "#test", "under the new key", &rekey);
+	g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", rekey));
+	g_free(rekey);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	decrypt_from(&b, &a, "#test", before, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "sent just before");
+	e2e_in_result_clear(&r);
+	/* after the grace the old key opens nothing and goes */
+	fake_now += E2E_PREV_KEY_GRACE + 1;
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", before, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	g_assert_true(r.save_needed);
+	e2e_in_result_clear(&r);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	fake_now -= E2E_PREV_KEY_GRACE + 1;
+	g_free(before);
+	g_free(after);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -6535,6 +6629,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/replay", test_replay);
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
+	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
