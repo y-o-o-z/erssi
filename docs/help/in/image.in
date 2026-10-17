@@ -39,11 +39,12 @@
     configuration directory. The file of a shown image is deleted again 30
     seconds after it was displayed, and files older than 7 days are removed.
     After each download and every 30 minutes the oldest files are removed
-    while the cache is larger than image_preview_cache_size; files
-    written more recently than image_preview_timeout and one minute ago
-    are not removed for that. Only the
-    cache's own files are deleted: other files, directories and symbolic
-    links in image_cache are left alone, and links are not followed.
+    while the cache is larger than image_preview_cache_size. A file
+    written less than image_preview_timeout plus one minute ago is not
+    removed for the size limit, as it may still be downloading or not yet
+    shown. Only the cache's own files are deleted: other files,
+    directories and symbolic links in image_cache are left alone, and
+    links are not followed.
 
     Settings:
 
