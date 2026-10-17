@@ -369,6 +369,7 @@ static int fe_web_verify_password(const char *data)
 	char *password_start;
 	char *password_end;
 	char *password = NULL;
+	gboolean from_header = FALSE;
 	int result = 0;
 
 	configured_password = settings_get_str("fe_web_password");
@@ -396,8 +397,16 @@ static int fe_web_verify_password(const char *data)
 
 				while (*v == ' ' || *v == '\t')
 					v++;
-				if (g_ascii_strncasecmp(v, "Bearer ", 7) == 0 && end != NULL && end > v + 7)
-					password = g_strndup(v + 7, end - (v + 7));
+				if (g_ascii_strncasecmp(v, "Bearer ", 7) == 0 && end != NULL) {
+					/* RFC 9110 5.5: whitespace at the end of a field
+					 * value is not part of it (a proxy may add some) */
+					while (end > v + 7 && (end[-1] == ' ' || end[-1] == '\t'))
+						end--;
+					if (end > v + 7) {
+						password = g_strndup(v + 7, end - (v + 7));
+						from_header = TRUE;
+					}
+				}
 			}
 			h = strstr(h, "\r\n");
 		}
@@ -420,9 +429,17 @@ static int fe_web_verify_password(const char *data)
 	if (password != NULL) {
 		char *want, *got;
 		unsigned char diff = 0;
+		gsize want_len = strlen(configured_password);
 		int i;
 
-		want = g_compute_checksum_for_string(G_CHECKSUM_SHA256, configured_password, -1);
+		/* a header cannot carry whitespace at the end of the password
+		 * (see above): such a password is compared without it */
+		while (from_header && want_len > 0 &&
+		       (configured_password[want_len - 1] == ' ' ||
+		        configured_password[want_len - 1] == '\t'))
+			want_len--;
+		want = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+		                                   (const guchar *) configured_password, want_len);
 		got = g_compute_checksum_for_string(G_CHECKSUM_SHA256, password, -1);
 		for (i = 0; want[i] != '\0'; i++)
 			diff |= want[i] ^ got[i];
