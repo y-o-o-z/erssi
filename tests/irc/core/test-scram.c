@@ -11,6 +11,7 @@
 #include <irssi/src/common.h>
 #include <irssi/src/irc/core/scram.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <openssl/evp.h>
@@ -163,17 +164,19 @@ static void test_login(gconstpointer data)
 	exchange_free(&ex);
 }
 
-/* the count Atheme uses by default is accepted too */
-static void test_iterations_atheme(void)
+/* the count Atheme uses by default, and the largest it can be set to,
+ * are accepted too */
+static void test_iterations_atheme(gconstpointer data)
 {
+	const char *count = data;
 	Exchange ex;
 	char *server_first, *client_final, *server_final;
 	size_t len = 0;
 	char *out = NULL;
 
 	exchange_start(&ex, "SHA256");
-	ex.iterations = 64000;
-	server_first = server_first_message(&ex, "64000");
+	ex.iterations = atoi(count);
+	server_first = server_first_message(&ex, count);
 	g_assert_cmpint(exchange_server_first(&ex, server_first, &client_final), ==,
 	                SCRAM_IN_PROGRESS);
 	server_final = server_verify(&ex, client_final);
@@ -188,7 +191,7 @@ static void test_iterations_atheme(void)
 static void test_iterations_refused(void)
 {
 	static const char *const counts[] = {
-		"", "0", "1", "4095", "1000001", "2147483648", "4294967297",
+		"", "0", "1", "4095", "10000001", "2147483648", "4294967297",
 		"99999999999999999999999", "-4096", "+4096", " 4096", "4096 ",
 		"4096x", "0x1000", "4e3", "abc",
 	};
@@ -319,7 +322,10 @@ int main(int argc, char **argv)
 	g_test_add_data_func("/scram/login/sha1", "SHA1", test_login);
 	g_test_add_data_func("/scram/login/sha256", "SHA256", test_login);
 	g_test_add_data_func("/scram/login/sha512", "SHA512", test_login);
-	g_test_add_func("/scram/iterations/atheme_default", test_iterations_atheme);
+	g_test_add_data_func("/scram/iterations/atheme_default", "64000",
+	                     test_iterations_atheme);
+	g_test_add_data_func("/scram/iterations/atheme_max", "5000000",
+	                     test_iterations_atheme);
 	g_test_add_func("/scram/iterations/refused", test_iterations_refused);
 	g_test_add_func("/scram/server_first/refused", test_server_first_refused);
 	g_test_add_func("/scram/server_final", test_server_final);

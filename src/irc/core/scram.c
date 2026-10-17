@@ -32,12 +32,16 @@
  * ask for at least 4096, which Ergo uses; Atheme (the services behind
  * SASL on Libera.Chat and many networks running Solanum, InspIRCd or
  * UnrealIRCd, which leave SCRAM to the services) defaults to 64000 and
- * accepts 10000 to 5000000. The client computes PBKDF2 over i rounds in
- * the main loop, so a larger count from a hostile or broken server would
- * freeze erssi: 1000000 rounds already take a second or more with SHA-512
- * on a slow machine. Anything outside this range is refused. */
+ * lets a network set anything from 10000 to 5000000. The upper bound here
+ * is 10000000, so that every Atheme setting logs in, with room to spare.
+ * The client computes PBKDF2 over i rounds in the main loop, so a hostile
+ * or broken server can still make one login stall erssi: 10000000 rounds
+ * take about 5 seconds with SHA-1 or SHA-256 and about 15 seconds with
+ * SHA-512 on a slow machine. It cannot ask for more than that, nor make
+ * the count wrap around or turn negative. Anything outside this range is
+ * refused. */
 #define SCRAM_MIN_ITERATIONS 4096
-#define SCRAM_MAX_ITERATIONS 1000000
+#define SCRAM_MAX_ITERATIONS 10000000
 
 // EVP_MD_CTX_create() and EVP_MD_CTX_destroy() were renamed in OpenSSL 1.1.0
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
