@@ -67,3 +67,6 @@ test suite also runs under both sanitizers.
 Switched off: in erssi 1.3.1 it never encrypted the configuration file and
 a wrong master password could delete stored credentials. Existing setups
 keep working; `/help credential` explains how to return to plain storage.
+A value they encrypt is AES-256-GCM, so a changed value or a wrong master
+password is refused; values from versions before 2026.10.3 (AES-256-CBC,
+which cannot detect a change) are still read.

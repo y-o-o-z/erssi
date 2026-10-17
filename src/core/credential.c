@@ -125,6 +125,24 @@ static CREDENTIAL_REC *credential_find(const char *network, CredentialContext co
 	return NULL;
 }
 
+/* A value in the encrypted form of versions before 2026.10.3, which has no
+ * tag, encrypted again in the current form; NULL when it is not in that
+ * form or cannot be decrypted with the master password. */
+static char *credential_upgrade_legacy(const char *value)
+{
+	char *plain, *upgraded;
+
+	if (master_password == NULL || !credential_is_legacy_encrypted(value))
+		return NULL;
+	plain = credential_decrypt(value, master_password);
+	if (plain == NULL)
+		return NULL;
+	upgraded = credential_encrypt(plain, master_password);
+	memset(plain, 0, strlen(plain));
+	g_free(plain);
+	return upgraded;
+}
+
 /* Encryption and the external file are not reliable yet: encryption never
  * reaches ~/.erssi/config (passwords stay in plain text there), external
  * mode puts them back into it, and a wrong master password can delete
@@ -430,6 +448,8 @@ gboolean credential_set(const char *network, CredentialContext context, const ch
 		if (new_value == NULL) {
 			return FALSE;
 		}
+	} else if ((new_value = credential_upgrade_legacy(value)) != NULL) {
+		/* an old encrypted value stays encrypted, now with a tag */
 	} else {
 		if (should_encrypt) {
 			/* Cannot encrypt without password - store plaintext with warning */
@@ -1296,6 +1316,33 @@ gboolean credential_external_reload(void)
 
 /* === Configuration hooks === */
 
+/* Encrypts the value of key in node if it is plain text (and, for
+ * autosendcmd, holds a login), and writes a value in the encrypted form of
+ * an older version again in the current one. */
+static void credential_encrypt_config_value(CONFIG_REC *config, CONFIG_NODE *node,
+                                            const char *key, gboolean autosendcmd)
+{
+	char *value, *encrypted;
+
+	value = config_node_get_str(node, key, NULL);
+	if (value == NULL)
+		return;
+
+	if (credential_is_legacy_encrypted(value)) {
+		encrypted = credential_upgrade_legacy(value);
+	} else if (credential_is_encrypted(value) ||
+	           (autosendcmd && !credential_is_autosendcmd_sensitive(value))) {
+		return;
+	} else {
+		encrypted = credential_encrypt(value, master_password);
+	}
+
+	if (encrypted != NULL) {
+		config_node_set_str(config, node, key, encrypted);
+		g_free(encrypted);
+	}
+}
+
 static void credential_encrypt_config_nodes(CONFIG_REC *config)
 {
 	CONFIG_NODE *root, *node;
@@ -1312,18 +1359,10 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 	if (node != NULL && node->value != NULL) {
 		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
 			CONFIG_NODE *server = tmp->data;
-			char *password, *encrypted;
-			
+
 			if (server->type != NODE_TYPE_BLOCK) continue;
-			
-			password = config_node_get_str(server, "password", NULL);
-			if (password != NULL && !credential_is_encrypted(password)) {
-				encrypted = credential_encrypt(password, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, server, "password", encrypted);
-					g_free(encrypted);
-				}
-			}
+
+			credential_encrypt_config_value(config, server, "password", FALSE);
 		}
 	}
 	
@@ -1332,41 +1371,13 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 	if (node != NULL && node->value != NULL) {
 		for (tmp = config_node_first(node->value); tmp != NULL; tmp = config_node_next(tmp)) {
 			CONFIG_NODE *chatnet = tmp->data;
-			char *sasl_password, *sasl_username, *autosendcmd;
-			char *encrypted;
-			
+
 			if (chatnet->type != NODE_TYPE_BLOCK) continue;
-			
-			/* Encrypt sasl_password */
-			sasl_password = config_node_get_str(chatnet, "sasl_password", NULL);
-			if (sasl_password != NULL && !credential_is_encrypted(sasl_password)) {
-				encrypted = credential_encrypt(sasl_password, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "sasl_password", encrypted);
-					g_free(encrypted);
-				}
-			}
-			
-			/* Encrypt sasl_username */
-			sasl_username = config_node_get_str(chatnet, "sasl_username", NULL);
-			if (sasl_username != NULL && !credential_is_encrypted(sasl_username)) {
-				encrypted = credential_encrypt(sasl_username, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "sasl_username", encrypted);
-					g_free(encrypted);
-				}
-			}
-			
-			/* Encrypt autosendcmd if it contains credentials */
-			autosendcmd = config_node_get_str(chatnet, "autosendcmd", NULL);
-			if (autosendcmd != NULL && credential_is_autosendcmd_sensitive(autosendcmd) &&
-			    !credential_is_encrypted(autosendcmd)) {
-				encrypted = credential_encrypt(autosendcmd, master_password);
-				if (encrypted != NULL) {
-					config_node_set_str(config, chatnet, "autosendcmd", encrypted);
-					g_free(encrypted);
-				}
-			}
+
+			credential_encrypt_config_value(config, chatnet, "sasl_password", FALSE);
+			credential_encrypt_config_value(config, chatnet, "sasl_username", FALSE);
+			/* autosendcmd only if it contains credentials */
+			credential_encrypt_config_value(config, chatnet, "autosendcmd", TRUE);
 		}
 	}
 }
