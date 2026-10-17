@@ -959,6 +959,15 @@ void mainwindows_resize(int width, int height)
 	screen_width = width;
 	screen_height = height;
 
+	/* The side panels give way to the main windows, so they go first:
+	   a panel the new width has no room for (next to the widest row of
+	   main windows) gives its columns back now, before the rows are
+	   fitted to the new width below - and before a window a row has no
+	   room for is destroyed. Laid out only afterwards, on "terminal
+	   resized", the panels kept their columns through the destroy step:
+	   side-by-side windows that fit without the panels were destroyed. */
+	signal_emit("terminal resizing", 0);
+
 	resize_debug_log("MW_RESIZE", "xdiff=%d, ydiff=%d, reserved: top=%d bot=%d left=%d right=%d",
 	                 xdiff, ydiff, screen_reserved_top, screen_reserved_bottom,
 	                 screen_reserved_left, screen_reserved_right);

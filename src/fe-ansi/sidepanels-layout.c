@@ -286,19 +286,21 @@ gboolean sp_layout_busy(void)
 	return layout_busy;
 }
 
-/* Which panels the screen has room for, and their columns: a panel is
- * created (its columns reserved) or destroyed (given back) here only, so
- * the columns are reserved once whatever the number of main windows. The
- * main area keeps at least MIN_MAIN_WINDOW_WIDTH columns and room for the
- * widest row of main windows; the right panel goes first. */
-static void layout_panels_once(SP_MAINWIN_CTX *ctx)
-{
-	int left_w, right_w, base, need, y, h;
-	gboolean rows, want_left, want_right, show_left, show_right, changed, destroyed;
-	GSList *tmp;
+typedef struct {
+	int left_w, right_w;            /* the widths set */
+	gboolean want_left, want_right; /* wanted on the screen */
+	gboolean show_left, show_right; /* and there is room for them */
+} SP_PANELS_FIT;
 
-	left_w = get_sp_enable_left() ? MAX(0, get_sp_left_width()) : 0;
-	right_w = get_sp_enable_right() ? MAX(0, get_sp_right_width()) : 0;
+/* Which panels the screen wants and has room for (see
+   layout_panels_once) */
+static void panels_fit(SP_MAINWIN_CTX *ctx, SP_PANELS_FIT *fit)
+{
+	int base, need, y, h;
+	gboolean rows;
+
+	fit->left_w = get_sp_enable_left() ? MAX(0, get_sp_left_width()) : 0;
+	fit->right_w = get_sp_enable_right() ? MAX(0, get_sp_right_width()) : 0;
 	rows = panel_rows(&y, &h);
 
 	/* the main area without the panels' own columns */
@@ -306,15 +308,38 @@ static void layout_panels_once(SP_MAINWIN_CTX *ctx)
 	       (screen_reserved_right - ctx->right_reserved);
 	need = MAX(MIN_MAIN_WINDOW_WIDTH, mainwindows_min_columns());
 
-	want_left = rows && left_w > 0;
-	show_left = want_left && base - left_w >= need;
+	fit->want_left = rows && fit->left_w > 0;
+	fit->show_left = fit->want_left && base - fit->left_w >= need;
 
 	/* the right panel shows the nicks of a channel in every row of main
 	   windows: auto-hidden, it goes only when no row has a channel */
-	want_right = rows && right_w > 0;
-	if (want_right && get_sp_auto_hide_right())
-		want_right = right_bands_have_channel();
-	show_right = want_right && base - (show_left ? left_w : 0) - right_w >= need;
+	fit->want_right = rows && fit->right_w > 0;
+	if (fit->want_right && get_sp_auto_hide_right())
+		fit->want_right = right_bands_have_channel();
+	fit->show_right = fit->want_right &&
+	                  base - (fit->show_left ? fit->left_w : 0) - fit->right_w >= need;
+}
+
+/* Which panels the screen has room for, and their columns: a panel is
+ * created (its columns reserved) or destroyed (given back) here only -
+ * and destroyed in sig_terminal_resizing() before a resize - so the
+ * columns are reserved once whatever the number of main windows. The
+ * main area keeps at least MIN_MAIN_WINDOW_WIDTH columns and room for the
+ * widest row of main windows; the right panel goes first. */
+static void layout_panels_once(SP_MAINWIN_CTX *ctx)
+{
+	SP_PANELS_FIT fit;
+	int left_w, right_w;
+	gboolean want_left, want_right, show_left, show_right, changed, destroyed;
+	GSList *tmp;
+
+	panels_fit(ctx, &fit);
+	left_w = fit.left_w;
+	right_w = fit.right_w;
+	want_left = fit.want_left;
+	want_right = fit.want_right;
+	show_left = fit.show_left;
+	show_right = fit.show_right;
 
 	/* a panel that goes or has a new width gives its columns back first */
 	changed = destroyed = FALSE;
@@ -390,6 +415,32 @@ void sp_layout_panels(void)
 			break;
 	}
 	layout_pending = FALSE;
+	layout_busy = FALSE;
+}
+
+/* "terminal resizing": mainwindows_resize() is about to fit the rows of
+ * main windows to the new terminal size, and to destroy the windows a
+ * row has no room for. A panel the new width has no room for gives its
+ * columns back first, so the rows are fitted to the columns they will
+ * really have (the panels give way to the main windows). Only panels
+ * go here, without drawing anything: a panel the new size has room for
+ * comes on "terminal resized", which lays them out and draws them. */
+static void sig_terminal_resizing(void)
+{
+	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
+	SP_PANELS_FIT fit;
+
+	if (ctx == NULL || mainwindows == NULL || layout_busy)
+		return;
+
+	layout_busy = TRUE;
+	panels_fit(ctx, &fit);
+	if (ctx->right_tw != NULL && !fit.show_right)
+		destroy_right_panel(ctx);
+	if (ctx->left_tw != NULL && !fit.show_left)
+		destroy_left_panel(ctx);
+	ctx->left_w = ctx->left_reserved;
+	ctx->right_w = ctx->right_reserved;
 	layout_busy = FALSE;
 }
 
@@ -489,11 +540,12 @@ void draw_panel_borders(void)
 
 void sidepanels_layout_init(void)
 {
-	/* Nothing to initialize */
+	signal_add("terminal resizing", (SIGNAL_FUNC) sig_terminal_resizing);
 }
 
 void sidepanels_layout_deinit(void)
 {
+	signal_remove("terminal resizing", (SIGNAL_FUNC) sig_terminal_resizing);
 	if (relayout_tag != 0) {
 		g_source_remove(relayout_tag);
 		relayout_tag = 0;

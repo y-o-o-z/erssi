@@ -222,13 +222,32 @@ def main():
         # 30 columns: no room for the panel (it goes, its columns come back)
         for cols, rows_, reserved in ((120, 40, 15), (200, 50, 15), (90, 30, 15), (30, 20, 0),
                                       (200, 50, 15)):
-            e.resize(cols, rows_)
-            started(e)
-            # erssi lays the windows out for the new size when it reads the
-            # SIGWINCH: the layout it saves tiles the new size from then on
-            harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, cols, rows_,
-                                                  reserved), WAIT, interval=0.2)
-            tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
+            resized(e, cols, rows_, reserved)
+        e.quit()
+
+    def resized(e, cols, rows_, reserved):
+        """a new terminal size: the layout erssi saves tiles it (once erssi
+        has read the SIGWINCH); that layout"""
+        e.resize(cols, rows_)
+        started(e)
+        harness.wait_until(lambda: not tiling(block(save(e), "mainwindows") or {}, cols, rows_,
+                                              reserved), WAIT, interval=0.2)
+        return tiles(e, cols, rows_, f"{cols}x{rows_}", reserved)
+
+    def t_panels_give_way_on_resize():
+        # two windows side by side, both panels (15 columns each): at 60
+        # columns the two windows fit without the right panel (45 >= 41),
+        # so the right panel goes and the windows stay. Before, the windows
+        # were fitted while the panels still held their 30 columns, the
+        # right window was destroyed, and it did not come back.
+        text = cfg("giveway").replace('"irc/core" =',
+                                      '"fe-ansi" = { sidepanel_right_auto_hide = "no"; };\n  "irc/core" =', 1)
+        e = new("giveway", text, 100, 30)
+        e.type_and_wait("/window new -right")
+        tiles(e, 100, 30, "two side by side", reserved=30)
+        for cols, reserved in ((60, 15), (45, 0), (100, 30)):
+            layout = resized(e, cols, 30, reserved)
+            assert len(layout) == 2 and len(rows(layout)) == 1, (cols, layout)
         e.quit()
 
     def t_both_panels_rows_and_side_by_side():
@@ -436,6 +455,7 @@ windows = {
         harness.main([t_install, t_left_panel_one_main_window, t_both_panels, t_left_panel_split,
                       t_left_panel_side_by_side, t_left_panel_three_rows_set, t_left_panel_side_by_side_set,
                       t_left_panel_width_set, t_left_panel_window_commands, t_left_panel_terminal_resize,
+                      t_panels_give_way_on_resize,
                       t_both_panels_rows_and_side_by_side,
                       t_left_panel_fifteen_rows_set, t_left_panel_restore_7_rows_80x24,
                       t_left_panel_restore_15_rows, t_left_panel_restore_side_by_side,
