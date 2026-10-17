@@ -23,6 +23,7 @@ TOPICS = {
     "nick_mode_color_normal": "Sets the colour of the blank $nickmode prints for a nick without a mode.",
     "nickmode": "$nickmode in a message format is the sender's mode prefix",
     "term_notify": "Shows a desktop notification through the terminal for every mention",
+    "window_close_disconnects": "Disconnects a server when /WINDOW CLOSE closes the last window that",
 }
 
 

@@ -32,7 +32,10 @@
     window and anti_floodnet_duplicate_threshold different users sent the
     same text, that text is blocked and messages with it are dropped. One
     person pasting lines or repeating a line never counts as a flood, and
-    messages from someone you already have a query with are never checked.
+    messages from someone you have a query with are never checked - unless
+    the query was opened by their own message and you have not written in
+    it yet (the first bots of a flood get such queries before protection
+    starts).
     Either case starts protection mode: while it is on, every private
     message from a user without ident or with a blocked text is dropped,
     and each one extends the block of its text.

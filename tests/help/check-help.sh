@@ -1,7 +1,8 @@
 #!/bin/sh
 # Every setting and expando of the fork that has a help text: the source file
 # docs/help/in/<t>.in, the generated docs/help/<t> (identical, none of these
-# has @SYNTAX@) and the entry in docs/help/meson.build.
+# has @SYNTAX@) and the entry in docs/help/meson.build. In a git checkout,
+# no generated docs/help/<t> is in git.
 # Usage: check-help.sh <source dir>
 src=${1:?usage: check-help.sh <source dir>}
 rc=0
@@ -26,4 +27,14 @@ for t in term_truecolor colors_ansi_24bit print_whois_rpl_in_server_window \
 	fi
 	echo "ok $t"
 done
+# docs/help/<t> is made from its .in by utils/syntax.pl at configure time
+# and ignored by git: a copy in git goes stale with the next edit of the .in
+if command -v git >/dev/null 2>&1 && git -C "$src" rev-parse --git-dir >/dev/null 2>&1; then
+	tracked=$(git -C "$src" ls-files -- docs/help | grep -v -e '^docs/help/in/' -e '^docs/help/meson.build$')
+	if [ -n "$tracked" ]; then
+		echo "FAIL generated help files in git:" $tracked; rc=1
+	else
+		echo "ok no generated help file in git"
+	fi
+fi
 exit $rc
