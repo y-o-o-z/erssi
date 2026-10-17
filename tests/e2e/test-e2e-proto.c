@@ -6744,6 +6744,23 @@ static void test_reverify_mixed_changes(void)
 	peer_free(&eve2);
 }
 
+/* a slot of the cap of all senders is free (the slots are kept in the
+   stamps table, "\001auto|<n>") */
+static gboolean auto_keyreq_budget_free(GHashTable *stamps)
+{
+	int i;
+
+	for (i = 0; i < E2E_AUTO_KEYREQ_BURST; i++) {
+		char *k = g_strdup_printf("\001auto|%d", i);
+		gint64 *when = g_hash_table_lookup(stamps, k);
+
+		g_free(k);
+		if (when == NULL || fake_now - *when >= E2E_AUTO_KEYREQ_WINDOW)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* automatic KEYREQs: once per 30 s per address AND context (a query
    right after a channel's exchange is asked for too), and at most
    E2E_AUTO_KEYREQ_BURST in E2E_AUTO_KEYREQ_WINDOW s of all senders
@@ -6799,6 +6816,34 @@ static void test_auto_keyreq_limits(void)
 	g_assert_cmpint(sent, ==, E2E_AUTO_KEYREQ_BURST);
 	g_assert_cmpint(busy, ==, 50 - E2E_AUTO_KEYREQ_BURST);
 	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "pending")), ==, 2 + E2E_AUTO_KEYREQ_BURST);
+	/* the cap is full: a known peer at its own address is still asked -
+	   without a session here, and with one that no longer opens her
+	   chunks (her REKEY lost) */
+	{
+		PEER a;
+		char *w, *rekey;
+
+		peer_init(&a, "alice", ALICE, -1);
+		enable(&a, "#a", "auto-accept");
+		enable(&a, "#b", "auto-accept");
+		give_key(&a, &me, "#a");
+		g_assert_false(auto_keyreq_budget_free(me.stamps));
+		w = wire_from(&a, "#b", "known");
+		in_params(&in, &me, "alice", ALICE, "#b", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+		w = rotate_wire(&a, "#a", "after a lost rekey", &rekey);
+		g_free(rekey);
+		in_params(&in, &me, "alice", ALICE, "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+		peer_free(&a);
+	}
 	/* a clone that got none is not counted as asked: later it is */
 	fake_now += E2E_AUTO_KEYREQ_WINDOW;
 	{

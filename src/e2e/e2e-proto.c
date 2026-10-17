@@ -1892,7 +1892,7 @@ static gboolean keyreq_stamp_allow(GHashTable *stamps, const char *handle, const
 static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
                                            GHashTable *stamps, const E2E_NET *net,
                                            const char *ctx, const char *sender,
-                                           const char *own_handle)
+                                           const char *own_handle, gboolean known)
 {
 	char *rctx, *k, *pk, *out = NULL, *error = NULL;
 	gboolean pending, trusted;
@@ -1904,8 +1904,10 @@ static char *maybe_build_reciprocal_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id,
 	pk = pending_key(rctx, sender);
 	trusted = is_trusted(row_or_twin(kr, net, "incoming", sender, rctx, TRUE, NULL));
 	pending = row_or_twin(kr, net, "pending", sender, rctx, FALSE, NULL) != NULL;
-	if (!pending && !trusted && auto_keyreq_budget(stamps, FALSE) &&
-	    keyreq_stamp_allow(stamps, sender, rctx) && auto_keyreq_budget(stamps, TRUE))
+	/* a known key at its own address has its own allowance: strangers
+	   filling the cap never starve it */
+	if (!pending && !trusted && (known || auto_keyreq_budget(stamps, FALSE)) &&
+	    keyreq_stamp_allow(stamps, sender, rctx) && (known || auto_keyreq_budget(stamps, TRUE)))
 		out = e2e_build_keyreq(kr, id, rctx, sender, &error);
 	g_free(error);
 	g_free(k);
@@ -2039,7 +2041,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		mark_accepted(kr, sender_handle, ctx, fp_hex,
 		              autotrust ? "autotrust" : "auto-accept");
 	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, net, ctx,
-	                                            sender_handle, own_handle);
+	                                            sender_handle, own_handle, change == CHANGE_KNOWN);
 out:
 	g_free(ctx);
 	g_free(k);
@@ -3470,6 +3472,16 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 	return done;
 }
 
+/* a known key, not revoked, is bound to the sender's (server-stamped)
+   address: someone we read or accepted - not one of a flood of clones */
+static gboolean known_at(const E2E_JSON *kr, const char *handle)
+{
+	E2E_JSON *peer;
+
+	e2e_find_peer_by_handle(kr, handle, &peer);
+	return peer != NULL && strcmp(status_of(peer), "trusted") == 0;
+}
+
 /* the key a REKEY replaced, while its grace lasts (set_session_after_rekey) */
 static gboolean try_decrypt_prev(const E2E_WIRE *w, const E2E_JSON *row, E2E_IN_RESULT *res)
 {
@@ -3495,7 +3507,7 @@ static gboolean try_decrypt_prev(const E2E_WIRE *w, const E2E_JSON *row, E2E_IN_
    when E2E is on here - at most every E2E_KEYREQ_MIN_INTERVAL per handle,
    none while ours waits for its answer; what became of it */
 static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
-                                  gboolean is_dm, E2E_IN_RESULT *res)
+                                  gboolean is_dm, gboolean known, E2E_IN_RESULT *res)
 {
 	/* enabled is the PEER-keyed config ("E2E with that peer"), the
 	   KEYREQ asks for the direction we receive */
@@ -3518,11 +3530,12 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 		return E2E_IN_ASK_WAITING;
 	/* all senders together first: a sender is not counted as asked
 	   while nothing could be sent */
-	if (!auto_keyreq_budget(p->keyreq_stamps, FALSE))
+	if (!known && !auto_keyreq_budget(p->keyreq_stamps, FALSE))
 		return E2E_IN_ASK_BUSY;
 	if (!keyreq_stamp_allow(p->keyreq_stamps, p->handle, res->ctx))
 		return E2E_IN_ASK_RECENT;
-	auto_keyreq_budget(p->keyreq_stamps, TRUE);
+	if (!known)
+		auto_keyreq_budget(p->keyreq_stamps, TRUE);
 	res->keyreq = e2e_build_keyreq(kr, id, res->ctx, p->handle, &error);
 	g_free(error);
 	if (res->keyreq == NULL)
@@ -3756,7 +3769,7 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 			}
 		}
 		res->why = E2E_IN_WHY_NO_SESSION;
-		res->ask = keyreq_for_wire(kr, id, p, is_dm, res);
+		res->ask = keyreq_for_wire(kr, id, p, is_dm, known_at(kr, p->handle), res);
 		goto out;
 	}
 	if (!try_decrypt(w, row, res->ctx, res) && !try_decrypt_prev(w, row, res)) {
@@ -3773,8 +3786,9 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 			res->reason = g_strdup("it does not open with their key (encrypted with another key of theirs, or changed on the way)");
 			/* most likely they rotated and their REKEY did not reach
 			   us: their current key is asked for (rate-limited, as
-			   for a missing key); a forged chunk costs one request */
-			res->ask = keyreq_for_wire(kr, id, p, is_dm, res);
+			   for a missing key, but outside the cap strangers can
+			   fill: a trusted session at their address) */
+			res->ask = keyreq_for_wire(kr, id, p, is_dm, TRUE, res);
 		}
 		g_ptr_array_unref(changes);
 	}
