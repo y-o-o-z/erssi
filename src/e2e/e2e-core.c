@@ -927,15 +927,20 @@ void e2e_tell_trust_changes(SERVER_REC *server, const char *ctx, const char *nic
 		dnick = e2e_text_display(nick != NULL ? nick : "?");
 		dhandle = e2e_text_display(handle);
 		if (strcmp(change, "handle_changed") == 0) {
+			/* whose key it is: someone else may have forwarded the
+			   request (the protocol does not bind it to the sender) */
 			const char *was = e2e_json_get_string(peer, "last_handle");
+			const char *owner = e2e_json_get_string(peer, "last_nick");
 			char *dwas = e2e_text_display(was != NULL ? was : "?");
+			char *downer = e2e_text_display(owner != NULL ? owner : "?");
 			char *fp16 = g_strndup(fp, 16);
 
 			printformat(server, item != NULL ? item->visible_name : NULL,
 			            MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_TRUST_HANDLE, dnick,
-			            dhandle, fp16, dwas);
+			            dhandle, fp16, dwas, downer);
 			g_free(fp16);
 			g_free(dwas);
+			g_free(downer);
 		} else if (strcmp(change, "fingerprint_changed") == 0) {
 			const char *old = e2e_json_get_string(row, "old_fp");
 			char *old16 = g_strndup(old != NULL ? old : "?", 16), *new16 = g_strndup(fp, 16);

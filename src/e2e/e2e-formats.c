@@ -37,9 +37,10 @@ FORMAT_REC e2e_formats[] = {
 	/* something the user has to act on: a message NOT sent, a refusal */
 	{ "e2e_warning", "{error [E2E] $0}", 1, { 0 } },
 	/* a key exchange blocked by a trust change, with the command that
-	   settles it: nick, the new ident@host, the start of the fingerprint,
-	   the ident@host the key was known under */
-	{ "e2e_trust_handle", "{error [E2E] Notice: the known key $2 of $0 appeared under a new address, $1 (before: $3). Their messages are not read until you accept it - if it is the same person: /e2e reverify $1}", 4, { 0, 0, 0, 0 } },
+	   settles it: the nick it came from, the new ident@host, the start of
+	   the fingerprint, the ident@host the key was known under, the nick
+	   it was known as */
+	{ "e2e_trust_handle", "{error [E2E] Notice: the known key $2 of $4 (before at $3) now comes from $0 at $1. Their messages are not read until you accept it - if $0 is $4: /e2e reverify $1}", 5, { 0, 0, 0, 0, 0 } },
 	/* nick, ident@host, old and new start of the fingerprint */
 	{ "e2e_trust_key", "{error [E2E] WARNING: the identity key of $0 ($1) has CHANGED (old $2, new $3). Their messages are not read; compare the new one with them over another channel, then /e2e reverify $1}", 4, { 0, 0, 0, 0 } },
 	/* nick, ident@host, the start of the fingerprint */

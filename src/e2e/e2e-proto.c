@@ -3714,10 +3714,22 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
 		const E2E_JSON *row = changes->len > 0 ? g_ptr_array_index(changes, 0) : NULL;
 		const char *change = row != NULL ? e2e_json_get_string(row, "change") : "";
 
-		if (g_strcmp0(change, "handle_changed") == 0)
-			out = g_strdup_printf("[E2E: encrypted message not read - the known key of %s appeared under a new address, %s; if it is the same person: /e2e reverify %s]",
-			                      who, addr, addr);
-		else if (g_strcmp0(change, "fingerprint_changed") == 0)
+		if (g_strcmp0(change, "handle_changed") == 0) {
+			/* the key's known owner: the request may have been
+			   forwarded by someone else */
+			const char *owner = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "peers"),
+			                                                     e2e_json_get_string(row, "new_fp")),
+			                                        "last_nick");
+			char *downer = e2e_text_display(owner != NULL ? owner : "?");
+
+			if (g_ascii_strcasecmp(downer, who) == 0)
+				out = g_strdup_printf("[E2E: encrypted message not read - the known key of %s now comes from a new address, %s; if it is the same person: /e2e reverify %s]",
+				                      who, addr, addr);
+			else
+				out = g_strdup_printf("[E2E: encrypted message not read - %s (%s) uses the known key of %s; only if %s is %s: /e2e reverify %s]",
+				                      who, addr, downer, who, downer, addr);
+			g_free(downer);
+		} else if (g_strcmp0(change, "fingerprint_changed") == 0)
 			out = g_strdup_printf("[E2E: encrypted message not read - the identity key of %s (%s) has CHANGED; compare fingerprints with them, then /e2e reverify %s]",
 			                      who, addr, addr);
 		else

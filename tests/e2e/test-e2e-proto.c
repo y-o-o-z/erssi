@@ -5842,7 +5842,14 @@ static void test_trust_change_notices(void)
 	decrypt_from(&b, &a, "#test", wire, &r);
 	g_assert_cmpint(r.why, ==, E2E_IN_WHY_TRUST);
 	g_assert_null(r.keyreq);
-	assert_placeholder(&b, &a, &r, "the known key of alice appeared under a new address, " ALICE2 "; if it is the same person: /e2e reverify " ALICE2 "]");
+	assert_placeholder(&b, &a, &r, "the known key of alice now comes from a new address, " ALICE2 "; if it is the same person: /e2e reverify " ALICE2 "]");
+	/* the same request forwarded by someone else: whose key it is */
+	{
+		char *text = e2e_in_placeholder(b.kr, &r, "mallory", ALICE2);
+
+		g_assert_cmpstr(text, ==, "[E2E: encrypted message not read - mallory (" ALICE2 ") uses the known key of alice; only if mallory is alice: /e2e reverify " ALICE2 "]");
+		g_free(text);
+	}
 	e2e_in_result_clear(&r);
 	g_free(wire);
 

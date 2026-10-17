@@ -130,12 +130,12 @@ def main():
                             "(bob2@127.0.0.1) yet - key requested]", start), chan_log(a)[start:]
         assert wait_chan(a, "Notice: the known key", start), chan_log(a)[start:]
         log = chan_log(a)[start:]
-        assert "appeared under a new address, bob2@127.0.0.1 (before: bob@127.0.0.1)" in log, log
+        assert "of bob (before at bob@127.0.0.1) now comes from bob at bob2@127.0.0.1" in log, log
         assert "/e2e reverify bob2@127.0.0.1" in log, log
         mid = len(chan_log(a))
         say(k, "secret two")
-        assert wait_chan(a, "[E2E: encrypted message not read - the known key of bob appeared "
-                            "under a new address, bob2@127.0.0.1; if it is the same person: "
+        assert wait_chan(a, "[E2E: encrypted message not read - the known key of bob now comes "
+                            "from a new address, bob2@127.0.0.1; if it is the same person: "
                             "/e2e reverify bob2@127.0.0.1]", mid), chan_log(a)[mid:]
         off = log_size(a)
         a.type_and_wait("/e2e status", "/window goto #test", "/e2e list")

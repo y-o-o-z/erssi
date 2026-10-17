@@ -772,7 +772,7 @@ formats = {
     e2e_warning = "%[-s]          %ZCF222Ee2e{col}%ZCF222E$0%N";
     e2e_pending = "%[-s]          %Z9A6700e2e{col}%Z9A6700Pending key exchange%N from {hilight $0} %Z687079⟨%N$1%Z687079⟩%N for $2$3. Run /e2e accept $1 or /e2e decline $1 (/e2e pending lists all)";
     e2e_pending_query = "%[-s]          %Z9A6700e2e{col}%Z9A6700Pending key exchange%N from {hilight $0} %Z687079⟨%N$1%Z687079⟩%N for a query$3. Run /e2e accept $1 or /e2e decline $1 in any window of $2 (/e2e pending lists all)";
-    e2e_trust_handle = "%[-s]          %ZCF222Ee2e{col}%Z9A6700%_Notice:%_%N the known key %Z9A6700$2%N of {hilight $0} appeared under a new address, %Z9A6700$1%N (before: $3). Their messages are not read until you accept it - if it is the same person: %ZCF222E/e2e reverify $1%N";
+    e2e_trust_handle = "%[-s]          %ZCF222Ee2e{col}%Z9A6700%_Notice:%_%N the known key %Z9A6700$2%N of {hilight $4} (before at $3) now comes from {hilight $0} at %Z9A6700$1%N. Their messages are not read until you accept it - if $0 is $4: %ZCF222E/e2e reverify $1%N";
     e2e_trust_key = "%[-s]          %ZCF222Ee2e{col}%ZCF222E%_WARNING:%_ the identity key of $0 ($1) has CHANGED%N (old $2, new $3). Their messages are not read; compare the new one with them over another channel, then %ZCF222E/e2e reverify $1%N";
     e2e_trust_revoked = "%[-s]          %ZCF222Ee2e{col}%ZCF222E%_$0 ($1, key $2) is REVOKED:%_%N their key exchange is refused and their messages are not read. %ZCF222E/e2e unrevoke $0%N restores them";
   };

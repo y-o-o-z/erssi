@@ -558,8 +558,9 @@ static guint print_trust_changes(WI_ITEM_REC *item, const E2E_JSON *kr, const ch
 		if (nick == NULL)
 			nick = str_or(e2e_json_get_string(peer, "last_nick"), "?");
 		if (strcmp(change, "handle_changed") == 0)
-			e2e_print_warning(item, "  blocked: %s (%s) on %s - the known key %.16s appeared under this new address (it was %s): /e2e reverify %s if it is the same person",
+			e2e_print_warning(item, "  blocked: %s (%s) on %s - the known key %.16s of %s (it was at %s) comes from this new address: /e2e reverify %s if it is the same person",
 			                  shown_text(nick), shown_text(h), shown(c), fp,
+			                  shown_text(str_or(e2e_json_get_string(peer, "last_nick"), "?")),
 			                  shown_text(str_or(e2e_json_get_string(peer, "last_handle"), "?")),
 			                  shown_text(h));
 		else if (strcmp(change, "fingerprint_changed") == 0)
