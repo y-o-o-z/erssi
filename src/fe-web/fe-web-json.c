@@ -13,7 +13,6 @@
 #include "fe-web.h"
 
 #include <string.h>
-#include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
@@ -114,137 +113,232 @@ static char *fe_web_json_unescape(const char *str)
 	return g_string_free(result, FALSE);
 }
 
-/* Simple JSON value extraction - finds "key":"value" or "key":123 */
+/*
+ Lookups in a client message read only the members of its top-level
+ object. A message is first checked to be one well-formed JSON object
+ (a stray character after it, an unclosed string or bracket: no member
+ is found at all), and a key is only ever matched at the top level, so
+ {"meta":{"type":"command"},"type":"ping"} is a ping and a key written
+ inside a string value is just text. A name given twice counts with its
+ last value, as in the browser's JSON.parse() and e2e-json.c.
+*/
+
+/* How deeply objects and arrays may nest in a message: far more than any
+   client sends, and it bounds the recursion of json_skip_value() */
+#define JSON_MAX_DEPTH 64
+
+static const char *json_skip_value(const char *p, int depth);
+
+static const char *json_skip_ws(const char *p)
+{
+	while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+		p++;
+	return p;
+}
+
+/* p is at the opening quote of a string: where it ends (after the
+ * closing quote), or NULL when it is not closed. An escape is skipped
+ * whole, so \" does not end the string; what it means is left to
+ * fe_web_json_unescape(). */
+static const char *json_skip_string(const char *p)
+{
+	for (p++; *p != '"'; p++) {
+		if (*p == '\0')
+			return NULL;
+		if (*p == '\\' && *++p == '\0')
+			return NULL;
+	}
+	return p + 1;
+}
+
+static const char *json_skip_digits(const char *p)
+{
+	if (!g_ascii_isdigit(*p))
+		return NULL;
+	while (g_ascii_isdigit(*p))
+		p++;
+	return p;
+}
+
+/* -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? */
+static const char *json_skip_number(const char *p)
+{
+	if (*p == '-')
+		p++;
+	if (*p == '0')
+		p++;
+	else if ((p = json_skip_digits(p)) == NULL)
+		return NULL;
+	if (*p == '.' && (p = json_skip_digits(p + 1)) == NULL)
+		return NULL;
+	if (*p == 'e' || *p == 'E') {
+		p++;
+		if (*p == '+' || *p == '-')
+			p++;
+		p = json_skip_digits(p);
+	}
+	return p;
+}
+
+/* Is the string that starts at the quote at p the name key */
+static gboolean json_key_is(const char *p, const char *end, const char *key)
+{
+	gsize len = end - p - 2;
+	char *raw, *name;
+	gboolean same;
+
+	/* a name with escapes is compared as what it means ("\u0074ype" is
+	 * "type" to a JSON parser too) */
+	if (memchr(p + 1, '\\', len) == NULL)
+		return strlen(key) == len && memcmp(p + 1, key, len) == 0;
+	raw = g_strndup(p + 1, len);
+	name = fe_web_json_unescape(raw);
+	same = strcmp(name, key) == 0;
+	g_free(name);
+	g_free(raw);
+	return same;
+}
+
+/* p is at the '{' of an object: where it ends (after the '}'), or NULL
+ * when it is not well-formed. With a key, *value is set to the start of
+ * the value of its last member of that name; members of the objects and
+ * arrays inside are skipped, never matched. */
+static const char *json_walk_object(const char *p, int depth, const char *key,
+                                    const char **value)
+{
+	p = json_skip_ws(p + 1);
+	if (*p == '}')
+		return p + 1;
+	for (;;) {
+		const char *name = p;
+		gboolean match;
+
+		if (*p != '"' || (p = json_skip_string(p)) == NULL)
+			return NULL;
+		match = key != NULL && json_key_is(name, p, key);
+
+		p = json_skip_ws(p);
+		if (*p != ':')
+			return NULL;
+		p = json_skip_ws(p + 1);
+		if (match)
+			*value = p;
+		if ((p = json_skip_value(p, depth)) == NULL)
+			return NULL;
+		p = json_skip_ws(p);
+		if (*p == '}')
+			return p + 1;
+		if (*p != ',')
+			return NULL;
+		p = json_skip_ws(p + 1);
+	}
+}
+
+static const char *json_walk_array(const char *p, int depth)
+{
+	p = json_skip_ws(p + 1);
+	if (*p == ']')
+		return p + 1;
+	for (;;) {
+		if ((p = json_skip_value(p, depth)) == NULL)
+			return NULL;
+		p = json_skip_ws(p);
+		if (*p == ']')
+			return p + 1;
+		if (*p != ',')
+			return NULL;
+		p = json_skip_ws(p + 1);
+	}
+}
+
+/* p is at a value inside a container nested 'depth' deep: where the value
+ * ends, or NULL when it is not well-formed */
+static const char *json_skip_value(const char *p, int depth)
+{
+	switch (*p) {
+	case '"':
+		return json_skip_string(p);
+	case '{':
+	case '[':
+		if (depth >= JSON_MAX_DEPTH)
+			return NULL;
+		return *p == '{' ? json_walk_object(p, depth + 1, NULL, NULL) :
+		                   json_walk_array(p, depth + 1);
+	case 't':
+		return strncmp(p, "true", 4) == 0 ? p + 4 : NULL;
+	case 'f':
+		return strncmp(p, "false", 5) == 0 ? p + 5 : NULL;
+	case 'n':
+		return strncmp(p, "null", 4) == 0 ? p + 4 : NULL;
+	default:
+		return json_skip_number(p);
+	}
+}
+
+/* Where the value of the top-level member key starts, or NULL when the
+ * object has no such member or json is not one well-formed object */
+static const char *json_find_value(const char *json, const char *key)
+{
+	const char *p, *value = NULL;
+
+	if (json == NULL || key == NULL)
+		return NULL;
+	p = json_skip_ws(json);
+	if (*p != '{')
+		return NULL;
+	p = json_walk_object(p, 1, key, &value);
+	if (p == NULL || *json_skip_ws(p) != '\0')
+		return NULL;
+	return value;
+}
+
+/* The string value of a top-level member, unescaped; NULL when there is
+ * none or it is no string */
 char *fe_web_json_get_string(const char *json, const char *key)
 {
-	char *search_str;
-	char *pos;
-	char *start;
-	char *end;
-	char *result;
+	const char *value, *end;
+	char *escaped, *result;
 
-	if (json == NULL || key == NULL) {
+	value = json_find_value(json, key);
+	if (value == NULL || *value != '"')
 		return NULL;
-	}
-
-	/* Build search string: "key": */
-	search_str = g_strdup_printf("\"%s\"", key);
-	pos = strstr(json, search_str);
-	g_free(search_str);
-
-	if (pos == NULL) {
-		return NULL;
-	}
-
-	/* Skip past the key and colon */
-	pos = strchr(pos + strlen(key), ':');
-	if (pos == NULL) {
-		return NULL;
-	}
-	pos++;
-
-	/* Skip whitespace */
-	while (*pos != '\0' && isspace((unsigned char) *pos)) {
-		pos++;
-	}
-
-	/* Check if it's a string (starts with ") */
-	if (*pos != '"') {
-		return NULL;
-	}
-
-	start = pos + 1;
-
-	/* Find end of string (handle escaped quotes) */
-	end = start;
-	while (*end != '\0') {
-		if (*end == '\\' && *(end + 1) != '\0') {
-			end += 2;
-			continue;
-		}
-		if (*end == '"') {
-			break;
-		}
-		end++;
-	}
-
-	if (*end != '"') {
-		return NULL;
-	}
-
-	/* Extract string and unescape JSON escape sequences */
-	{
-		char *escaped_str = g_strndup(start, end - start);
-		result = fe_web_json_unescape(escaped_str);
-		g_free(escaped_str);
-	}
-
+	end = json_skip_string(value);
+	escaped = g_strndup(value + 1, end - value - 2);
+	result = fe_web_json_unescape(escaped);
+	g_free(escaped);
 	return result;
 }
 
-/* Get integer value from JSON */
+/* The integer value of a top-level member (true is 1, false 0) */
 int fe_web_json_get_int(const char *json, const char *key, int default_value)
 {
-	char *search_str;
-	char *pos;
+	const char *value;
 	char *end;
-	long value;
+	long number;
 
-	if (json == NULL || key == NULL) {
+	value = json_find_value(json, key);
+	if (value == NULL)
 		return default_value;
-	}
-
-	/* Build search string: "key": */
-	search_str = g_strdup_printf("\"%s\"", key);
-	pos = strstr(json, search_str);
-	g_free(search_str);
-
-	if (pos == NULL) {
-		return default_value;
-	}
-
-	/* Skip past the key and colon */
-	pos = strchr(pos + strlen(key), ':');
-	if (pos == NULL) {
-		return default_value;
-	}
-	pos++;
-
-	/* Skip whitespace */
-	while (*pos != '\0' && isspace((unsigned char) *pos)) {
-		pos++;
-	}
 
 	/* JSON booleans, as server_list sends them (use_tls, autoconnect) */
-	if (strncmp(pos, "true", 4) == 0)
+	if (strncmp(value, "true", 4) == 0)
 		return 1;
-	if (strncmp(pos, "false", 5) == 0)
+	if (strncmp(value, "false", 5) == 0)
 		return 0;
 
 	/* Parse integer: one that does not fit an int is not taken
 	 * (sscanf("%d") is undefined for it) */
 	errno = 0;
-	value = strtol(pos, &end, 10);
-	if (end == pos || errno == ERANGE || value < INT_MIN || value > INT_MAX)
+	number = strtol(value, &end, 10);
+	if (end == value || errno == ERANGE || number < INT_MIN || number > INT_MAX)
 		return default_value;
-	return (int) value;
+	return (int) number;
 }
 
-/* Check if JSON has a key */
+/* Does the top-level object have a member key */
 int fe_web_json_has_key(const char *json, const char *key)
 {
-	char *search_str;
-	char *pos;
-
-	if (json == NULL || key == NULL) {
-		return 0;
-	}
-
-	search_str = g_strdup_printf("\"%s\"", key);
-	pos = strstr(json, search_str);
-	g_free(search_str);
-
-	return pos != NULL;
+	return json_find_value(json, key) != NULL;
 }
 
 /* Append "key":"value", (escaped) or "key":null, */

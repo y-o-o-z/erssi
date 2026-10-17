@@ -28,6 +28,12 @@ static const char *const decoded[][2] = {
 	{ "{\"v\":\"\\ud800x\\udc00\"}", "\xef\xbf\xbdx\xef\xbf\xbd" },
 	{ "{\"v\":\"a\\u0000b\"}", "a\xef\xbf\xbd" "b" },
 	{ "{\"v\":\"\\uzz12\\u12\"}", "uzz12u12" },
+	/* only members of the top-level object count, the last of a name */
+	{ "{\"x\":{\"v\":\"no\"},\"v\":\"yes\"}", "yes" },
+	{ "{\"x\":\"\\\"v\\\":\\\"no\\\"\",\"v\":\"yes\"}", "yes" },
+	{ "{\"v\":\"no\",\"v\":\"yes\"}", "yes" },
+	{ "{\"x\":[{\"v\":\"no\"}]}", NULL },
+	{ "{\"v\":\"no\"}{\"v\":\"no\"}", NULL },
 };
 
 /* and of the number lookup (-1 = not a number) */
@@ -42,6 +48,8 @@ static const struct {
 	{ "{\"v\":99999999999}", -1 },
 	{ "{\"v\":\"6697\"}", -1 },
 	{ "{\"v\":}", -1 },
+	{ "{\"x\":{\"v\":1},\"v\":2}", 2 },
+	{ "{\"x\":{\"v\":1}}", -1 },
 };
 
 int LLVMFuzzerInitialize(int *argc, char ***argv)
@@ -57,7 +65,8 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
 
 		if (g_strcmp0(value, decoded[i][1]) != 0) {
 			fprintf(stderr, "fe_web_json_get_string(%s) = \"%s\", not \"%s\"\n",
-			        decoded[i][0], value, decoded[i][1]);
+			        decoded[i][0], value != NULL ? value : "(none)",
+			        decoded[i][1] != NULL ? decoded[i][1] : "(none)");
 			abort();
 		}
 		g_free(value);
