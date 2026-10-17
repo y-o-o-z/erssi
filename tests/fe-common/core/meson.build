@@ -292,3 +292,25 @@ test('test-credential-set test', test_test_credential_set,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# core/network-openssl.c compiled in, for its certificate host name check
+test_test_tls_hostname = executable('test-tls-hostname',
+  files(
+    'test-tls-hostname.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-tls-hostname test', test_test_tls_hostname,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
