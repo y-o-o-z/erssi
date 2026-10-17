@@ -524,6 +524,21 @@ static const char *client_peer(WEB_CLIENT_REC *client)
 	return client->peer_key != NULL ? client->peer_key : "unknown";
 }
 
+/* How many web clients are logged in */
+static int logged_in_clients(void)
+{
+	GSList *tmp;
+	int n = 0;
+
+	for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
+		WEB_CLIENT_REC *c = tmp->data;
+
+		if (c->authenticated)
+			n++;
+	}
+	return n;
+}
+
 /* Handle WebSocket handshake (RFC 6455) */
 static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 {
@@ -569,6 +584,18 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		                           "Content-Length: 0\r\n\r\n";
 		fe_web_client_send_raw(client, busy, sizeof(busy) - 1);
 		log_refused(client, "too many wrong passwords, logins paced");
+		return -1;
+	}
+
+	/* The client limit again: it is checked when a connection is
+	 * accepted, but the connections accepted while fewer clients were
+	 * logged in would take the count past it. Refused before the
+	 * password is checked: no guess is made, none is counted. */
+	if (logged_in_clients() >= FE_WEB_MAX_CLIENTS) {
+		static const char full[] = "HTTP/1.1 503 Service Unavailable\r\n"
+		                           "Content-Length: 0\r\n\r\n";
+		fe_web_client_send_raw(client, full, sizeof(full) - 1);
+		log_refused(client, "too many web clients logged in");
 		return -1;
 	}
 
@@ -1104,15 +1131,8 @@ static void sig_listen(void)
 
 	{
 		WEB_CLIENT_REC *victim;
-		int logged_in = 0;
-		GSList *tmp;
 
-		for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
-			WEB_CLIENT_REC *c = tmp->data;
-			if (c->authenticated)
-				logged_in++;
-		}
-		if (logged_in >= FE_WEB_MAX_CLIENTS) {
+		if (logged_in_clients() >= FE_WEB_MAX_CLIENTS) {
 			log_refused_addr(addr, "too many web clients logged in");
 			g_free(addr);
 			g_free(peer_key);
