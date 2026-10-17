@@ -5,6 +5,7 @@
 
 #include "module.h"
 #include "e2e-json.h"
+#include "e2e-keyring.h"
 #include "e2e-proto.h"
 #include "e2e-state.h"
 
@@ -31,6 +32,9 @@ E2E_JSON *e2e_load(void);
 /* the same; *lost: the keyring is lost (a corrupt one was moved aside),
    the one returned is empty and must not be used for anything */
 E2E_JSON *e2e_load_full(gboolean *lost);
+/* the same; *status (when not NULL) how it was read - a READ_ERROR one
+   is an empty stand-in, not to be read, asked or answered with */
+E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *status);
 /* a corrupt keyring was moved aside and /e2e reset not run yet */
 gboolean e2e_keyring_is_lost(void);
 /* drops the PRIVMSGs waiting in irssi's flood queues and every line

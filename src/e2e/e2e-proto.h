@@ -393,6 +393,7 @@ char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const cha
                          const char *handle);
 /* the same for a message the module cannot even try to read */
 #define E2E_PLACEHOLDER_LOST "[E2E: encrypted message not read - the keyring is lost: /e2e reset starts a new one, /e2e import loads an export]"
+#define E2E_PLACEHOLDER_UNREADABLE "[E2E: encrypted message not read - the keyring cannot be read: fix the file (permissions, its layout) or /e2e import an export]"
 #define E2E_PLACEHOLDER_OWN_UNKNOWN "[E2E: encrypted message not read - your own address is not known yet (waiting for the WHOIS reply); the next one will be]"
 
 /* ---- trust changes ---- */

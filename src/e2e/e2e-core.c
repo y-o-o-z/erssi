@@ -578,6 +578,11 @@ static void note_keyring_stat(gboolean ours)
 
 E2E_JSON *e2e_load_full(gboolean *lost)
 {
+	return e2e_load_status(lost, NULL);
+}
+
+E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
+{
 	E2E_LOAD_STATUS status;
 	char *notice = NULL;
 	gboolean was_lost;
@@ -590,6 +595,8 @@ E2E_JSON *e2e_load_full(gboolean *lost)
 	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
 	if (lost != NULL)
 		*lost = status == E2E_LOAD_LOST;
+	if (out != NULL)
+		*out = status;
 	/* moved aside just now: every window's state is an error now */
 	if (status == E2E_LOAD_LOST && !was_lost)
 		e2e_state_changed();
@@ -1750,6 +1757,7 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 	const char *sp, *text, *orig_nick = nick, *orig_address = address;
 	char *target, **readings, *newdata;
 	gboolean have_id, is_channel, lost;
+	E2E_LOAD_STATUS status = E2E_LOAD_OK;
 
 	if (!IS_IRC_SERVER(server) || data == NULL || !e2e_native_active())
 		return;
@@ -1799,11 +1807,16 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 
 	/* the keyring is lost (moved aside): nothing to decrypt with, and no
 	   new identity or KEYREQ until /e2e reset */
-	kr = e2e_keyring_is_lost() ? NULL : e2e_load_full(&lost);
-	if (kr == NULL || lost) {
-		e2e_print_debug(server, target, nick, "wire from %s hidden: the keyring is lost (/e2e reset)",
-		                nick);
-		show_placeholder(server, target, orig_nick, orig_address, E2E_PLACEHOLDER_LOST, TRUE);
+	kr = e2e_keyring_is_lost() ? NULL : e2e_load_status(&lost, &status);
+	if (kr == NULL || lost || status == E2E_LOAD_READ_ERROR) {
+		gboolean unreadable = kr != NULL && !lost;
+
+		e2e_print_debug(server, target, nick, "wire from %s hidden: the keyring is %s", nick,
+		                unreadable ? "unreadable" : "lost (/e2e reset)");
+		/* an unreadable one: what stands in for it is empty - nothing
+		   is read, asked or made with it */
+		show_placeholder(server, target, orig_nick, orig_address,
+		                 unreadable ? E2E_PLACEHOLDER_UNREADABLE : E2E_PLACEHOLDER_LOST, TRUE);
 		e2e_json_free(kr);
 		e2e_net_clear(&net);
 		g_strfreev(readings);
@@ -1911,6 +1924,7 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	const char *sender, *ctx;
 	char *before, *after, *key, *rsp = NULL, *recip = NULL, *limit, *sctx = NULL;
 	gboolean have_id, lost;
+	E2E_LOAD_STATUS status = E2E_LOAD_OK;
 	size_t taglen = strlen(E2E_CTCP_TAG);
 	static const char *const names[] = { "", "KEYREQ", "KEYRSP", "REKEY" };
 
@@ -1941,15 +1955,18 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 		return;
 	}
 	g_free(limit);
-	kr = e2e_keyring_is_lost() ? NULL : e2e_load_full(&lost);
-	if (kr == NULL || lost) {
-		e2e_print_debug(server, ctx, nick, "%s from %s ignored: the keyring is lost (/e2e reset)",
-		                names[type], nick);
+	kr = e2e_keyring_is_lost() ? NULL : e2e_load_status(&lost, &status);
+	if (kr == NULL || lost || status == E2E_LOAD_READ_ERROR) {
+		gboolean unreadable = kr != NULL && !lost;
+
+		e2e_print_debug(server, ctx, nick, "%s from %s ignored: the keyring is %s", names[type],
+		                nick, unreadable ? "unreadable" : "lost (/e2e reset)");
 		/* once a minute per server, whoever sends them */
 		limit = g_strconcat(server->tag, "|lost", NULL);
 		if (e2e_stamp_allow(trust_notice, limit, E2E_TRUST_NOTICE_INTERVAL))
 			e2e_print_warning(e2e_notice_item(server, ctx, nick),
-			                  "%s from %s ignored: the keyring is lost - /e2e reset starts a new one, /e2e import loads an export",
+			                  unreadable ? "%s from %s ignored: the keyring cannot be read - fix the file (or /e2e import an export)"
+			                             : "%s from %s ignored: the keyring is lost - /e2e reset starts a new one, /e2e import loads an export",
 			                  names[type], shown_nick(nick));
 		g_free(limit);
 		e2e_json_free(kr);
