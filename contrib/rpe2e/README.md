@@ -50,7 +50,8 @@ with its next undecryptable message).
 
 - `python3 test_rpe2e_from_repartee.py` — migration on a synthetic repartee
   database (real libsodium keys, AES-256-GCM secrets), including rejection
-  of a wrong key and inconsistent data.
+  of a wrong key and inconsistent data. `meson test` runs it as
+  `rpe2e-from-repartee`; it is skipped without libsodium.
 - The module itself is tested by `meson test` (`tests/e2e`, `src/fe-fuzz/e2e`);
   `tests/e2e/live-interop.sh` runs it live against repartee's `rpe2e.pl`
   when `RPE2E_SCRIPT` points to a copy of the script.
