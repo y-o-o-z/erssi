@@ -18,7 +18,7 @@ foreach c : ['ascii', 'utf8',
     'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both',
     'stale-nexus',
     'release-signature', 'release-newest', 'release-pinned',
-    'update', 'update-same-version', 'update-branch']
+    'update', 'update-same-version', 'update-branch', 'saved-settings']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)

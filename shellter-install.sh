@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 #   sh shellter-install.sh [--prefix DIR] [--src DIR] [--ref REF] [--repo URL]
-#                          [--no-test] [--clean]
+#                          [--no-test|--test] [--clean|--no-clean]
 #   erssi --update          (= this installer, installed with erssi: --update)
 #   erssi --check-update    (= --update --check)
 #
@@ -84,8 +84,14 @@ erssi Shellter Edition - install and update
                  verified release)
   --repo URL     git repository (default https://github.com/y-o-o-z/erssi.git)
   --no-test      skip the test suite
+  --test         run the test suite (the default)
   --clean        remove the build directory afterwards (small disk quotas)
+  --no-clean     keep the build directory (the default)
   --yes          as root: install the missing packages without asking
+
+--src, --repo, --no-test/--test and --clean/--no-clean are kept in
+<prefix>/share/irssi/shellter-install.conf and used again by the next
+install into the same prefix and by erssi --update, until given again.
 
 As root the installer lists the system packages erssi needs and installs
 them after you confirm; on a user account it lists them with the command
@@ -445,7 +451,9 @@ while [ $# -gt 0 ]; do
         --ref) optval "$1" "${2:-}" TAG; REF=$2; shift 2 ;;
         --repo) optval "$1" "${2:-}" URL; REPO=$2; shift 2 ;;
         --no-test) RUN_TESTS=0; shift ;;
+        --test) RUN_TESTS=1; shift ;;
         --clean) CLEAN=1; shift ;;
+        --no-clean) CLEAN=0; shift ;;
         --update) UPDATE=1; shift ;;
         --check) CHECK=1; shift ;;
         --yes|-y) YES=1; shift ;;

@@ -48,9 +48,13 @@ shown when a step fails. Works on Linux and FreeBSD.
 | `--prefix` | Where erssi is installed (default `~/.local/opt/erssi`). |
 | `--ref <tag\|branch\|commit>` | What to build. Anything that is not a recorded release is built with a warning; a commit as the full SHA. |
 | `--src` | The source directory (default `~/.local/src/erssi`). |
-| `--no-test` | Skip the test suite. |
-| `--clean` | Remove the build directory afterwards, for small disk quotas. |
+| `--no-test` | Skip the test suite (`--test` runs it again). |
+| `--clean` | Remove the build directory afterwards, for small disk quotas (`--no-clean` keeps it again). |
 | `--yes` | Install the packages as root without asking. |
+
+`--src`, `--repo`, `--no-test`/`--test` and `--clean`/`--no-clean` are kept
+in `<prefix>/share/irssi/shellter-install.conf`: the next install into the
+same prefix and `erssi --update` use them again until you give them again.
 
 The source directory and its venv must be yours, and every directory above
 them yours or root's. In a rootless container or another user namespace see

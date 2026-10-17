@@ -1586,6 +1586,31 @@ update-branch)
     check "install from a branch: done" [ "$RC" = 0 ]
     check "... main recorded" grep -qx "REF=main" "$W/q/share/irssi/shellter-install.conf"
     ;;
+saved-settings)
+    # --no-test and --clean are kept for the next install and erssi
+    # --update; --test and --no-clean undo them
+    CONF=$HOME/.local/opt/erssi/share/irssi/shellter-install.conf
+    run_install --clean
+    check "--no-test: saved" grep -qx 'TESTS=0' "$CONF"
+    check "--clean: saved" grep -qx 'CLEAN=1' "$CONF"
+    check "... build directory removed" none_exist "$HOME/.local/src/erssi/Build"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main > "$W/out" 2>&1 < /dev/null
+    check "again without them: still no tests" grep -q 'Testing *- skipped' "$W/out"
+    check "... still clean" none_exist "$HOME/.local/src/erssi/Build"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test --no-clean > "$W/out" 2>&1 < /dev/null
+    check "--test --no-clean: installed" [ $? = 0 ]
+    check "... the tests ran" grep -q 'Testing *ok' "$W/out"
+    check "... the build directory kept" [ -f "$HOME/.local/src/erssi/Build/build.ninja" ]
+    check "... --test saved" grep -qx 'TESTS=1' "$CONF"
+    check "... --no-clean saved" grep -qx 'CLEAN=0' "$CONF"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main > "$W/out" 2>&1 < /dev/null
+    check "again without them: the tests run" grep -q 'Testing *ok' "$W/out"
+    check "... the build directory kept" [ -f "$HOME/.local/src/erssi/Build/build.ninja" ]
+    sh "$SRC/shellter-install.sh" --help > "$W/out" 2>&1
+    check "--help names --test" grep -q -- '^  --test ' "$W/out"
+    check "--help names --no-clean" grep -q -- '^  --no-clean ' "$W/out"
+    check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
+    ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
 esac
