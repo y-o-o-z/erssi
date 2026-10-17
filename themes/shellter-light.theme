@@ -137,6 +137,13 @@ abstracts = {
 
   msgchannel = "%Z687079:%Z0969DA$*%N";
 
+  ## The nick of a message comes from $nickmode, $nicktrunc and $nickcolored,
+  ## so ownmsgnick, pubmsgnick, pubmsgmenick and pubmsghinick leave out their
+  ## arguments. The channel of a message printed where its channel is not the
+  ## active one, and the @#chan or +#chan of a message to a channel's ops or
+  ## voices, come after the separator: "nick │ #chan ⟫ text".
+  msgtarget = "%Z0969DA$*%Z687079 ⟫%N ";
+
 
 
   ownprivnick = "%Z7D4E00%_$[-13]0%_%N";
@@ -337,15 +344,15 @@ formats = {
     chansetup_footer = "";
 
     own_msg = "{ownmsgnick $2 {ownnick $0}}$1";
-    own_msg_channel = "{ownmsgnick $3 {ownnick $0}{msgchannel $1}}$2";
+    own_msg_channel = "{ownmsgnick $3 {ownnick $0}}{msgtarget $1}$2";
     own_msg_private = "%Z7D4E00%_$[-13]N%_{col}%Z8250DF→ $0%Z687079 ⟫%N $1";
     own_msg_private_query = "%Z7D4E00%_$[-13]2%_{col}$1";
     pubmsg_me = "{pubmsgmenick $2 {menick $0}}$1";
-    pubmsg_me_channel = "{pubmsgmenick $3 {menick $0}{msgchannel $1}}$2";
+    pubmsg_me_channel = "{pubmsgmenick $3 {menick $0}}{msgtarget $1}%Z7D4E00$2";
     pubmsg_hilight = "{pubmsghinick $0 $3 $1}$2%N";
-    pubmsg_hilight_channel = "{pubmsghinick $0 $4 $1{msgchannel $2}}$3%N";
+    pubmsg_hilight_channel = "{pubmsghinick $0 $4 $1}{msgtarget $2}%Z7D4E00$3%N";
     pubmsg = "{pubmsgnick $2 {pubnick $0}}$1";
-    pubmsg_channel = "{pubmsgnick $3 {pubnick $0}{msgchannel $1}}$2";
+    pubmsg_channel = "{pubmsgnick $3 {pubnick $0}}{msgtarget $1}$2";
     msg_private = "%Z8250DF%_$[-13]0%_{col}%Z687079⟨$1⟩%N $2";
     msg_private_query = "%Z8250DF%_$[-13]0%_{col}$2";
     no_msgs_got = "%ZCF222E✗%N You have not received a message from anyone yet";
@@ -434,7 +441,7 @@ formats = {
     ignore_not_found = "%ZCF222E✗%N {nick $0} is not being ignored";
     ignore_no_ignores = "%Z1A7F37✓%N There are no ignores";
     ignore_header = "%#%ZCF222E⊘%N Ignore List:";
-    ignore_line = "%#  %Z687079$[-4]0%N $1: %Z0969DA$2%N $3 $4";
+    ignore_line = "%#  %Z687079$[-4]0%N $1: %Z0969DA$2%N $3";
     ignore_footer = "";
     not_channel_or_query = "%ZCF222E✗%N The current window is not a channel or query window";
 
@@ -579,7 +586,7 @@ formats = {
     own_ctcp = "%Z7D4E00%_$[-13]N%_{col}%Z0969DA→ $0 %Z687079CTCP%N $1 $2";
 
     notice_server = "{servernotice $0}$1";
-    notice_public = "%Z0969DA%_$[-13]0%_{col}%Z0969DAnotice%Z687079 ·%N $2";
+    notice_public = "%Z0969DA%_$[-13]0%_{col}%Z0969DAnotice%Z687079 ·%N {msgtarget $1}$2";
     notice_private = "%Z0969DA%_$[-13]0%_{col}%Z0969DAnotice%Z687079 · ⟨$1⟩%N $2";
 
     action_private = "{pvtaction $0}$2";
