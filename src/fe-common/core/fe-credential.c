@@ -189,7 +189,7 @@ void cmd_credential_list(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 				display_value = sasl_username;
 
 				/* If encrypted and we have master password, decrypt */
-				if (strchr(sasl_username, ':') != NULL && credential_has_master_password()) {
+				if (credential_is_encrypted(sasl_username) && credential_has_master_password()) {
 					decrypted = credential_get(network_name, CREDENTIAL_CONTEXT_SASL_USERNAME);
 					if (decrypted != NULL) {
 						display_value = decrypted;

@@ -33,6 +33,8 @@
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/commands.h>
+#include <irssi/src/core/recode.h>
+#include <irssi/src/core/utf8.h>
 #include <time.h>
 
 /* Nick column context variables */
@@ -74,103 +76,102 @@ static char *expando_winname(SERVER_REC *server, void *item, int *free_ret)
 	return active_win->name;
 }
 
-/* Count only valid nick characters (ignore color codes) */
-static int count_nick_chars(const char *str)
+/* One character of a nick and the cells it takes, as the text view draws
+ * it (textbuffer_read_unichar() in fe-ansi): in a UTF-8 terminal a
+ * character with its combining marks, of its width (2 for CJK), and a byte
+ * that is not UTF-8 as one cell (the view shows U+FFFD); in another
+ * terminal one byte, one cell. Moves *p past it. */
+static int nick_advance(const char **p, gboolean utf8)
 {
-	int count = 0;
-	if (!str)
-		return 0;
+	if (utf8 && (g_utf8_get_char_validated(*p, -1) & 0x80000000) == 0)
+		return string_advance(p, TREAT_STRING_AS_UTF8);
+	(*p)++;
+	return 1;
+}
 
-	for (const char *p = str; *p; p++) {
-		/* Alfanumeryczne */
-		if (isalnum(*p)) {
-			count++;
-		}
-		/* Specjalne znaki nicka - zgodnie z RFC 2812 i isnickchar z fe-messages.c */
-		else if (*p == '`' || *p == '-' || *p == '_' || *p == '[' || *p == ']' ||
-		         *p == '{' || *p == '}' || *p == '|' || *p == '\\' || *p == '^' || *p == '~') {
-			count++;
-		}
-		/* Ignoruje kody kolorów %B %N %Y %n itp. */
+static int nick_cells(const char *str, gboolean utf8)
+{
+	int cells = 0;
+
+	while (*str != '\0')
+		cells += nick_advance(&str, utf8);
+	return cells;
+}
+
+/* The cells of the mode before the nick: one even without a mode, as
+ * $nickmode gives a space then. */
+static int nick_mode_cells(void)
+{
+	int cells;
+
+	cells = current_mode == NULL ? 0 : nick_cells(current_mode, is_utf8());
+	return cells > 0 ? cells : 1;
+}
+
+/* The nick as the nick column shows it: when the mode and the nick are
+ * wider than nick_column_width, the nick is cut to what fits with a "+"
+ * after it. Widths are terminal cells and the cut never splits a
+ * character, so a wide character that does not fit is left out whole and
+ * the column is one cell narrower (*cells says so, $nickalign pads it).
+ * Returns NULL when the nick fits as it is. */
+static char *nick_column_cut(int *cells)
+{
+	gboolean utf8 = is_utf8();
+	const char *p, *next;
+	int room, used, w;
+
+	*cells = nick_cells(current_nick, utf8);
+	room = settings_get_int("nick_column_width") - nick_mode_cells();
+	if (*cells <= room)
+		return NULL;
+
+	room--; /* for the "+" */
+	used = 0;
+	for (p = current_nick; *p != '\0'; p = next) {
+		next = p;
+		w = nick_advance(&next, utf8);
+		if (used + w > room)
+			break;
+		used += w;
 	}
-	return count;
+	*cells = used + 1;
+	return g_strdup_printf("%.*s+", (int) (p - current_nick), current_nick);
 }
 
 /* Nick column align - returns only padding spaces */
 static char *expando_nickalign(SERVER_REC *server, void *item, int *free_ret)
 {
-	int width, mode_chars, nick_chars, total_chars, padding;
-	const char *mode;
+	int padding, cells;
 
-	/* Gdy wyłączone - zwróć pusty string */
-	if (!settings_get_bool("nick_column_enabled")) {
+	if (!settings_get_bool("nick_column_enabled") || !nick_context_valid ||
+	    current_nick == NULL)
 		return "";
-	}
 
-	if (!nick_context_valid || !current_nick) {
+	g_free(nick_column_cut(&cells));
+	padding = settings_get_int("nick_column_width") - nick_mode_cells() - cells;
+	if (padding <= 0)
 		return "";
-	}
-
-	width = settings_get_int("nick_column_width");
-	mode = current_mode ? current_mode : "";
-
-	/* Zawsze 1 miejsce na mode (nawet spacja) */
-	mode_chars = strlen(mode) > 0 ? strlen(mode) : 1;
-	nick_chars = count_nick_chars(current_nick);
-	total_chars = mode_chars + nick_chars;
-
-	if (total_chars > width) {
-		padding = 0;
-	} else {
-		padding = width - total_chars;
-	}
 
 	*free_ret = TRUE;
 	return g_strnfill(padding, ' ');
 }
 
-/* Nick truncated - returns truncated nick with >> indicator */
+/* The nick of the message, cut to the nick column when it is on */
 static char *expando_nicktrunc(SERVER_REC *server, void *item, int *free_ret)
 {
-	int width, mode_chars, nick_chars, total_chars;
-	const char *mode;
-	char *result;
+	char *cut;
+	int cells;
 
-	/* Gdy wyłączone - zwróć oryginalny nick */
-	if (!settings_get_bool("nick_column_enabled")) {
-		return current_nick ? current_nick : "";
-	}
-
-	if (!nick_context_valid || !current_nick) {
-		return current_nick ? current_nick : "";
-	}
-
-	width = settings_get_int("nick_column_width");
-	mode = current_mode ? current_mode : "";
-
-	/* Zawsze 1 miejsce na mode (nawet spacja) */
-	mode_chars = strlen(mode) > 0 ? strlen(mode) : 1;
-	nick_chars = count_nick_chars(current_nick);
-	total_chars = mode_chars + nick_chars;
-
-	if (total_chars > width) {
-		/* Nick za długi - przytnij z + */
-		int available_for_nick = width - mode_chars - 1; /* -1 dla + */
-		if (available_for_nick > 0) {
-			/* Przytnij nick i dodaj + */
-			result = g_strdup_printf("%.*s+", available_for_nick, current_nick);
-
-		} else {
-			/* Mode sam za długi */
-			result = g_strdup("+");
-		}
-		*free_ret = TRUE;
-		return result;
-	} else {
-		/* Nick się zmieści - zwróć oryginalny */
-
+	if (!nick_context_valid || current_nick == NULL)
+		return "";
+	if (!settings_get_bool("nick_column_enabled"))
 		return current_nick;
-	}
+
+	cut = nick_column_cut(&cells);
+	if (cut == NULL)
+		return current_nick;
+	*free_ret = TRUE;
+	return cut;
 }
 
 /* Update nick context for expandos */
@@ -361,58 +362,53 @@ static int get_persistent_nick_color(const char *nick, void *item, SERVER_REC *s
 	return color_index;
 }
 
-/* Main hash coloring expando - replaces nick with colored version */
+/* The nick of the message in its hash colour, cut to the nick column when
+ * that is on (as $nicktrunc). With nick_hash_color_enabled off it is the
+ * same nick without a colour: a theme that shows the nick with
+ * $nickcolored must not lose it when the colouring is switched off. */
 static char *expando_nickcolored(SERVER_REC *server, void *item, int *free_ret)
 {
-	const char *display_nick;
+	char *display_nick;
+	int nick_free = FALSE;
 	int palette_size;
 	gchar **palette;
 	int color_index;
+	GString *raw;
+	const char *p;
 	char *result;
-	char *raw_format;
-	
-	if (!settings_get_bool("nick_hash_color_enabled") || !nick_context_valid || !current_nick) {
+
+	if (!nick_context_valid || current_nick == NULL)
 		return "";
-	}
-	
-	/* Get nick to display - use nicktrunc if nick_column_enabled */
-	if (settings_get_bool("nick_column_enabled")) {
-		int temp_free = FALSE;
-		display_nick = expando_nicktrunc(server, item, &temp_free);
-		/* Handle memory correctly - always make our own copy */
-		if (temp_free && display_nick) {
-			/* nicktrunc allocated memory, take ownership */
-			char *temp_nick = g_strdup(display_nick);
-			g_free((char*)display_nick);
-			display_nick = temp_nick;
-		} else {
-			/* nicktrunc didn't allocate, make our own copy */
-			display_nick = display_nick ? g_strdup(display_nick) : g_strdup("");
-		}
-	} else {
-		display_nick = g_strdup(current_nick ? current_nick : "");
-	}
-	
-	/* Parse color palette */
-	palette = parse_color_palette(settings_get_str("nick_hash_colors"), &palette_size);
-	
-	/* Get persistent color index for this nick */
-	color_index = get_persistent_nick_color(current_nick, item, server);
-	
-	if (palette == NULL || palette_size <= 0 || color_index < 0 || color_index >= palette_size) {
-		g_strfreev(palette);
-		*free_ret = TRUE;
-		return (char *)display_nick;
+
+	display_nick = expando_nicktrunc(server, item, &nick_free);
+	if (!settings_get_bool("nick_hash_color_enabled")) {
+		*free_ret = nick_free;
+		return display_nick;
 	}
 
-	/* Return colored nick with proper formatting */
-	*free_ret = TRUE;
-	raw_format = g_strdup_printf("%%%s%%_%s%%_%%n", palette[color_index], display_nick);
-	result = format_string_expand(raw_format, NULL);
-	g_free(raw_format);
-	
+	palette = parse_color_palette(settings_get_str("nick_hash_colors"), &palette_size);
+	color_index = get_persistent_nick_color(current_nick, item, server);
+	if (color_index < 0 || color_index >= palette_size) {
+		g_strfreev(palette);
+		*free_ret = nick_free;
+		return display_nick;
+	}
+
+	raw = g_string_new(NULL);
+	g_string_append_printf(raw, "%%%s%%_", palette[color_index]);
+	for (p = display_nick; *p != '\0'; p++) {
+		if (*p == '%')
+			g_string_append_c(raw, '%'); /* literal %, not a format code */
+		g_string_append_c(raw, *p);
+	}
+	g_string_append(raw, "%_%n");
+	result = format_string_expand(raw->str, NULL);
+
+	g_string_free(raw, TRUE);
 	g_strfreev(palette);
-	g_free((char*)display_nick);
+	if (nick_free)
+		g_free(display_nick);
+	*free_ret = TRUE;
 	return result;
 }
 

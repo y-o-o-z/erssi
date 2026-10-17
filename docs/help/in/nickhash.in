@@ -26,7 +26,9 @@
     each channel, and keeps it. The related settings are:
 
         nick_hash_color_enabled (default: ON)
-            Enables the coloring.
+            Enables the coloring. When it is OFF, $nickcolored is the
+            nickname without a color (cut to the nick column like
+            $nicktrunc when nick_column_enabled is ON).
         nick_hash_colors
             The colors to pick from, separated by spaces: color letters
             such as r, g or B, or #rrggbb values.

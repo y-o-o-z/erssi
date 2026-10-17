@@ -65,7 +65,12 @@ static int string_advance_with_grapheme_support(char const **str, int policy)
 	while (*pos != '\0') {
 		bytes = utf8proc_iterate((const utf8proc_uint8_t *)pos, -1, &codepoint);
 		if (bytes < 0) {
-			/* Invalid UTF-8, skip one byte */
+			/* Invalid UTF-8 ends the cluster before it; on its
+			 * own it is one byte of one column. (Skipping it as
+			 * part of the cluster before lost that byte's
+			 * column and the width of the cluster.) */
+			if (pos != start)
+				break;
 			*str = pos + 1;
 			return 1;
 		}

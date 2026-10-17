@@ -6,9 +6,9 @@ project('erssi', 'c',
 ############################
 ############################
 
-glib_internal_version = 'glib-2.74.3' # keep this in sync with subprojects/glib.wrap
-glib_pcre2_internal_version = 'pcre2-10.40'
-glib_libffi_internal_version = 'libffi'
+glib_internal_version = 'glib-2.90.1' # keep this in sync with subprojects/glib.wrap
+glib_pcre2_internal_version = 'pcre2-10.46'
+glib_libffi_internal_version = 'libffi-3.5.2'
 cc = meson.get_compiler('c')
 rootinc = include_directories('.')
 dep = []
@@ -198,7 +198,13 @@ else
 endif
 if not glib_dep.found()
   glib_internal = true
-  meson_cmd = find_program('meson')
+  # the bundled GLib (subprojects/glib.wrap, 2.90) needs meson 1.4 for its
+  # own setup, which runs only at build time: say so now, not deep in ninja
+  glib_internal_meson = '>=1.4.0'
+  if not meson.version().version_compare(glib_internal_meson)
+    error('-Dinstall-glib builds the bundled GLib (' + glib_internal_version + '), which needs meson ' + glib_internal_meson + '; this is meson ' + meson.version() + '. Install a newer meson (pip install meson) or your distribution\'s GLib (libglib2.0-dev).')
+  endif
+  meson_cmd = find_program('meson', version : glib_internal_meson)
   ninja = find_program('ninja')
 
   glib_internal_download_t = custom_target('glib-internal-download',
@@ -252,6 +258,9 @@ if not glib_dep.found()
     command : [ meson_cmd, 'setup', '--prefix=/irssi-glib-internal',
       '--buildtype=' + get_option('buildtype'),
       '-Dlibmount=disabled', '-Dselinux=disabled', '-Ddefault_library=static', '-Dforce_fallback_for=pcre2,libffi',
+      # GLib turns these on by itself when the system has them; the static
+      # link below does not carry libsysprof-capture or introspection
+      '-Dsysprof=disabled', '-Dintrospection=disabled',
       glib_internal_configure_args,
       (meson.current_build_dir() / 'build-subprojects' / 'glib'),
       (meson.current_source_dir() / 'subprojects' / glib_internal_version) ],
@@ -537,7 +546,13 @@ endif
 # OpenSSL 1.1.1 or newer, hence the function checks.
 have_e2e = false
 if want_e2e
-  e2e_openssl_ok = cc.has_function('EVP_PKEY_new_raw_private_key', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>') and cc.has_function('EVP_chacha20_poly1305', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>')
+  if openssl_dep.type_name() == 'internal'
+    # the OpenSSL subproject of the static fuzz build (subprojects/openssl.wrap,
+    # 3.x) has them; cc.has_function() cannot look into an internal dependency
+    e2e_openssl_ok = true
+  else
+    e2e_openssl_ok = cc.has_function('EVP_PKEY_new_raw_private_key', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>') and cc.has_function('EVP_chacha20_poly1305', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>')
+  endif
   if e2e_openssl_ok
     have_e2e = true
   elif require_e2e

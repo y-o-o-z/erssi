@@ -40,6 +40,27 @@ test('test-nick-palette test', test_test_nick_palette,
   args : ['--tap'],
   protocol : 'tap')
 
+test_test_nick_column = executable('test-nick-column',
+  files(
+    'test-nick-column.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-nick-column test', test_test_nick_column,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
+
 test_test_join_names = executable('test-join-names',
   files(
     'test-join-names.c',
@@ -205,4 +226,47 @@ test_test_shipped_themes = executable('test-shipped-themes',
 test('test-shipped-themes test', test_test_shipped_themes,
   env : test_env,
   args : ['--tap'] + shipped_themes,
+  protocol : 'tap')
+
+test_test_theme_formats = executable('test-theme-formats',
+  files(
+    'test-theme-formats.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+    libfe_common_irc_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-theme-formats test', test_test_theme_formats,
+  env : test_env,
+  args : ['--tap'] + shipped_themes,
+  protocol : 'tap')
+
+test_test_credential = executable('test-credential',
+  files(
+    'test-credential.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential test', test_test_credential,
+  env : test_env,
+  args : ['--tap'],
   protocol : 'tap')

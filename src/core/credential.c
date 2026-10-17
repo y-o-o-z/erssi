@@ -223,7 +223,7 @@ static void credential_config_encrypt_changed(void)
 			char *encrypted_value;
 
 			/* Check if already encrypted */
-			if (rec->encrypted_value && strchr(rec->encrypted_value, ':') != NULL) {
+			if (rec->encrypted_value && credential_is_encrypted(rec->encrypted_value)) {
 				continue; /* Already encrypted */
 			}
 
@@ -263,7 +263,7 @@ static void credential_config_encrypt_changed(void)
 			char *decrypted_value;
 
 			/* Check if encrypted */
-			if (!rec->encrypted_value || strchr(rec->encrypted_value, ':') == NULL) {
+			if (!rec->encrypted_value || !credential_is_encrypted(rec->encrypted_value)) {
 				continue; /* Already plaintext */
 			}
 
@@ -431,7 +431,7 @@ gboolean credential_set(const char *network, CredentialContext context, const ch
 	}
 
 	/* Check if value is already encrypted */
-	if (value != NULL && strchr(value, ':') != NULL) {
+	if (value != NULL && credential_is_encrypted(value)) {
 		should_encrypt = FALSE;
 	}
 
@@ -478,8 +478,8 @@ char *credential_get(const char *network, CredentialContext context)
 		return NULL;
 	}
 
-	/* Check if value is encrypted (contains ':' as separator) */
-	if (rec->encrypted_value != NULL && strchr(rec->encrypted_value, ':') != NULL) {
+	/* an encrypted value has its prefix; anything else is plain text */
+	if (rec->encrypted_value != NULL && credential_is_encrypted(rec->encrypted_value)) {
 		if (master_password == NULL) {
 			g_warning("Credential for %s (%s) is encrypted but no master password set",
 			         network, credential_context_to_string(context));
@@ -1321,7 +1321,7 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 			if (server->type != NODE_TYPE_BLOCK) continue;
 			
 			password = config_node_get_str(server, "password", NULL);
-			if (password != NULL && !strchr(password, ':')) {
+			if (password != NULL && !credential_is_encrypted(password)) {
 				encrypted = credential_encrypt(password, master_password);
 				if (encrypted != NULL) {
 					config_node_set_str(config, server, "password", encrypted);
@@ -1343,7 +1343,7 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 			
 			/* Encrypt sasl_password */
 			sasl_password = config_node_get_str(chatnet, "sasl_password", NULL);
-			if (sasl_password != NULL && !strchr(sasl_password, ':')) {
+			if (sasl_password != NULL && !credential_is_encrypted(sasl_password)) {
 				encrypted = credential_encrypt(sasl_password, master_password);
 				if (encrypted != NULL) {
 					config_node_set_str(config, chatnet, "sasl_password", encrypted);
@@ -1353,7 +1353,7 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 			
 			/* Encrypt sasl_username */
 			sasl_username = config_node_get_str(chatnet, "sasl_username", NULL);
-			if (sasl_username != NULL && !strchr(sasl_username, ':')) {
+			if (sasl_username != NULL && !credential_is_encrypted(sasl_username)) {
 				encrypted = credential_encrypt(sasl_username, master_password);
 				if (encrypted != NULL) {
 					config_node_set_str(config, chatnet, "sasl_username", encrypted);
@@ -1364,7 +1364,7 @@ static void credential_encrypt_config_nodes(CONFIG_REC *config)
 			/* Encrypt autosendcmd if it contains credentials */
 			autosendcmd = config_node_get_str(chatnet, "autosendcmd", NULL);
 			if (autosendcmd != NULL && credential_is_autosendcmd_sensitive(autosendcmd) &&
-			    !strchr(autosendcmd, ':')) {
+			    !credential_is_encrypted(autosendcmd)) {
 				encrypted = credential_encrypt(autosendcmd, master_password);
 				if (encrypted != NULL) {
 					config_node_set_str(config, chatnet, "autosendcmd", encrypted);
@@ -1396,7 +1396,7 @@ static void credential_decrypt_config_nodes(CONFIG_REC *config)
 			if (server->type != NODE_TYPE_BLOCK) continue;
 			
 			password = config_node_get_str(server, "password", NULL);
-			if (password != NULL && strchr(password, ':')) {
+			if (password != NULL && credential_is_encrypted(password)) {
 				decrypted = credential_decrypt(password, master_password);
 				if (decrypted != NULL) {
 					config_node_set_str(config, server, "password", decrypted);
@@ -1418,7 +1418,7 @@ static void credential_decrypt_config_nodes(CONFIG_REC *config)
 			
 			/* Decrypt sasl_password */
 			sasl_password = config_node_get_str(chatnet, "sasl_password", NULL);
-			if (sasl_password != NULL && strchr(sasl_password, ':')) {
+			if (sasl_password != NULL && credential_is_encrypted(sasl_password)) {
 				decrypted = credential_decrypt(sasl_password, master_password);
 				if (decrypted != NULL) {
 					config_node_set_str(config, chatnet, "sasl_password", decrypted);
@@ -1428,7 +1428,7 @@ static void credential_decrypt_config_nodes(CONFIG_REC *config)
 			
 			/* Decrypt sasl_username */
 			sasl_username = config_node_get_str(chatnet, "sasl_username", NULL);
-			if (sasl_username != NULL && strchr(sasl_username, ':')) {
+			if (sasl_username != NULL && credential_is_encrypted(sasl_username)) {
 				decrypted = credential_decrypt(sasl_username, master_password);
 				if (decrypted != NULL) {
 					config_node_set_str(config, chatnet, "sasl_username", decrypted);
@@ -1438,7 +1438,7 @@ static void credential_decrypt_config_nodes(CONFIG_REC *config)
 			
 			/* Decrypt autosendcmd */
 			autosendcmd = config_node_get_str(chatnet, "autosendcmd", NULL);
-			if (autosendcmd != NULL && strchr(autosendcmd, ':')) {
+			if (autosendcmd != NULL && credential_is_encrypted(autosendcmd)) {
 				decrypted = credential_decrypt(autosendcmd, master_password);
 				if (decrypted != NULL) {
 					config_node_set_str(config, chatnet, "autosendcmd", decrypted);

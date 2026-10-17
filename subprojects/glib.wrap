@@ -1,6 +1,13 @@
 [wrap-file]
-# make sure to update the glib_internal_version in meson.build
-directory = glib-2.74.3
-source_url = https://download.gnome.org/sources/glib/2.74/glib-2.74.3.tar.xz
-source_filename = glib-2.74.3.tar.xz
-source_hash = e9bc41ecd9690d9bc6a970cc7380119b828e5b6a4b16c393c638b3dc2b87cbcb
+# make sure to update the glib_internal_version in meson.build, and
+# glib_pcre2_internal_version / glib_libffi_internal_version from the
+# pcre2.wrap and libffi.wrap in this GLib's subprojects directory
+# The wrap of WrapDB (glib_2.90.1-1) without its [provide] section: GLib
+# is built by meson.build itself with -Dinstall-glib, never as an implicit
+# fallback for a missing glib-2.0.
+directory = glib-2.90.1
+source_url = https://download.gnome.org/sources/glib/2.90/glib-2.90.1.tar.xz
+source_fallback_url = https://wrapdb.mesonbuild.com/v2/glib_2.90.1-1/get_source/glib-2.90.1.tar.xz
+source_filename = glib-2.90.1.tar.xz
+source_hash = 93c941aa17d5eb1d53fe838365f29a8b4e539c222a256d974ec8f30fc413e396
+wrapdb_version = 2.90.1-1
