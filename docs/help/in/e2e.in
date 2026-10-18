@@ -228,18 +228,18 @@
     in 10 s to everyone together - people you confirmed (/E2E ACCEPT, an
     AUTOTRUST rule, /E2E REVERIFY, /E2E UNREVOKE, an exchange you started
     with /E2E HANDSHAKE; and, once, every key trusted in a keyring of an
-    erssi before 2026.10.3, of rpe2e.pl or of an import, when this version
-    first reads it) are not held back by that - and only while encryption
-    is on here; their answer lets you read their next messages), "[E2E
-    rejected: ...]" in red when it does not open with their key (their
-    current key is then requested - their REKEY may not have reached you)
-    or you declined or revoked them here (then nothing is requested), "too
-    old to verify" when its time is more than 5 minutes off (history a
-    bouncer plays back - your own lines too - a replay, or a clock far
-    off), and the reason when a key exchange of theirs is blocked (a new
-    address, a new key, revoked - see REVERIFY); such a block is also told
-    in full, with the command to run, when it happens and at most once a
-    minute while they write.
+    erssi before 2026.10.3 or of rpe2e.pl, when this version first reads
+    it; an import keeps what the export says) are not held back by that -
+    and only while encryption is on here; their answer lets you read
+    their next messages), "[E2E rejected: ...]" in red when it does not
+    open with their key (their current key is then requested - their
+    REKEY may not have reached you) or you declined or revoked them here
+    (then nothing is requested), "too old to verify" when its time is
+    more than 5 minutes off (history a bouncer plays back - your own
+    lines too - a replay, or a clock far off), and the reason when a key
+    exchange of theirs is blocked (a new address, a new key, revoked -
+    see REVERIFY); such a block is also told in full, with the command
+    to run, when it happens and at most once a minute while they write.
 
     Your own key goes only to people you accepted: /E2E ACCEPT, an
     AUTOTRUST rule or auto-accept mode. Having their key is not enough -

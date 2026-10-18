@@ -852,6 +852,9 @@ static void test_export_import(void)
 	e2e_json_remove(b.kr, "seen_rekeys");
 	e2e_json_remove(kr, "accepted");
 	e2e_json_remove(kr, "seen_rekeys");
+	/* an import marks the migration done (b's keyring never ran it) */
+	g_assert_nonnull(e2e_json_get(kr, "confirmed_migrated"));
+	e2e_json_remove(kr, "confirmed_migrated");
 	s1 = e2e_keyring_snapshot(b.kr);
 	s2 = e2e_keyring_snapshot(kr);
 	g_assert_cmpstr(s1, ==, s2);
@@ -7156,6 +7159,27 @@ static void test_migrate_confirmed(void)
 	give_key(&b2, &me, "#a");
 	g_assert_false(e2e_migrate_confirmed(me.kr));
 	g_assert_false(e2e_handle_confirmed(me.kr, CAROL));
+	/* export and import: carol stays unconfirmed, alice confirmed */
+	{
+		E2E_JSON *doc = e2e_keyring_export(me.kr), *kr;
+		char *error = NULL;
+
+		g_assert_nonnull(e2e_json_get(doc, "confirmedMigrated"));
+		kr = e2e_keyring_import(doc, &error);
+		g_assert_nonnull(kr);
+		g_assert_false(e2e_migrate_confirmed(kr));
+		g_assert_true(e2e_handle_confirmed(kr, ALICE));
+		g_assert_false(e2e_handle_confirmed(kr, CAROL));
+		e2e_json_free(kr);
+		/* an export without the marker (an older one): still no
+		   migration on import */
+		e2e_json_remove(doc, "confirmedMigrated");
+		kr = e2e_keyring_import(doc, &error);
+		g_assert_false(e2e_migrate_confirmed(kr));
+		g_assert_false(e2e_handle_confirmed(kr, CAROL));
+		e2e_json_free(kr);
+		e2e_json_free(doc);
+	}
 	peer_free(&me);
 	peer_free(&a);
 	peer_free(&b2);

@@ -4358,6 +4358,10 @@ E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 	src = e2e_json_get(kr, "seen_rekeys");
 	e2e_json_set(doc, "seenRekeys", src != NULL && src->type == E2E_JSON_OBJECT ? e2e_json_copy(src)
 	                                                                           : e2e_json_new(E2E_JSON_OBJECT));
+	/* the peers' "confirmed" travel in their rows */
+	src = e2e_json_get(kr, E2E_CONFIRM_MIGRATED);
+	if (src != NULL)
+		e2e_json_set(doc, "confirmedMigrated", e2e_json_copy(src));
 	return doc;
 }
 
@@ -4535,6 +4539,12 @@ E2E_JSON *e2e_keyring_import(const E2E_JSON *doc, char **error)
 		g_free(k);
 	}
 	import_seen_rekeys(kr, e2e_json_get(doc, "seenRekeys"));
+	/* an import never makes a key confirmed: what the export says
+	   ("confirmed" in its peer rows) stands, the migration does not run */
+	node = e2e_json_get(doc, "confirmedMigrated");
+	e2e_json_set_int(kr, E2E_CONFIRM_MIGRATED,
+	                 node != NULL && node->type == E2E_JSON_NUMBER ? e2e_json_get_int(doc, "confirmedMigrated", 0)
+	                                                              : e2e_now());
 	return kr;
 fail:
 	e2e_json_free(kr);

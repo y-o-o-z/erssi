@@ -148,9 +148,11 @@ guint e2e_prune_prev_keys(E2E_JSON *kr);
 #define E2E_PENDING_INBOUND_TTL (24 * 3600)
 guint e2e_prune_old_requests(E2E_JSON *kr);
 /* Once per keyring (the member E2E_CONFIRM_MIGRATED marks it): the keys
-   trusted in a keyring of an erssi before 2026.10.3, of rpe2e.pl or of an
-   import count as confirmed - their owners were trusted before the caps
-   knew the difference. TRUE when it ran (the caller saves). */
+   trusted in a keyring of an erssi before 2026.10.3 or of rpe2e.pl count
+   as confirmed - their owners were trusted before the caps knew the
+   difference. An export carries the marker, and an import always sets
+   it: an import never makes a key confirmed. TRUE when it ran (the
+   caller saves). */
 #define E2E_CONFIRM_MIGRATED "confirmed_migrated"
 gboolean e2e_migrate_confirmed(E2E_JSON *kr);
 /* our pending KEYREQs to handle for the bare context wire go (they
