@@ -188,17 +188,18 @@ def main():
             e.wait_ready()
             log = e.all_log()
             # the warnings are printed at no message level (not logged):
-            # read on the screen. perl_use_lib's at the start, help_path's
-            # at the first /help (a short one, so both stay on the screen)
+            # perl_use_lib's at the start, help_path's at the first /help
             e.type_and_wait("/help nosuchtopic_x")
             e.sync_output()
 
             def warned(k):
                 return [ln for ln in e.screen() if f"{k} pointed into another release ({old}/" in ln]
             for k in ("help_path", "perl_use_lib"):
-                assert harness.wait_until(lambda: warned(k), WAIT), \
+                # written (perl_use_lib's may have scrolled off the screen
+                # by now, so in the output), and never twice on the screen
+                assert harness.wait_until(lambda: f"{k} pointed into another release" in e.text(), WAIT), \
                     f"no warning for {k}:\n" + "\n".join(e.screen())
-                assert len(warned(k)) == 1, f"{k}: " + "\n".join(warned(k))
+                assert len(warned(k)) <= 1, f"{k}: " + "\n".join(warned(k))
             e.type_and_wait(f"/help {HELP_TOPIC}")
             assert e.wait_file(log, HELP_LINE, WAIT), f"/help {HELP_TOPIC} with a stale help_path"
             e.type_and_wait("/script load usercount")
