@@ -138,33 +138,77 @@ static gboolean path_in(const char *path, const char *dir)
 	return strncmp(path, dir, len) == 0 && (path[len] == '/' || path[len] == '\0');
 }
 
-const char *get_install_setting(const char *key)
+/* ENTRY, a path under RELEASES/<another version>, as the same path under
+   PREFIX (this release); NULL when it is not one */
+static char *entry_moved(const char *entry, const char *releases, const char *prefix)
 {
-	/* the keys warned about: the config can be read again from the
-	   file during the run (the value comes back), one line is enough */
+	const char *version, *rest;
+
+	if (!path_in(entry, releases) || path_in(entry, prefix))
+		return NULL;
+	version = entry + strlen(releases);
+	if (*version != '/' || version[1] == '\0' || version[1] == '/')
+		return NULL; /* <releases> itself, or with an empty version */
+	rest = strchr(version + 1, '/');
+	return g_strconcat(prefix, rest == NULL ? "" : rest, NULL);
+}
+
+const char *get_install_setting(const char *key, const char *seps)
+{
+	/* the entries warned about, "key old": the config can be read again
+	   from the file during the run, one line each is enough */
 	static GHashTable *warned;
 	const char *value, *prefix;
-	char *releases, *name, *msg;
+	char *releases, *name, **entries, *moved, *msg, *id, *joined, sep[2];
+	gboolean changed = FALSE;
+	int i;
 
 	value = settings_get_str(key);
 	prefix = get_install_prefix();
 	releases = g_path_get_dirname(prefix);
 	name = g_path_get_basename(releases);
-	if (strcmp(name, "releases") == 0 && path_in(value, releases) &&
-	    strcmp(value, releases) != 0 && !path_in(value, prefix)) {
+	if (strcmp(name, "releases") != 0) {
+		g_free(releases);
+		g_free(name);
+		return value;
+	}
+
+	/* each entry of the list on its own; the others stay as they are,
+	   in their order */
+	entries = g_strsplit_set(value, seps, -1);
+	for (i = 0; entries[i] != NULL; i++) {
+		moved = entry_moved(entries[i], releases, prefix);
+		if (moved == NULL)
+			continue;
 		if (warned == NULL)
 			warned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-		msg = g_hash_table_contains(warned, key) ? NULL :
-		      g_strdup_printf("%s pointed into another release (%s) - this release's "
-		                      "default applies", key, value);
-		settings_reset(key);
-		if (msg != NULL) {
-			g_hash_table_add(warned, g_strdup(key));
+		id = g_strconcat(key, " ", entries[i], NULL);
+		if (!g_hash_table_contains(warned, id)) {
+			msg = g_strdup_printf("%s: %s is in another release - using %s of this one",
+			                      key, entries[i], moved);
 			signal_emit("gui dialog", 2, "warning", msg);
 			g_free(msg);
+			g_hash_table_add(warned, id);
+		} else {
+			g_free(id);
 		}
+		g_free(entries[i]);
+		entries[i] = moved;
+		changed = TRUE;
+	}
+	if (changed) {
+		sep[0] = seps[0];
+		sep[1] = '\0';
+		joined = g_strjoinv(sep, entries);
+		/* the default itself is not written into the config */
+		if (strcmp(joined, settings_get_record(key)->default_value.v_string) == 0)
+			settings_reset(key);
+		else
+			settings_set_str(key, joined);
+		g_free(joined);
 		value = settings_get_str(key);
 	}
+	g_strfreev(entries);
 	g_free(releases);
 	g_free(name);
 	return value;
@@ -182,8 +226,9 @@ const char *get_install_path(const char *compiled)
 	return compiled;
 }
 
-const char *get_install_setting(const char *key)
+const char *get_install_setting(const char *key, const char *seps)
 {
+	(void) seps;
 	return settings_get_str(key);
 }
 

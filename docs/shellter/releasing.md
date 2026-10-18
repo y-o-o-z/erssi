@@ -58,9 +58,11 @@ The platforms are `debian13-amd64` and `freebsd14-amd64`.
   uses the compiled paths; `G_MESSAGES_DEBUG=erssi` shows why.
   `erssi --print-prefix` prints the prefix in use. A build without the
   option uses the compiled paths, as before. In the installer's layout
-  (`<prefix>/releases/<version>/`), a `help_path` or `perl_use_lib`
-  saved in the config that points into another release is dropped: this
-  release's default applies, with one warning line. `/SET -default`
+  (`<prefix>/releases/<version>/`), an entry of a saved `help_path`
+  (`:`-separated) or `perl_use_lib` (space-separated) that lies inside
+  another release becomes the same path under this release, with one
+  warning line naming both. The other entries stay as they are, in their
+  order, and a list that is then the default leaves the config. `/SET -default`
   writes no default into the config.
 - **The tarball** `erssi-<version>-<platform>.tar.xz` has one top
   directory, `erssi-<version>-<platform>/`. It holds the installed tree

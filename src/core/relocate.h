@@ -20,11 +20,14 @@ const char *get_install_prefix(void);
 const char *get_install_path(const char *compiled);
 
 /* settings_get_str(KEY) of a setting whose default is a path under the
-   prefix (help_path, perl_use_lib). In the binary installer's layout
-   (<p>/releases/<version>/bin/erssi), a value that points into another
-   release (one /SET -default wrote before 2026.10.4, say) would name an
-   old or removed tree: it is removed from the config, so the default of
-   this release applies, with one warning line. */
-const char *get_install_setting(const char *key);
+   prefix: a list of paths separated by any of SEPS, the first of them
+   joining it again (help_path ":", perl_use_lib " \t"). In the binary
+   installer's layout (<p>/releases/<version>/bin/erssi), an entry under
+   <p>/releases/<another version> (one /SET -default wrote before
+   2026.10.4, say) would name an old or removed tree: it becomes the same
+   path under this release, with one warning line naming both. The other
+   entries stay as they are, in their order. A list that is then the
+   default is removed from the config. */
+const char *get_install_setting(const char *key, const char *seps);
 
 #endif

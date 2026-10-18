@@ -168,21 +168,31 @@ def main():
     def t_prefix_b_moved_and_linked():
         check_prefix("b")
 
-    def t_stale_release_paths():
-        """help_path and perl_use_lib saved by another release of the
-        installer's layout (<p>/releases/0.9/...) are taken as the
-        default of this one (releases/1.0), with one warning line each,
-        and are gone from the next /SAVE; /help and a Perl script work"""
+    def stale_release_paths(layout):
+        """help_path (":") and perl_use_lib (" ") saved by another release
+        of the installer's layout (<p>/releases/0.9/...): the entry of 0.9
+        becomes the same path under this release (releases/1.0), with one
+        warning line naming both; the user's own entries stay, in their
+        order. LAYOUT puts the stale entry alone, first, in the middle or
+        last. Alone, the list is then the default and leaves the config.
+        /help and a Perl script work."""
         if "b" not in st:
             raise harness.SkipCase("not a relocatable build")
         inst, prefix = st["b"]
         old = prefix.parent / "0.9"
+        w = Path(tempfile.mkdtemp(prefix=f"run-stale-{layout}.", dir=work))
+        user = [str(w / "mine1"), str(w / "mine2")]
         perl_rel = Path(inst.perllib).relative_to(prefix)
+        stale = {"help_path": (f"{old}/share/irssi/help", f"{prefix}/share/irssi/help", ":"),
+                 "perl_use_lib": (str(old / perl_rel), str(prefix / perl_rel), " ")}
+        place = {"alone": lambda x: [x], "first": lambda x: [x, user[0]],
+                 "middle": lambda x: [user[0], x, user[1]], "last": lambda x: [user[0], x]}[layout]
+        saved_list = {k: sep.join(place(v)) for k, (v, _, sep) in stale.items()}
+        want = {k: sep.join(place(n)) for k, (_, n, sep) in stale.items()}
         cfg = harness.config(1, "alice").replace(
-            'theme = "default";', f'theme = "default"; help_path = "{old}/share/irssi/help";').replace(
-            'perl_use_lib = "@PERLLIB@";', f'perl_use_lib = "{old / perl_rel}";')
+            'theme = "default";', f'theme = "default"; help_path = "{saved_list["help_path"]}";').replace(
+            'perl_use_lib = "@PERLLIB@";', f'perl_use_lib = "{saved_list["perl_use_lib"]}";')
         assert str(old) in cfg and "@PERLLIB@" not in cfg
-        w = Path(tempfile.mkdtemp(prefix="run-stale.", dir=work))
         with HomeOnly(inst, w, "alice", cfg, args=("--noconnect",)) as e:
             e.start()
             e.wait_ready()
@@ -191,27 +201,38 @@ def main():
             # perl_use_lib's at the start, help_path's at the first /help
             e.type_and_wait("/help nosuchtopic_x")
             e.sync_output()
-
-            def warned(k):
-                return [ln for ln in e.screen() if f"{k} pointed into another release ({old}/" in ln]
-            for k in ("help_path", "perl_use_lib"):
+            for k, (v, n, _) in stale.items():
+                line = f"{k}: {v} is in another release"
                 # written (perl_use_lib's may have scrolled off the screen
                 # by now, so in the output), and never twice on the screen
-                assert harness.wait_until(lambda: f"{k} pointed into another release" in e.text(), WAIT), \
+                assert harness.wait_until(lambda: line in e.text(), WAIT), \
                     f"no warning for {k}:\n" + "\n".join(e.screen())
-                assert len(warned(k)) <= 1, f"{k}: " + "\n".join(warned(k))
+                assert sum(line in ln for ln in e.screen()) <= 1, "\n".join(e.screen())
             e.type_and_wait(f"/help {HELP_TOPIC}")
             assert e.wait_file(log, HELP_LINE, WAIT), f"/help {HELP_TOPIC} with a stale help_path"
             e.type_and_wait("/script load usercount")
             assert e.wait_file(log, "Loaded script usercount", WAIT), "no Perl script with a stale perl_use_lib"
-            # now the defaults of this release
-            e.type_and_wait("/set help_path", "/set perl_use_lib")
-            assert e.wait_file(log, f"help_path {prefix}/share/irssi/help", WAIT), "help_path is not the default"
-            assert e.wait_file(log, f"perl_use_lib {inst.perllib}", WAIT), "perl_use_lib is not the default"
             saved = e.save_config()
             assert str(old) not in saved, f"the old release in the config:\n{saved}"
+            for k in stale:
+                if layout == "alone":
+                    assert f"{k} = " not in saved, f"{k} saved though it is the default:\n{saved}"
+                else:
+                    assert f'{k} = "{want[k]}";' in saved, f"{k} is not {want[k]!r}:\n{saved}"
             e.quit()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
+
+    def t_stale_release_path_alone():
+        stale_release_paths("alone")
+
+    def t_stale_release_path_first():
+        stale_release_paths("first")
+
+    def t_stale_release_path_middle():
+        stale_release_paths("middle")
+
+    def t_stale_release_path_last():
+        stale_release_paths("last")
 
     def t_not_relocatable():
         if "plain" not in st:
@@ -240,7 +261,8 @@ def main():
         if tree is not None:
             harness.main([t_unpacked_tree])
         else:
-            harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_stale_release_paths,
+            harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_stale_release_path_alone,
+                          t_stale_release_path_first, t_stale_release_path_middle, t_stale_release_path_last,
                           t_not_relocatable])
     finally:
         if not harness.keep_work():
