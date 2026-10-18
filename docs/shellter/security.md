@@ -75,10 +75,13 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 - **Replays** — a message the server delivers again is dropped while its
   timestamp is still accepted (5 minutes either way), also after a
   restart: the cache of what was read is kept in
-  `~/.erssi/rpe2e/replay.cache` (digests and times only, no text, names
-  or keys). Each sender has room for its last 512 parts in each channel
-  or query, 16384 in all, so a flood can make only the flooder's own
-  older lines repeatable.
+  `~/.erssi/rpe2e/replay.cache` (only hashes and times). Each sender has
+  room for its last 512 parts in each channel or query, 16384 in all, so
+  a flood can make only the flooder's own older lines repeatable - unless
+  many thousands of senders write at once, when the cap takes from
+  whoever holds the most. Two erssi processes that share one home
+  overwrite each other's cache file (the last one to save wins), which
+  only weakens the protection after a restart.
 - **Files** — keyring.json, the replay cache and `/e2e import` files are
   read only when they are regular files (a symlink is not followed, a
   FIFO or device is refused at once); the keyring and the cache must

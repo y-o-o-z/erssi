@@ -341,18 +341,18 @@
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again - so is one that is
     not a regular file of yours (keyring.json as a symlink, which is not
-    followed: link the rpe2e directory instead; a FIFO, a device). The
-    subcommands (but HELP and IMPORT) refuse then, so that EXPORT never
-    writes an empty export and nothing claims a change that was not
-    saved. One that is not
-    valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
-    state is then LOST: nothing is sent to any channel or query and
-    nothing is saved, also after a restart, until you run /E2E RESET (a
-    new keyring) or /E2E IMPORT a keyring export. Which people you
-    accepted is stored in keyring.json as "accepted" (rpe2e.pl keeps it,
-    exports do not carry it): with a keyring from rpe2e.pl, repartee or an
-    import, a person asking for your key again needs one /E2E ACCEPT, and
-    does not get your new key when it rotates before that.
+    followed - replace the link with the file, or link the whole rpe2e
+    directory instead - a FIFO, a device). The subcommands (but HELP and
+    IMPORT) refuse then, so that EXPORT never writes an empty export and
+    nothing claims a change that was not saved. One that is not valid JSON
+    is moved aside to keyring.json.corrupt-<time>; the E2E state is then
+    LOST: nothing is sent to any channel or query and nothing is saved,
+    also after a restart, until you run /E2E RESET (a new keyring) or
+    /E2E IMPORT a keyring export. Which people you accepted is stored in
+    keyring.json as "accepted" (rpe2e.pl keeps it, exports do not carry
+    it): with a keyring from rpe2e.pl, repartee or an import, a person
+    asking for your key again needs one /E2E ACCEPT, and does not get your
+    new key when it rotates before that.
 
     Channel names are compared as the server's CASEMAPPING compares
     them: ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the
@@ -447,19 +447,22 @@
     remembered, the last 512 of each sender in each channel or query: a
     sender's flood pushes out only that sender's own older parts, never
     anyone else's (16384 are kept in all; past that, the sender holding
-    the most loses its oldest). They are kept in rpe2e/replay.cache next
-    to the keyring - digests and times only, no text, names or keys -
-    saved every 10 s when something changed, at /UPGRADE and when erssi
-    exits, so a restart does not let a repeat through (after a crash the
-    last 10 s may be missing). A cache file that cannot be read (damaged,
-    too large, not a regular file of yours) is not used: the cache starts
+    the most loses its oldest - so with many thousands of senders at once
+    the cap can still push out another sender's parts). They are kept in
+    rpe2e/replay.cache next to the keyring - only hashes and times - saved
+    every 10 s when something changed, at /UPGRADE and when erssi exits,
+    so a restart does not let a repeat through (after a crash the last
+    10 s may be missing). A cache file that cannot be read (damaged, too
+    large, not a regular file of yours) is not used: the cache starts
     empty, with a warning, and the file is replaced at the next save;
-    nothing else depends on it. A key request carries no ident@host:
-    someone who forwards your peer's request before the peer's first
-    contact with you ties that key to their own address, and the peer's
-    own request is then held back as a changed address until /E2E REVERIFY
-    (nobody gets a key that way). The rpe2e.pl script is recognised by its
-    file name (rpe2e*.pl).
+    nothing else depends on it. Two erssi processes that share one home
+    overwrite each other's cache file (the last one to save wins): the
+    protection after a restart is then weaker, nothing fails. A key
+    request carries no ident@host: someone who forwards your peer's
+    request before the peer's first contact with you ties that key to
+    their own address, and the peer's own request is then held back as a
+    changed address until /E2E REVERIFY (nobody gets a key that way). The
+    rpe2e.pl script is recognised by its file name (rpe2e*.pl).
 
     Networks: keys, sessions and settings are kept per network - the
     chatnet name of the server, otherwise its tag - so #test on one
