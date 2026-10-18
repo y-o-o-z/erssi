@@ -66,6 +66,7 @@ typedef struct {
 	char *line;		/* "NOTICE <nick> :..." */
 	char *keyrsp_wire;	/* a KEYRSP: the bare context, else NULL */
 	char *keyreq_wire;	/* a KEYREQ of ours: the bare context, else NULL */
+	char *rekey_wire;	/* a REKEY behind a KEYRSP: its context, else NULL */
 	char *handle;		/* the address it is for (a KEYREQ's), or NULL */
 } E2E_STRANGER_LINE;
 
@@ -77,13 +78,15 @@ void e2e_strangerq_free(E2E_STRANGERQ *q);
 gboolean e2e_strangerq_empty(const E2E_STRANGERQ *q);
 guint e2e_strangerq_length(const E2E_STRANGERQ *q);
 /* a copy, behind the others; the oldest that went for it (the caller
-   frees them, e2e_stranger_line_free), NULL when none */
+   frees them, e2e_stranger_line_free), NULL when none. A KEYRSP that goes
+   takes the REKEYs queued behind it along (they would reach a peer with
+   no session) */
 GPtrArray *e2e_strangerq_push(E2E_STRANGERQ *q, const char *nick, const char *line,
                               const char *keyrsp_wire, const char *keyreq_wire,
                               const char *handle);
-/* a KEYRSP to nick (ASCII case) for wire waits here: line goes right
-   behind the last such one (past the cap - it never goes for others) and
-   TRUE; else FALSE, nothing queued */
+/* a KEYRSP or a REKEY to nick (ASCII case) for wire waits here: line (a
+   REKEY) goes right behind the last such one, in order (past the cap, it
+   pushes nothing out) and TRUE; else FALSE, nothing queued */
 gboolean e2e_strangerq_push_after_keyrsp(E2E_STRANGERQ *q, const char *nick, const char *wire,
                                          const char *line);
 /* the first one, freed by the caller (e2e_stranger_line_free); NULL */

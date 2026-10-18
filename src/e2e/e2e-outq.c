@@ -138,6 +138,7 @@ void e2e_stranger_line_free(E2E_STRANGER_LINE *l)
 	g_free(l->nick);
 	g_free(l->keyrsp_wire);
 	g_free(l->keyreq_wire);
+	g_free(l->rekey_wire);
 	g_free(l->handle);
 	g_free(l);
 }
@@ -173,6 +174,36 @@ static E2E_STRANGER_LINE *stranger_line(const char *nick, const char *line, cons
 	return l;
 }
 
+static gboolean line_for(const E2E_STRANGER_LINE *l, const char *nick, const char *wire)
+{
+	return g_ascii_strcasecmp(l->nick, nick) == 0 &&
+	       ((l->keyrsp_wire != NULL && strcmp(l->keyrsp_wire, wire) == 0) ||
+	        (l->rekey_wire != NULL && strcmp(l->rekey_wire, wire) == 0));
+}
+
+/* the KEYRSP rsp went: so do the REKEYs behind it, unless another KEYRSP
+   to that nick for that context still waits (they are behind that one) */
+static void drop_bound_rekeys(E2E_STRANGERQ *q, const E2E_STRANGER_LINE *rsp, GPtrArray *dropped)
+{
+	GList *tmp, *next;
+
+	for (tmp = q->lines.head; tmp != NULL; tmp = tmp->next) {
+		E2E_STRANGER_LINE *l = tmp->data;
+
+		if (l->keyrsp_wire != NULL && line_for(l, rsp->nick, rsp->keyrsp_wire))
+			return;
+	}
+	for (tmp = q->lines.head; tmp != NULL; tmp = next) {
+		E2E_STRANGER_LINE *l = tmp->data;
+
+		next = tmp->next;
+		if (l->rekey_wire != NULL && line_for(l, rsp->nick, rsp->keyrsp_wire)) {
+			g_queue_delete_link(&q->lines, tmp);
+			g_ptr_array_add(dropped, l);
+		}
+	}
+}
+
 GPtrArray *e2e_strangerq_push(E2E_STRANGERQ *q, const char *nick, const char *line,
                               const char *keyrsp_wire, const char *keyreq_wire,
                               const char *handle)
@@ -184,7 +215,10 @@ GPtrArray *e2e_strangerq_push(E2E_STRANGERQ *q, const char *nick, const char *li
 	while (g_queue_get_length(&q->lines) >= q->max) {
 		if (dropped == NULL)
 			dropped = g_ptr_array_new();
-		g_ptr_array_add(dropped, g_queue_pop_head(&q->lines));
+		l = g_queue_pop_head(&q->lines);
+		g_ptr_array_add(dropped, l);
+		if (l->keyrsp_wire != NULL)
+			drop_bound_rekeys(q, l, dropped);
 	}
 	l = stranger_line(nick, line, keyrsp_wire);
 	l->keyreq_wire = g_strdup(keyreq_wire);
@@ -196,20 +230,21 @@ GPtrArray *e2e_strangerq_push(E2E_STRANGERQ *q, const char *nick, const char *li
 gboolean e2e_strangerq_push_after_keyrsp(E2E_STRANGERQ *q, const char *nick, const char *wire,
                                          const char *line)
 {
+	E2E_STRANGER_LINE *rekey;
 	GList *tmp, *last = NULL;
 
-	if (q == NULL)
+	if (q == NULL || nick == NULL || wire == NULL)
 		return FALSE;
-	for (tmp = q->lines.head; tmp != NULL; tmp = tmp->next) {
-		E2E_STRANGER_LINE *l = tmp->data;
-
-		if (l->keyrsp_wire != NULL && strcmp(l->keyrsp_wire, wire) == 0 &&
-		    g_ascii_strcasecmp(l->nick, nick) == 0)
+	/* behind the KEYRSP, and behind the REKEYs already there: two
+	   rotations reach the peer in the order they were made */
+	for (tmp = q->lines.head; tmp != NULL; tmp = tmp->next)
+		if (line_for(tmp->data, nick, wire))
 			last = tmp;
-	}
 	if (last == NULL)
 		return FALSE;
-	g_queue_insert_after(&q->lines, last, stranger_line(nick, line, NULL));
+	rekey = stranger_line(nick, line, NULL);
+	rekey->rekey_wire = g_strdup(wire);
+	g_queue_insert_after(&q->lines, last, rekey);
 	return TRUE;
 }
 

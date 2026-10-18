@@ -174,8 +174,10 @@ static void test_null_args(void)
 }
 
 /* strangers' NOTICEs: bounded, the oldest go (handed back, for what
-   they leave behind); a REKEY goes right behind its peer's KEYRSP and is
-   never pushed out; they leave only when nothing else waits */
+   they leave behind); a REKEY goes right behind its peer's KEYRSP (and
+   the REKEYs already behind it, in order), pushes nothing out, and goes
+   with that KEYRSP when the cap drops it; they leave only when nothing
+   else waits */
 static void test_strangers(void)
 {
 	E2E_STRANGERQ *q = e2e_strangerq_new(3);
@@ -221,6 +223,55 @@ static void test_strangers(void)
 	g_assert_cmpstr(l->line, ==, "NOTICE b :rekey");
 	e2e_stranger_line_free(l);
 	g_assert_true(e2e_strangerq_empty(q));
+	e2e_strangerq_free(q);
+
+	/* two rotations: their REKEYs in the order made, both behind the
+	   KEYRSP; the second is queued behind the first even once the
+	   KEYRSP has left */
+	q = e2e_strangerq_new(3);
+	g_assert_null(e2e_strangerq_push(q, "e", "NOTICE e :keyrsp", "#c", NULL, NULL));
+	g_assert_null(e2e_strangerq_push(q, "x", "NOTICE x :1", NULL, NULL, NULL));
+	g_assert_true(e2e_strangerq_push_after_keyrsp(q, "e", "#c", "NOTICE e :rekey1"));
+	g_assert_true(e2e_strangerq_push_after_keyrsp(q, "E", "#c", "NOTICE e :rekey2"));
+	/* another context of e's: nothing waits for it */
+	g_assert_false(e2e_strangerq_push_after_keyrsp(q, "e", "#d", "NOTICE e :rekey-d"));
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE e :keyrsp");
+	e2e_stranger_line_free(l);
+	g_assert_true(e2e_strangerq_push_after_keyrsp(q, "e", "#c", "NOTICE e :rekey3"));
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE e :rekey1");
+	g_assert_cmpstr(l->rekey_wire, ==, "#c");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE e :rekey2");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE e :rekey3");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE x :1");
+	e2e_stranger_line_free(l);
+	g_assert_true(e2e_strangerq_empty(q));
+
+	/* the cap drops a KEYRSP: its REKEYs go with it, the others stay */
+	g_assert_null(e2e_strangerq_push(q, "e", "NOTICE e :keyrsp", "#c", NULL, NULL));
+	g_assert_true(e2e_strangerq_push_after_keyrsp(q, "e", "#c", "NOTICE e :rekey1"));
+	g_assert_null(e2e_strangerq_push(q, "y", "NOTICE y :1", NULL, NULL, NULL));
+	dropped = e2e_strangerq_push(q, "z", "NOTICE z :1", NULL, NULL, NULL);
+	g_assert_nonnull(dropped);
+	g_assert_cmpuint(dropped->len, ==, 2);
+	g_assert_cmpstr(((E2E_STRANGER_LINE *) g_ptr_array_index(dropped, 0))->line, ==, "NOTICE e :keyrsp");
+	g_assert_cmpstr(((E2E_STRANGER_LINE *) g_ptr_array_index(dropped, 1))->line, ==, "NOTICE e :rekey1");
+	g_ptr_array_foreach(dropped, (GFunc) e2e_stranger_line_free, NULL);
+	g_ptr_array_free(dropped, TRUE);
+	g_assert_cmpuint(e2e_strangerq_length(q), ==, 2);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE y :1");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE z :1");
+	e2e_stranger_line_free(l);
 	e2e_strangerq_free(q);
 
 	/* when they may leave (speed 2200 ms, 5 at once) */

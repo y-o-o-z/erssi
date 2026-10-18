@@ -1759,9 +1759,9 @@ static void native_gate(SERVER_REC *server, GString *str)
 			char *notice = g_strdup_printf("NOTICE %s :%s", to,
 			                               (char *) g_ptr_array_index(res.notices, i + 1));
 
-			/* a peer whose KEYRSP (of the key before) still waits
-			   with the strangers' NOTICEs gets its REKEY right behind
-			   it, not before */
+			/* a peer whose KEYRSP (of the key before), or an earlier
+			   REKEY, still waits with the strangers' NOTICEs gets this
+			   REKEY right behind it, not before */
 			if (e2e_strangerq_push_after_keyrsp(stranger_queue_of(server, FALSE), to,
 			                                    e2e_ctx_wire(res.ctx), notice)) {
 				e2e_wipe(notice, strlen(notice));
