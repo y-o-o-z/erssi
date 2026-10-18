@@ -22,8 +22,10 @@
 #       The script runs again in an empty environment (env -i) with
 #       PATH=CLEAN_PATH below: no CC, CFLAGS, LDFLAGS, PKG_CONFIG_PATH,
 #       LD_LIBRARY_PATH, PERL5LIB or test settings of the caller reach
-#       the build or its tests. Only TMPDIR (where the work directory
-#       goes) and BUILD_BINARY_TESTS are kept. No ELF file of the package
+#       the build or its tests, nor http(s)_proxy (behind a proxy, give
+#       --repo a local clone). Only TMPDIR (where the work directory
+#       goes) and BUILD_BINARY_TESTS are kept, with PATH, HOME=/nonexistent
+#       and LC_ALL=C set. No ELF file of the package
 #       may have an RPATH or RUNPATH, except the system perl's CORE
 #       directory (FreeBSD's perl links libperl that way).
 #   build-binary.sh --sums DIR
