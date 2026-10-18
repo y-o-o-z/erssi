@@ -177,6 +177,57 @@ case_verify() {
         bad "a signed tag of another version (exit $RC): $OUT"
     fi
 
+    # the checks of an installed tree (--check-tree, as in a package
+    # build): needed= from GNU readelf's output and from FreeBSD's (ELF
+    # Tool Chain, NEEDED without parentheses), the package's own library
+    # left out; a link that is absolute or climbs is refused
+    TR=$tmp/tree
+    mkdir -p "$TR/bin" "$TR/lib" "$tmp/stub-gnu" "$tmp/stub-etc" || exit 1
+    printf '\177ELF fake\n' > "$TR/bin/erssi" && chmod 755 "$TR/bin/erssi" &&
+        printf '\177ELF fake\n' > "$TR/lib/libown.so.1" && ln -s erssi "$TR/bin/erssi-link" || exit 1
+    cat > "$tmp/stub-gnu/readelf" <<'EOF'
+#!/bin/sh
+echo 'Dynamic section at offset 0x2d8e0 contains 30 entries:'
+echo '  Tag        Type                         Name/Value'
+case $2 in
+    */bin/erssi)
+        echo ' 0x0000000000000001 (NEEDED)             Shared library: [libglib-2.0.so.0]'
+        echo ' 0x0000000000000001 (NEEDED)             Shared library: [libown.so.1]'
+        echo ' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]' ;;
+    *)
+        echo ' 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]'
+        echo ' 0x000000000000000e (SONAME)             Library soname: [libown.so.1]' ;;
+esac
+echo ' 0x000000000000000c (INIT)               0x5000'
+EOF
+    cat > "$tmp/stub-etc/readelf" <<'EOF'
+#!/bin/sh
+echo
+echo 'Dynamic section at offset 0x3b10 contains 26 entries:'
+echo '  Tag                Type                 Name/Value'
+case $2 in
+    */bin/erssi)
+        echo '  0x0000000000000001 NEEDED               Shared library: [libglib-2.0.so.0]'
+        echo '  0x0000000000000001 NEEDED               Shared library: [libown.so.1]'
+        echo '  0x0000000000000001 NEEDED               Shared library: [libc.so.7]' ;;
+    *)
+        echo '  0x0000000000000001 NEEDED               Shared library: [libc.so.7]'
+        echo '  0x000000000000000e SONAME               Library soname: [libown.so.1]' ;;
+esac
+echo '  0x000000000000000c INIT                 0x5000'
+EOF
+    chmod 755 "$tmp/stub-gnu/readelf" "$tmp/stub-etc/readelf"
+    out=$(PATH="$tmp/stub-gnu:$PATH" sh "$BB" --check-tree "$TR" 2>&1)
+    check "--check-tree: needed from GNU readelf" [ "$out" = "needed=libc.so.6 libglib-2.0.so.0" ]
+    out=$(PATH="$tmp/stub-etc:$PATH" sh "$BB" --check-tree "$TR" 2>&1)
+    check "--check-tree: needed from FreeBSD's readelf" [ "$out" = "needed=libc.so.7 libglib-2.0.so.0" ]
+    for l in /etc/passwd ../lib ../../x a/.. ./../lib; do
+        ln -sfn "$l" "$TR/bin/bad" || exit 1
+        out=$(PATH="$tmp/stub-gnu:$PATH" sh "$BB" --check-tree "$TR" 2>&1)
+        check "--check-tree: a link to $l is refused" sh -c 'printf "%s\n" "$1" | grep -q "a link is absolute or has a .. in it: bin/bad -> "' sh "$out"
+    done
+    unlink "$TR/bin/bad"
+
     # SHA256SUMS over the tarballs of one release, sorted, signed and
     # checked with the commands of releasing.md
     D=$tmp/release

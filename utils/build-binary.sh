@@ -22,6 +22,10 @@
 #   build-binary.sh --sums DIR
 #       Writes DIR/SHA256SUMS over the tarballs in DIR (one release) and
 #       prints the command that signs it.
+#   build-binary.sh --check-tree DIR
+#       Only the checks of an installed tree (as unpacked: bin/erssi,
+#       lib/...) that a package build makes, and the needed= line of its
+#       MANIFEST; for the packager's test.
 #
 # BUILD_BINARY_TESTS: the names of the tests to run (separated by commas)
 # in place of the full suite, for the packager's own test
@@ -162,6 +166,33 @@ is_elf() {
     [ -f "$1" ] && [ ! -L "$1" ] && [ "$(od -An -c -N4 "$1" | tr -d ' ')" = '177ELF' ]
 }
 
+# the checks of an installed tree DIR (the package's top directory),
+# before it is packed; dies at the first problem. NEEDED: the shared
+# libraries its ELF files need (sonames, sorted), but not the package's own.
+check_tree() {
+    dir=$1
+    [ -x "$dir/bin/erssi" ] || die "no bin/erssi in the installed tree"
+    # a link in the package is relative and never climbs ("..") or starts
+    # at /: unpacked anywhere it cannot reach out of the tree. The installer
+    # refuses a package with any other link.
+    bad=$(find "$dir" -type l | while IFS= read -r l; do
+            t=$(readlink "$l")
+            case /$t/ in
+                //*|*/../*) printf '%s -> %s\n' "${l#"$dir"/}" "$t" ;;
+            esac
+        done)
+    [ -z "$bad" ] || die "a link is absolute or has a .. in it: $(printf '%s\n' "$bad" | head -n 1)"
+    ELFS=$(find "$dir" -type f | LC_ALL=C sort | while IFS= read -r f; do is_elf "$f" && printf '%s\n' "$f"; done)
+    [ -n "$ELFS" ] || die "no ELF files in the package"
+    own=$(printf '%s\n' "$ELFS" | sed 's|.*/||')
+    # GNU readelf: " 0x...01 (NEEDED)  Shared library: [libc.so.6]";
+    # FreeBSD's (ELF Tool Chain): " 0x...01 NEEDED  Shared library: [libc.so.7]"
+    NEEDED=$(printf '%s\n' "$ELFS" | while IFS= read -r f; do
+            readelf -d "$f" | sed -n 's/.*NEEDED.*Shared library: *\[\(.*\)\].*/\1/p'
+        done | LC_ALL=C sort -u | grep -vxF "$own" | tr '\n' ' ' | sed 's/ $//')
+    [ -n "$NEEDED" ] || die "readelf found no shared libraries"
+}
+
 # ── a package ────────────────────────────────────────────────────────
 REPO=
 OUT=.
@@ -175,6 +206,12 @@ while [ $# -gt 0 ]; do
         --work) [ $# -ge 2 ] || usage "--work needs a directory"; WORK=$2; shift 2 ;;
         --keep-work) KEEP=1; shift ;;
         --sums) [ $# -ge 2 ] || usage "--sums needs a directory"; SUMS=$2; shift 2 ;;
+        # the checks of an installed tree alone, for the packager's test
+        --check-tree)
+            [ $# -eq 2 ] || usage "--check-tree takes one directory"
+            check_tree "$2"
+            printf 'needed=%s\n' "$NEEDED"
+            exit 0 ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
         -*) usage "unknown option $1" ;;
         *) break ;;
@@ -296,30 +333,12 @@ meson install -C "$BUILD" --no-rebuild --destdir "$STAGE" --quiet > "$WORK/insta
 PKG=$WORK/pkg/$NAME
 mkdir "$WORK/pkg" || die "cannot make $WORK/pkg"
 mv "$STAGE$BUILD_PREFIX" "$PKG" || die "cannot move the installed tree"
-[ -x "$PKG/bin/erssi" ] || die "no bin/erssi in the installed tree"
-# a link in the package is relative and never climbs ("..") or starts
-# at /: unpacked anywhere it cannot reach out of the tree. The installer
-# refuses a package with any other link.
-bad=$(find "$PKG" -type l | while IFS= read -r l; do
-        t=$(readlink "$l")
-        case /$t/ in
-            //*|*/../*) printf '%s -> %s\n' "${l#"$PKG"/}" "$t" ;;
-        esac
-    done)
-[ -z "$bad" ] || die "a link is absolute or has a .. in it: $(printf '%s\n' "$bad" | head -n 1)"
+check_tree "$PKG"
 
-# stripped; the shared libraries every ELF file needs (sonames), but not
-# the package's own
-elfs=$(find "$PKG" -type f | LC_ALL=C sort | while IFS= read -r f; do is_elf "$f" && printf '%s\n' "$f"; done)
-[ -n "$elfs" ] || die "no ELF files in the package"
-own=$(printf '%s\n' "$elfs" | sed 's|.*/||')
-printf '%s\n' "$elfs" | while IFS= read -r f; do
+# stripped
+printf '%s\n' "$ELFS" | while IFS= read -r f; do
     strip --strip-unneeded "$f" || exit 1
 done || die "strip failed"
-NEEDED=$(printf '%s\n' "$elfs" | while IFS= read -r f; do
-        readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p'
-    done | LC_ALL=C sort -u | grep -vxF "$own" | tr '\n' ' ' | sed 's/ $//')
-[ -n "$NEEDED" ] || die "readelf found no shared libraries"
 
 {
     printf 'version=%s\n' "$VERSION"
