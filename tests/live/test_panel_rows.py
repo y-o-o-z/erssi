@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
 WAIT = 10
+LAYOUT_WAIT = 3
 COLS, ROWS = 120, 40
 PANEL = 15  # the default width of both panels
 # a window statusbar on top of the main window and one under it, each with
@@ -143,11 +144,18 @@ def main():
         e = st["e"]
         e.type_and_wait("/topic TOPICSTART of the channel", "/statusbar additem -alignment right tail topic")
         assert harness.wait_until(lambda: "TOPICSTART" in settled(e)[0], WAIT), settled(e)[0]
+        # nothing of the topic change left to draw: the panels are laid
+        # out again only for what the modify does
+        e.type_and_wait("/redraw")
         rows = settled(e)
         assert rows[0].startswith(" TOPICSTART") and rows[0].rstrip().endswith("TAILMARK"), rows[0]
         assert rows[0][:PANEL].strip() and rows[0][COLS - PANEL:].strip(), rows[0]
         e.type_and_wait("/statusbar modify -type window topic")
-        assert harness.wait_until(lambda: not settled(e)[0].startswith(" TOPICSTART"), WAIT), settled(e)[0]
+        # the panels are laid out a few ms after the bars came; without
+        # that nothing clears these cells until some other event (with no
+        # traffic, none comes in this time)
+        assert harness.wait_until(lambda: not settled(e)[0].startswith(" TOPICSTART"), LAYOUT_WAIT), \
+            settled(e)[0]
         rows = settled(e)
         for y in (0, 1):
             left, right = panel_cells(rows, y)

@@ -530,6 +530,18 @@ void sig_mainwindow_resized(MAIN_WINDOW_REC *mw)
 	resize_debug_log("SP_MW_RESIZED", "contents redraw complete");
 }
 
+/* A statusbar came or went (/STATUSBAR, a window statusbar shown only for
+ * the active main window, the config read again): the main windows' rows
+ * may be others with their text the same size, and then no "mainwindow
+ * resized" comes - e.g. a root bar made a window one, whose row is the
+ * main window's now. Lay the panels out once after it (one timer for any
+ * number of bars), so sp_move_panels() clears their columns on the rows
+ * the main windows took. */
+static void sig_statusbar_changed(void)
+{
+	schedule_batched_redraw("statusbar_changed");
+}
+
 /* Clear ALL sidepanel caches when terminal is resized.
  * This is a safety net in addition to the cache clearing on a main window
  * resize. */
@@ -562,6 +574,8 @@ void sidepanels_signals_register(void)
 {
 	signal_add("terminal resized", (SIGNAL_FUNC) sig_terminal_resized);
 	signal_add("mainwindow resized", (SIGNAL_FUNC) sig_mainwindow_resized);
+	signal_add("statusbar created", (SIGNAL_FUNC) sig_statusbar_changed);
+	signal_add("statusbar destroyed", (SIGNAL_FUNC) sig_statusbar_changed);
 	signal_add("server connected", (SIGNAL_FUNC) sig_server_connected);
 	signal_add("window changed", (SIGNAL_FUNC) sig_window_changed);
 	signal_add("window item changed", (SIGNAL_FUNC) sig_window_item_changed);
@@ -602,6 +616,8 @@ void sidepanels_signals_unregister(void)
 {
 	signal_remove("terminal resized", (SIGNAL_FUNC) sig_terminal_resized);
 	signal_remove("mainwindow resized", (SIGNAL_FUNC) sig_mainwindow_resized);
+	signal_remove("statusbar created", (SIGNAL_FUNC) sig_statusbar_changed);
+	signal_remove("statusbar destroyed", (SIGNAL_FUNC) sig_statusbar_changed);
 	signal_remove("server connected", (SIGNAL_FUNC) sig_server_connected);
 	signal_remove("window changed", (SIGNAL_FUNC) sig_window_changed);
 	signal_remove("window item changed", (SIGNAL_FUNC) sig_window_item_changed);
