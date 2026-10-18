@@ -70,6 +70,12 @@
     replaced; any other file at the path is left alone and the server does
     not start. The socket is removed when the server stops.
 
+    Networks and servers: a web client can list, add, change and remove
+    them. Passwords (sasl_password, a server's password and tls_pass)
+    and a network's autosendcmd, which often holds a NickServ password,
+    are sent to it as "***"; a client that sends "***" back leaves the
+    stored value as it is.
+
     Web clients and E2E: with the e2e module loaded, a web client is told
     the E2E state of every channel and query (off, on, waiting for keys,
     blocked, keyring error) and the key requests that wait there, and it

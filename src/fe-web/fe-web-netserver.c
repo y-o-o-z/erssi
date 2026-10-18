@@ -260,12 +260,15 @@ void fe_web_handle_network_add(WEB_CLIENT_REC *client, const char *json_str)
 		g_free(own_host);
 	}
 	
+	/* network_list masks autosendcmd (it often holds a NickServ
+	 * password) and sasl_password: a client that sends back what it
+	 * got leaves the stored value as it is */
 	autosendcmd = fe_web_json_get_string(json_str, "autosendcmd");
-	if (autosendcmd != NULL) {
+	if (autosendcmd != NULL && g_strcmp0(autosendcmd, FE_WEB_MASK) != 0) {
 		g_free_not_null(rec->autosendcmd);
 		rec->autosendcmd = g_strdup(autosendcmd);
-		g_free(autosendcmd);
 	}
+	g_free(autosendcmd);
 	
 	usermode = fe_web_json_get_string(json_str, "usermode");
 	if (usermode != NULL) {
@@ -289,11 +292,11 @@ void fe_web_handle_network_add(WEB_CLIENT_REC *client, const char *json_str)
 	}
 	
 	sasl_password = fe_web_json_get_string(json_str, "sasl_password");
-	if (sasl_password != NULL) {
+	if (sasl_password != NULL && g_strcmp0(sasl_password, FE_WEB_MASK) != 0) {
 		g_free_not_null(rec->sasl_password);
 		rec->sasl_password = g_strdup(sasl_password);
-		g_free(sasl_password);
 	}
+	g_free(sasl_password);
 	
 	/* Numeric fields */
 	if (fe_web_json_has_key(json_str, "max_kicks")) {
@@ -431,8 +434,8 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 
 	/* Update fields from JSON (simplified parsing) */
 	password = fe_web_json_get_string(json_str, "password");
-	/* "***" is the mask server_list sends: keep the password */
-	if (password != NULL && g_strcmp0(password, "***") != 0) {
+	/* the mask server_list sends: keep the password */
+	if (password != NULL && g_strcmp0(password, FE_WEB_MASK) != 0) {
 		g_free_not_null(rec->password);
 		rec->password = g_strdup(password);
 	}

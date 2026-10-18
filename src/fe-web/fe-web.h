@@ -195,7 +195,11 @@ char *fe_web_json_get_string(const char *json, const char *key);
 int fe_web_json_get_int(const char *json, const char *key, int default_value);
 int fe_web_json_has_key(const char *json, const char *key);
 
-/* JSON building for network/server management */
+/* JSON building for network/server management. Passwords and the
+ * network's autosendcmd go out as FE_WEB_MASK; network_add and server_add
+ * keep the stored value when a client sends the mask back. */
+#define FE_WEB_MASK "***"
+
 GString *fe_web_build_network_json(IRC_CHATNET_REC *rec);
 GString *fe_web_build_server_json(IRC_SERVER_SETUP_REC *rec);
 GString *fe_web_build_command_result_json(gboolean success, const char *message,

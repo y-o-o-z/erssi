@@ -376,7 +376,13 @@ GString *fe_web_build_network_json(IRC_CHATNET_REC *rec)
 	json_append_string(json, "username", rec->username);
 	json_append_string(json, "realname", rec->realname);
 	json_append_string(json, "own_host", rec->own_host);
-	json_append_string(json, "autosendcmd", rec->autosendcmd);
+	/* masked: it often holds a NickServ password (network_add keeps
+	 * the stored value when it gets the mask back) */
+	if (rec->autosendcmd != NULL && *rec->autosendcmd != '\0') {
+		g_string_append(json, "\"autosendcmd\":\"" FE_WEB_MASK "\",");
+	} else {
+		json_append_string(json, "autosendcmd", rec->autosendcmd);
+	}
 	json_append_string(json, "usermode", rec->usermode);
 
 	/* SASL fields */
@@ -385,7 +391,7 @@ GString *fe_web_build_network_json(IRC_CHATNET_REC *rec)
 
 	/* Mask password - never send actual password */
 	if (rec->sasl_password != NULL) {
-		g_string_append(json, "\"sasl_password\":\"***\",");
+		g_string_append(json, "\"sasl_password\":\"" FE_WEB_MASK "\",");
 	} else {
 		g_string_append(json, "\"sasl_password\":null,");
 	}
@@ -424,7 +430,7 @@ GString *fe_web_build_server_json(IRC_SERVER_SETUP_REC *rec)
 
 	/* Password - never send actual password */
 	if (rec->password != NULL) {
-		g_string_append(json, "\"password\":\"***\",");
+		g_string_append(json, "\"password\":\"" FE_WEB_MASK "\",");
 	} else {
 		g_string_append(json, "\"password\":null,");
 	}
@@ -440,7 +446,7 @@ GString *fe_web_build_server_json(IRC_SERVER_SETUP_REC *rec)
 
 	/* Mask TLS password */
 	if (rec->tls_pass != NULL) {
-		g_string_append(json, "\"tls_pass\":\"***\",");
+		g_string_append(json, "\"tls_pass\":\"" FE_WEB_MASK "\",");
 	} else {
 		g_string_append(json, "\"tls_pass\":null,");
 	}
