@@ -53,19 +53,19 @@ fork-only `shellter-defaults.c`, section 4). Each row can be taken as it is.
 
 | Commits | Change | Default in C (erssi-org) | Shellter value (irssi.conf) |
 |---|---|---|---|
-| `bdeb8084 47daae64` + `6c8c3adb` | 256-colour fallback for 24-bit colours (GNU Screen, Linux console, 8/16-colour terminals); new `term_truecolor auto/on/off` | `colors_ansi_24bit` OFF; with OFF, the fallback gives upstream users 256 colours. v1.3.1 wrote 24-bit codes at start whatever the setting said, so upstream should decide | `"fe-ansi"`: `colors_ansi_24bit` yes |
-| `0609e771` + `6c8c3adb` | WHOIS and WHOWAS replies go to the network's status window | `print_whois_rpl_in_server_window` OFF | ON |
-| `9e393a2d` + `6c8c3adb` | join prints only the nick count line | `show_names_on_join_limit` 18 | 1 |
-| `92c1a7ac` (fe-channels.c) + `ca68b1df` + `6c8c3adb` | alone on a channel: count line, no names table. `ca68b1df` replaces the hard-coded rule with the setting `show_names_on_join_alone` | `show_names_on_join_alone` ON, as v1.3.1 | no |
-| `f42ff98d` + `6c8c3adb` | `$nickmode` expando (mode prefix coloured by rank, new `nick_mode_color_*` settings), theme default, `nick_column_width`, `nick_hash_colors` | `theme` `default`, `nick_column_width` 10, `nick_hash_colors` "g r b m c y G C", `nick_mode_color_*` "". `$nickmode` itself is additive | theme `shellter`, width 13, the shellter palette, rank colours set |
-| `1ea1bd1f` + `6c8c3adb` | 24-bit hilight colours | `hilight_color` `%Y`, `hilight_act_color` `%M` | `%Zbb9af7`, `%ZFF7B72` |
-| `85e9a8c1` + `6c8c3adb` | `hidden_settings` default named a script's setting | `hidden_settings` "" (PR #6 already has `""`, checked with `gh pr diff 6`) | `translate_deepl_key` |
+| `b9395ce7 f726253c` + `630cbcda` | 256-colour fallback for 24-bit colours (GNU Screen, Linux console, 8/16-colour terminals); new `term_truecolor auto/on/off` | `colors_ansi_24bit` OFF; with OFF, the fallback gives upstream users 256 colours. v1.3.1 wrote 24-bit codes at start whatever the setting said, so upstream should decide | `"fe-ansi"`: `colors_ansi_24bit` yes |
+| `5a80bce2` + `630cbcda` | WHOIS and WHOWAS replies go to the network's status window | `print_whois_rpl_in_server_window` OFF | ON |
+| `c92e5631` + `630cbcda` | join prints only the nick count line | `show_names_on_join_limit` 18 | 1 |
+| `55aed0a0` (fe-channels.c) + `bd79c1ad` + `630cbcda` | alone on a channel: count line, no names table. `bd79c1ad` replaces the hard-coded rule with the setting `show_names_on_join_alone` | `show_names_on_join_alone` ON, as v1.3.1 | no |
+| `8d8aeafa` + `630cbcda` | `$nickmode` expando (mode prefix coloured by rank, new `nick_mode_color_*` settings), theme default, `nick_column_width`, `nick_hash_colors` | `theme` `default`, `nick_column_width` 10, `nick_hash_colors` "g r b m c y G C", `nick_mode_color_*` "". `$nickmode` itself is additive | theme `shellter`, width 13, the shellter palette, rank colours set |
+| `c9326d3f` + `630cbcda` | 24-bit hilight colours | `hilight_color` `%Y`, `hilight_act_color` `%M` | `%Zbb9af7`, `%ZFF7B72` |
+| `d6cde470` + `630cbcda` | `hidden_settings` default named a script's setting | `hidden_settings` "" (PR #6 already has `""`, checked with `gh pr diff 6`) | `translate_deepl_key` |
 
-`6c8c3adb` is the take commit for all rows; `0f11cb35` is its test
+`630cbcda` is the take commit for all rows; `86420447` is its test
 follow-up (the defaults tests skip when a global `irssi.conf` is
-installed). `ca68b1df` touches `src/fe-common/core/fe-channels.h` and
-the setting. To see one feature, `git show 6c8c3adb -- <file>` (section 6),
-for example `git show 6c8c3adb -- src/fe-common/core/themes.c`.
+installed). `bd79c1ad` touches `src/fe-common/core/fe-channels.h` and
+the setting. To see one feature, `git show 630cbcda -- <file>` (section 6),
+for example `git show 630cbcda -- src/fe-common/core/themes.c`.
 
 ### Ready to take, not yet in a pull request: features of 2026.10.0
 
@@ -77,24 +77,24 @@ taken as it is; the commits are on `dev/2026.10`.
 
 | Commits | Change | Notes |
 |---|---|---|
-| `b7f7802b f55ce730 ee148fda` | `/HELP $name` shows the help of an expando; help texts for `term_truecolor`, `colors_ansi_24bit`, `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`, `show_names_on_join_limit` | The texts of settings that exist only in the fork (`term_truecolor`, `nick_mode_color_*`, `$nickmode`) go with the rows of section 2 that add them |
-| `c1666ab5 2c027e55` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 c97952ee 95163304`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
-| `c0e4cd84 ba40df8c 560daae9` | Terminal notifications: OSC 9 / OSC 777 sequences when a mention or private message arrives while the terminal is not focused (focus reports, tmux pass-through, throttle, control characters removed). New setting `term_notify` | `560daae9` is neutral: the default of `term_notify` is `off`. The fork's default is a separate commit (`d4dd0003`, section 4). Follow-ups: `e8aa02c6` (ASCII only on a terminal that is not UTF-8), `71a7ec4c` (bidi and line-separator characters removed), `f5b0faf4` (tests) |
-| `ef4c0adc 8584127c` | Key input: `gui-mouse.c` dropped the final letter of a CSI sequence (`ESC [ I` Page Up, `ESC [ Z` Shift-Tab, `ESC [ G`) and waited for more after a CSI that ends in a lowercase letter or `@` (rxvt shift-arrows, CSI u) | Bug fixes in code of v1.3.1, with a live test (`tests/live/test_keys.py`). Independent of the rest |
-| `e4ad53f9 d6d50441 11708591 3b070dca 943f9001 9c83e708 3dfb804c 28ee82ee dbc2862e 9906974e` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise. The default network offered is "IRCnet" (`firstrun.c`), also a fork preference |
-| `228daa9b 52a95cbd 48610063 5f53bedf e88f27c0` | `/SEARCH` in the autolog files: a search in a child process with a hit, size and file limit and a 120 s time limit; new setting `search_max_size` | The search is not available in Capsicum mode. Live test: `tests/live/test_search.py` |
+| `0eb382c0 3d104761 4e0d9f86` | `/HELP $name` shows the help of an expando; help texts for `term_truecolor`, `colors_ansi_24bit`, `print_whois_rpl_in_server_window`, `nick_mode_color_*`, `$nickmode`, `show_names_on_join_limit` | The texts of settings that exist only in the fork (`term_truecolor`, `nick_mode_color_*`, `$nickmode`) go with the rows of section 2 that add them |
+| `7a637932 405be774` and the Mentions commits (branch `pr3-mentions`: `4c72ebd0 b52076e2 c97952ee 95163304`) | A native Mentions window: private messages, actions, notices, DCC CHAT and channel hilights in one immortal window, a 0600 log, `/MENTIONS`, the `mention` signal, settings `mentions_*`, unit tests and a live test. The branch is the update of pull request #3 | Based on `c591e6c0`; it also carries the Python live-test harness (`tests/live`). Fork-only follow-ups are not in the branch: the queue test before "irssi init finished", the `mentions.pl` migration (section 4) |
+| `dce35b88 35677d69 79b16c72` | Terminal notifications: OSC 9 / OSC 777 sequences when a mention or private message arrives while the terminal is not focused (focus reports, tmux pass-through, throttle, control characters removed). New setting `term_notify` | `79b16c72` is neutral: the default of `term_notify` is `off`. The fork's default is a separate commit (`e1ebcbf6`, section 4). Follow-ups: `40a9a14b` (ASCII only on a terminal that is not UTF-8), `e054bdf2` (bidi and line-separator characters removed), `bba0a32c` (tests) |
+| `c68686b8 5f5cdc09` | Key input: `gui-mouse.c` dropped the final letter of a CSI sequence (`ESC [ I` Page Up, `ESC [ Z` Shift-Tab, `ESC [ G`) and waited for more after a CSI that ends in a lowercase letter or `@` (rxvt shift-arrows, CSI u) | Bug fixes in code of v1.3.1, with a live test (`tests/live/test_keys.py`). Independent of the rest |
+| `09e1ffbb ba922f25 2572f718 d0147b2d c6d57767 6bf30a5d 717d719b 9935c94f 56703955 464ea50b` | First-run setup on a fresh home (network, nick, SASL, theme) and `erssi --setup`. The password is read without echo, ^C and ^Z work, SASL is offered only for a TLS server that is verified. New core helper `settings_get_builtin_str()` | Fork-specific parts: the start-up hint for the nick that comes from the `erssi_user` default of the fork's `irssi.conf`, and the values the unit test expects for the fork's settings (theme `shellter`); both are easy to drop or generalise. The default network offered is "IRCnet" (`firstrun.c`), also a fork preference |
+| `8f1e1437 f3092102 52643c1a db95a558 a3885e6b` | `/SEARCH` in the autolog files: a search in a child process with a hit, size and file limit and a 120 s time limit; new setting `search_max_size` | The search is not available in Capsicum mode. Live test: `tests/live/test_search.py` |
 
 ## 3. Behind a setting
 
 These change what users see. Upstream may want them only as an opt-in.
-Line numbers are at `4833f418` (they may shift by a few lines in later commits).
+Line numbers are at `fe7bffe2` (they may shift by a few lines in later commits).
 
 | Commit | Change in the fork | Where | Upstream default to keep |
 |---|---|---|---|
-| `69c0526e` (credential part) | credential encryption and the external file refused at runtime | core/credential.c:159, 199 | fix or remove the feature instead |
-| `dee9923b` | `buildtype=debugoptimized`, PIE, stack protector, RELRO/now, `_FORTIFY_SOURCE=2` by default | meson.build:4, 635-644 | meson defaults; hardening behind a meson option. It also replaces a packager's `_FORTIFY_SOURCE=3` with 2 |
-| `2336acab` | no server tag in any window bound to the line's server (also `/WINDOW SERVER -sticky` windows) | fe-common/core/formats.c | listed in 2.2; a setting is possible if upstream wants the tag there |
-| `9559dad6` (fe-help.c) | /HELP reads ~/.erssi/help before help_path | fe-common/core/fe-help.c | listed in 2.2; upstream may prefer it opt-in |
+| `03ce4455` (credential part) | credential encryption and the external file refused at runtime | core/credential.c:159, 199 | fix or remove the feature instead |
+| `fff42e6f` | `buildtype=debugoptimized`, PIE, stack protector, RELRO/now, `_FORTIFY_SOURCE=2` by default | meson.build:4, 635-644 | meson defaults; hardening behind a meson option. It also replaces a packager's `_FORTIFY_SOURCE=3` with 2 |
+| `3a03a593` | no server tag in any window bound to the line's server (also `/WINDOW SERVER -sticky` windows) | fe-common/core/formats.c | listed in 2.2; a setting is possible if upstream wants the tag there |
+| `b19f6d84` (fe-help.c) | /HELP reads ~/.erssi/help before help_path | fe-common/core/fe-help.c | listed in 2.2; upstream may prefer it opt-in |
 
 Since 2026.10.0 the fork keeps erssi-org defaults in C (section 2); the rows below still change behaviour in C.
 
@@ -104,32 +104,32 @@ Not meant for erssi main.
 
 - Branding and version (31): `/VERSION` text, start banner, topic bar,
   `SV` alias, README, NEWS, screenshots, version numbers
-  1.3.2 to 1.3.10, calendar versions from 2026.10.0 (`786dd409 0656826a
-  f5874039 3aab4339 f5eb5c48`). Commits: `c49a9b71 e697af65 8cd5e5a2 9d37292d 49d719ca
-  0c66fc9e 15cea05c 33515325 db97f998 226007b5 2a0f363c 68f397e3 af29ea3f
-  3ca236a5 cee9c77f cedeaea6 2878fac3 eca79190 6fb0c2b6 3740d250 82f691cf
-  f8338ca0 054b1d87 394a075c ead8d021 4833f418`.
+  1.3.2 to 1.3.10, calendar versions from 2026.10.0 (`9a6ed0b5 3936782b
+  7afb839c bda87f42 1d61b673`). Commits: `2f755752 4c658266 137cf19a e5d1ec5f 295f554b
+  18e796f7 36355a5f 81859846 bca533e7 23c82af4 f6d44f8f 6964814a 186c893c
+  dd41e167 0ad17cb3 ec182dac 5df34abc 7475d758 f6d162ef 07fd5358 2a1a9791
+  98b35ab9 4b665223 98f83298 a3ffd532 fe7bffe2`.
   One neutral idea inside: v1.3.1 `/VERSION` prints a fixed "erssi
   v1.1.0" (fe-common/core/fe-core-commands.c). The fork prints
   `PACKAGE_VERSION` there.
 - Shellter values of former defaults (fork-only, 3): `src/fe-common/core/shellter-defaults.c`
-  writes them once into an older config (`5ad348a8 e8d46d0e`);
-  `irssi.conf` carries them for a new `~/.erssi` (`e33eae52`).
+  writes them once into an older config (`5cb40073 53b534de`);
+  `irssi.conf` carries them for a new `~/.erssi` (`48c40307`).
 - Shellter themes (13): `themes/shellter.theme`, `themes/shellter-light.theme`
   and `shellter` as the default theme. They could ship as extra themes
-  after cleanup (section 5). Commits: `e4365483 7c067efc 1321d58a 640c686b
-  777a4f56 0abc2d0b c778ce16 1224aa27 0ef6484a 49f8edad 1a454ea6 3254ed4b
-  8c74d6ba`.
+  after cleanup (section 5). Commits: `e4365483 7b39166f 59ebeeb7 02b3e85f
+  32f19a96 e9c13dc6 c4f535b6 11701c9c 8d992a73 c3f90edf 36ed3647 7589854a
+  66fc60de`.
 - Installer, updates, signing, pre-push, CI (18):
   `shellter-install.sh`, `erssi --update` / `--check-update`
   (`src/fe-ansi/irssi.c`, `ERSSI_PREFIX`), signed release tags,
   `utils/allowed_signers`, `utils/pre-push`,
   `.github/workflows/shellter-ci.yml`, and the removal of erssi-org's
-  release, pages and packaging workflows. Commits: `5bd16a53 c5437584
-  6360dcfb 0978e48b 8305143f 70234b8f 8c32f909 c9a97110 5fdda940 fd01960b
-  d97d9d96 af4295f3 3796e493 09e6bc4a d58cc468 af077c93 42baac67 356d7e06`.
-- ~/.erssi default files updated like package conffiles (2): `0b5e9b5d`
-  `0a64bda5`, with `src/fe-ansi/default-files-known.h` (hashes of the
+  release, pages and packaging workflows. Commits: `c21ae4e3 67159a44
+  d1836e0f a2932e97 3d062e72 6dbf4b63 fda5145d 64627a0d c5832501 3b90a145
+  7f8f2280 17ccd17d 326aad4c 8c839cdf 9a679bde 7eb407bc 5810ba38 034b957e`.
+- ~/.erssi default files updated like package conffiles (2): `a3e00378`
+  `65c109e7`, with `src/fe-ansi/default-files-known.h` (hashes of the
   Shellter files) and `utils/default-file-hashes.sh`. Upstream could
   want the mechanism, but behind a setting and with the hash list made
   at build time, not committed.
@@ -137,40 +137,40 @@ Not meant for erssi main.
   unloads itself in favour of the built-in window), `scripts/trackbar.pl`,
   `scripts/webjournal.pl` with their help files in `scripts/help/`.
   They are separate scripts. Upstream may or may not want them.
-  The author's own scripts were removed (`56f5f294`). Commits: `e98c9986
-  7335c86d d022c06b c77acd0f 5ce58555 914e7f09 deec5efa 643d8dca 688d84ca
-  ad09be31 56f5f294 e37805dc`.
+  The author's own scripts were removed (`e97edf72`). Commits: `cd3e6246
+  1fc4bae4 1a66c953 c77acd0f d57d4d4f 914e7f09 eef343d4 393dae3d c33e18e6
+  23216f09 e97edf72 1fcedd8b`.
 - End-to-end encryption: the `e2e` module (`src/e2e`, `-Dwith-e2e`) speaks
   RPE2E v1.0 natively with OpenSSL only; it replaced the Perl script that
   was in `contrib/rpe2e` (only the repartee migration tool and the MIT
   licence stay there). It is proposed upstream as PR #11
   (branch `upstream/e2e`, based on erssi-org main). Before that, the contrib history: A patch series for a
-  third-party web client was added and later removed (`56f5f294`).
-  Commits: `ec8861b9 2739e24e 60bb924f 02900930 ffa2d3cf 3fc9dead
-  1dac3524 6526c1d3 ea42643b 581745f6 8bdd53cd f29f28a7 9605def3 0be4b809
-  bdfa60ef 3cc9f4cc 3635ec86 f92cc8f5`.
-- Housekeeping (2): `85cbe5eb` removes erssi-org development files and
-  workflows; `7fb91b78` changes example names in fe-web comments.
-  If you take `6ceb578a`, `7fb91b78` gives its comment a neutral
+  third-party web client was added and later removed (`e97edf72`).
+  Commits: `ec8861b9 2739e24e e97c5fec 02900930 ffa2d3cf 3fc9dead
+  1dac3524 12fa67b5 ea42643b 581745f6 8bdd53cd 216037a5 9605def3 0be4b809
+  bdfa60ef 3cc9f4cc 3635ec86 069bedf9`.
+- Housekeeping (2): `fe870095` removes erssi-org development files and
+  workflows; `d7b01c56` changes example names in fe-web comments.
+  If you take `6ceb578a`, `d7b01c56` gives its comment a neutral
   example name.
 
 - Mentions window, shipped defaults and migration: `scripts/mentions.pl`
   became a stub, and the first start of a config that used the script moves
-  its settings and log to the built-in window (`8ecd1e4d 86ca3820
-  81cb044f`). `irssi.conf` for a new `~/.erssi` turns `mentions_log` on
-  (`2819802c 22e2b960`). A queue test for the Mentions window before
-  "irssi init finished" stays here too (`540061a6`).
+  its settings and log to the built-in window (`bab6476a 6f414985
+  fec18987`). `irssi.conf` for a new `~/.erssi` turns `mentions_log` on
+  (`0bc04638 a2cedecd`). A queue test for the Mentions window before
+  "irssi init finished" stays here too (`79159d94`).
 - Shellter values in `irssi.conf` for the new features: `term_notify auto`
-  (`d4dd0003 64ca7700`), `mentions_log` on, and the nick `erssi_user`
+  (`e1ebcbf6 5a6c8a2b`), `mentions_log` on, and the nick `erssi_user`
   and theme `shellter` that the first-run setup starts from. A new home gets
   them; a home that exists keeps what it has. Everything in `irssi.conf` is the fork's choice.
 - Test and hook housekeeping: `utils/pre-push` runs the tests with a
-  throwaway HOME (`90554a30`); `6b841760` (a warning when the E2E module is
+  throwaway HOME (`b421f94c`); `2307033a` (a warning when the E2E module is
   loaded for one session only).
 
 ## 5. Known gaps
 
-Open at `4833f418`. Each item was checked in the code.
+Open at `fe7bffe2`. Each item was checked in the code.
 
 1. fe-web, the rest of the per-peer work (login pacing and the login
    queue are fixed, see below: a loop of new connections evicts its own
@@ -239,8 +239,8 @@ Open at `4833f418`. Each item was checked in the code.
 13. The shellter themes still carry format sections for scripts erssi
     does not ship, including the author's own (`themes/shellter.theme:753-880`,
     same in `shellter-light.theme`). Remove them before shipping the themes.
-14. Commit hygiene: `18851c12`, `4b56253e` and `d4e22458` are review-fix
-    commits that mix several fixes. `92c1a7ac` and `69c0526e` mix a fix with
+14. Commit hygiene: `12144243`, `b71b2ca1` and `1f96101e` are review-fix
+    commits that mix several fixes. `55aed0a0` and `03ce4455` mix a fix with
     a behaviour change. Take them per file (section 6).
 15. The `"fe-text"` block of `irssi.conf` is ignored since fe-text was
     merged into fe-ansi (`scrollback_lines`, `paste_verify_line_count`,
@@ -248,7 +248,7 @@ Open at `4833f418`. Each item was checked in the code.
     it to `"fe-ansi"` would change two values that users see (2000 lines,
     2), so it is left as is.
 
-Fixed since `4833f418` (the unmasked client frames and `/UNLOAD` of fe-web
+Fixed since `fe7bffe2` (the unmasked client frames and `/UNLOAD` of fe-web
 from a web client were older than the fork; the rest is fork-only):
 
 - fe-web login pacing is per peer: uid on the Unix socket, address (/64
