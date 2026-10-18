@@ -296,37 +296,55 @@ def main():
     def t_replay_after_restart():
         """a line of alice's that the server delivers again is dropped,
         not shown twice - also after /unload and /load of the module and
-        after bob restarts: the cache of lines read is kept on disk
-        (digests and times only)"""
+        after bob restarts: the cache of lines read is kept on disk (only
+        hashes and times). A line read just before /quit is in it too:
+        /quit saves it, not only /unload or the 10 s timer"""
         a, k = st["alice"], st["bob"]
-        wire_off = (work / "wire.log").stat().st_size
         start = len(chan_log(k))
-        say(a, "said only once")
-        assert wait_chan(k, "said only once", start), chan_log(k)[start:]
-        wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
-        sent = [ln for ln in wire.splitlines() if ln.startswith("alice PRIVMSG #test :+RPE2E01 ")]
-        assert len(sent) == 1, wire
-        raw = f":alice!alice@127.0.0.1 PRIVMSG #test :{sent[0].split(' :', 1)[1]}"
 
-        def replayed(when):
+        def sent(text):
+            """alice says text, bob reads it: its wire as bob got it"""
+            wire_off = (work / "wire.log").stat().st_size
+            say(a, text)
+            assert wait_chan(k, text, start), chan_log(k)[start:]
+            wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
+            lines = [ln for ln in wire.splitlines() if ln.startswith("alice PRIVMSG #test :+RPE2E01 ")]
+            assert len(lines) == 1, wire
+            return f":alice!alice@127.0.0.1 PRIVMSG #test :{lines[0].split(' :', 1)[1]}"
+
+        def replayed(raw, text, when, warned=True):
+            """the server delivers raw to bob again; the warning comes once
+            a minute per sender: without it, a line of alice's after it
+            shows that bob has taken it"""
             off = log_size(k)
             with harness.Client(st["port"], "replayer", "replayer") as c:
                 c.send(f"TESTRAW bob :{raw}")
+                c.send("PING :replayed")
+                c.expect("PONG")
+            if warned:
                 assert wait_log(k, off, "repeated message from alice dropped"), (when, log_since(k, off))
-            assert chan_log(k)[start:].count("said only once") == 1, (when, chan_log(k)[start:])
+            else:
+                mark = f"after the replay {when}"
+                say(a, mark)
+                assert wait_chan(k, mark, start), chan_log(k)[start:]
+            assert chan_log(k)[start:].count(text) == 1, (when, chan_log(k)[start:])
 
-        replayed("at once")
+        first = sent("said only once")
+        replayed(first, "said only once", "at once")
         k.type_and_wait("/unload e2e")
         k.type_and_wait("/load e2e")
-        replayed("after /load e2e")
+        replayed(first, "said only once", "after /load e2e")
+        # after the save of /unload, and before the timer's (10 s)
+        last = sent("said just before the quit")
         k.quit()
         cache = k.home / "rpe2e" / "replay.cache"
         assert cache.is_file() and (cache.stat().st_mode & 0o777) == 0o600, cache
         text = cache.read_text()
-        for word in ("said only once", "alice", "#test", "127.0.0.1"):
+        for word in ("said only once", "said just", "alice", "#test", "127.0.0.1"):
             assert word not in text, (word, text)
         up(k)
-        replayed("after a restart")
+        replayed(first, "said only once", "after a restart")
+        replayed(last, "said just before the quit", "after a restart", warned=False)
         # and he reads and writes as before
         start = len(chan_log(a))
         say(k, "back after the restart")
