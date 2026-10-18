@@ -521,10 +521,13 @@ static void test_read_fill_not_saved(void)
 }
 
 /* The start in external mode, in a process of its own: the configuration
- * and the external file are there before core_init(). */
-static void start_with(const char *external_link_target, gboolean fifo)
+ * and the external file are there before core_init(). target_name, when
+ * not NULL, is where the link .credentials points, relative to the home
+ * (so it goes with the home when the test ends); content, when not NULL,
+ * is written there first. Returns the target's path. */
+static char *start_with(const char *target_name, const char *content, gboolean fifo)
 {
-	char *path;
+	char *path, *target = NULL;
 
 	test_home_setup();
 	path = g_build_filename(test_home_dir, "config", NULL);
@@ -533,16 +536,26 @@ static void start_with(const char *external_link_target, gboolean fifo)
 	                                  -1, NULL));
 	g_free(path);
 	path = g_build_filename(test_home_dir, ".credentials", NULL);
-	if (fifo)
+	if (fifo) {
 		g_assert_cmpint(mkfifo(path, 0600), ==, 0);
-	else
-		g_assert_cmpint(symlink(external_link_target, path), ==, 0);
+	} else {
+		target = g_build_filename(test_home_dir, target_name, NULL);
+		if (content != NULL) {
+			char *dir = g_path_get_dirname(target);
+
+			g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+			g_assert_true(g_file_set_contents(target, content, -1, NULL));
+			g_free(dir);
+		}
+		g_assert_cmpint(symlink(target_name, path), ==, 0);
+	}
 	g_free(path);
 	alarm(HANG_SECONDS);
 	core_preinit("test");
 	irssi_gui = IRSSI_GUI_NONE;
 	core_init();
 	alarm(0);
+	return target;
 }
 
 /* a start in external mode reads the file, through a link, and leaves it
@@ -551,19 +564,13 @@ static void start_with(const char *external_link_target, gboolean fifo)
 static void test_start_external_link(void)
 {
 	if (g_test_subprocess()) {
-		char *target = g_build_filename(g_get_tmp_dir(), "erssi-test-creds-XXXXXX", NULL);
-		int fd = g_mkstemp(target);
+		char *target = start_with("elsewhere/credentials", CONTENT, FALSE);
 		char *content;
 
-		g_assert_cmpint(fd, >=, 0);
-		close(fd);
-		g_assert_true(g_file_set_contents(target, CONTENT, -1, NULL));
-		start_with(target, FALSE);
 		assert_loaded("from-the-file");
 		content = read_back(target);
 		g_assert_cmpstr(content, ==, CONTENT);
 		g_free(content);
-		g_unlink(target);
 		g_free(target);
 		return;
 	}
@@ -578,7 +585,7 @@ static void test_start_external_fifo(void)
 	if (g_test_subprocess()) {
 		char **lines;
 
-		start_with(NULL, TRUE);
+		start_with(NULL, NULL, TRUE);
 		lines = credential_legacy_warning();
 		g_assert_nonnull(lines);
 		g_assert_nonnull(strstr(lines[0], "cannot read"));
@@ -598,12 +605,11 @@ static void test_start_external_fifo(void)
 static void test_start_dangling_link(void)
 {
 	if (g_test_subprocess()) {
-		char *dir = g_dir_make_tmp("erssi-test-volume-XXXXXX", NULL);
-		char *target = g_build_filename(dir, "credentials", NULL);
+		char *target = start_with("volume/credentials", NULL, FALSE);
+		char *dir = g_path_get_dirname(target);
 		char **lines, *content;
 		CONFIG_NODE *node;
 
-		start_with(target, FALSE);
 		signal_add_first("gui dialog", (SIGNAL_FUNC) sig_gui_dialog);
 		lines = credential_legacy_warning();
 		g_assert_nonnull(lines);
@@ -611,6 +617,7 @@ static void test_start_dangling_link(void)
 		g_strfreev(lines);
 
 		/* the volume is mounted */
+		g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
 		g_assert_true(g_file_set_contents(target, OLD_CONTENT, -1, NULL));
 		server_saved("127.0.0.1", "srvpw", &node);
 		content = read_back(target);
@@ -626,8 +633,6 @@ static void test_start_dangling_link(void)
 		g_assert_nonnull(strstr(content, "keep-user"));
 		g_assert_nonnull(strstr(content, "srvpw"));
 		g_free(content);
-		g_unlink(target);
-		g_rmdir(dir);
 		g_free(target);
 		g_free(dir);
 		return;

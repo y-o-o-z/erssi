@@ -23,6 +23,8 @@
 #include <irssi/src/common.h>
 #include <irssi/src/core/safe-file.h>
 
+#include "../test-tmpdir.h"
+
 #include <glib/gstdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -524,6 +526,8 @@ static void test_write_fails_cleanly(Fixture *f, gconstpointer data)
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
+	/* every temporary file in one directory, removed also after a failure */
+	test_tmpdir_setup();
 
 	ADD("/safe-file/read/regular", test_read_regular);
 	ADD("/safe-file/read/large", test_read_large);

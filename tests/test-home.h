@@ -2,7 +2,8 @@
  * A test or fuzz harness that runs core_init() must not touch the real home:
  * the core reads and writes ~/.erssi/config. test_home_setup() gives the
  * process a temporary --home (and a config inside it) and removes the tree
- * at exit; HOME points there too, as "~" paths (autolog) follow HOME.
+ * at exit, also when an assertion fails or a hang ends the test; HOME
+ * points there too, as "~" paths (autolog) follow HOME.
  * Call it before core_preinit().
  */
 #ifndef ERSSI_TESTS_TEST_HOME_H
@@ -13,6 +14,7 @@
 #include <irssi/src/core/core.h>
 
 #include <glib/gstdio.h>
+#include <signal.h>
 #include <stdlib.h>
 
 static char *test_home_dir;
@@ -47,6 +49,16 @@ static void test_home_cleanup(void)
 	}
 }
 
+/* A failed assertion aborts, and a hang ends with alarm() or the SIGTERM
+ * of meson's timeout: atexit() does not run then, the tree is removed
+ * here before the signal ends the process as it would have. */
+static void test_home_signal(int sig)
+{
+	test_home_cleanup();
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
 static void test_home_setup(void)
 {
 	char *argv[] = { "test", "--home", NULL, NULL };
@@ -57,6 +69,14 @@ static void test_home_setup(void)
 		exit(1);
 	}
 	atexit(test_home_cleanup);
+	signal(SIGABRT, test_home_signal);
+	signal(SIGALRM, test_home_signal);
+	signal(SIGTERM, test_home_signal);
+	/* the temporary files of the test, and the homes of its child
+	 * processes (g_test_trap_subprocess(), whose failed assertions end
+	 * them with _exit(), without any cleanup), are made in here: they go
+	 * with this tree */
+	g_setenv("TMPDIR", test_home_dir, TRUE);
 
 	/* "~" in paths (autolog, /LOG) expands from the home directory, not
 	 * from --home */

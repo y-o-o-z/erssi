@@ -27,6 +27,8 @@
 #include <irssi/src/common.h>
 #include <irssi/src/lib-config/iconfig.h>
 
+#include "../test-tmpdir.h"
+
 #include <glib/gstdio.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -222,6 +224,8 @@ static void test_rename_fails(Fixture *f, gconstpointer data)
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
+	/* every temporary file in one directory, removed also after a failure */
+	test_tmpdir_setup();
 #ifdef __linux__
 	ADD("/config-write/success", test_success);
 	ADD("/config-write/full-at-the-end", test_full_at_the_end);

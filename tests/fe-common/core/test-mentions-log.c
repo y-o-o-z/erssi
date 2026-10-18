@@ -4,6 +4,8 @@
 #include <irssi/src/common.h>
 #include <irssi/src/fe-common/core/mentions-log.h>
 
+#include "../../test-tmpdir.h"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -414,6 +416,8 @@ static void test_server_nick(void)
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
+	/* every temporary file in one directory, removed also after a failure */
+	test_tmpdir_setup();
 
 	g_test_add_func("/mentions_log/line_format", test_line_format);
 	g_test_add_func("/mentions_log/line_utf8_bytes", test_line_utf8_bytes);
