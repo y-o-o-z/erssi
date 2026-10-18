@@ -148,9 +148,10 @@ static int show_help_file(const char *file)
 		   only: a FIFO would hang erssi, a directory shows nothing. A
 		   link is followed - help pages and help directories are often
 		   links (installed by scripts, kept in dotfiles), and ~/.erssi
-		   is the user's own */
+		   is the user's own. Quiet: with Capsicum, no warning for each
+		   directory tried */
 		path = g_strdup_printf("%s/%s", *tmp, file);
-		fd = safe_file_open_read(path, SAFE_FILE_FOLLOW, &st);
+		fd = safe_file_open_read(path, SAFE_FILE_FOLLOW | SAFE_FILE_QUIET, &st);
 		g_free(path);
 		if (fd >= 0 && st.st_size > HELP_FILE_MAX) {
 			close(fd);

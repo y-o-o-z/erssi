@@ -68,7 +68,8 @@ user on the box can influence go through one helper (`src/core/safe-file.c`):
   Directories above the file are always followed, so a log directory on
   another disk keeps working.
 - **Appending** (mentions log, debug logs) — only to a regular file of your
-  own, never through a link, with mode 0600.
+  own with no other hard link, never through a symbolic link, with mode
+  0600.
 - **Replacing** (files erssi installs into `~/.erssi`, the web certificate
   and key, the credentials file) — a new file in the same directory with
   its mode from the start (0600; an installed file that is updated keeps

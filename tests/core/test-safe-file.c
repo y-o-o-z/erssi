@@ -389,6 +389,70 @@ static void test_truncate(Fixture *f, gconstpointer data)
 	g_free(fifo);
 }
 
+/* a hard link to another file of the user's (made by someone else where
+ * the system allows it): nothing is appended to it, its mode stays */
+static void test_append_hard_link(Fixture *f, gconstpointer data)
+{
+	char *target = make_file(f, "profile", "keep");
+	char *log = path_in(f, "log"), *got;
+	struct stat st;
+
+	g_assert_cmpint(chmod(target, 0644), ==, 0);
+	g_assert_cmpint(link(target, log), ==, 0);
+	errno = 0;
+	g_assert_cmpint(safe_file_open_append(log, 0600), ==, -1);
+	g_assert_cmpint(errno, ==, EPERM);
+	g_assert_cmpstr(safe_file_strerror(errno), ==, "a file with other hard links");
+	g_assert_cmpint(safe_file_open_truncate(log, 0600), ==, -1);
+	got = file_contents(target);
+	g_assert_cmpstr(got, ==, "keep");
+	g_assert_cmpint(stat(target, &st), ==, 0);
+	g_assert_cmpuint(st.st_mode & 07777, ==, 0644);
+	g_free(got);
+	g_free(target);
+	g_free(log);
+}
+
+/* the names are for the refusals of the helper only: the same errno for
+ * another reason is printed as it is */
+static void test_strerror(Fixture *f, gconstpointer data)
+{
+	char *a = path_in(f, "a"), *b = path_in(f, "b"), *loop, *got;
+	char *fifo = make_fifo(f, "fifo");
+	gsize len;
+
+	g_assert_false(safe_file_read(fifo, 0, 64, &got, &len));
+	g_assert_cmpstr(safe_file_strerror(errno), ==, "not a regular file");
+	g_assert_cmpstr(safe_file_strerror(EPERM), ==, g_strerror(EPERM));
+
+	/* a loop of links in the directories above: ELOOP, but not a link
+	 * that was refused */
+	g_assert_cmpint(symlink(b, a), ==, 0);
+	g_assert_cmpint(symlink(a, b), ==, 0);
+	loop = g_build_filename(a, "file", NULL);
+	errno = 0;
+	g_assert_false(safe_file_read(loop, 0, 64, &got, &len));
+	g_assert_cmpint(errno, ==, ELOOP);
+	g_assert_cmpstr(safe_file_strerror(errno), ==, g_strerror(ELOOP));
+	g_free(loop);
+	g_free(a);
+	g_free(b);
+	g_free(fifo);
+}
+
+/* SAFE_FILE_OWN: the user's own file is read (a file of someone else's
+ * cannot be made without root, see the check in check_regular()) */
+static void test_read_own(Fixture *f, gconstpointer data)
+{
+	char *path = make_file(f, "own", "mine"), *got;
+	gsize len;
+
+	g_assert_true(safe_file_read(path, SAFE_FILE_OWN, 64, &got, &len));
+	g_assert_cmpstr(got, ==, "mine");
+	g_free(got);
+	g_free(path);
+}
+
 static void test_write_replaces(Fixture *f, gconstpointer data)
 {
 	char *path = make_file(f, "f", "old"), *got;
@@ -476,6 +540,9 @@ int main(int argc, char **argv)
 	ADD("/safe-file/append/directory", test_append_directory);
 	ADD("/safe-file/append/dev-null-link", test_append_dev_null_link);
 	ADD("/safe-file/truncate", test_truncate);
+	ADD("/safe-file/append/hard-link", test_append_hard_link);
+	ADD("/safe-file/strerror", test_strerror);
+	ADD("/safe-file/read/own", test_read_own);
 	ADD("/safe-file/write/replaces", test_write_replaces);
 	ADD("/safe-file/write/symlink", test_write_symlink);
 	ADD("/safe-file/write/fifo", test_write_fifo);

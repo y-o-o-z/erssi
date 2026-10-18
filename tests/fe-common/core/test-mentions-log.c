@@ -263,6 +263,41 @@ static void test_append_to_symlink_fails(void)
 	g_free(tmp);
 }
 
+/* a hard link to another file of the user's (another user can make one
+   in a shared directory where the system allows it): nothing is appended
+   to that file, its mode stays */
+static void test_append_to_hard_link_fails(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *target, *path, *content = NULL;
+	struct stat st;
+
+	g_assert_no_error(error);
+	target = g_build_filename(tmp, "profile", NULL);
+	path = g_build_filename(tmp, "mentions.log", NULL);
+	g_assert_true(g_file_set_contents(target, "keep\n", -1, NULL));
+	g_assert_cmpint(chmod(target, 0644), ==, 0);
+	g_assert_cmpint(link(target, path), ==, 0);
+
+	g_assert_false(mentions_log_append(path, "; evil\n", &error));
+	g_assert_nonnull(error);
+	g_assert_nonnull(strstr(error->message, "other hard links"));
+	g_clear_error(&error);
+	g_assert_true(g_file_get_contents(target, &content, NULL, NULL));
+	g_assert_cmpstr(content, ==, "keep\n");
+	g_assert_cmpint(stat(target, &st), ==, 0);
+	g_assert_cmpuint(st.st_mode & 07777, ==, 0644);
+
+	g_free(content);
+	g_remove(path);
+	g_remove(target);
+	g_rmdir(tmp);
+	g_free(target);
+	g_free(path);
+	g_free(tmp);
+}
+
 /* a link to /dev/null: refused, nothing is written there */
 static void test_append_to_dev_null_link_fails(void)
 {
@@ -392,6 +427,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/mentions_log/append_to_directory_fails", test_append_to_directory_fails);
 	g_test_add_func("/mentions_log/append_to_fifo_fails", test_append_to_fifo_fails);
 	g_test_add_func("/mentions_log/append_to_symlink_fails", test_append_to_symlink_fails);
+	g_test_add_func("/mentions_log/append_to_hard_link_fails", test_append_to_hard_link_fails);
 	g_test_add_func("/mentions_log/append_to_dev_null_link_fails",
 	                test_append_to_dev_null_link_fails);
 	g_test_add_func("/mentions_log/append_in_linked_directory", test_append_in_linked_directory);
