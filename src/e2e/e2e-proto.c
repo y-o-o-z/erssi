@@ -3881,13 +3881,14 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
    inside the timestamp window). Dropping its new lines instead would let
    a hostile server or sender hide what was really written. The global
    cap only bounds memory: when it is reached the oldest chunk of the
-   sender holding the most goes. */
+   sender holding the most goes (with many thousands of senders at once
+   that can be anyone's). The partitions are kept in buckets by their
+   size, so that sender is found at once, not by a scan. */
 typedef struct _REPLAY_PART REPLAY_PART;
 
 typedef struct {
 	unsigned char digest[32];	/* first: the key of r->seen */
 	gint64 until;
-	guint64 seq;		/* the order they came in */
 	REPLAY_PART *part;
 	GList all_link;		/* in r->all */
 	GList part_link;	/* in part->entries */
@@ -3896,14 +3897,16 @@ typedef struct {
 struct _REPLAY_PART {
 	unsigned char key[32];	/* first: SHA-256 of the context and sender */
 	GQueue entries;		/* oldest first */
+	GList size_link;	/* in r->by_size[entries.length] */
 };
 
 struct _E2E_REPLAY {
 	GHashTable *seen;	/* digest -> REPLAY_ENTRY */
 	GHashTable *parts;	/* key -> REPLAY_PART */
 	GQueue all;		/* every entry, oldest first */
+	GQueue *by_size;	/* [n]: the partitions of n entries, 1..per_sender */
+	guint top;		/* the largest n with a partition (0: none) */
 	guint max, per_sender;
-	guint64 seq;
 	gboolean changed;	/* since the last save */
 };
 
@@ -3930,7 +3933,23 @@ E2E_REPLAY *e2e_replay_new(guint max, guint per_sender)
 	g_queue_init(&r->all);
 	r->max = max > 0 ? max : 1;
 	r->per_sender = per_sender > 0 ? MIN(per_sender, r->max) : 1;
+	r->by_size = g_new0(GQueue, r->per_sender + 1);
 	return r;
+}
+
+/* part has old entries before a change of one: into its new bucket */
+static void replay_resize(E2E_REPLAY *r, REPLAY_PART *part, guint old)
+{
+	guint now = part->entries.length;
+
+	if (old > 0)
+		g_queue_unlink(&r->by_size[old], &part->size_link);
+	if (now > 0) {
+		g_queue_push_tail_link(&r->by_size[now], &part->size_link);
+		r->top = MAX(r->top, now);
+	}
+	while (r->top > 0 && r->by_size[r->top].length == 0)
+		r->top--;
 }
 
 static void replay_remove(E2E_REPLAY *r, REPLAY_ENTRY *e)
@@ -3939,6 +3958,7 @@ static void replay_remove(E2E_REPLAY *r, REPLAY_ENTRY *e)
 
 	g_queue_unlink(&r->all, &e->all_link);
 	g_queue_unlink(&part->entries, &e->part_link);
+	replay_resize(r, part, part->entries.length + 1);
 	g_hash_table_remove(r->seen, e->digest);
 	if (part->entries.length == 0) {
 		g_hash_table_remove(r->parts, part->key);
@@ -3955,6 +3975,7 @@ void e2e_replay_free(E2E_REPLAY *r)
 		replay_remove(r, r->all.head->data);
 	g_hash_table_destroy(r->seen);
 	g_hash_table_destroy(r->parts);
+	g_free(r->by_size);
 	g_free(r);
 }
 
@@ -3973,24 +3994,11 @@ static void replay_expire(E2E_REPLAY *r, gint64 now)
 		replay_remove(r, e);
 }
 
-/* the partition with the most entries (of those, the one with the
-   oldest): where the global cap takes from */
+/* a partition with the most entries (of those, the one that got there
+   first): where the global cap takes from */
 static REPLAY_PART *replay_largest(E2E_REPLAY *r)
 {
-	GHashTableIter iter;
-	REPLAY_PART *part, *best = NULL;
-	gpointer value;
-
-	g_hash_table_iter_init(&iter, r->parts);
-	while (g_hash_table_iter_next(&iter, NULL, &value)) {
-		part = value;
-		if (best == NULL || part->entries.length > best->entries.length ||
-		    (part->entries.length == best->entries.length &&
-		     ((REPLAY_ENTRY *) g_queue_peek_head(&part->entries))->seq <
-		     ((REPLAY_ENTRY *) g_queue_peek_head(&best->entries))->seq))
-			best = part;
-	}
-	return best;
+	return r->top > 0 ? g_queue_peek_head(&r->by_size[r->top]) : NULL;
 }
 
 static void replay_add(E2E_REPLAY *r, const unsigned char key[32],
@@ -4012,17 +4020,18 @@ static void replay_add(E2E_REPLAY *r, const unsigned char key[32],
 		part = g_new0(REPLAY_PART, 1);
 		memcpy(part->key, key, sizeof(part->key));
 		g_queue_init(&part->entries);
+		part->size_link.data = part;
 		g_hash_table_insert(r->parts, part->key, part);
 	}
 	e = g_new0(REPLAY_ENTRY, 1);
 	memcpy(e->digest, digest, sizeof(e->digest));
 	e->until = until;
-	e->seq = r->seq++;
 	e->part = part;
 	e->all_link.data = e;
 	e->part_link.data = e;
 	g_queue_push_tail_link(&r->all, &e->all_link);
 	g_queue_push_tail_link(&part->entries, &e->part_link);
+	replay_resize(r, part, part->entries.length - 1);
 	g_hash_table_insert(r->seen, e->digest, e);
 }
 
@@ -4069,8 +4078,9 @@ gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, co
 }
 
 /* The file: a header line, then one line per chunk, oldest first -
-   "<partition> <digest> <until>", two SHA-256 in hex and a time; no
-   name, no text, no key. */
+   "<partition> <digest> <until>", two SHA-256 in hex and a time: only
+   hashes and times (the partition is a hash of the names, which anyone
+   who can read the keyring next to it knows anyway). */
 #define REPLAY_HEADER "erssi-e2e-replay 1\n"
 #define REPLAY_LINE_MAX (64 + 1 + 64 + 1 + 18 + 1)
 
@@ -4083,15 +4093,19 @@ gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error)
 {
 	GString *out;
 	GList *tmp;
+	gint64 now = e2e_now();
 	gboolean ok;
 	char *hex;
 
-	replay_expire(r, e2e_now());
+	replay_expire(r, now);
 	out = g_string_sized_new(strlen(REPLAY_HEADER) + r->all.length * REPLAY_LINE_MAX);
 	g_string_append(out, REPLAY_HEADER);
 	for (tmp = r->all.head; tmp != NULL; tmp = tmp->next) {
 		REPLAY_ENTRY *e = tmp->data;
 
+		/* expired behind a younger head: not written */
+		if (e->until < now)
+			continue;
 		hex = e2e_hex_encode(e->part->key, sizeof(e->part->key));
 		g_string_append(out, hex);
 		g_free(hex);
@@ -4178,11 +4192,14 @@ gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error)
 		g_array_append_val(rows, row);
 	}
 	/* through the quota and the cap, as if read now; those whose time is
-	   over are not taken */
+	   over are not taken, and none is kept longer than e2e_replay_check
+	   would keep a chunk read now (a clock that was set ahead, a changed
+	   file): one far in the future would stop the expiry behind it */
 	for (i = 0; i < rows->len; i++) {
 		row = g_array_index(rows, REPLAY_ROW, i);
 		if (row.until >= now)
-			replay_add(r, row.key, row.digest, row.until);
+			replay_add(r, row.key, row.digest,
+			           MIN(row.until, now + 2 * E2E_TS_TOLERANCE + 1));
 	}
 	g_array_free(rows, TRUE);
 	g_free(data);

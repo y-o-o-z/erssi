@@ -6481,6 +6481,7 @@ static void test_replay_partitions(void)
 	unsigned char ct[17];
 	char sender[32];
 	guint i, n = 0, victim;
+	gint64 t0;
 
 	rp = e2e_replay_new(8, 4);
 	victim = n;
@@ -6513,6 +6514,19 @@ static void test_replay_partitions(void)
 	synthetic_wire(&w, ct, sizeof(ct), n - 1);
 	g_assert_true(e2e_replay_check(rp, "#test", "s49@127.0.0.1", &w));
 	g_assert_false(e2e_replay_check(rp, "#other", "s49@127.0.0.1", &w));
+	e2e_replay_free(rp);
+
+	/* at the cap the pick costs no scan of every sender: 50 000
+	   senders, far beyond the cap, in bounded time */
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	t0 = g_get_monotonic_time();
+	for (i = 0; i < 50000; i++) {
+		g_snprintf(sender, sizeof(sender), "s%u@127.0.0.1", i);
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", sender, &w));
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, E2E_REPLAY_MAX);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 10 * G_USEC_PER_SEC);
 	e2e_replay_free(rp);
 }
 
@@ -6633,6 +6647,52 @@ static void test_replay_file(void)
 	g_assert_cmpuint(e2e_replay_size(rp), ==, 0);
 	synthetic_wire(&w, ct, sizeof(ct), 1);
 	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	fake_now = start;
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	lines = g_strsplit(data, "\n", -1);
+	g_assert_cmpuint(g_strv_length(lines), ==, 3);
+	g_strfreev(lines);
+	g_free(data);
+
+	/* a time far in the future (a clock that was ahead, a changed file)
+	   is read as the longest a chunk read now is kept: the expiry goes
+	   on behind it */
+	rp = e2e_replay_new(8, 4);
+	synthetic_wire(&w, ct, sizeof(ct), 4);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	lines = g_strsplit(data, "\n", -1);
+	g_free(data);
+	*strrchr(lines[1], ' ') = '\0';
+	data = g_strdup_printf("%s\n%s 999999999999999999\n", lines[0], lines[1]);
+	g_strfreev(lines);
+	g_assert_true(g_file_set_contents(path, data, -1, NULL));
+	g_free(data);
+	rp = e2e_replay_new(8, 4);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+	synthetic_wire(&w, ct, sizeof(ct), 5);
+	g_assert_false(e2e_replay_check(rp, "#test", BOB, &w));
+	fake_now += 100000;
+	synthetic_wire(&w, ct, sizeof(ct), 6);
+	g_assert_false(e2e_replay_check(rp, "#test", BOB, &w));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	e2e_replay_free(rp);
+	fake_now = start;
+	/* one expired behind a younger head (read 5 minutes ahead of our
+	   clock) is not written */
+	rp = e2e_replay_new(8, 4);
+	synthetic_wire(&w, ct, sizeof(ct), 7);
+	w.ts = fake_now + E2E_TS_TOLERANCE;
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	synthetic_wire(&w, ct, sizeof(ct), 8);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	fake_now += E2E_TS_TOLERANCE + 2;
 	g_assert_true(e2e_replay_save(rp, path, &error));
 	e2e_replay_free(rp);
 	fake_now = start;

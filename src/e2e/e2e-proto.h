@@ -364,7 +364,7 @@ gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, co
 /* On disk, so that a restart does not open the window again: next to
    the keyring, written as it is (a new 0600 file, fsync'ed, renamed
    over; never through a symlink), only the chunks still inside the
-   window, as SHA-256 digests and times - no names, text or keys. A file
+   window, only as SHA-256 hashes and times (no text or keys). A file
    that is missing reads as empty; one that is damaged, too large or no
    regular file of this user reads as empty too, with *error, and is
    replaced at the next save. Nothing else depends on it. */
