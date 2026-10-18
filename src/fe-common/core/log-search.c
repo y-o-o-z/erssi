@@ -15,6 +15,7 @@
 */
 
 #include "module.h"
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/fe-common/core/fe-log.h>
 #include <irssi/src/fe-common/core/log-search.h>
 
@@ -428,13 +429,13 @@ void log_search_run(GPtrArray *files, Regex *re, int max_hits, gint64 max_bytes,
 		if ((int)res->hits->len >= max_hits)
 			break;
 
-		/* O_NONBLOCK: opening a FIFO must not wait for a writer; regular files
-		   ignore it. O_NOFOLLOW: a path swapped for a symlink after the walk. */
-		fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+		/* a FIFO swapped in after the walk does not hang the search, a
+		   symlink is not followed, and the size is that of the file
+		   read (safe_file_open_read()) */
+		fd = safe_file_open_read(path, 0, &st);
 		if (fd < 0)
 			continue;
-		if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
-		    (f = fdopen(fd, "r")) == NULL) {
+		if ((f = fdopen(fd, "r")) == NULL) {
 			close(fd);
 			continue;
 		}

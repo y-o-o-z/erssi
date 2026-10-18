@@ -49,6 +49,31 @@ of the side panels and of terminal resizes (`/set sidepanel_debug on`,
 `/set resize_debug on`): they are kept in `~/.erssi`, never in `/tmp`, and
 never written through a link.
 
+Files the fork reads or writes at a path that a setting, you or another
+user on the box can influence go through one helper (`src/core/safe-file.c`):
+
+- **Reading** — opened once without waiting (a FIFO or a device put there
+  cannot hang erssi) and checked on that descriptor: anything but a regular
+  file is refused, with a size limit. A symbolic link as the file itself is
+  refused where none is expected (the image cache, the external credentials
+  file, the web certificate and key, `default-files.sha256`, the mentions
+  and debug logs); it is followed for files you may well keep as links: help
+  pages in `~/.erssi/help` and the help path, the `~/.erssi/keepnick` file of
+  the old script, and the themes and startup file of the installation.
+  Directories above the file are always followed, so a log directory on
+  another disk keeps working.
+- **Appending** (mentions log, debug logs) — only to a regular file of your
+  own, never through a link, with mode 0600.
+- **Replacing** (files erssi installs into `~/.erssi`, the web certificate
+  and key, the credentials file) — a new file in the same directory with
+  its mode from the start (0600; an installed file that is updated keeps
+  its mode), written out to the disk and renamed over the old one: a crash
+  leaves the old or the new file, and a link at the path is replaced, not
+  followed.
+
+The upstream code that reads `~/.erssi/config`, the startup file, themes,
+the `/upgrade` session and `/cat` follows links as irssi always has.
+
 ## Hardened build
 
 By default: PIE, stack protector, stack clash protection,
