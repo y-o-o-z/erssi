@@ -201,7 +201,7 @@ clone), with the same options:
 
 ```sh
 git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
-    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.2
+    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.3
 ```
 
 ## Files in ~/.erssi
@@ -218,7 +218,7 @@ where the new version is. The sha256 of what erssi installed is kept in
 
 ## Upgrading from 1.3.x
 
-`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.2. 1.3.9
+`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.3. 1.3.9
 and older have no `--update`: run the install command above again (with
 the same `--prefix` and `--src` if you gave any), which builds the new
 release in the same places. Your `~/.erssi/config` is kept; at the first

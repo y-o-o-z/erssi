@@ -1,3 +1,140 @@
+shellter-v2026.10.3 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.3
+
+	A security and reliability release after a full review of the
+	fork's code and live tests against repartee 2.2.1 and rpe2e.pl.
+
+	+ End-to-end encryption: nothing is hidden silently
+	  - an encrypted message that cannot be read is never dropped
+	    without a word: in its place, as the sender's line, comes
+	    "[E2E: encrypted message not read - ...]" or a red "[E2E
+	    rejected: ...]" that says why and what to run
+	  - when someone comes back from another ident@host with the same
+	    key, or their key changes, or they were revoked, the window says
+	    so with the exact command (/e2e reverify <ident@host>, /e2e
+	    unrevoke); /e2e status, list and pending show these blocks.
+	    /e2e reverify accepts a known key at a new address, and the next
+	    message is read at once. Before, such a peer's messages
+	    disappeared and nothing said why
+	  - if a peer's key change was lost, their key is asked for again
+	    automatically; lines sent just before a key change still open for
+	    two minutes
+	  - plain text in an encrypted channel or query is marked "[plain]"
+	    (e2e_mark_plain, ON), so a server or a user without E2E cannot
+	    pass plain text off as encrypted
+	  - lines that look like bot commands ("!cmd", ".cmd") are encrypted
+	    like any other; the old clear-text exception is the setting
+	    e2e_bot_bypass, OFF. A keyring that cannot be read lets nothing
+	    out, and a refused line is marked [NOT SENT]
+	  - a message the server delivers again is dropped; /e2e export keeps
+	    the REKEY replay protection
+	  - key requests: limited per person and conversation, and overall;
+	    only peers you confirmed yourself (/e2e accept, reverify,
+	    unrevoke, your autotrust rules, a /e2e handshake you started) are
+	    outside the overall limit. Replies to strangers wait in their own
+	    small queue and never delay your lines or REKEYs, also under a
+	    clone flood. Peers you trusted before this release count as
+	    confirmed
+	  - /e2e reset -force starts over on a working keyring (kept as a
+	    backup that /e2e import can restore); /e2e reset says what the
+	    other side has to do (repartee: /e2e reverify, then /e2e
+	    handshake)
+	  - /e2e decline and forget warn that the person can still read with
+	    the key they have until /e2e rotate; quiet mode stores nothing of a
+	    stranger; a server without a chatnet whose tag changed no longer
+	    sends clear text to a channel that had E2E on
+	  - in the shellter themes E2E lines sit in the column as "e2e │ ...",
+	    warnings in red
+	  - tests: a live test against the real repartee (REPARTEE_BIN), the
+	    rpe2e.pl interop and a live clone-flood test run with meson test
+
+	+ Credentials, SASL, TLS
+	  - credential encryption stays switched off (/help credential);
+	    for setups that still use it, an encrypted credential is now
+	    AES-256-GCM with an "erssi-enc1:" prefix: a changed value or a
+	    wrong master password is refused. Older values are still read and
+	    are written again in the new form on /SAVE once a value in the new
+	    form proves the master password.
+	    A value with ':' in it is no longer taken for an encrypted one; a
+	    failed encryption no longer corrupts the stored value (double
+	    free)
+	  - SASL SCRAM accepts 4096 to 10,000,000 PBKDF2 iterations (every
+	    Atheme setting) and refuses a malformed server reply with a clear
+	    message; a typo in the server-signature check is fixed
+	  - TLS: a server given as an IP address is accepted when its
+	    certificate lists that address (IPv4 or IPv6); a host name
+	    starting with '.' is refused; an IP address is no longer sent as
+	    the SNI name
+
+	+ Web frontend (fe-web)
+	  - the ?password= login (the form NexusIRC uses) is read only from
+	    the request line and percent-decoded; a request with an
+	    Authorization header uses only that header. The documentation now
+	    says both forms are accepted and that the header is the better one
+	  - a client's message is read only from its top-level JSON object
+	  - at most 16 clients also when several log in at once; a frame sent
+	    with the upgrade request is not lost; Close is answered only with
+	    a status code that may be sent; /SET fe_web_enabled ON starts a
+	    server that could not start before; no "Broken pipe" error when a
+	    socket client leaves without a TLS goodbye
+
+	+ Terminal and themes
+	  - shellter themes: a message shown outside its channel's window
+	    shows the channel again ("nick │ #chan ⟫ text"), @#chan and +#chan
+	    messages and a public notice show their target, and nicks no
+	    longer vanish with nick_hash_color_enabled OFF
+	  - the nick column counts terminal cells: Polish, CJK and combining
+	    nicks are padded and cut correctly, never inside a character
+	  - narrowing the terminal keeps side-by-side windows (the side
+	    panels give way first), and they come back after a very small
+	    terminal; side panels are at least 6 columns wide; borders are
+	    drawn once, as "|" on a terminal that is not UTF-8
+	  - the side-panel and resize debug logs are written to ~/.erssi,
+	    readable only by you, not to /tmp; /set takes effect at once
+	  - a double free when a text buffer is destroyed while lines are
+	    still being formatted is fixed
+
+	+ IRC
+	  - anti-floodnet: a query opened by a flooder's own message or
+	    notice no longer exempts it; a reply by /me or notice counts as
+	    answering
+	  - keepnick adds the kept nick to MONITOR again after MONITOR C or
+	    MONITOR - by you or a script
+	  - image preview: image_preview_cache_size is enforced (oldest files
+	    first, never a file still downloading); pending retries stop with
+	    /IMAGE OFF, CLEAR and at exit
+
+	+ Installer and updates
+	  - erssi --update installs only a newer version; a release tag that
+	    now points elsewhere is reported and never installed; an install
+	    from --ref main is offered only a newer release. A release that
+	    cannot be downloaded says so instead of "not signed" and "up to
+	    date". These rules start with this release's installer: an older
+	    install should run the install command once
+	  - docs/shellter/install.md "What the installer verifies" explains
+	    what each way of installing and updating checks, and how to check
+	    the installer yourself before running it
+	  - --test and --no-clean undo a saved --no-test or --clean; a
+	    relative --prefix is refused at once; install.sh no longer links
+	    the binary to itself on BSD and macOS
+
+	+ For maintainers
+	  - utils/pre-push checks commits already on another remote when they
+	    go to origin, never trusts tracking refs a rewrite moved, refuses
+	    deleting or moving a release tag (one-time re-signing with
+	    PREPUSH_RETAG, docs/shellter/releasing.md and
+	    utils/resign-history.sh), and checks each commit once per push
+	  - clang UBSan and libFuzzer builds work (-fsanitize=function is left
+	    out: irssi's signals call handlers through one function type);
+	    the static fuzz build uses OpenSSL 3.0.10 and GLib 2.90.1
+	  - licence headers on the fork's new files; the outdated erssi-org
+	    documents docs/ERSSI-UPSTREAM-README.md and docs/postdev are gone;
+	    new /help pages for settings other pages pointed to
+
+	+ rpe2e.pl 0.2.3 (scripts repository) closes clear text to a channel
+	  written in other letter case or in a target list, and gets the same
+	  placeholders, warnings and key-request limits
+
 shellter-v2026.10.2 2026-10-16  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.2
 

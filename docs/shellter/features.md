@@ -3,6 +3,7 @@
 Back to the [README](../../README.md). Every command below has its own
 page in `/help`.
 
+- [End-to-end encryption](#end-to-end-encryption)
 - [Nicks, networks and windows](#nicks-networks-and-windows)
 - [Mentions, notifications and search](#mentions-notifications-and-search)
 - [Look and feel](#look-and-feel)
@@ -13,6 +14,26 @@ page in `/help`.
 The [security review](security.md) and
 [end-to-end encryption](configuration.md#end-to-end-encryption) have their
 own pages.
+
+## End-to-end encryption
+
+New in 2026.10.3. Details: [configuration.md](configuration.md#end-to-end-encryption)
+and `/help e2e`.
+
+- **Nothing is hidden silently** — an encrypted message that cannot be
+  read leaves the sender's line with "[E2E: encrypted message not read -
+  ...]" or a red "[E2E rejected: ...]" that says why and what to run.
+- **Address and key changes are explained** — when someone comes back
+  from another ident@host with the same key, their key changes, or they
+  were revoked, the window names the exact command (`/e2e reverify`,
+  `/e2e unrevoke`); `/e2e status`, `list` and `pending` show it too.
+- **Recovery** — a lost key change is asked for again automatically, and
+  lines sent just before a key change still open for two minutes.
+- **No clear text by accident** — bot-style lines (`!cmd`, `.cmd`) are
+  encrypted unless `e2e_bot_bypass` is on; an unreadable keyring lets
+  nothing out; plain text in an encrypted channel shows `[plain]`.
+- **Floods** — key requests are limited per person and overall; replies
+  to strangers wait in their own queue and never delay your lines.
 
 ## Nicks, networks and windows
 

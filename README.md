@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-2026.10.2-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-2026.10.3-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -73,14 +73,20 @@ config files, what changes when upgrading from 1.3.x):
 
 | Component | Version |
 |---|---|
-| **erssi Shellter Edition 2026.10.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 2026.10.3** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.2`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.3`). |
 
 ## What this edition adds
 
 Every command has a page in `/help`. The full lists:
 [docs/shellter/features.md](docs/shellter/features.md).
+
+**Encryption you can rely on** (new in 2026.10.3)
+
+- **Nothing disappears** — an encrypted message that cannot be read leaves a line in its place that says why and what to run; a known key from a new address gets a warning with the exact `/e2e reverify` command.
+- **Plain text is marked** — a line in an encrypted channel that came in unencrypted shows `[plain]`; bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
+- **Tested against repartee** — `meson test` includes live tests against repartee and `rpe2e.pl` (run when they are installed), covering key changes, a reset and a flood of key requests.
 
 **Nicks, networks and windows** (new in 2026.10.1 and 2026.10.2)
 
@@ -141,7 +147,9 @@ erssi speaks RPE2E v1.0, the end-to-end encryption of
 [repartee](https://github.com/outragedevs/repartee), natively, and is
 wire-compatible with repartee and its WeeChat (`rpe2e.py`) and irssi
 (`rpe2e.pl`) scripts. `/e2e on` in a channel or query encrypts it; a key
-request waits for `/e2e accept`. `/help e2e` has the commands.
+request waits for `/e2e accept`. A message that cannot be read is never
+hidden: its line says why and names the command that fixes it. `/help e2e`
+has the commands.
 
 Details and moving from `rpe2e.pl`:
 [docs/shellter/configuration.md](docs/shellter/configuration.md#end-to-end-encryption).
