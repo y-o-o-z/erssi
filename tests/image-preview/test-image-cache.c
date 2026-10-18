@@ -303,6 +303,68 @@ static void test_foreign_entries(void)
 	teardown();
 }
 
+/* PNG magic and enough bytes to pass for an image */
+static void write_png(const char *path)
+{
+	char data[200];
+
+	memset(data, 0, sizeof(data));
+	memcpy(data, "\x89PNG\r\n\x1a\n", 8);
+	g_assert_true(g_file_set_contents(path, data, sizeof(data), NULL));
+}
+
+/* a cached image is the cache's own regular file: a link with the URL's
+ * cache name is no cached image (it would show any file it points to);
+ * neither the link nor what it points to is removed */
+static void test_get_symlink(void)
+{
+	const char *url = "https://example.invalid/linked.png";
+	char *path, *target;
+
+	setup();
+	path = generate_cache_path(url);
+	target = g_build_filename(outside, "other.png", NULL);
+	write_png(target);
+	g_assert_cmpint(symlink(target, path), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(image_cache_has(url));
+	g_assert_true(g_file_test(path, G_FILE_TEST_IS_SYMLINK));
+	g_assert_true(g_file_test(target, G_FILE_TEST_IS_REGULAR));
+
+	/* the same image as the cache's own file is found */
+	g_unlink(path);
+	write_png(path);
+	g_assert_true(image_cache_has(url));
+	g_free(path);
+	path = image_cache_get(url);
+	g_assert_nonnull(path);
+	g_free(path);
+	g_free(target);
+	teardown();
+}
+
+/* a FIFO or a link to /dev/null under the cache name: not an image, and
+ * looking at it does not hang (alarm() ends a hanging test) */
+static void test_get_fifo_dev_null(void)
+{
+	const char *url = "https://example.invalid/fifo.png";
+	char *path;
+
+	setup();
+	alarm(5);
+	path = generate_cache_path(url);
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(validate_image_file(path));
+	g_unlink(path);
+	g_assert_cmpint(symlink("/dev/null", path), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(validate_image_file(path));
+	alarm(0);
+	g_free(path);
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -312,6 +374,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-cache/recent_files", test_recent_files);
 	g_test_add_func("/image-cache/age", test_age);
 	g_test_add_func("/image-cache/foreign_entries", test_foreign_entries);
+	g_test_add_func("/image-cache/get_symlink", test_get_symlink);
+	g_test_add_func("/image-cache/get_fifo_dev_null", test_get_fifo_dev_null);
 
 	return g_test_run();
 }

@@ -13,6 +13,7 @@
 #include "image-preview.h"
 
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/safe-file.h>
 #include <fcntl.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/commands.h>
@@ -71,7 +72,8 @@ void image_preview_debug_print(const char *fmt, ...)
 	if (debug_file == NULL) {
 		/* the log holds every clicked URL: only for the owner */
 		char *path = g_strdup_printf("%s/image-preview-debug.log", get_irssi_dir());
-		int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+		/* not through a symbolic link, never a FIFO (safe-file.h) */
+		int fd = safe_file_open_append(path, 0600);
 		g_free(path);
 		debug_file = fd < 0 ? NULL : fdopen(fd, "a");
 		if (debug_file == NULL && fd >= 0)

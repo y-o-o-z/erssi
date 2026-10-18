@@ -3,6 +3,7 @@
 test_test_image_cache = executable('test-image-cache',
   files(
     'test-image-cache.c',
+    '../../src/core/safe-file.c',
   ),
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'image-preview' + '"',
@@ -21,6 +22,7 @@ test('test-image-cache test', test_test_image_cache,
 test_test_image_fetch = executable('test-image-fetch',
   files(
     'test-image-fetch.c',
+    '../../src/core/safe-file.c',
   ),
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'image-preview' + '"',

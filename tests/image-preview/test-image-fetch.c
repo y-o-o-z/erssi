@@ -12,6 +12,10 @@
 #define IMAGE_FETCH_RETRY_DELAY_MS 200
 #include <irssi/src/image-preview/image-preview-fetch.c>
 
+#include <glib/gstdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 static IMAGE_PREVIEW_REC preview;
 static gboolean preview_present;
 static int preview_lookups;
@@ -149,13 +153,51 @@ static void test_cancel(void)
 	image_fetch_deinit();
 }
 
+/* The download is written in place under the cache's name, and opened
+ * before any request: a link put there is not written through (the file
+ * it points to is not emptied), a FIFO does not hang erssi (alarm() ends a
+ * hanging test). Both are refused, so no request is made. */
+static void test_cache_file_refused(void)
+{
+	char *dir = g_dir_make_tmp("image-fetch-XXXXXX", NULL);
+	char *target = g_build_filename(dir, "precious", NULL);
+	char *link = g_build_filename(dir, "link.png", NULL);
+	char *fifo = g_build_filename(dir, "fifo.png", NULL);
+	char *content;
+
+	g_assert_true(g_file_set_contents(target, "keep", -1, NULL));
+	g_assert_cmpint(symlink(target, link), ==, 0);
+	g_assert_cmpint(mkfifo(fifo, 0600), ==, 0);
+	image_fetch_init();
+	alarm(5);
+	g_assert_false(image_fetch_start("http://127.0.0.1:9/link.png", link, NULL, NULL, FALSE));
+	g_assert_false(image_fetch_start("http://127.0.0.1:9/fifo.png", fifo, NULL, NULL, FALSE));
+	alarm(0);
+	image_fetch_deinit();
+	g_assert_true(g_file_get_contents(target, &content, NULL, NULL));
+	g_assert_cmpstr(content, ==, "keep");
+	g_free(content);
+
+	g_unlink(fifo);
+	g_unlink(link);
+	g_unlink(target);
+	g_rmdir(dir);
+	g_free(fifo);
+	g_free(link);
+	g_free(target);
+	g_free(dir);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
+	/* a refused cache file is reported with g_warning(): no failure here */
+	g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
 
 	g_test_add_func("/image-fetch/deinit_removes_retry", test_deinit_removes_retry);
 	g_test_add_func("/image-fetch/fired_retry", test_fired_retry);
 	g_test_add_func("/image-fetch/cancel", test_cancel);
+	g_test_add_func("/image-fetch/cache_file_refused", test_cache_file_refused);
 
 	return g_test_run();
 }

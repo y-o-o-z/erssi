@@ -44,7 +44,9 @@
     removed for the size limit, as it may still be downloading or not yet
     shown. Only the cache's own files are deleted: other files,
     directories and symbolic links in image_cache are left alone, and
-    links are not followed.
+    links are not followed. A cached image is shown only from a regular
+    file of the cache, never through a link, and a download is never
+    written through one.
 
     Settings:
 
