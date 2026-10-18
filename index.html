@@ -28,7 +28,7 @@
   --text: #e6edf3;
   --soft: #c9d1d9;
   --muted: #8b949e;
-  --faint: #6e7681;
+  --faint: #7d8590;
   --amber: #f59e0b;
   --yellow: #fcd34d;
   --blue: #79c0ff;
@@ -264,13 +264,13 @@ footer a { color: var(--muted); }
     <a class="name" href="./">erssi <b>Shellter Edition</b></a>
     <nav aria-label="Project">
       <a href="#install">Install</a>
-      <a class="wide" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.2">Release notes</a>
+      <a class="wide" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.3">Release notes</a>
       <a href="https://github.com/y-o-o-z/erssi">GitHub</a>
     </nav>
   </header>
 
   <section class="row hero" aria-labelledby="title">
-    <div class="label">2026.10.2</div>
+    <div class="label">2026.10.3</div>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
       <h1 id="title">IRC in your shell, made for IRCnet.</h1>
@@ -288,10 +288,10 @@ footer a { color: var(--muted); }
     <picture>
       <source srcset="images/erssi-shellter-light.png" media="(prefers-color-scheme: light)">
       <img class="shot" src="images/erssi-shellter.png" width="2663" height="1282"
-           alt="erssi Shellter Edition 2026.10.2 in #shellter: the window list on the left, the channel with its topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar">
+           alt="erssi Shellter Edition in #shellter: the window list on the left, the channel with its topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar">
     </picture>
     </a>
-    <figcaption class="caption">erssi 2026.10.2 in #shellter, in the shellter theme (shellter-light when your system is light). Every line starts after the same separator, and wrapped text stays under it.</figcaption>
+    <figcaption class="caption">erssi in #shellter, in the shellter theme (shellter-light when your system is light). Every line starts after the same separator, and wrapped text stays under it.</figcaption>
   </figure>
 
   <section class="row" aria-labelledby="what">
@@ -315,7 +315,7 @@ footer a { color: var(--muted); }
 
       <div class="feature">
         <h3>End-to-end encryption</h3>
-        <p>RPE2E, natively and wire-compatible with repartee and its WeeChat and irssi scripts: XChaCha20-Poly1305 with per-sender keys. Your key goes only to people you accept.</p>
+        <p>RPE2E, natively and wire-compatible with repartee and its WeeChat and irssi scripts: XChaCha20-Poly1305 with per-sender keys. Your key goes only to people you accept. A message that cannot be read is never hidden: its line says why and names the command that fixes it, and plain text in an encrypted channel is marked.</p>
         <span class="cmd"><code>/e2e on</code> · <code>/e2e accept</code></span>
       </div>
 
@@ -327,7 +327,7 @@ footer a { color: var(--muted); }
 
       <div class="feature">
         <h3>A browser, when you need one</h3>
-        <p>fe-web shares the same session with a web client such as <a href="https://github.com/kofany/nexus">NexusIRC</a>. On a shared box it listens on a Unix socket only you can open, and the password never travels in a URL.</p>
+        <p>fe-web shares the same session with a web client such as <a href="https://github.com/kofany/nexus">NexusIRC</a>. On a shared box it listens on a Unix socket only you can open, so no one else on the machine can reach it.</p>
         <span class="cmd"><code>/help fe_web</code></span>
       </div>
 
@@ -369,10 +369,10 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
       <h2 id="trust">Releases you can check</h2>
-      <p>Every release tag is signed with one SSH key, and the installer and <code>erssi --update</code> build only a tag that carries that signature and points to the commit the installer records. A tag pushed by anyone else is skipped.</p>
+      <p>Every release tag is signed with one SSH key. The one-line install trusts the script it downloads from GitHub; that script carries the key and the commit of every release, and builds a release only when its tag is signed by that key and points to the recorded commit. Without ssh-keygen it checks the commit only, and any other <code style="white-space:nowrap">--ref</code> is built unverified, with a warning. <code>erssi --update</code> installs only a newer release signed by the same key. You can <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#what-the-installer-verifies">check the installer yourself</a> before running it.</p>
       <p class="fp">ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</p>
       <pre class="block">git -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.2</pre>
+    verify-tag shellter-v2026.10.3</pre>
       <p>The parts that face the network, the web frontend and end-to-end encryption among them, are fuzzed with libFuzzer, and the test suite runs under AddressSanitizer and UndefinedBehaviorSanitizer for every change. The build is hardened by default: PIE, stack protector, full RELRO, <code>FORTIFY_SOURCE=2</code>.</p>
     </div>
   </section>
@@ -381,9 +381,9 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
     <div class="label">new</div>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
-      <h2 id="latest">In 2026.10.2</h2>
-      <p>Keepnick is built in, and the nicks of the keepnick.pl script are taken over at the first start. Split windows get a nick list per row, keep their widths when the panels come and go, and a restored layout puts every window back in its place.</p>
-      <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.2">Release notes</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">All changes since 2026.10.0</a></p>
+      <h2 id="latest">In 2026.10.3</h2>
+      <p>A security and reliability release after a full review of the code. An encrypted message that cannot be read is never hidden any more: its line says why, and when someone comes back from another address or with a new key, the window names the exact command. Plain text in an encrypted channel is marked, bot-style lines are encrypted too, and key requests from a flood of clones never delay your lines. Credentials, SASL SCRAM, TLS, the web frontend, the themes and the installer got fixes as well.</p>
+      <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.3">Release notes</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">All changes since 2026.10.0</a></p>
     </div>
   </section>
 
@@ -400,7 +400,7 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
 
 <footer>
   <div class="wrap">
-    <span>erssi Shellter Edition 2026.10.2, by the Shellter team at <a href="https://shellter.me">shellter.me</a></span>
+    <span>erssi Shellter Edition 2026.10.3, by the Shellter team at <a href="https://shellter.me">shellter.me</a></span>
     <span><a href="https://github.com/y-o-o-z/erssi">Source</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">NEWS</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/issues">Issues</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/SECURITY.md">Security</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/COPYING">GPL-2.0-or-later</a></span>
   </div>
 </footer>
@@ -408,6 +408,12 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
 <script>
 (function () {
   var copy = document.querySelector(".copy");
+  /* the full-size link opens the picture that is shown (light or dark) */
+  var shot = document.querySelector(".shot-link");
+  var img = shot.querySelector("img");
+  shot.addEventListener("click", function () {
+    if (img.currentSrc) shot.href = img.currentSrc;
+  });
   copy.addEventListener("click", function () {
     var text = copy.getAttribute("data-copy");
     function done(ok) {
