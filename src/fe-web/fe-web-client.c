@@ -83,6 +83,9 @@ void fe_web_client_destroy(WEB_CLIENT_REC *client)
 		g_byte_array_free(client->output_buffer, TRUE);
 	}
 
+	if (client->fragments != NULL) {
+		g_byte_array_free(client->fragments, TRUE);
+	}
 	if (client->input_buffer != NULL) {
 		g_byte_array_free(client->input_buffer, TRUE);
 	}

@@ -181,6 +181,33 @@ def main():
     write("frames", "continuation", frame(1, b'{"type":', fin=False) + frame(0, b'"ping"}'))
     write("frames", "two-in-one-read", ping + frame(1, MESSAGES[1]))
     write("frames", "split-over-reads", ping[:3] + SPLIT + ping[3:9] + SPLIT + ping[9:])
+    # fragmented messages (RFC 6455 5.4), control frames between them, and
+    # what fails the connection: reserved bits (1002), opcodes with no
+    # meaning, a continuation of nothing, a new message inside one, text
+    # that is not UTF-8 (1007), too big (1009)
+    write("frames", "fragments", frame(1, b'{"type":"pi', fin=False) + frame(0, b'ng","id":"f', fin=False)
+          + frame(9, b"between") + frame(0, b'"}'))
+    write("frames", "fragments-over-reads", frame(1, b'{"type":', fin=False) + SPLIT
+          + frame(0, b'"ping"}')[:4] + SPLIT + frame(0, b'"ping"}')[4:])
+    sealed = seal(MESSAGES[0])
+    write("frames", "fragments-binary", frame(2, sealed[:20], fin=False) + frame(0, sealed[20:]))
+    write("frames", "fragments-utf8-split", frame(1, b'{"type":"ping","id":"\xc5', fin=False)
+          + frame(0, b'\xbc"}'))
+    write("frames", "fragments-utf8-bad", frame(1, b'{"type":"ping","id":"\xc5', fin=False)
+          + frame(0, b'x"}'))
+    write("frames", "fragments-many", frame(1, b'{"type":"ping"', fin=False)
+          + frame(0, b"", fin=False) * 4096 + frame(0, b"}"))
+    write("frames", "fragments-interleaved", frame(1, b'{"type":', fin=False) + ping)
+    write("frames", "fragments-too-big", frame(1, b"x" * 16, fin=False)
+          + b"\x00\xff" + struct.pack(">Q", 16 * 1024 * 1024 - 15) + b"\x11\x22\x33\x44")
+    write("frames", "continuation-alone", frame(0, MESSAGES[0]))
+    write("frames", "rsv1", bytes([ping[0] | 0x40]) + ping[1:])
+    write("frames", "rsv3-ping", bytes([0x89 | 0x10]) + frame(9, b"x")[1:])
+    write("frames", "opcode-3", frame(3, b"x") + ping)
+    write("frames", "opcode-b", frame(0xB, b"x") + ping)
+    write("frames", "text-not-utf8", frame(1, b'{"type":"ping","id":"\xed\xa0\x80"}'))
+    write("frames", "ping-fragmented", frame(9, b"x", fin=False))
+    write("frames", "ping-too-long", frame(9, b"x" * 126))
     write("frames", "binary-short", frame(2, b"\x00" * 27))
     write("frames", "binary-bad-tag", frame(2, seal(MESSAGES[0])[:-1] + b"\x00"))
 

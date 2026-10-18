@@ -88,6 +88,12 @@ typedef struct {
 	unsigned int output_failed : 1;    /* write error or too much queued: closing */
 	unsigned int closing : 1;          /* last frame queued, closing once written */
 	GByteArray *input_buffer; /* For incomplete WebSocket frames */
+	/* A fragmented message (RFC 6455 5.4) being put together: its
+	 * unmasked data so far, NULL when none is open; its opcode (text or
+	 * binary) and how many frames it had */
+	GByteArray *fragments;
+	int fragments_opcode;
+	unsigned int fragments_count;
 	int recv_tag;
 	guint handshake_tag; /* closes the client if it does not log in in time */
 
@@ -195,7 +201,11 @@ char *fe_web_json_get_string(const char *json, const char *key);
 int fe_web_json_get_int(const char *json, const char *key, int default_value);
 int fe_web_json_has_key(const char *json, const char *key);
 
-/* JSON building for network/server management */
+/* JSON building for network/server management. Passwords and the
+ * network's autosendcmd go out as FE_WEB_MASK; network_add and server_add
+ * keep the stored value when a client sends the mask back. */
+#define FE_WEB_MASK "***"
+
 GString *fe_web_build_network_json(IRC_CHATNET_REC *rec);
 GString *fe_web_build_server_json(IRC_SERVER_SETUP_REC *rec);
 GString *fe_web_build_command_result_json(gboolean success, const char *message,
@@ -233,8 +243,22 @@ gboolean fe_web_e2e_json_valid(const char *json);
 
 /* WebSocket protocol (RFC 6455) */
 char *fe_web_websocket_compute_accept(const char *client_key);
-/* Largest WebSocket frame accepted from a client */
+/* Largest WebSocket frame accepted from a client, and the largest
+ * message (the frames of a fragmented one together) */
 #define FE_WEB_MAX_FRAME (16 * 1024 * 1024)
+/* Most frames one fragmented message may have */
+#define FE_WEB_MAX_FRAGMENTS 4096
+
+/* The header of the frame at 'data': 1 when all of it is there (then
+ * 'header_len' is its length; the payload follows, maybe not yet read),
+ * 0 when more is needed, -1 when it breaks the rules for control frames
+ * (more than 125 bytes, fragmented) */
+int fe_web_websocket_parse_header(const guchar *data, gsize data_len, int *fin, int *opcode,
+                                  int *masked, guint64 *payload_len, guchar mask_key[4],
+                                  gsize *header_len);
+/* The whole frame at 'data': 1 when it is there ('payload' points into
+ * 'data'), 0 when more is needed, -1 as for the header and for a payload
+ * over FE_WEB_MAX_FRAME */
 
 int fe_web_websocket_parse_frame(const guchar *data, gsize data_len, int *fin, int *opcode,
                                  int *masked, guint64 *payload_len, guchar mask_key[4],
