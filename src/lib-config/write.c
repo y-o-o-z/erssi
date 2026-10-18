@@ -310,6 +310,8 @@ int config_write(CONFIG_REC *rec, const char *fname, int create_mode)
 	int ret;
 	int fd;
 	int save_errno;
+	GError *error = NULL;
+	GIOStatus status;
 	const char *base_name;
 	char *tmp_name = NULL;
 	char *dest_name = NULL;
@@ -372,21 +374,44 @@ int config_write(CONFIG_REC *rec, const char *fname, int create_mode)
 		goto out;
 	}
 
+	/* the channel is buffered: its last part reaches the file only when
+	   it is flushed. Flushed, synced and closed here, each result
+	   checked, before the rename - a write that fails at the end (a full
+	   disk or quota) keeps the old file and is reported */
+	if (g_io_channel_flush(rec->handle, &error) != G_IO_STATUS_NORMAL) {
+		ret = -1;
+		unlink(tmp_name);
+		config_error(rec, error != NULL ? error->message : "flush failed");
+		g_clear_error(&error);
+		goto out;
+	}
+
 	ret = fsync(fd);
 	save_errno = errno;
 
 	if (ret == -1) {
 		unlink(tmp_name);
-		config_error(rec, g_strerror(errno));
+		config_error(rec, g_strerror(save_errno));
 		goto out;
 	}
 
+	status = g_io_channel_shutdown(rec->handle, FALSE, &error);
 	g_io_channel_unref(rec->handle);
 	rec->handle = NULL;
+	if (status != G_IO_STATUS_NORMAL) {
+		ret = -1;
+		unlink(tmp_name);
+		config_error(rec, error != NULL ? error->message : "close failed");
+		g_clear_error(&error);
+		goto out;
+	}
 
 	if (rename(tmp_name, dest_name) == -1) {
+		/* ret is still 0 from the fsync: a failed rename is a failure too */
+		ret = -1;
+		save_errno = errno;
 		unlink(tmp_name);
-		config_error(rec, g_strerror(errno));
+		config_error(rec, g_strerror(save_errno));
 		goto out;
 	}
 

@@ -47,10 +47,12 @@ than twice the limit plus three downloads in progress (`/help image`).
 
 ## Configuration
 
-`~/.erssi/config` is written readable only by you. So are the debug logs
-of the side panels and of terminal resizes (`/set sidepanel_debug on`,
-`/set resize_debug on`): they are kept in `~/.erssi`, never in `/tmp`, and
-never written through a link.
+`~/.erssi/config` is written readable only by you, to a temporary file
+that replaces it only once every byte is written and synced: a save that
+fails on a full disk or quota keeps the old file and says why. The debug
+logs of the side panels and of terminal resizes (`/set sidepanel_debug on`,
+`/set resize_debug on`) are readable only by you too: they are kept in
+`~/.erssi`, never in `/tmp`, and never written through a link.
 
 Files the fork reads or writes at a path that a setting, you or another
 user on the box can influence go through one helper (`src/core/safe-file.c`):

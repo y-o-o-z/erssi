@@ -38,3 +38,22 @@ test('test-signal-abi test', test_test_signal_abi,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# config_write() (lib-config) when a write fails at the end
+test_test_config_write = executable('test-config-write',
+  files(
+    'test-config-write.c',
+  ),
+  link_with : [
+    libconfig_a,
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+
+test('test-config-write test', test_test_config_write,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 30)
