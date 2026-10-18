@@ -1853,7 +1853,7 @@ binary-install)
     make_pkg 2026.10.7 "$(fsha 2026.10.7)"
     PT="$W/pkg/2026.10.7-debian13-amd64/erssi-2026.10.7-debian13-amd64"
     ln -s libfe_web.so "$PT/lib/irssi/modules/libfe_web.so.0"
-    ln -s ../../share/irssi "$PT/lib/irssi/share"
+    ln -s modules "$PT/lib/irssi/mods"
     ln "$PT/MANIFEST" "$PT/share/irssi/MANIFEST.copy"
     repack 2026.10.7
     # shellcheck disable=SC2016 # a stand-in script
@@ -1861,7 +1861,7 @@ binary-install)
     run_bin --ref shellter-v2026.10.7
     rm -f "$W/shim/tar"
     check "links within the package: installed" [ "$RC" = 0 ] && current_is 2026.10.7
-    check "... the links kept" [ "$(readlink "$P/releases/2026.10.7/lib/irssi/share")" = ../../share/irssi ]
+    check "... the links kept" [ "$(readlink "$P/releases/2026.10.7/lib/irssi/mods")" = modules ]
     check "... unpacked without the archive's owners and modes" grep -q -- '--no-same-owner --no-same-permissions -xJf' "$W/tar.log"
     # names as tar -C DIR . writes them, with a leading ./
     make_pkg 2026.10.6 "$(fsha 2026.10.6)"
@@ -1953,11 +1953,21 @@ binary-refused)
     make_pkg 2026.10.4 "$c4"
     ln -s /etc/passwd "$PT/share/irssi/abs"
     repack 2026.10.4
-    refused "a symbolic link to an absolute path" "holds a symbolic link that leads outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    refused "a symbolic link to an absolute path" "holds a symbolic link whose target is absolute or has a .. in it - refusing to install"
     make_pkg 2026.10.4 "$c4"
     ln -s ../../../outside "$PT/share/irssi/up"
     repack 2026.10.4
-    refused "a symbolic link above the top directory" "holds a symbolic link that leads outside"
+    refused "a symbolic link above the top directory" "holds a symbolic link whose target is absolute or has a .. in it"
+    # a chain whose every link stays inside when read alone: d leads out
+    make_pkg 2026.10.4 "$c4"
+    ln -s . "$PT/share/irssi/a" && ln -s a/.. "$PT/share/irssi/b" &&
+        ln -s b/.. "$PT/share/irssi/c" && ln -s c/.. "$PT/share/irssi/d"
+    repack 2026.10.4
+    refused "a chain of symbolic links that leads out" "holds a symbolic link whose target is absolute or has a .. in it"
+    make_pkg 2026.10.4 "$c4"
+    ln -s x/../y "$PT/share/irssi/xy"
+    repack 2026.10.4
+    refused "a symbolic link with .. inside its target" "holds a symbolic link whose target is absolute or has a .. in it"
     make_pkg 2026.10.4 "$c4"
     : > "$PT/share/irssi/h1" && ln "$PT/share/irssi/h1" "$PT/share/irssi/h2"
     repack 2026.10.4 --transform 'flags=RSh;s|^erssi-2026.10.4-debian13-amd64/share/irssi/h[12]$|etc/passwd|'

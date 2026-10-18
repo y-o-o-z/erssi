@@ -907,21 +907,15 @@ binary_install() {
     # archive's: as root, tar would otherwise restore them
     run_logged tar --no-same-owner --no-same-permissions -xJf "$STAGE/$ASSET" -C "$STAGE/u" ||
         die_log "unpacking $ASSET failed"
-    # a symbolic link only within the package: relative, and never above
-    # its top directory
+    # a symbolic link only within the package: its target neither absolute
+    # nor with a .. anywhere. Read as text, one link at a time, a chain
+    # (a -> ., b -> a/.., c -> b/..) would get out; without / and .. no
+    # link or chain of links can leave the tree.
     find "$STAGE/u" -type l | while IFS= read -r l; do
-            printf '%s\t%s\n' "${l#"$STAGE/u/"}" "$(readlink "$l")"
-        done | awk -F '\t' '{
-            n = split($1, a, "/"); d = 0
-            for (i = 1; i < n; i++) if (a[i] != "" && a[i] != ".") d++
-            if (substr($2, 1, 1) == "/" || $2 == "") { bad = 1; next }
-            m = split($2, b, "/")
-            for (i = 1; i <= m; i++) {
-                if (b[i] == "" || b[i] == ".") continue
-                if (b[i] == "..") { if (--d < 1) { bad = 1; next } } else d++
-            } }
+            printf '%s\n' "$(readlink "$l")"
+        done | awk '$0 == "" || substr($0, 1, 1) == "/" || $0 ~ /(^|\/)\.\.(\/|$)/ { bad = 1 }
         END { exit bad }' ||
-        die "$ASSET holds a symbolic link that leads outside $TOP/ - refusing to install, nothing was changed (report it)"
+        die "$ASSET holds a symbolic link whose target is absolute or has a .. in it - refusing to install, nothing was changed (report it)"
     T="$STAGE/u/$TOP"
     [ -f "$T/MANIFEST" ] || die "$ASSET has no MANIFEST - refusing to install, nothing was changed (report it)"
     for k in version tag platform commit; do

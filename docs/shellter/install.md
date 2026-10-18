@@ -82,8 +82,10 @@ a signature it carries) the source build runs as well, as it did before
 there were packages.
 
 The package unpacks with the owner and the permissions of the installing
-user (and its umask), never those stored in it, and a symbolic link or
-hard link in it must stay inside its top directory.
+user (and its umask), never those stored in it. A hard link in it must
+name a file below its top directory, and a symbolic link must have a
+target that is neither absolute nor has a `..` component anywhere (`..`,
+`../x`, `x/../y`, `a/..`); otherwise the package is refused.
 
 Without `--ref` the installer takes the newest release it records. If the
 installed erssi is newer than that (the copy of the installer an install
