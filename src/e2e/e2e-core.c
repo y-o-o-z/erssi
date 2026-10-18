@@ -1548,7 +1548,8 @@ static void start_pump(void)
 
 /* one stranger's NOTICE of s, when nothing else waits and the flood
    rule leaves room for the user */
-static void flush_stranger(IRC_SERVER_REC *s)
+/* TRUE when a line left */
+static gboolean flush_stranger(IRC_SERVER_REC *s)
 {
 	E2E_STRANGERQ *q = stranger_queue_of(SERVER(s), FALSE);
 	E2E_OUTQ *own = queue_of(SERVER(s), FALSE);
@@ -1559,10 +1560,11 @@ static void flush_stranger(IRC_SERVER_REC *s)
 	    !e2e_stranger_may_send(s->cmdqueue == NULL, own == NULL || e2e_outq_empty(own),
 	                           g_get_real_time(), s->wait_cmd, s->last_cmd, s->cmd_queue_speed,
 	                           s->cmdcount, s->max_cmds_at_once))
-		return;
+		return FALSE;
 	l = e2e_strangerq_pop(q);
 	irc_send_cmd(s, l->line);
 	e2e_stranger_line_free(l);
+	return TRUE;
 }
 
 static gboolean pump_all(gpointer data)
@@ -1630,10 +1632,12 @@ gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const ch
 	E2E_HS_TYPE type;
 	GPtrArray *dropped;
 	char *cmd, *inner;
+	gboolean first, sent;
 	size_t len;
 
 	if (!IS_IRC_SERVER(server) || (q = stranger_queue_of(server, TRUE)) == NULL)
 		return FALSE;
+	first = e2e_strangerq_empty(q);
 	/* a KEYRSP (a REKEY goes behind it) or a KEYREQ (its pending row
 	   goes if it is dropped): its context */
 	inner = g_strdup(*body == '\001' ? body + 1 : body);
@@ -1653,10 +1657,10 @@ gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const ch
 	g_free(inner);
 	start_pump();
 	/* at once when nothing waits */
-	flush_stranger(IRC_SERVER(server));
+	sent = flush_stranger(IRC_SERVER(server)) && first;
 	if (dropped != NULL)
 		strangers_dropped(server, dropped);
-	return TRUE;
+	return sent;
 }
 
 
@@ -2266,18 +2270,22 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			char *shown = e2e_ctx_display(res.ctx);
 
 			/* a person the user confirmed: the normal queue; anyone
-			   else's behind the user's lines, and only while that
-			   leaves within E2E_STRANGER_BACKLOG */
+			   else: the strangers' queue, behind everything we send */
 			/* the pending row is saved first: a drop of it later
 			   (strangers_dropped) removes it from the file */
 			if (res.save_needed)
 				e2e_save(kr);
 			res.save_needed = FALSE;
-			if (e2e_handle_confirmed(kr, address))
+			if (e2e_handle_confirmed(kr, address)) {
 				e2e_send_notice(server, nick, res.keyreq);
-			else
-				e2e_send_notice_stranger(server, nick, res.keyreq, address);
-			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
+				e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
+			} else {
+				e2e_print_debug(server, res.ctx, nick,
+				                e2e_send_notice_stranger(server, nick, res.keyreq, address)
+				                ? "TX auto-KEYREQ to %s for %s"
+				                : "auto-KEYREQ to %s for %s queued behind your own lines",
+				                nick, shown);
+			}
 			g_free(shown);
 		}
 		/* a KEYREQ of ours waits for its answer; old rows taken over */
@@ -2477,8 +2485,10 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 				e2e_send_notice(server, nick, rsp);
 				e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
 			} else {
-				e2e_send_notice_stranger(server, nick, rsp, sender);
-				e2e_print_debug(server, ctx, nick, "KEYRSP to %s for %s queued behind your own lines",
+				e2e_print_debug(server, ctx, nick,
+				                e2e_send_notice_stranger(server, nick, rsp, sender)
+				                ? "TX KEYRSP to %s for %s"
+				                : "KEYRSP to %s for %s queued behind your own lines",
 				                nick, ctx);
 			}
 		}
@@ -2487,8 +2497,10 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 				e2e_send_notice(server, nick, recip);
 				e2e_print_debug(server, ctx, nick, "TX reciprocal KEYREQ to %s for %s", nick, ctx);
 			} else {
-				e2e_send_notice_stranger(server, nick, recip, sender);
-				e2e_print_debug(server, ctx, nick, "reciprocal KEYREQ to %s for %s queued behind your own lines",
+				e2e_print_debug(server, ctx, nick,
+				                e2e_send_notice_stranger(server, nick, recip, sender)
+				                ? "TX reciprocal KEYREQ to %s for %s"
+				                : "reciprocal KEYREQ to %s for %s queued behind your own lines",
 				                nick, ctx);
 			}
 		}

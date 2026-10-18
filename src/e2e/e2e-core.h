@@ -62,7 +62,8 @@ gboolean e2e_legacy_ok(void);
 void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
 /* the same for a person the user did not confirm (handle: their
    address): in the module's strangers' queue (e2e-outq.h), which leaves
-   only while nothing else waits; at once when nothing does. TRUE */
+   only while nothing else waits; at once when nothing does. TRUE when
+   it left at once */
 gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body,
                                   const char *handle);
 /* the 30 s limiter of the KEYREQs we send */

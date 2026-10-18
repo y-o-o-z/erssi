@@ -116,6 +116,8 @@ def main():
         """the user's lines leave within the bound while 60 strangers
         flood the channel with junk ciphertext"""
         a, b = st["alice"], st["bob"]
+        a.type_and_wait("/set e2e_debug on")
+        off = a.all_log().stat().st_size
         start = time.time()
         for i in range(60):
             c = harness.Client(st["port"], f"clone{i}", f"c{i}")
@@ -140,6 +142,13 @@ def main():
         firsts, lasts = min(t for t, _ in sent), last
         between = [t for t, ln in lines_since(firsts, "alice", "NOTICE") if t < lasts and " clone" in ln]
         assert not between, f"{len(between)} NOTICEs to clones between alice's chunks"
+        # "TX" only for what left at once; the rest says it waits
+        a.type_and_wait("/set e2e_debug off")
+        dbg = a.all_log().read_bytes()[off:].decode(errors="replace")
+        tx = dbg.count("TX auto-KEYREQ to clone")
+        wire = [ln for _, ln in lines_since(start, "alice", "NOTICE") if " clone" in ln and "KEYREQ" in ln]
+        assert "auto-KEYREQ to clone" in dbg and "queued behind your own lines" in dbg, dbg[-2000:]
+        assert tx <= len(wire), (tx, len(wire))
 
     def t_rotate_under_flood():
         """/e2e rotate under the flood: the REKEY reaches bob, he reads"""
