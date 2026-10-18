@@ -1293,7 +1293,6 @@ static void test_control_characters(void)
 	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(r.plain, ==, "one two three four \002bold\002 \00304red");
 	e2e_in_result_clear(&r);
-	g_free(line);
 	peer_free(&a);
 	peer_free(&b);
 }
@@ -4200,8 +4199,7 @@ static void test_casemap_superset(void)
 						g_error("map %d: %s is another channel than %s, yet refused",
 						        maps[m], variant, name->str);
 				}
-				g_free(line);
-				g_free(vfold);
+							g_free(vfold);
 				g_free(variant);
 			}
 			g_free(want);
@@ -7135,76 +7133,6 @@ static void test_user_started_confirms(void)
 	peer_free(&b2);
 }
 
-/* A model of irssi's send queue under a sustained flood: 5 clones each
-   send a signed KEYREQ to an auto-accept channel every 10 s for 10
-   minutes. Strangers' NOTICEs are queued only while what waits leaves
-   within E2E_STRANGER_BACKLOG (as e2e_send_notice_stranger does), and a
-   request is not taken while there is no room for its answer: the
-   backlog stays bounded, so the user's lines (queued ahead of them) and
-   a friend's answer never wait more than that. */
-static void test_stranger_backlog(void)
-{
-	PEER me, clones[5];
-	double queued = 0, worst = 0;
-	int w, c, answered = 0, held = 0;
-	const int speed = 2200;	/* cmd_queue_speed, ms */
-
-	peer_init(&me, "me", BOB, -1);
-	enable(&me, "#auto", "auto-accept");
-	for (c = 0; c < 5; c++) {
-		char *h = g_strdup_printf("clone%d@h", c);
-
-		peer_init(&clones[c], "c", h, -1);
-		g_free(h);
-	}
-	for (w = 0; w < 60; w++) {
-		fake_now += 10;
-		/* irssi drains the queue for 10 s */
-		queued = MAX(0, queued - 10);
-		for (c = 0; c < 5; c++) {
-			char *req, *rsp = NULL, *recip = NULL, *error = NULL;
-
-			if (!e2e_stranger_room(queued, 330, speed)) {
-				held++;
-				continue;
-			}
-			e2e_json_remove(e2e_json_get(clones[c].kr, "pending"), "#auto|" BOB);
-			req = e2e_build_keyreq(clones[c].kr, &clones[c].id, "#auto", BOB, &error);
-			deliver_keyreq(&me, &clones[c], req, BOB, &rsp, &recip);
-			/* counted twice while they wait, as later_backlog does */
-			if (rsp != NULL && e2e_stranger_room(queued, strlen(rsp) + 20, speed)) {
-				queued += 2 * e2e_send_cost(strlen(rsp) + 20, speed);
-				answered++;
-			}
-			if (recip != NULL && e2e_stranger_room(queued, strlen(recip) + 20, speed))
-				queued += 2 * e2e_send_cost(strlen(recip) + 20, speed);
-			worst = MAX(worst, queued);
-			g_free(req);
-			g_free(rsp);
-			g_free(recip);
-		}
-	}
-	fake_now -= 600;
-	g_assert_cmpfloat(worst, <=, E2E_STRANGER_BACKLOG);
-	g_assert_cmpint(answered, >, 0);
-	g_assert_cmpint(held, >, 0);
-	/* what irssi really takes for what waits: half the bound at most,
-	   and the user's lines wait only for the line in flight (they go
-	   ahead of strangers' lines), never more than one long line takes */
-	g_assert_cmpfloat(worst / 2, <=, E2E_STRANGER_BACKLOG / 2);
-	g_assert_cmpfloat(e2e_inflight_wait(0, 30 * G_USEC_PER_SEC), <=, 7.0);
-	/* a KEYRSP and its reciprocal KEYREQ fit after a long line */
-	g_assert_true(e2e_stranger_room(e2e_inflight_wait(0, 7 * G_USEC_PER_SEC) + 2 * e2e_send_cost(330, speed), 240, speed));
-	/* the wall clock set back an hour: the wait stays one line's */
-	g_assert_cmpfloat(e2e_inflight_wait(-(gint64) 3600 * G_USEC_PER_SEC, 5 * G_USEC_PER_SEC), ==, 7.0);
-	g_assert_cmpfloat(e2e_inflight_wait(10 * G_USEC_PER_SEC, 5 * G_USEC_PER_SEC), ==, 0.0);
-	/* a long line costs what irssi waits after it */
-	g_assert_cmpfloat(e2e_send_cost(330, speed), ==, 5.0);
-	g_assert_cmpfloat(e2e_send_cost(50, speed), ==, 2.2);
-	for (c = 0; c < 5; c++)
-		peer_free(&clones[c]);
-	peer_free(&me);
-}
 
 /* a keyring of before (or of rpe2e.pl, an import): its trusted keys count
    as confirmed, once - a key trusted afterwards by itself does not */
@@ -7233,15 +7161,14 @@ static void test_migrate_confirmed(void)
 	peer_free(&b2);
 }
 
-/* a stranger's KEYRSP still queued carries the key of before a rotation:
-   it is told apart (the core drops it), and a KEYRSP built while a
-   rotation is due hands out the current key without using the rotation
-   up - the next line rotates, with its REKEYs */
+/* a KEYRSP built while a rotation is due hands out the current key
+   without using the rotation up - the next line rotates, with its
+   REKEYs */
 static void test_keyrsp_and_rotation(void)
 {
 	PEER a, b;
 	E2E_GATE_RESULT g;
-	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *line;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
 
 	peer_init(&a, "alice", ALICE, -1);
 	peer_init(&b, "bob", BOB, -1);
@@ -7255,20 +7182,12 @@ static void test_keyrsp_and_rotation(void)
 	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
 	g_assert_nonnull(rsp);
 	g_assert_true(e2e_json_truthy(path_get(a.kr, "outgoing", "#test", "pending_rotation", NULL)));
-	line = g_strdup_printf("NOTICE bob :%s", rsp);
-	g_assert_true(e2e_line_is_keyrsp_for(line, "#test"));
-	g_assert_false(e2e_line_is_keyrsp_for(line, "#other"));
-	g_assert_false(e2e_line_is_keyrsp_for("NOTICE bob :\001RPEE2E KEYREQ v=1 c=#test\001", "#test"));
-	g_assert_false(e2e_line_is_keyrsp_for("PRIVMSG #test :hi", "#test"));
 	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "rotates now", no_resolve, NULL, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
-	g_assert_true(g.rotated);
 	g_assert_nonnull(g.notices);
 	e2e_gate_result_clear(&g);
 	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "no rotation", no_resolve, NULL, &g);
-	g_assert_false(g.rotated);
 	e2e_gate_result_clear(&g);
-	g_free(line);
 	g_free(req);
 	g_free(rsp);
 	g_free(recip);
@@ -7358,7 +7277,6 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
 	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
 	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
-	g_test_add_func("/e2e/proto/stranger-backlog", test_stranger_backlog);
 	g_test_add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
 	g_test_add_func("/e2e/proto/keyrsp-and-rotation", test_keyrsp_and_rotation);
 	g_test_add_func("/e2e/proto/request-expiry", test_request_expiry);

@@ -60,10 +60,11 @@ void e2e_server_net(SERVER_REC *server, E2E_NET *net);
    (one without a chatnet by its address, unless it is up) */
 gboolean e2e_legacy_ok(void);
 void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
-/* the same for a person the user did not confirm: at the end of irssi's
-   queue (IRC_SEND_LATER), and only while it leaves within
-   E2E_STRANGER_BACKLOG; FALSE when not sent */
-gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body);
+/* the same for a person the user did not confirm (handle: their
+   address): in the module's strangers' queue (e2e-outq.h), which leaves
+   only while nothing else waits; at once when nothing does. TRUE */
+gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body,
+                                  const char *handle);
 /* the 30 s limiter of the KEYREQs we send */
 GHashTable *e2e_keyreq_out_stamps(void);
 /* FALSE (after telling the user once) while rpe2e.pl is loaded; a change

@@ -2539,51 +2539,6 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 	return n;
 }
 
-double e2e_send_cost(gsize len, int cmd_queue_speed_ms)
-{
-	/* irc-servers.c: the next line waits cmd_queue_speed, and 2 s plus
-	   1 s per 100 bytes after a line of 100 bytes or more */
-	double speed = cmd_queue_speed_ms / 1000.0;
-	double wait = len >= 100 && cmd_queue_speed_ms > 10 ? 2 + (double) (len / 100) : 0;
-
-	return MAX(speed, wait);
-}
-
-double e2e_inflight_wait(gint64 now_us, gint64 wait_cmd_us)
-{
-	/* never more than a line of 512 bytes makes irssi wait */
-	double w = wait_cmd_us > now_us ? (double) (wait_cmd_us - now_us) / G_USEC_PER_SEC : 0;
-
-	return MIN(w, 2 + 512 / 100);
-}
-
-gboolean e2e_stranger_room(double queued_seconds, gsize len, int cmd_queue_speed_ms)
-{
-	return queued_seconds + 2 * e2e_send_cost(len, cmd_queue_speed_ms) <= E2E_STRANGER_BACKLOG;
-}
-
-gboolean e2e_line_is_keyrsp_for(const char *line, const char *wire)
-{
-	E2E_HANDSHAKE *hs;
-	const char *p;
-	char *body;
-	size_t len;
-	gboolean same;
-
-	if (line == NULL || g_ascii_strncasecmp(line, "NOTICE ", 7) != 0 ||
-	    (p = strstr(line, " :\001")) == NULL)
-		return FALSE;
-	body = g_strdup(p + 3);
-	len = strlen(body);
-	while (len > 0 && (body[len - 1] == '\001' || body[len - 1] == '\r' || body[len - 1] == '\n'))
-		body[--len] = '\0';
-	hs = e2e_handshake_type(body) == E2E_HS_KEYRSP ? e2e_handshake_parse(body, E2E_HS_KEYRSP) : NULL;
-	same = hs != NULL && strcmp(hs->channel, wire) == 0;
-	e2e_handshake_free(hs);
-	g_free(body);
-	return same;
-}
-
 static gboolean known_at(const E2E_JSON *kr, const char *handle);
 
 gboolean e2e_handle_confirmed(const E2E_JSON *kr, const char *handle)
@@ -2675,6 +2630,25 @@ gboolean e2e_migrate_confirmed(E2E_JSON *kr)
 	g_ptr_array_unref(keys);
 	e2e_json_set_int(kr, E2E_CONFIRM_MIGRATED, e2e_now());
 	return TRUE;
+}
+
+guint e2e_forget_keyreq_wire(E2E_JSON *kr, const char *wire, const char *handle)
+{
+	E2E_JSON *pending = e2e_json_get(kr, "pending");
+	GPtrArray *keys = e2e_json_keys(pending);
+	guint i, n = 0;
+
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+		E2E_JSON *row = e2e_json_get(pending, k);
+		const char *c = e2e_json_get_string(row, "channel");
+
+		if (c != NULL && g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0 &&
+		    strcmp(e2e_ctx_wire(c), wire) == 0)
+			n += e2e_json_remove(pending, k);
+	}
+	g_ptr_array_unref(keys);
+	return n;
 }
 
 void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle)
@@ -3500,7 +3474,6 @@ static void gate_single(E2E_JSON *kr, gboolean kr_ok, const E2E_IDENTITY *id,
 	}
 	if (rotated)
 		distribute_rekey(kr, id, ctx, key, res);
-	res->rotated = rotated;
 	/* written only when a key was generated or rotated (or old rows were
 	   taken over), not per message */
 	res->save_needed = generated || adopted || damaged->len > 0;

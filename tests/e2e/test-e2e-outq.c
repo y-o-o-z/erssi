@@ -173,6 +173,70 @@ static void test_null_args(void)
 	e2e_outq_free(q);
 }
 
+/* strangers' NOTICEs: bounded, the oldest go (handed back, for what
+   they leave behind); a REKEY goes right behind its peer's KEYRSP and is
+   never pushed out; they leave only when nothing else waits */
+static void test_strangers(void)
+{
+	E2E_STRANGERQ *q = e2e_strangerq_new(3);
+	E2E_STRANGER_LINE *l;
+	GPtrArray *dropped;
+	const gint64 s = G_USEC_PER_SEC;
+
+	g_assert_true(e2e_strangerq_empty(q));
+	g_assert_null(e2e_strangerq_push(q, "a", "NOTICE a :1", "#c", NULL, NULL));
+	g_assert_null(e2e_strangerq_push(q, "b", "NOTICE b :2", NULL, "#c", "b@h"));
+	g_assert_null(e2e_strangerq_push(q, "c", "NOTICE c :3", NULL, NULL, NULL));
+	/* full: the oldest goes for the next */
+	dropped = e2e_strangerq_push(q, "d", "NOTICE d :4", NULL, NULL, NULL);
+	g_assert_nonnull(dropped);
+	g_assert_cmpuint(dropped->len, ==, 1);
+	l = g_ptr_array_index(dropped, 0);
+	g_assert_cmpstr(l->line, ==, "NOTICE a :1");
+	g_assert_cmpstr(l->keyrsp_wire, ==, "#c");
+	e2e_stranger_line_free(l);
+	g_ptr_array_free(dropped, TRUE);
+	/* a KEYRSP of b's: none waits, nothing queued */
+	g_assert_false(e2e_strangerq_push_after_keyrsp(q, "B", "#c", "NOTICE b :rekey"));
+	dropped = e2e_strangerq_push(q, "b", "NOTICE b :keyrsp", "#c", NULL, NULL);
+	g_assert_nonnull(dropped);
+	l = g_ptr_array_index(dropped, 0);
+	g_assert_cmpstr(l->keyreq_wire, ==, "#c");
+	g_assert_cmpstr(l->handle, ==, "b@h");
+	e2e_stranger_line_free(l);
+	g_ptr_array_free(dropped, TRUE);
+	/* its REKEY right behind it, past the cap */
+	g_assert_true(e2e_strangerq_push_after_keyrsp(q, "B", "#c", "NOTICE b :rekey"));
+	g_assert_cmpuint(e2e_strangerq_length(q), ==, 4);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE c :3");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE d :4");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE b :keyrsp");
+	e2e_stranger_line_free(l);
+	l = e2e_strangerq_pop(q);
+	g_assert_cmpstr(l->line, ==, "NOTICE b :rekey");
+	e2e_stranger_line_free(l);
+	g_assert_true(e2e_strangerq_empty(q));
+	e2e_strangerq_free(q);
+
+	/* when they may leave (speed 2200 ms, 5 at once) */
+	g_assert_true(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 0, 90 * s, 2200, 0, 5));
+	/* anything of irssi's or ours waits: never */
+	g_assert_false(e2e_stranger_may_send(FALSE, TRUE, 100 * s, 0, 90 * s, 2200, 0, 5));
+	g_assert_false(e2e_stranger_may_send(TRUE, FALSE, 100 * s, 0, 90 * s, 2200, 0, 5));
+	/* the wait after a long line, cmd_queue_speed, the user's burst */
+	g_assert_false(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 103 * s, 90 * s, 2200, 0, 5));
+	g_assert_false(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 0, 99 * s, 2200, 0, 5));
+	g_assert_false(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 0, 90 * s, 2200, 3, 5));
+	g_assert_true(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 0, 90 * s, 2200, 2, 5));
+	/* a clock set back an hour: the waits it shows are no waits */
+	g_assert_true(e2e_stranger_may_send(TRUE, TRUE, 100 * s, 3700 * s, 3700 * s, 2200, 0, 5));
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -182,6 +246,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/outq/drop-counts-plain", test_drop_counts_plain);
 	g_test_add_func("/e2e/outq/free-full", test_free_full);
 	g_test_add_func("/e2e/outq/null-args", test_null_args);
+	g_test_add_func("/e2e/outq/strangers", test_strangers);
 
 	return g_test_run();
 }

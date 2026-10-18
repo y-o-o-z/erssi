@@ -680,72 +680,6 @@ void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body)
 	g_free(cmd);
 }
 
-/* what waits at the end of irssi's queue of server (IRC_SEND_LATER):
-   the seconds it takes to leave */
-static double later_backlog(IRC_SERVER_REC *s)
-{
-	GSList *tmp;
-	guint n = g_slist_length(s->cmdqueue), i = 0, first = n - MIN(n, 2 * (guint) s->cmdlater);
-	double total = 0;
-
-	gint64 now = g_get_real_time();
-
-	/* the wait after the line in flight, then the queued ones (counted
-	   twice, as e2e_stranger_room counts a new one) */
-	total = e2e_inflight_wait(now, s->wait_cmd);
-	for (tmp = s->cmdqueue; tmp != NULL; tmp = tmp->next, i++)
-		if (i >= first && (i - first) % 2 == 0 && tmp->data != NULL)
-			total += 2 * e2e_send_cost(strlen(tmp->data), s->cmd_queue_speed);
-	return total;
-}
-
-gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body)
-{
-	IRC_SERVER_REC *s = IRC_SERVER(server);
-	char *cmd;
-	gboolean room;
-
-	if (s == NULL)
-		return FALSE;
-	cmd = g_strdup_printf("NOTICE %s :%s", nick, body);
-	room = e2e_stranger_room(later_backlog(s), strlen(cmd) + 2, s->cmd_queue_speed);
-	/* nothing waits and the flood rule allows: at once (as irc_send_cmd
-	   would), else behind everything else */
-	if (room)
-		irc_send_cmd_full(s, cmd, s->cmdqueue == NULL && g_get_real_time() >= s->wait_cmd &&
-		                  (s->cmdcount < s->max_cmds_at_once || s->cmd_queue_speed <= 0)
-		                  ? IRC_SEND_NOW : IRC_SEND_LATER, FALSE);
-	g_free(cmd);
-	return room;
-}
-
-/* our key of the bare context wire rotated: a stranger's KEYRSP still
-   waiting at the end of irssi's queue carries the old key and would
-   reach the peer after the REKEY - dropped (the REKEY, or their next
-   request, gives them the new one) */
-static void drop_queued_keyrsps(IRC_SERVER_REC *s, const char *wire)
-{
-	GSList *tmp, *next;
-	guint n = g_slist_length(s->cmdqueue), i = 0, first = n - MIN(n, 2 * (guint) s->cmdlater);
-
-	for (tmp = s->cmdqueue; tmp != NULL; tmp = next, i += 2) {
-		GSList *link = tmp->next;
-		char *cmd = tmp->data;
-
-		next = link != NULL ? link->next : NULL;
-		if (i < first || !e2e_line_is_keyrsp_for(cmd, wire))
-			continue;
-		if (link != NULL && link->data != NULL)
-			server_redirect_destroy(link->data);
-		s->cmdqueue = g_slist_delete_link(s->cmdqueue, link);
-		s->cmdqueue = g_slist_delete_link(s->cmdqueue, tmp);
-		s->cmdcount--;
-		s->cmdlater--;
-		e2e_wipe(cmd, strlen(cmd));
-		g_free(cmd);
-	}
-}
-
 /* ---- handles ---- */
 
 char *e2e_resolve_dm_handle(SERVER_REC *server, const E2E_JSON *kr, const char *nick)
@@ -1483,6 +1417,20 @@ static gboolean from_pump(void)
 	return in_pump && pump_emission > 0 && pump_emission == outgoing_depth;
 }
 
+/* SERVER_REC * -> E2E_STRANGERQ *: strangers' handshake NOTICEs */
+static GHashTable *stranger_qs;
+
+static E2E_STRANGERQ *stranger_queue_of(SERVER_REC *server, gboolean create)
+{
+	E2E_STRANGERQ *q = stranger_qs != NULL ? g_hash_table_lookup(stranger_qs, server) : NULL;
+
+	if (q == NULL && create && stranger_qs != NULL) {
+		q = e2e_strangerq_new(E2E_STRANGERQ_MAX);
+		g_hash_table_insert(stranger_qs, server, q);
+	}
+	return q;
+}
+
 static E2E_OUTQ *queue_of(SERVER_REC *server, gboolean create)
 {
 	E2E_OUTQ *q = g_hash_table_lookup(outqs, server);
@@ -1589,6 +1537,34 @@ static void pump_server(IRC_SERVER_REC *s, gboolean ignore_flood)
 	server_unref(server);
 }
 
+static gboolean pump_all(gpointer data);
+static void tell_busy(SERVER_REC *server, const char *ctx, const char *nick);
+
+static void start_pump(void)
+{
+	if (pump_tag == 0)
+		pump_tag = g_timeout_add(100, pump_all, NULL);
+}
+
+/* one stranger's NOTICE of s, when nothing else waits and the flood
+   rule leaves room for the user */
+static void flush_stranger(IRC_SERVER_REC *s)
+{
+	E2E_STRANGERQ *q = stranger_queue_of(SERVER(s), FALSE);
+	E2E_OUTQ *own = queue_of(SERVER(s), FALSE);
+	E2E_STRANGER_LINE *l;
+
+	if (q == NULL || e2e_strangerq_empty(q) || !s->connected || s->connection_lost ||
+	    in_pump || outgoing_depth > 0 ||
+	    !e2e_stranger_may_send(s->cmdqueue == NULL, own == NULL || e2e_outq_empty(own),
+	                           g_get_real_time(), s->wait_cmd, s->last_cmd, s->cmd_queue_speed,
+	                           s->cmdcount, s->max_cmds_at_once))
+		return;
+	l = e2e_strangerq_pop(q);
+	irc_send_cmd(s, l->line);
+	e2e_stranger_line_free(l);
+}
+
 static gboolean pump_all(gpointer data)
 {
 	GHashTableIter iter;
@@ -1600,22 +1576,89 @@ static gboolean pump_all(gpointer data)
 		if (g_hash_table_contains(outqs, tmp->data))
 			pump_server(IRC_SERVER(tmp->data), FALSE);
 	g_list_free(keys);
+	keys = g_hash_table_get_keys(stranger_qs);
+	for (tmp = keys; tmp != NULL; tmp = tmp->next)
+		if (g_hash_table_contains(stranger_qs, tmp->data))
+			flush_stranger(IRC_SERVER(tmp->data));
+	g_list_free(keys);
 	/* empty queues are not kept */
 	g_hash_table_iter_init(&iter, outqs);
 	while (g_hash_table_iter_next(&iter, NULL, &value))
 		if (e2e_outq_empty(value))
 			g_hash_table_iter_remove(&iter);
-	if (g_hash_table_size(outqs) > 0)
+	g_hash_table_iter_init(&iter, stranger_qs);
+	while (g_hash_table_iter_next(&iter, NULL, &value))
+		if (e2e_strangerq_empty(value))
+			g_hash_table_iter_remove(&iter);
+	if (g_hash_table_size(outqs) > 0 || g_hash_table_size(stranger_qs) > 0)
 		return TRUE;
 	pump_tag = 0;
 	return FALSE;
 }
 
-static void start_pump(void)
+/* strangers' NOTICEs that went for newer ones: a KEYREQ of ours among
+   them is no request waiting for an answer any more */
+static void strangers_dropped(SERVER_REC *server, GPtrArray *dropped)
 {
-	if (pump_tag == 0)
-		pump_tag = g_timeout_add(100, pump_all, NULL);
+	E2E_JSON *kr = NULL;
+	gboolean lost, changed = FALSE;
+	guint i;
+
+	for (i = 0; i < dropped->len; i++) {
+		E2E_STRANGER_LINE *l = g_ptr_array_index(dropped, i);
+
+		if (l->keyreq_wire != NULL && l->handle != NULL) {
+			if (kr == NULL && !e2e_keyring_is_lost())
+				kr = e2e_load_full(&lost);
+			if (kr != NULL)
+				changed |= e2e_forget_keyreq_wire(kr, l->keyreq_wire, l->handle) > 0;
+		}
+		e2e_stranger_line_free(l);
+	}
+	if (changed)
+		e2e_save(kr);
+	e2e_json_free(kr);
+	g_ptr_array_free(dropped, TRUE);
+	tell_busy(server, NULL, NULL);
 }
+
+gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body,
+                                  const char *handle)
+{
+	E2E_STRANGERQ *q;
+	E2E_HANDSHAKE *hs = NULL;
+	E2E_HS_TYPE type;
+	GPtrArray *dropped;
+	char *cmd, *inner;
+	size_t len;
+
+	if (!IS_IRC_SERVER(server) || (q = stranger_queue_of(server, TRUE)) == NULL)
+		return FALSE;
+	/* a KEYRSP (a REKEY goes behind it) or a KEYREQ (its pending row
+	   goes if it is dropped): its context */
+	inner = g_strdup(*body == '\001' ? body + 1 : body);
+	len = strlen(inner);
+	if (len > 0 && inner[len - 1] == '\001')
+		inner[len - 1] = '\0';
+	type = e2e_handshake_type(inner);
+	if (type == E2E_HS_KEYRSP || type == E2E_HS_KEYREQ)
+		hs = e2e_handshake_parse(inner, type);
+	cmd = g_strdup_printf("NOTICE %s :%s", nick, body);
+	dropped = e2e_strangerq_push(q, nick, cmd,
+	                             hs != NULL && type == E2E_HS_KEYRSP ? hs->channel : NULL,
+	                             hs != NULL && type == E2E_HS_KEYREQ ? hs->channel : NULL, handle);
+	e2e_wipe(cmd, strlen(cmd));
+	g_free(cmd);
+	e2e_handshake_free(hs);
+	g_free(inner);
+	start_pump();
+	/* at once when nothing waits */
+	flush_stranger(IRC_SERVER(server));
+	if (dropped != NULL)
+		strangers_dropped(server, dropped);
+	return TRUE;
+}
+
 
 /* the module's gate on the line in str */
 static void native_gate(SERVER_REC *server, GString *str)
@@ -1701,18 +1744,28 @@ static void native_gate(SERVER_REC *server, GString *str)
 	case E2E_GATE_CIPHER:
 		if (res.save_needed)
 			e2e_save(kr);
-		if (res.rotated)
-			drop_queued_keyrsps(IRC_SERVER(server), e2e_ctx_wire(res.ctx));
 		for (i = 0; res.warnings != NULL && i < res.warnings->len; i++)
 			e2e_print_warning(e2e_notice_item(server, res.ctx, target), "%s",
 			                  (char *) g_ptr_array_index(res.warnings, i));
 		lines = g_ptr_array_new_with_free_func(g_free);
 		/* a REKEY reaches each recipient before the first chunk under
 		   the new key */
-		for (i = 0; res.notices != NULL && i + 1 < res.notices->len; i += 2)
-			g_ptr_array_add(lines, g_strdup_printf("NOTICE %s :%s",
-			                                       (char *) g_ptr_array_index(res.notices, i),
-			                                       (char *) g_ptr_array_index(res.notices, i + 1)));
+		for (i = 0; res.notices != NULL && i + 1 < res.notices->len; i += 2) {
+			const char *to = g_ptr_array_index(res.notices, i);
+			char *notice = g_strdup_printf("NOTICE %s :%s", to,
+			                               (char *) g_ptr_array_index(res.notices, i + 1));
+
+			/* a peer whose KEYRSP (of the key before) still waits
+			   with the strangers' NOTICEs gets its REKEY right behind
+			   it, not before */
+			if (e2e_strangerq_push_after_keyrsp(stranger_queue_of(server, FALSE), to,
+			                                    e2e_ctx_wire(res.ctx), notice)) {
+				e2e_wipe(notice, strlen(notice));
+				g_free(notice);
+				continue;
+			}
+			g_ptr_array_add(lines, notice);
+		}
 		/* IRCv3 tags of the original line stay on the chunks */
 		for (i = 0; i < res.wires->len; i++)
 			g_ptr_array_add(lines, g_strdup_printf("%sPRIVMSG %s :%s", tags, target,
@@ -1941,6 +1994,7 @@ static void sig_server_gone(SERVER_REC *server)
 		return;
 	drop_queue(server, "disconnected", 0);
 	g_hash_table_remove(outqs, server);
+	g_hash_table_remove(stranger_qs, server);
 }
 
 /* ---- incoming messages ---- */
@@ -2214,13 +2268,15 @@ static void sig_event_privmsg(SERVER_REC *server, const char *data, const char *
 			/* a person the user confirmed: the normal queue; anyone
 			   else's behind the user's lines, and only while that
 			   leaves within E2E_STRANGER_BACKLOG */
-			if (e2e_handle_confirmed(kr, address)) {
+			/* the pending row is saved first: a drop of it later
+			   (strangers_dropped) removes it from the file */
+			if (res.save_needed)
+				e2e_save(kr);
+			res.save_needed = FALSE;
+			if (e2e_handle_confirmed(kr, address))
 				e2e_send_notice(server, nick, res.keyreq);
-			} else if (!e2e_send_notice_stranger(server, nick, res.keyreq)) {
-				e2e_forget_keyreq(kr, res.ctx, address);
-				res.ask = E2E_IN_ASK_BUSY;
-				tell_busy(server, res.ctx, nick);
-			}
+			else
+				e2e_send_notice_stranger(server, nick, res.keyreq, address);
 			e2e_print_debug(server, res.ctx, nick, "TX auto-KEYREQ to %s for %s", nick, shown);
 			g_free(shown);
 		}
@@ -2417,18 +2473,24 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 		gboolean confirmed = e2e_handle_confirmed(kr, sender);
 
 		if (rsp != NULL) {
-			if (confirmed)
+			if (confirmed) {
 				e2e_send_notice(server, nick, rsp);
-			else if (!e2e_send_notice_stranger(server, nick, rsp))
-				tell_busy(server, ctx, nick);
-			e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
+				e2e_print_debug(server, ctx, nick, "TX KEYRSP to %s for %s", nick, ctx);
+			} else {
+				e2e_send_notice_stranger(server, nick, rsp, sender);
+				e2e_print_debug(server, ctx, nick, "KEYRSP to %s for %s queued behind your own lines",
+				                nick, ctx);
+			}
 		}
 		if (recip != NULL) {
-			if (confirmed)
+			if (confirmed) {
 				e2e_send_notice(server, nick, recip);
-			else if (!e2e_send_notice_stranger(server, nick, recip))
-				tell_busy(server, ctx, nick);
-			e2e_print_debug(server, ctx, nick, "TX reciprocal KEYREQ to %s for %s", nick, ctx);
+				e2e_print_debug(server, ctx, nick, "TX reciprocal KEYREQ to %s for %s", nick, ctx);
+			} else {
+				e2e_send_notice_stranger(server, nick, recip, sender);
+				e2e_print_debug(server, ctx, nick, "reciprocal KEYREQ to %s for %s queued behind your own lines",
+				                nick, ctx);
+			}
 		}
 	}
 	e2e_wipe(before, strlen(before));
@@ -2496,6 +2558,8 @@ void e2e_core_init(void)
 	own_lines = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 	outqs = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
 	                              (GDestroyNotify) e2e_outq_free);
+	stranger_qs = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
+	                                    (GDestroyNotify) e2e_strangerq_free);
 
 	signal_add_full(MODULE_NAME, SIGNAL_PRIORITY_HIGH - 1, "server outgoing modify",
 	                (SIGNAL_FUNC) sig_server_outgoing_depth, NULL);
@@ -2610,6 +2674,8 @@ void e2e_core_deinit(void)
 	pump_tag = 0;
 	g_hash_table_destroy(outqs);
 	outqs = NULL;
+	g_hash_table_destroy(stranger_qs);
+	stranger_qs = NULL;
 	in_pump = pump_armed = FALSE;
 	pump_emission = 0;
 
