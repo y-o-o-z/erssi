@@ -148,6 +148,38 @@ static void test_truecolor_fg(void)
 	term_close();
 }
 
+/* term_window_clear() leaves the default colours, on the terminal and in
+   what term_set_color2() knows of it: the same colour set again after it
+   is sent again (before, only SGR 0 was sent and the colour was taken as
+   still set, so the next text was drawn without it) */
+static void test_window_clear_resets_colour(void)
+{
+	TERM_WINDOW *win;
+	char *colour;
+
+	term_open();
+	term_use_colors24 = 0;
+	term_width = 80;
+	term_height = 24;
+	ansi_term->lines_empty = g_new0(char, term_height);
+	term_set_color(NULL, 4 | ATTR_RESETBG);
+	fflush(ansi_term->out);
+	colour = g_strdup(buf);
+	g_assert_cmpstr(colour, !=, "");
+
+	win = term_window_create(0, 2, 10, 1);
+	term_window_clear(win);
+	term_window_destroy(win);
+	term_set_color(NULL, 4 | ATTR_RESETBG);
+	fflush(ansi_term->out);
+	if (!g_str_has_suffix(buf, colour))
+		g_error("the colour was not set again after the clear: %s", g_strescape(buf, NULL));
+
+	g_free(colour);
+	g_free(ansi_term->lines_empty);
+	term_close();
+}
+
 static void test_term_truecolor_setting(void)
 {
 	settings_add_choice("lookandfeel", "term_truecolor", 0, "auto;on;off");
@@ -180,6 +212,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term/fallback-black24", test_fallback_black24);
 	g_test_add_func("/term/truecolor-fg", test_truecolor_fg);
 	g_test_add_func("/term/term-truecolor-setting", test_term_truecolor_setting);
+	g_test_add_func("/term/window-clear-resets-colour", test_window_clear_resets_colour);
 
 	test_home_setup();
 

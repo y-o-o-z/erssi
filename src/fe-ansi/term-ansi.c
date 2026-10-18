@@ -992,7 +992,10 @@ void term_window_clear(TERM_WINDOW *window)
 {
 	int y;
 
-	ansi_set_normal(ansi_term);
+	/* the default colours, also in what the terminal is known to have
+	   (last_fg, last_bg, last_attrs): a bare SGR 0 left the old ones
+	   there, and the next text in them was drawn without its colour */
+	term_set_color(window, ATTR_RESET);
 	if (window->y == 0 && window->height == term_height && window->width == term_width) {
 		term_clear();
 	} else {
