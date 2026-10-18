@@ -246,6 +246,16 @@ EOF
             *) check "--check-tree: refused: $*" sh -c 'printf "%s\n" "$1" | grep -q "an RPATH or RUNPATH in the package - no package: .*/home/someone/lib"' sh "$out" ;;
         esac
     done
+    # a perl whose CORE directory climbs out of /usr with ".." is no
+    # exception: its RUNPATH is refused like any other
+    for core in /usr/../home/someone/CORE /usr/lib/perl/../../../home/someone/CORE; do
+        mkdir -p "$tmp/stub-perl" && printf '#!/bin/sh\nprintf %%s %s\n' "$core" > "$tmp/stub-perl/perl" &&
+            chmod 755 "$tmp/stub-perl/perl" && sed '/INIT/d' "$tmp/stub-gnu/readelf" > "$tmp/stub-rpath/readelf" &&
+            printf "echo '  0x000000000000001d (RUNPATH)            Library runpath: [%s]'\n" "$core" >> "$tmp/stub-rpath/readelf" ||
+            exit 1
+        out=$(PATH="$tmp/stub-perl:$tmp/stub-rpath:$PATH" sh "$BB" --check-tree "$TR" 2>&1)
+        check "--check-tree: a perl CORE of $core is refused" sh -c 'printf "%s\n" "$1" | grep -qF "an RPATH or RUNPATH in the package - no package: bin/erssi: $2"' sh "$out" "$core"
+    done
     if command -v cc >/dev/null 2>&1 && command -v readelf >/dev/null 2>&1; then
         RT=$tmp/rtree
         mkdir -p "$RT/bin" && printf 'int main(void) { return 0; }\n' > "$tmp/t.c" &&

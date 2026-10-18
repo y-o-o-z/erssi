@@ -208,8 +208,10 @@ check_tree() {
     # LDFLAGS, say) would be searched for libraries wherever the package
     # runs. Only the system perl's own CORE directory may be there.
     perl_core=$(perl -MConfig -e 'print "$Config{archlibexp}/CORE"' 2>/dev/null)
-    case $perl_core in
-        /usr/*) ;;
+    # under /usr, and no ".." that could climb out of it
+    case /$perl_core/ in
+        */../*) perl_core= ;;
+        //usr/*) ;;
         *) perl_core= ;;
     esac
     bad=$(printf '%s\n' "$ELFS" | while IFS= read -r f; do
