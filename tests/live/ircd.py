@@ -21,7 +21,8 @@ TESTDROP <nick> closes that nick's connection without a word, as a link that
 dies does.
 TESTRAWHEX <nick> <hex> writes those bytes (and CR LF) to that nick: a
 line that is not UTF-8.
-ISON is answered (303) with the nicks that are on.
+ISON is answered (303) with the nicks that are on, USERHOST (302) with
+nick=+user@127.0.0.1 of each.
 --nick-rules: NICKLEN=9 in 005; a nick in use gets 433 (at registration too: 001 waits for
 a nick that is free), QUIT is sent to the clients that share a channel, and
 TESTDELAY <nick> <seconds> makes a free nick unavailable for that long
@@ -274,6 +275,11 @@ async def handle(reader, writer, wire_path, times_path):
                 target = clients.get(fold(args[0]))
                 if target:
                     rename(target, args[1])
+            elif cmd == "USERHOST" and args:
+                # 302 nick=+user@host for those on (repartee learns its own
+                # address from it)
+                found = [clients[fold(n)] for n in " ".join(args).lstrip(":").split() if fold(n) in clients]
+                me.send(f":{SRV} 302 {me.nick} :" + " ".join(f"{c.nick}=+{c.user}@127.0.0.1" for c in found))
             elif cmd == "ISON":
                 on = [clients[fold(n)].nick for n in " ".join(args).lstrip(":").split() if fold(n) in clients]
                 me.send(f":{SRV} 303 {me.nick} :{' '.join(on)}")

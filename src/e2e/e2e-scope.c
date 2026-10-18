@@ -52,12 +52,15 @@ static char *label_from(const char *name)
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok)
 {
-	if (chatnet != NULL && *chatnet != '\0')
+	net->from_tag = FALSE;
+	if (chatnet != NULL && *chatnet != '\0') {
 		net->label = label_from(chatnet);
-	else if (tag != NULL && *tag != '\0')
+	} else if (tag != NULL && *tag != '\0') {
 		net->label = label_from(tag);
-	else
+		net->from_tag = TRUE;
+	} else {
 		net->label = NULL;
+	}
 	net->casemap = e2e_casemap_parse(casemapping);
 	net->legacy_ok = legacy_ok;
 }
@@ -91,7 +94,7 @@ E2E_CASEMAP e2e_casemap_of_server(const char *value, gboolean motd_done)
 
 /* the exact maps, byte by byte, in place; UNICODE takes RFC1459's.
    latin1: also the Latin-1 capitals C0-DE (not D7) to E0-FE, as the
-   ircu family folds them (R-E23) - never inside valid UTF-8 that must
+   ircu family folds them - never inside valid UTF-8 that must
    stay valid */
 static void fold_bytes(char *s, E2E_CASEMAP map, gboolean latin1)
 {
@@ -354,7 +357,7 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 	if (map == E2E_CASEMAP_UNKNOWN) {
 		/* the superset fold; but a byte code page (cp1251, koi8-r)
 		   folds the bytes of a name in UTF-8 its own way: only ASCII
-		   names are decided (R-E23) */
+		   names are decided */
 		map = E2E_CASEMAP_UNICODE;
 		decided = is_ascii(name);
 	}
@@ -364,7 +367,7 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact)
 		result = fold_unicode(name);
 		if (result != NULL) {
 			/* a server with newer tables may fold an unassigned
-			   code point any way (R-E24) */
+			   code point any way */
 			if (exact != NULL)
 				*exact = decided && !has_unassigned(name);
 			return result;
@@ -489,11 +492,11 @@ char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map)
 	}
 	if (!g_utf8_validate(name, -1, NULL))
 		return NULL;
-	/* every model must take the names for one (R-E26, R-E28):
+	/* every model must take the names for one:
 	   - per code point simple lower case (towlower, Go's
 	     unicode.ToLower), no normalisation;
 	   - whole-string lower case (Final_Sigma: #ΑΣ is #ας), GLib's
-	     rule and Unicode's own (R-E29: #ΑΣ中 is #ας中 to Unicode,
+	     rule and Unicode's own (#ΑΣ中 is #ας中 to Unicode,
 	     #ασ中 to GLib), the full mapping of U+0130 in both;
 	   - whole-string upper case (servers that compare in upper case:
 	     the Kelvin, Angstrom and Ohm signs, ß / ẞ, θ / ϴ stay apart);

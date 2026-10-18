@@ -102,6 +102,12 @@ module is built in and loaded at start (`-Dwith-e2e=no` leaves it out).
   its WeeChat (`rpe2e.py`) and irssi (`rpe2e.pl`) scripts.
 - A key request waits for `/e2e accept` (`/e2e pending` lists them), and
   your key goes only to people you accepted.
+- An encrypted message that cannot be read leaves a line in its place
+  (`[E2E: encrypted message not read - ...]`, `[E2E rejected: ...]`)
+  that says why and what to do.
+- When someone comes back from another host with the same key, or their
+  key changes, their key exchange is blocked until you decide: you are
+  told so in the window, and `/e2e reverify <ident@host>` accepts it.
 - Keys are kept per network, so `#test` on two networks has two keys.
 - The `e2e` statusbar item shows the state of the active channel or query.
 - `/help e2e` has the commands.

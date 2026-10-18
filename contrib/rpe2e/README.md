@@ -23,6 +23,7 @@ identity:
 rpe2e-from-repartee --dry-run          # what would be moved
 # in erssi first: /unload e2e  (nothing saves while the file is replaced)
 rpe2e-from-repartee --channels-off --force   # write (the module created a keyring at its first start)
+# or, with erssi on several networks: ... --network IRCnet
 # then in erssi: /load e2e
 ```
 
@@ -31,7 +32,15 @@ The tool opens the repartee database read-only, decrypts the stored secrets
 cryptographically: it derives the public key from the seed and compares
 fingerprints. When a channel appears under several names (`#chan` and
 `IRCnet\x1f#chan`) the newest session wins, with a warning when the
-variants come from different networks. An existing keyring is replaced
+variants come from different networks. The key changes (REKEY) repartee
+already took are moved too, so a recorded one is not taken again.
+
+The contexts are written without a network, as `rpe2e.pl` keeps them:
+erssi uses them as they are while it uses one network. If erssi uses
+several, each of them is refused until `/e2e adopt` in its window binds
+it to that network - or run the tool with `--network <label>` (erssi's
+chatnet name of the network, as `/e2e status` shows it, e.g. `IRCnet`)
+to write them as that network's at once. An existing keyring is replaced
 only with `--force` (a backup is kept). Secrets are never printed. Verified
 on a real repartee keyring: the moved keys decrypted every `+RPE2E01`
 message stored in the channel log.

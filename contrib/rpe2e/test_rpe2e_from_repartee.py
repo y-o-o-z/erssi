@@ -50,6 +50,7 @@ CREATE TABLE e2e_incoming_sessions (handle TEXT, channel TEXT, fingerprint BLOB,
 CREATE TABLE e2e_channel_config (channel TEXT, enabled INTEGER, mode TEXT);
 CREATE TABLE e2e_autotrust (id INTEGER PRIMARY KEY, scope TEXT, handle_pattern TEXT, created_at INTEGER);
 CREATE TABLE e2e_outgoing_recipients (channel TEXT, handle TEXT, fingerprint BLOB, first_sent_at INTEGER);
+CREATE TABLE e2e_seen_rekeys (fingerprint BLOB, channel TEXT, nonce BLOB, seen_at INTEGER);
 """
 
 
@@ -94,6 +95,8 @@ class Fixture:
         db.execute("INSERT INTO e2e_channel_config VALUES ('#chan', 0, 'normal')")
         db.execute("INSERT INTO e2e_channel_config VALUES ('IRCnet\x1f#chan', 1, 'normal')")
         db.execute("INSERT INTO e2e_outgoing_recipients VALUES ('IRCnet\x1f#chan', 'bob@example.org', ?, 150)", (pfp,))
+        self.nonce = os.urandom(16)
+        db.execute("INSERT INTO e2e_seen_rekeys VALUES (?, 'IRCnet\x1f#chan', ?, 170)", (pfp, self.nonce))
         db.commit()
         db.close()
 
@@ -130,6 +133,30 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(kr["incoming"]["bob@example.org|#chan"]["sk"]), self.f.in_new)
         self.assertEqual(kr["channels"], {"#chan": {"enabled": 1, "mode": "normal"}})
         self.assertIn("#chan|bob@example.org", kr["outgoing_recipients"])
+
+    def test_seen_rekeys_are_moved(self):
+        self.f.run()
+        kr = self.f.keyring()
+        pfp = rfr.fingerprint(self.f.peer_pk).hex()
+        self.assertEqual(kr["seen_rekeys"], {f"{pfp}|#chan": {base64.b64encode(self.f.nonce).decode(): 170}})
+
+    def test_network_keeps_the_contexts_of_that_network(self):
+        self.assertEqual(self.f.run("--network", "IRCnet"), 0)
+        kr = self.f.keyring()
+        ctx = "IRCnet\x1f#chan"
+        self.assertEqual(set(kr["outgoing"]), {ctx})
+        self.assertEqual(base64.b64decode(kr["outgoing"][ctx]["sk"]), self.f.new_sk)
+        self.assertEqual(set(kr["incoming"]), {f"bob@example.org|{ctx}"})
+        self.assertEqual(kr["channels"], {ctx: {"enabled": 1, "mode": "normal"}})
+        self.assertEqual(kr["outgoing_recipients"][f"{ctx}|bob@example.org"]["channel"], ctx)
+        pfp = rfr.fingerprint(self.f.peer_pk).hex()
+        self.assertIn(f"{pfp}|{ctx}", kr["seen_rekeys"])
+
+    def test_network_without_a_name_is_refused(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.f.run("--network", ""), 1)
+            self.assertEqual(self.f.run("--network", "a\x1fb"), 1)
+        self.assertFalse(os.path.exists(self.f.out_path))
 
     def test_channels_off_keeps_keys_but_waits_for_e2e_on(self):
         self.assertEqual(self.f.run("--channels-off"), 0)

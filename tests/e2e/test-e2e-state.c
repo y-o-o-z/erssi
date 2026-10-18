@@ -559,7 +559,7 @@ static void test_age_and_names(void)
 	g_assert_cmpstr(e2e_win_state_name(E2E_WIN_ERROR), ==, "error");
 }
 
-/* reading the state never changes the keyring (R-E18: no adoption) */
+/* reading the state never changes the keyring (no adoption) */
 static void test_read_only(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();

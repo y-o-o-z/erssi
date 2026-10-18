@@ -30,6 +30,14 @@
 #include "e2e-wire.h"
 
 #define E2E_KEYREQ_MIN_INTERVAL         30
+/* automatic KEYREQs of all senders together: at most BURST per WINDOW s */
+#define E2E_AUTO_KEYREQ_BURST           3
+#define E2E_AUTO_KEYREQ_WINDOW          10
+/* every handshake NOTICE sent by ourselves, of anyone, per WINDOW s */
+#define E2E_HANDSHAKE_CEILING           10
+/* requests of people the user did not confirm that store something or
+   are answered, all together, per WINDOW s */
+#define E2E_INBOUND_BURST               5
 #define E2E_KEYREQ_INBOUND_MIN_INTERVAL 10
 #define E2E_PENDING_KEYREQ_TTL          120
 /* growth limits of what anyone can make us store */
@@ -40,9 +48,15 @@
 #define E2E_MAX_PENDING_OUT             256
 #define E2E_MAX_TRUST_CHANGES           128
 #define E2E_MAX_SEEN_REKEYS             1024
+/* seconds the key a REKEY replaced still opens chunks */
+#define E2E_PREV_KEY_GRACE              120
 
 /* seconds since the epoch; tests replace it */
 extern gint64 (*e2e_now)(void);
+/* the e2e_bot_bypass setting: channel lines that look like bot commands
+   ('.' or '!' and a letter) go out in clear text where E2E is on (as
+   rpe2e.pl did); FALSE (the default): encrypted like any other line */
+extern gboolean e2e_bot_bypass;
 
 typedef struct {
 	unsigned char pk[32];
@@ -126,6 +140,34 @@ gboolean e2e_peer_accepted(const E2E_JSON *kr, const char *handle, const char *c
    accepted - for a DM session ("@<own>") the acceptance of "@<handle>" */
 gboolean e2e_session_accepted(const E2E_JSON *kr, const char *handle, const char *ctx,
                               const char *fp);
+/* the keys REKEYs replaced whose grace is over go (their nodes wiped);
+   how many */
+guint e2e_prune_prev_keys(E2E_JSON *kr);
+/* key requests waiting for /e2e accept longer than E2E_PENDING_INBOUND_TTL
+   go, with the keyless session row stored with them; how many */
+#define E2E_PENDING_INBOUND_TTL (24 * 3600)
+guint e2e_prune_old_requests(E2E_JSON *kr);
+/* Once per keyring (the member E2E_CONFIRM_MIGRATED marks it): the keys
+   trusted in a keyring of an erssi before 2026.10.3 or of rpe2e.pl count
+   as confirmed - their owners were trusted before the caps knew the
+   difference. An export carries the marker, and an import always sets
+   it: an import never makes a key confirmed. TRUE when it ran (the
+   caller saves). */
+#define E2E_CONFIRM_MIGRATED "confirmed_migrated"
+gboolean e2e_migrate_confirmed(E2E_JSON *kr);
+/* our pending KEYREQs to handle for the bare context wire go (they
+   were never sent): on any network; how many */
+guint e2e_forget_keyreq_wire(E2E_JSON *kr, const char *wire, const char *handle);
+/* our pending KEYREQ of ctx to handle goes (it was not sent) */
+void e2e_forget_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
+/* the key at handle is one the user confirmed (/e2e accept, autotrust,
+   reverify, unrevoke, an exchange the user started) */
+gboolean e2e_handle_confirmed(const E2E_JSON *kr, const char *handle);
+/* how many addresses keys known as nick (ASCII case) are at */
+guint e2e_nick_addresses(const E2E_JSON *kr, const char *nick);
+/* our pending KEYREQ of ctx to handle is one the user started
+   (/e2e handshake, /e2e reverify): its answer confirms the key */
+void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
 /* the ident@host of every "@<handle>" config with E2E on that belongs to
    nick (its "nick" member, or a peer last seen as nick there), of net:
    its own configs and old unscoped ones that none of its own hides */
@@ -140,6 +182,11 @@ GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const c
 gboolean e2e_fingerprint_accepted(const E2E_JSON *kr, const char *fp_hex);
 /* /e2e revoke, decline, forget: handle no longer gets our key for ctx */
 void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);
+/* the same, and handle is no recipient of our key for ctx any more (no
+   REKEY reaches them): TRUE when they had it - accepted or a recipient.
+   Our key is not rotated (as in repartee): what they hold reads our
+   messages there until it rotates (/e2e revoke, /e2e rotate). */
+gboolean e2e_stop_giving_key(E2E_JSON *kr, const char *handle, const char *ctx);
 
 typedef enum {
 	E2E_ACCEPT_SENT,	/* a pending request answered: *rsp (and *reciprocal) */
@@ -180,6 +227,9 @@ GPtrArray *e2e_rotate_for_damaged(E2E_JSON *kr, const char *ctx);
 /* /e2e unrevoke: the sessions of handle on ctx and own_ctx that hold a key
    are trusted again; how many (0: nothing changed) */
 int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx);
+/* the peer of handle is no longer revoked (its key exchanges are not
+   refused any more; no session is trusted by it); TRUE when it was */
+gboolean e2e_unrevoke_peer(E2E_JSON *kr, const char *handle);
 
 /* ---- the outbound gate ---- */
 
@@ -243,7 +293,7 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
                          const char *buf, gsize len,
                          E2E_RESOLVE_FUNC resolve, void *resolve_data);
 /*
- While rpe2e.pl is loaded (R-E19): the outgoing buffer buf, which the
+ While rpe2e.pl is loaded: the outgoing buffer buf, which the
  script let pass unchanged, decided as the module would decide it with a
  dry gate: kr is never changed, nothing is adopted, no key is made.
   - One line: decided on the rows rpe2e.pl cannot see - a copy of kr
@@ -253,7 +303,7 @@ char *e2e_gate_multiline(E2E_JSON *kr, gboolean kr_ok, const E2E_NET *net,
     another name (CASEMAPPING): the script compares names exactly and
     would send it in clear (E2E_SCRIPT_REFUSE_CASE), and for a single
     nick with no address the script finds (a non-ASCII nick: none but a
-    live one, R-E30) an old bare-nick row of another spelling or an old
+    live one) an old bare-nick row of another spelling or an old
     query of that nick (its "nick", or a peer last seen as it)
     (E2E_SCRIPT_REFUSE_NICK, _NICK_UNKNOWN), or, at an address whose old
     config is off, a query of that nick with E2E on elsewhere
@@ -289,6 +339,22 @@ gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
 
 /* ---- incoming messages ---- */
 
+/* Chunks read lately, to drop one the server delivers again: the
+   timestamp check lets a ciphertext through for E2E_TS_TOLERANCE either
+   way, and repartee and rpe2e.pl show such a repeat again. A chunk is
+   remembered by a SHA-256 of its storage context (network included),
+   sender and parsed fields (msgid, ts, part, total, nonce, ciphertext -
+   not its spelling) for as long as the timestamp check would take it, at
+   most max of them (the oldest go first: memory stays bounded under a
+   flood; only chunks that opened under a trusted key are remembered). */
+typedef struct _E2E_REPLAY E2E_REPLAY;
+#define E2E_REPLAY_MAX 4096
+E2E_REPLAY *e2e_replay_new(guint max);
+void e2e_replay_free(E2E_REPLAY *r);
+/* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
+gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w);
+guint e2e_replay_size(const E2E_REPLAY *r);
+
 typedef struct {
 	const char *nick;	/* sender */
 	const char *handle;	/* sender's ident@host */
@@ -301,6 +367,7 @@ typedef struct {
 	void *resolve_data;
 	GHashTable *keyreq_stamps;	/* the 30 s limiter of our KEYREQs */
 	const E2E_NET *net;	/* the network; NULL: unscoped (as before) */
+	E2E_REPLAY *replay;	/* chunks read lately (NULL: not checked) */
 } E2E_IN_PARAMS;
 
 typedef enum {
@@ -310,21 +377,128 @@ typedef enum {
 	E2E_IN_WAIT_OWN		/* a DM before our handle is known: hide, tell */
 } E2E_IN_ACTION;
 
+/* why a DROP is not shown: e2e_in_placeholder() says it to the user */
+typedef enum {
+	E2E_IN_WHY_NONE,
+	E2E_IN_WHY_NO_SESSION,	/* no key from the sender here yet (res->ask) */
+	E2E_IN_WHY_TRUST,	/* a trust change of the sender waits for the user
+				   (e2e_trust_changes): no key is asked for */
+	E2E_IN_WHY_REVOKED,	/* the sender's session here is revoked (/e2e decline,
+				   /e2e revoke): not read, no key is asked for */
+	E2E_IN_WHY_REJECTED,	/* it does not open under their key (res->reason) */
+	E2E_IN_WHY_STALE,	/* its time is out of the window (res->skew) */
+	E2E_IN_WHY_OWN_COPY,	/* our own line relayed back, not under our key now */
+	E2E_IN_WHY_BLOCKED,	/* an old context of unknown network: off here */
+	E2E_IN_WHY_REPEAT	/* the same chunk again (E2E_REPLAY): dropped */
+} E2E_IN_WHY;
+
+/* E2E_IN_WHY_NO_SESSION: what became of the key request */
+typedef enum {
+	E2E_IN_ASK_NONE,
+	E2E_IN_ASK_SENT,	/* res->keyreq goes to the sender */
+	E2E_IN_ASK_RECENT,	/* one went to that handle within E2E_KEYREQ_MIN_INTERVAL */
+	E2E_IN_ASK_WAITING,	/* ours waits for their answer (E2E_PENDING_KEYREQ_TTL) */
+	E2E_IN_ASK_OFF,		/* E2E is off here: nothing is asked */
+	E2E_IN_ASK_FAILED,	/* no identity, or the request could not be made */
+	E2E_IN_ASK_BUSY		/* the cap of all senders together is reached */
+} E2E_IN_ASK;
+
 typedef struct {
 	E2E_IN_ACTION action;
+	E2E_IN_WHY why;		/* DROP: why */
+	E2E_IN_ASK ask;		/* E2E_IN_WHY_NO_SESSION, _REJECTED */
+	char *reason;		/* E2E_IN_WHY_REJECTED: what was wrong, for the user */
+	gint64 skew;		/* E2E_IN_WHY_STALE: now - its time */
+	gboolean own;		/* our own line relayed back */
 	char *plain;		/* PLAIN: valid UTF-8 */
 	char *ctx;		/* the storage context (bare until it is found) */
 	char *keyreq;		/* DROP: an automatic KEYREQ to send to the sender */
 	char *debug;		/* why it was dropped */
 	gboolean save_needed;	/* a KEYREQ of ours is pending, or old rows taken over */
 	char *via;		/* PLAIN under the session of another channel, which the
-				   server may keep apart from the wire's (R-E22): that
+				   server may keep apart from the wire's: that
 				   channel's name, for the display (e2e_plain_with_via) */
 } E2E_IN_RESULT;
 
 void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PARAMS *p,
                           const char *text, E2E_IN_RESULT *res);
 void e2e_in_result_clear(E2E_IN_RESULT *res);
+/* The text shown in place of an encrypted message that is not shown -
+   one line per message, so the user sees that someone writes and why it
+   cannot be read: res a DROP of e2e_decrypt_incoming (kr the keyring it
+   used, for a trust change that waits), nick and handle its sender (shown
+   with control bytes as '?'). Valid UTF-8, no line break. */
+char *e2e_in_placeholder(const E2E_JSON *kr, const E2E_IN_RESULT *res, const char *nick,
+                         const char *handle);
+/* the same for a message the module cannot even try to read */
+#define E2E_PLACEHOLDER_LOST "[E2E: encrypted message not read - the keyring is lost: /e2e reset starts a new one, /e2e import loads an export]"
+#define E2E_PLACEHOLDER_UNREADABLE "[E2E: encrypted message not read - the keyring cannot be read: fix the file (permissions, its layout) or /e2e import an export]"
+#define E2E_PLACEHOLDER_OWN_UNKNOWN "[E2E: encrypted message not read - your own address is not known yet (waiting for the WHOIS reply); the next one will be]"
+
+/* ---- trust changes ---- */
+
+/* The trust changes recorded for key exchanges that are blocked and still
+   are (rows of pending_trust_change: "handle", "channel", "change" -
+   handle_changed, fingerprint_changed or revoked - "old_fp", "new_fp",
+   "nick", "recorded_at"): a row whose change no longer holds (/e2e
+   reverify, /e2e unrevoke, /e2e forget since) is left out. Of handle,
+   or all for NULL; the newest first. The rows are kr's. */
+GPtrArray *e2e_trust_changes(const E2E_JSON *kr, const char *handle);
+
+typedef enum {
+	E2E_REVERIFY_REBOUND,	/* a known key at a new address: it is that address's now */
+	E2E_REVERIFY_INSTALLED,	/* a new key at a known address: trusted there now */
+	E2E_REVERIFY_AMBIGUOUS,	/* several changes wait: listed, nothing done */
+	E2E_REVERIFY_NO_MATCH,	/* none of them has the fingerprint given: listed, nothing done */
+	E2E_REVERIFY_STALE,	/* the key of the change was forgotten since: the record goes */
+	E2E_REVERIFY_PURGED,	/* nothing to accept: the data of the address went */
+	E2E_REVERIFY_NOTHING,	/* nothing to accept, nothing stored */
+	E2E_REVERIFY_NICK_AMBIGUOUS,	/* the nick names keys at several addresses:
+					   candidates have their "handle" */
+	E2E_REVERIFY_BAD_FP	/* the fingerprint given is not 8 or more hex digits */
+} E2E_REVERIFY_RESULT;
+
+typedef struct {
+	E2E_REVERIFY_RESULT result;
+	char *handle;		/* the address now (REBOUND: the new one) */
+	char *old_handle;	/* REBOUND: where the key was */
+	char *fp;		/* REBOUND, INSTALLED, STALE: the fingerprint accepted */
+	char *old_fp;		/* INSTALLED: the key it replaces */
+	char *nick;		/* the peer's nick, as last seen (or NULL) */
+	GPtrArray *installed;	/* REBOUND, INSTALLED: the contexts where a session
+				   from the blocked answer is trusted now */
+	GPtrArray *ctxs;	/* REBOUND, INSTALLED: the other contexts of the
+				   blocked exchanges, to ask for the key again */
+	GPtrArray *candidates;	/* AMBIGUOUS, NO_MATCH: copies of the rows waiting */
+	int removed;		/* PURGED: rows removed */
+} E2E_REVERIFY;
+
+/*
+ /e2e reverify: the user accepts the trust change that waits for an
+ address (e2e_trust_changes). who is what the user typed, an ident@host
+ or a nick; live the nick's address now (a query, a common channel), or
+ NULL - not used: who holds a nick now proves nothing; fp_prefix the
+ start of the fingerprint to accept (any case) or NULL. A nick names the
+ address of the key we trust known as it - refused when there are
+ several - and only a change of such a key; an address names its own
+ changes first, else a handle change away from it. A fingerprint is 8 or
+ more hex digits. Exactly one change must be in question:
+  - a handle change: the key is moved to the new address - its acceptance
+    and recipient rows of channels go with it, the sessions of the old
+    and of the new address go (a new key exchange sets them up), another
+    key bound to the new address loses it;
+  - a key change: the old key of the address goes with its sessions,
+    acceptances and recipients, the new one is trusted there;
+ the session of a blocked KEYRSP (kept with its record, signed by that
+ key) is trusted then, so the next message reads; every change filed
+ under the address goes. Without one (or with a
+ revoked peer only, which /e2e unrevoke answers) the address's data goes:
+ its peer, sessions and recipients, so that a new exchange starts anew.
+ The caller saves and frees out (e2e_reverify_clear).
+*/
+void e2e_reverify(E2E_JSON *kr, const char *who, const char *live, const char *fp_prefix,
+                  E2E_REVERIFY *out);
+void e2e_reverify_clear(E2E_REVERIFY *r);
 /* plain marked "\017 (E2E key of <via>)" - the formatting reset first,
    inside the \001 of an ACTION; control bytes of via shown as '?' */
 char *e2e_plain_with_via(const char *plain, const char *via);

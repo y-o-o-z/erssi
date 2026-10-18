@@ -139,6 +139,19 @@ static char *table_resolve(const char *nick, const E2E_JSON *kr, void *data)
 	return h != NULL ? g_strdup(h) : NULL;
 }
 
+/* the budgets of all senders together ("\001<name>|<n>" in the stamps
+   table) free again: a test of what a flood stores, with time passing */
+static void free_budgets(GHashTable *stamps)
+{
+	GHashTableIter iter;
+	gpointer key;
+
+	g_hash_table_iter_init(&iter, stamps);
+	while (g_hash_table_iter_next(&iter, &key, NULL))
+		if (*(const char *) key == '\001')
+			g_hash_table_iter_remove(&iter);
+}
+
 /* run one channel message through the gate of from and the decryption of to */
 static char *send_channel(PEER *from, PEER *to, const char *chan, const char *text)
 {
@@ -303,12 +316,20 @@ static void test_handshake_modes(void)
 	g_assert_null(rsp);
 	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 0);
 
-	/* quiet: ignored as well, the peer is remembered */
+	/* quiet: ignored as well, and nothing of the stranger is stored */
 	enable(&b, "#test", "quiet");
-	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	{
+		char *before = e2e_keyring_snapshot(b.kr), *after;
+
+		deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+		after = e2e_keyring_snapshot(b.kr);
+		g_assert_cmpstr(before, ==, after);
+		g_free(before);
+		g_free(after);
+	}
 	g_assert_null(rsp);
 	g_assert_null(path_get(b.kr, "pending_inbound", ALICE "|#test", NULL));
-	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 1);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "peers")), ==, 0);
 
 	/* auto-accept: KEYRSP and our own KEYREQ back */
 	enable(&b, "#test", "auto-accept");
@@ -511,6 +532,8 @@ static void test_gate(void)
 	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
 	E2E_JSON *out;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, -1);
 	g_hash_table_insert(nicks, (char *) "bob", (char *) BOB);
 
@@ -604,14 +627,15 @@ static void test_gate(void)
 	g_assert_cmpstr(g.message, ==, E2E_REFUSE_NO_HANDLE);
 	e2e_gate_result_clear(&g);
 
-	/* a keyring that could not be read: nothing but bot commands */
+	/* a keyring that could not be read: nothing at all, a bot command
+	   neither (it may be a channel with E2E on) */
 	e2e_gate_decide(a.kr, FALSE, &a.id, NULL, "#plain", "hello", table_resolve, nicks, &g);
 	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
 	g_assert_cmpstr(g.message, ==, E2E_REFUSE_KEYRING);
 	e2e_gate_result_clear(&g);
 	e2e_gate_decide(a.kr, FALSE, &a.id, NULL, "#plain", ".op", table_resolve, nicks, &g);
-	g_assert_cmpint(g.action, ==, E2E_GATE_BYPASS);
-	g_assert_nonnull(g.message);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_cmpstr(g.message, ==, E2E_REFUSE_KEYRING);
 	e2e_gate_result_clear(&g);
 
 	/* a scheduled rotation: a new key, REKEY to the recipients first */
@@ -660,6 +684,7 @@ static void test_gate(void)
 #undef GATE
 	g_hash_table_destroy(nicks);
 	peer_free(&a);
+	e2e_bot_bypass = FALSE;
 }
 
 static void test_incoming(void)
@@ -827,6 +852,9 @@ static void test_export_import(void)
 	e2e_json_remove(b.kr, "seen_rekeys");
 	e2e_json_remove(kr, "accepted");
 	e2e_json_remove(kr, "seen_rekeys");
+	/* an import marks the migration done (b's keyring never ran it) */
+	g_assert_nonnull(e2e_json_get(kr, "confirmed_migrated"));
+	e2e_json_remove(kr, "confirmed_migrated");
 	s1 = e2e_keyring_snapshot(b.kr);
 	s2 = e2e_keyring_snapshot(kr);
 	g_assert_cmpstr(s1, ==, s2);
@@ -848,7 +876,7 @@ static void test_export_import(void)
 	peer_free(&b);
 }
 
-/* ---- the findings of the security review ---- */
+/* ---- hardening beyond rpe2e.pl and repartee ---- */
 
 #define MAL   "mallory@127.0.0.1"
 #define THIRD "@bob@b.host"
@@ -927,7 +955,7 @@ static void exchange(PEER *to, PEER *from, const char *ctx)
 }
 
 /* C1: a session we asked for is no permission to give our key away */
-static void test_review_c1(void)
+static void test_keyrsp_is_no_acceptance(void)
 {
 	PEER a, m;
 	E2E_IN_RESULT r;
@@ -990,7 +1018,7 @@ static void test_review_c1(void)
 
 /* C2: a REKEY replaces a trusted session of that handle and context, it
    never creates one; a DM request names its sender */
-static void test_review_c2(void)
+static void test_rekey_needs_session(void)
 {
 	static const char *const ctxs[] = { "#secret", THIRD, NULL };
 	PEER a, m, b;
@@ -1084,7 +1112,7 @@ static void test_review_c2(void)
 }
 
 /* M7: a REKEY is used once */
-static void test_review_m7(void)
+static void test_rekey_replay(void)
 {
 	PEER a, b;
 	unsigned char k1[32], k2[32], got[32];
@@ -1137,8 +1165,8 @@ static char *fixed_resolve(const char *nick, const E2E_JSON *kr, void *data)
 	return g_strdup(data);
 }
 
-/* I3: E2E is on for a nick's old ident@host: refused, not clear text */
-static void test_review_i3(void)
+/* E2E is on for a nick's old ident@host: refused, not clear text */
+static void test_dm_handle_changed(void)
 {
 	E2E_JSON *kr = e2e_keyring_new(), *peer;
 	E2E_GATE_RESULT g;
@@ -1172,8 +1200,8 @@ static void test_review_i3(void)
 	e2e_json_free(kr);
 }
 
-/* I5: a session row without a real key is never trusted, never used */
-static void test_review_i5(void)
+/* a session row without a real key is never trusted, never used */
+static void test_no_key_no_trust(void)
 {
 	PEER a, m;
 	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
@@ -1234,7 +1262,7 @@ static void test_review_i5(void)
 }
 
 /* M1: no line breaks or NUL out of a decrypted message */
-static void test_review_m1(void)
+static void test_control_characters(void)
 {
 	PEER a, b;
 	E2E_WIRE w;
@@ -1268,14 +1296,13 @@ static void test_review_m1(void)
 	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(r.plain, ==, "one two three four \002bold\002 \00304red");
 	e2e_in_result_clear(&r);
-	g_free(line);
 	peer_free(&a);
 	peer_free(&b);
 }
 
 /* M6: a KEYRSP answers our request to that handle, and only one that
    opens counts */
-static void test_review_m6(void)
+static void test_keyrsp_binding(void)
 {
 	PEER a, b, m;
 	unsigned char eph[32], eph_sk[32];
@@ -1319,7 +1346,7 @@ static void test_review_m6(void)
 
 /* M8: what strangers can make us store is bounded, the handshakes are
    rate-limited */
-static void test_review_m8(void)
+static void test_limits(void)
 {
 	PEER a;
 	GHashTable *stamps = e2e_stamps_new();
@@ -1338,6 +1365,7 @@ static void test_review_m8(void)
 		req = e2e_build_keyreq(kr, &id, "#c", ALICE, &error);
 		body = unframe(req);
 		fake_now++;
+		free_budgets(a.stamps);
 		e2e_handle_keyreq(a.kr, &a.id, a.stamps, NULL, handle, "u", body, ALICE, &rsp, &recip);
 		g_assert_null(rsp);
 		g_free(body);
@@ -1373,7 +1401,7 @@ static void test_review_m8(void)
 }
 
 /* M10: timestamps from an imported keyring, rotations, long targets */
-static void test_review_m10(void)
+static void test_robustness(void)
 {
 	PEER a, b;
 	E2E_GATE_RESULT g;
@@ -1440,8 +1468,8 @@ static void test_review_m10(void)
 	peer_free(&b);
 }
 
-/* I2: one outgoing buffer, several IRC lines */
-static void test_review_i2(void)
+/* one outgoing buffer, several IRC lines */
+static void test_multiline_buffer(void)
 {
 	static const char nul_buf[] = "PRIVMSG #pub :a\0PRIVMSG #secret :b";
 	E2E_JSON *kr = e2e_keyring_new();
@@ -1476,12 +1504,12 @@ static void test_review_i2(void)
 	e2e_json_free(kr);
 }
 
-/* ---- second round of the review ---- */
+/* ---- more of the hardening ---- */
 
 #define CAROL "carol@127.0.0.1"
 
-/* I3: E2E on for a nick whose address is not known at all now */
-static void test_review2_i3_unresolved(void)
+/* E2E on for a nick whose address is not known at all now */
+static void test_unresolved_nick(void)
 {
 	E2E_JSON *kr = e2e_keyring_new(), *cfg, *peer;
 	E2E_GATE_RESULT g;
@@ -1510,7 +1538,7 @@ static void test_review2_i3_unresolved(void)
 }
 
 /* M7: replaying an old REKEY after many newer ones */
-static void test_review2_rekey_replay(void)
+static void test_rekey_replay_after_many(void)
 {
 	PEER a, b;
 	unsigned char k1[32], k[32], got[32];
@@ -1555,7 +1583,7 @@ static void test_review2_rekey_replay(void)
 }
 
 /* M8: wires from many handles, half of them answering our KEYREQ */
-static void test_review2_growth(void)
+static void test_growth_from_wires(void)
 {
 	PEER a, b;
 	E2E_IN_RESULT r;
@@ -1587,6 +1615,7 @@ static void test_review2_growth(void)
 		enable(&m, "#g", "auto-accept");
 		wire = gate_wire(&m, "#g", "x");
 		fake_now++;
+		free_budgets(a.stamps);
 		recv_wire(&a, &m, "#g", wire, &r);
 		g_assert_nonnull(r.keyreq);
 		if (i % 2 == 0) {
@@ -1622,7 +1651,7 @@ static void test_review2_growth(void)
 }
 
 /* REKEYs go only to recipients that were accepted */
-static void test_review2_rekey_recipients(void)
+static void test_rekey_to_accepted_only(void)
 {
 	PEER a, b, c;
 	E2E_GATE_RESULT g;
@@ -1671,7 +1700,7 @@ static void test_review2_rekey_recipients(void)
 }
 
 /* /e2e reset drops queued PRIVMSGs: every line of a queued buffer counts */
-static void test_review2_buffer_privmsg(void)
+static void test_queued_buffer_privmsg(void)
 {
 	static const char nul_buf[] = "NICK a\0PRIVMSG #s :b";
 
@@ -1685,7 +1714,7 @@ static void test_review2_buffer_privmsg(void)
 }
 
 /* /e2e off in a query turns off the address of that query only */
-static void test_review2_query_off(void)
+static void test_query_off_this_address(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
 	GPtrArray *t;
@@ -1758,6 +1787,7 @@ static void keyreq_from(PEER *to, const E2E_NET *net, const char *h)
 	g_assert_true(e2e_identity_get(kr, &id, TRUE, &created, &error));
 	req = e2e_build_keyreq(kr, &id, "#test", to->handle, &error);
 	body = unframe(req);
+	free_budgets(to->stamps);
 	e2e_handle_keyreq(to->kr, &to->id, to->stamps, net, h, "u", body, to->handle, &rsp, &recip);
 	g_assert_null(rsp);
 	g_free(body);
@@ -2130,7 +2160,7 @@ static void test_scope_rekey_dm_config(void)
 
 static void legacy_bob_real(PEER *a);
 
-/* I1 (fix round 1): a handle may hold '|' and 0x1F; the network of a
+/* a handle may hold '|' and 0x1F; the network of a
    waiting request is its row's, not whatever follows the first '|' */
 static void test_scope_prune_confused_handle(void)
 {
@@ -2322,7 +2352,7 @@ static void test_legacy_dm_reciprocal_in_place(void)
 }
 
 
-/* N1 (fix round 2): the global cap takes from the network holding the
+/* the global cap takes from the network holding the
    most requests, not the oldest of all - a flood on other networks does
    not push a network's real requests out */
 static void test_scope_prune_global_fair(void)
@@ -2367,7 +2397,7 @@ static void test_scope_prune_global_fair(void)
 	peer_free(&a);
 }
 
-/* N2: an export and import keep every member of the config and key rows:
+/* an export and import keep every member of the config and key rows:
    the network that took a name over, the nick of a DM config */
 static void test_legacy_import_keeps_members(void)
 {
@@ -2458,7 +2488,7 @@ static E2E_IN_ACTION dm_decrypt(PEER *to, PEER *from, const E2E_NET *net, const 
 	return action;
 }
 
-/* N3: the user's own DM line to bob takes bob's old DM sessions to us
+/* the user's own DM line to bob takes bob's old DM sessions to us
    ("@<own>") over with "@<bob>", not those of others */
 static void test_legacy_dm_sessions_follow(void)
 {
@@ -2664,7 +2694,7 @@ static void test_legacy_mixed_keyrsp(void)
 	peer_free(&b);
 }
 
-/* N4: the pending notice looks the request up where the handler put it */
+/* the pending notice looks the request up where the handler put it */
 static void test_legacy_pending_notice_key(void)
 {
 	PEER a;
@@ -2722,7 +2752,7 @@ static void test_scope_prune_global_cap(void)
 	peer_free(&a);
 }
 
-/* R-E18 (fix round 1): someone else's traffic never binds old rows to a
+/* someone else's traffic never binds old rows to a
    network; once the user's own line has, another network is refused */
 static void test_legacy_stranger_does_not_adopt(void)
 {
@@ -3029,13 +3059,15 @@ static void test_legacy_single_network(void)
 		fake_now = 1791564129;
 		in_params(&in, &a, "bob", BOB, "#other", &net_one);
 		e2e_decrypt_incoming(a.kr, &a.id, &in, vec_wire[0].wire[0], &r);
-		/* the AAD is "#test": not this channel's message */
+		/* the AAD is "#test": not this channel's message (bob's key
+		   is asked for, under the old row where it is) */
 		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
-		g_assert_false(r.save_needed);
 		e2e_in_result_clear(&r);
 	}
 	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|#other", NULL));
 	g_assert_null(path_get(a.kr, "incoming", BOB "|E2E\x1f#other", NULL));
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f#other|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "channels", "E2E\x1f#other", NULL));
 	peer_free(&a);
 }
 
@@ -3079,6 +3111,8 @@ static void test_legacy_multi_network(void)
 	GHashTable *nicks = g_hash_table_new(g_str_hash, g_str_equal);
 	char *before, *after, *plain, *rsp = NULL, *recip = NULL, *msg;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, 0x41);
 	legacy_fixture_fill(a.kr);
 	/* old rows that rpe2e.pl's KEYRSP and REKEY (from bob) would match:
@@ -3164,6 +3198,7 @@ static void test_legacy_multi_network(void)
 	g_hash_table_destroy(nicks);
 	peer_free(&a);
 	peer_free(&b);
+	e2e_bot_bypass = FALSE;
 }
 
 /* rows of this network exist: they are used, old ones are left alone */
@@ -3333,7 +3368,7 @@ static void test_scope_separator_in_name(void)
 }
 
 
-/* ---- regressions of the reviews (fix round 3) ---- */
+/* ---- regressions ---- */
 
 static E2E_NET net_two_only = { (char *) "E2E2", E2E_CASEMAP_RFC1459, TRUE };
 
@@ -3369,7 +3404,7 @@ static void flood(PEER *a, const char *label, int count, const char *fmt)
 	}
 }
 
-/* N1: floods on every other network, also with handles that read like
+/* floods on every other network, also with handles that read like
    B's, never push B's real requests out */
 static void test_regress_flood_around_b(void)
 {
@@ -3395,7 +3430,7 @@ static void test_regress_flood_around_b(void)
 	peer_free(&a);
 }
 
-/* N1: the global cap shares out evenly among the fullest networks, and a
+/* the global cap shares out evenly among the fullest networks, and a
    smaller one is not touched while others hold more */
 static void test_regress_fair_share(void)
 {
@@ -3427,7 +3462,7 @@ static void test_regress_fair_share(void)
 	peer_free(&a);
 }
 
-/* N2: export and import give back the config and key rows member for
+/* export and import give back the config and key rows member for
    member, and B stays refused */
 static void test_regress_export_import(void)
 {
@@ -3670,7 +3705,7 @@ static void test_regress_replay_across_adoption(void)
 	peer_free(&a);
 }
 
-/* the stranger of R-E18: a signed KEYREQ and a wire for #test on the only
+/* a stranger: a signed KEYREQ and a wire for #test on the only
    network, then a second one - #test there is never clear text */
 static void test_regress_cross_network_stranger(void)
 {
@@ -3857,7 +3892,7 @@ static void test_casemap_other_network_ignored(void)
 	e2e_json_free(kr);
 }
 
-/* R-E11: a target that is not UTF-8 on a Unicode CASEMAPPING cannot be
+/* a target that is not UTF-8 on a Unicode CASEMAPPING cannot be
    compared as the server compares it: refused while E2E is on for a
    channel of this network; nor can a config of such a name */
 static void test_casemap_not_utf8_refused(void)
@@ -3963,7 +3998,7 @@ static void test_casemap_decrypt_folded_target(void)
 	g_assert_cmpint(cm_decrypt(&a, &one, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(plain, ==, "hello");
 	g_free(plain);
-	/* incoming traffic never takes old rows over (R-E18) */
+	/* incoming traffic never takes old rows over */
 	g_assert_nonnull(path_get(a.kr, "incoming", BOB "|" ZABA_LOWER, NULL));
 	g_assert_null(path_get(a.kr, "incoming", BOB "|E2E\x1f" ZABA_LOWER, NULL));
 	peer_free(&a);
@@ -4167,8 +4202,7 @@ static void test_casemap_superset(void)
 						g_error("map %d: %s is another channel than %s, yet refused",
 						        maps[m], variant, name->str);
 				}
-				g_free(line);
-				g_free(vfold);
+							g_free(vfold);
 				g_free(variant);
 			}
 			g_free(want);
@@ -4207,7 +4241,7 @@ static void test_casemap_dm_nick(void)
 	e2e_json_free(kr);
 }
 
-/* ---- CASEMAPPING, fix round 1 (R-E22 .. R-E24) ---- */
+/* ---- CASEMAPPING ---- */
 
 static E2E_NET cm_unknown = { (char *) "E2E", E2E_CASEMAP_UNKNOWN, FALSE };
 
@@ -4247,7 +4281,7 @@ static E2E_IN_ACTION cm_moved(const E2E_NET *net, const char *session_ctx, const
 	return action;
 }
 
-/* R-E22 (I1): the superset fold also opens bob's #a[b line delivered as
+/* the superset fold also opens bob's #a[b line delivered as
    #a{b - a channel a Unicode server keeps apart. The AEAD does not
    reject it (the AAD is the session's name): the line is marked with
    the channel whose key opened it. */
@@ -4281,7 +4315,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpint(cm_moved(&cm_unicode, ZABA_LOWER, "#\xc5\xbb" "ABA", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
-	/* R-E26: names a per code point server (towlower, Go) or a PRECIS
+	/* names a per code point server (towlower, Go) or a PRECIS
 	   one keeps apart: marked */
 	{
 		static const struct { const char *session, *target; } apart[] = {
@@ -4298,7 +4332,7 @@ static void test_casemap_decrypt_marked(void)
 			g_free(via);
 		}
 	}
-	/* R-E28: a server comparing in upper case keeps the Kelvin sign
+	/* a server comparing in upper case keeps the Kelvin sign
 	   apart from k, and Final_Sigma makes #ΑΣ #ας: marked */
 	g_assert_cmpint(cm_moved(&cm_unicode, "#k", "#\xe2\x84\xaa", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, "#k");
@@ -4309,7 +4343,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpstr(via, ==, "#\xce\xb1\xcf\x83");
 	g_free(plain);
 	g_free(via);
-	/* R-E26: an unknown CASEMAPPING (cp1250, cp1251) may keep any
+	/* an unknown CASEMAPPING (cp1250, cp1251) may keep any
 	   non-ASCII spelling apart: marked */
 	g_assert_cmpint(cm_moved(&cm_unknown, ZABA_LOWER, ZABA_UPPER, &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, ZABA_LOWER);
@@ -4326,7 +4360,7 @@ static void test_casemap_decrypt_marked(void)
 	g_assert_cmpint(cm_moved(&cm_rfc1459, "#a[b", "#A{B", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_null(via);
 	g_free(plain);
-	/* ... but their Latin-1 bytes (R-E23) are not every server's */
+	/* ... but their Latin-1 bytes are not every server's */
 	g_assert_cmpint(cm_moved(&cm_rfc1459, "#\xe9", "#\xc9", &plain, &via), ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(via, ==, "#\xe9");
 	g_free(plain);
@@ -4346,14 +4380,14 @@ static void test_casemap_decrypt_marked(void)
 	plain = e2e_plain_with_via("x", "#a\003" "4b");
 	g_assert_cmpstr(plain, ==, "x\017 (E2E key of #a?4b)");
 	g_free(plain);
-	/* R-E26: formatting left on by the text (black on black) is reset
+	/* formatting left on by the text (black on black) is reset
 	   before the mark */
 	plain = e2e_plain_with_via("x\00301,01", "#a[b");
 	g_assert_cmpstr(plain, ==, "x\00301,01\017 (E2E key of #a[b)");
 	g_free(plain);
 }
 
-/* R-E23 (I2a): servers of the ircu family fold Latin-1 bytes */
+/* servers of the ircu family fold Latin-1 bytes */
 static void test_casemap_latin1_bytes(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4370,7 +4404,7 @@ static void test_casemap_latin1_bytes(void)
 	e2e_json_free(kr);
 }
 
-/* R-E23 (I2b): an unknown CASEMAPPING may be a byte code page */
+/* an unknown CASEMAPPING may be a byte code page */
 static void test_casemap_unknown_codepage(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4391,7 +4425,7 @@ static void test_casemap_unknown_codepage(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M1: before 005, the widest map */
+/* before 005, the widest map */
 static void test_casemap_before_005(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4405,7 +4439,7 @@ static void test_casemap_before_005(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M2: only channel configs count for R-E11 */
+/* only channel configs count for a name that cannot be decided */
 static void test_casemap_r_e11_channels_only(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4417,7 +4451,7 @@ static void test_casemap_r_e11_channels_only(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M3: /e2e off in a query names its nick exactly */
+/* /e2e off in a query names its nick exactly */
 static void test_casemap_off_exact(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4439,7 +4473,7 @@ static void test_casemap_off_exact(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M4: an unassigned code point is not decided */
+/* an unassigned code point is not decided */
 static void test_casemap_unassigned(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -4451,7 +4485,7 @@ static void test_casemap_unassigned(void)
 	e2e_json_free(kr);
 }
 
-/* R-E24 M6: with rpe2e.pl loaded, a name the server takes for the
+/* with rpe2e.pl loaded, a name the server takes for the
    script's own (bare) entry but which the script, comparing exactly,
    does not know */
 static void test_casemap_guard_bare_rows(void)
@@ -4495,11 +4529,18 @@ static void test_casemap_guard_bare_rows(void)
 	g_free(m);
 	g_free(t);
 	line = "PRIVMSG #MULTI :!seen x";
+	e2e_bot_bypass = TRUE;
 	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_ascii, line, strlen(line),
 	                                 no_resolve, NULL, &m, &t), !=, E2E_GATE_REFUSE);
 	g_free(m);
 	g_free(t);
-	/* R-E26: rpe2e.pl does not split "#x,#y": a piece the server takes
+	/* without the bypass the module would encrypt it: refused */
+	e2e_bot_bypass = FALSE;
+	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_ascii, line, strlen(line),
+	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+	g_free(m);
+	g_free(t);
+	/* rpe2e.pl does not split "#x,#y": a piece the server takes
 	   for a channel E2E is on for there, the same name too */
 	line = "PRIVMSG #x," ZABA_LOWER " :hello";
 	g_assert_cmpint(e2e_script_guard(kr, TRUE, FALSE, FALSE, &cm_unicode, line, strlen(line),
@@ -4526,7 +4567,7 @@ static void test_casemap_guard_bare_rows(void)
 	                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_PASS);
 	g_free(m);
 	g_free(t);
-	/* R-E26: the script encrypts from its own row whatever the module's
+	/* the script encrypts from its own row whatever the module's
 	   config of the name says - one that is off does not hide it */
 	enable(&p, "E2E\x1f" ZABA_LOWER, "normal");
 	e2e_json_set_int(path_get(kr, "channels", "E2E\x1f" ZABA_LOWER, NULL), "enabled", 0);
@@ -4562,7 +4603,7 @@ static void test_casemap_ircnet_short_name(void)
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!other", NULL), ==, E2E_GATE_PASS);
 	g_assert_cmpint(cm_gate(kr, &cm_rfc1459, "!AB12Csecret", NULL), ==, E2E_GATE_CIPHER);
 	e2e_json_free(kr);
-	/* R-E26: an ID written in lower case, and the other way round: a
+	/* an ID written in lower case, and the other way round: a
 	   short name with E2E on, the full name as the target */
 	kr = e2e_keyring_new();
 	p.kr = kr;
@@ -4575,7 +4616,7 @@ static void test_casemap_ircnet_short_name(void)
 	e2e_json_free(kr);
 }
 
-/* R-E28: a list of targets with a query piece E2E is on for */
+/* a list of targets with a query piece E2E is on for */
 static char *cm_resolve_bob(const char *nick, const E2E_JSON *kr, void *data)
 {
 	return g_ascii_strcasecmp(nick, "bob") == 0 ? g_strdup(BOB) : NULL;
@@ -4676,13 +4717,15 @@ static void test_casemap_list_dm_pieces(void)
 	e2e_json_free(kr);
 }
 
-/* R-E29: a bot command bypasses E2E on a channel only - DMs never bypass,
+/* a bot command bypasses E2E on a channel only - DMs never bypass,
    also when a channel piece of the list makes the line a bot command */
 static void test_casemap_list_dm_bypass(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
 	PEER p = { .kr = kr };
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	/* the module active: the DM piece refuses the list (as before) */
 	enable(&p, "E2E\x1f@" BOB, "normal");
 	g_assert_cmpint(cm_gate_r(kr, &cm_rfc1459, "#x,bob", "!help secret", cm_resolve_bob), ==,
@@ -4722,9 +4765,10 @@ static void test_casemap_list_dm_bypass(void)
 	g_assert_cmpint(cm_guard(kr, &cm_unicode, "PRIVMSG #x,#\xc5\xbb" "aba :help", cm_resolve_bob), ==,
 	                E2E_GATE_REFUSE);
 	e2e_json_free(kr);
+	e2e_bot_bypass = FALSE;
 }
 
-/* R-E29: an old bare-nick row (no '@') with E2E on counts for a nick in a
+/* an old bare-nick row (no '@') with E2E on counts for a nick in a
    list, as nick_enabled() does for the module */
 static void test_casemap_list_bare_nick(void)
 {
@@ -4945,7 +4989,7 @@ static void test_casemap_script_single_nick(void)
    Perl's lc() on a string it decoded from JSON, not on the bytes irssi
    gives it: it may not find the peer, and sends in clear text. A
    non-ASCII nick resolved only through the keyring's cache counts as not
-   resolved for the script (R-E30); a live address is the script's own. */
+   resolved for the script; a live address is the script's own. */
 static void test_casemap_script_nonascii_cache(void)
 {
 	static const char *const nicks[] = {
@@ -5066,7 +5110,7 @@ static void test_casemap_blocked_folded_peer(void)
 
 /* rpe2e.pl loaded: the nick resolves to another address than the one of
    a query E2E is on for whose peer the server takes for that nick - the
-   native gate refuses (REFUSE_DM_MOVED), so does the guard (R-E30) */
+   native gate refuses (REFUSE_DM_MOVED), so does the guard */
 static void test_casemap_script_dm_moved(void)
 {
 	E2E_JSON *kr = e2e_keyring_new();
@@ -5112,7 +5156,7 @@ static void tie_peer(E2E_JSON *kr, const char *fp, const char *nick, const char 
 	e2e_json_set(e2e_json_get(kr, "peers"), fp, peer);
 }
 
-/* R-E31: the newest last_seen wins, a tie goes to the smallest
+/* the newest last_seen wins, a tie goes to the smallest
    fingerprint key (byte order), null or missing is 0 - whatever order
    the peers were stored in */
 static void test_cache_tie_order(void)
@@ -5145,7 +5189,7 @@ static void test_cache_tie_order(void)
 /* rpe2e.pl loaded: two addresses tie for the nick in the keyring's cache.
    An older script picks one by Perl's hash order, which changes from
    process to process: the module's pick may not be the script's, so a
-   cache-only address with a tie counts as not resolved (R-E31). */
+   cache-only address with a tie counts as not resolved. */
 static void test_casemap_script_cache_tie(void)
 {
 	int order;
@@ -5206,6 +5250,8 @@ static void test_gate_dry(void)
 	PEER a;
 	char *before, *after;
 
+	/* the bot command bypass, opt-in (e2e_bot_bypass) */
+	e2e_bot_bypass = TRUE;
 	peer_init(&a, "alice", ALICE, -1);
 	/* an old context on the only network, no key of ours yet */
 	enable(&a, "#old", "normal");
@@ -5250,9 +5296,10 @@ static void test_gate_dry(void)
 	g_free(after);
 	g_free(before);
 	peer_free(&a);
+	e2e_bot_bypass = FALSE;
 }
 
-/* the reviewer's PoC (R-E33): y's KEYREQ for x's query, stored as
+/* y's KEYREQ for x's query, stored as
    rpe2e.pl stored it, must never get y our key for x */
 static void test_accept_foreign_dm(void)
 {
@@ -5376,7 +5423,7 @@ static void put_accepted_recipient(E2E_JSON *kr, const char *handle, const char 
 	g_free(k);
 }
 
-/* R-E34: an "accepted" y|@x the bug of R-E33 already wrote gets nothing
+/* an "accepted" y|@x the bug of before already wrote gets nothing
    more: no REKEY of x's query, no KEYRSP; told as damaged; dropped by
    /e2e decline (our key for x then rotates) */
 static void test_damaged_dm_rows(void)
@@ -5479,7 +5526,7 @@ static void test_damaged_dm_rows(void)
 #undef DCTX
 }
 
-/* R-E34: y may hold our CURRENT key for x already - the next message to
+/* y may hold our CURRENT key for x already - the next message to
    x rotates it without /e2e decline, the new key reaches x only; told
    once */
 static void test_damaged_dm_auto_rotation(void)
@@ -5562,6 +5609,1673 @@ static void test_damaged_dm_auto_rotation(void)
 #undef DCTX
 }
 
+/* the first line of ciphertext from's gate makes of text to chan */
+static char *wire_from(PEER *from, const char *chan, const char *text)
+{
+	E2E_GATE_RESULT g;
+	char *wire;
+
+	e2e_gate_decide(from->kr, TRUE, &from->id, NULL, chan, text, no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	wire = g_strdup(g_ptr_array_index(g.wires, 0));
+	e2e_gate_result_clear(&g);
+	return wire;
+}
+
+/* reader gets writer's key for chan: reader asks, writer (auto-accept)
+   answers */
+static void give_key(PEER *writer, PEER *reader, const char *chan)
+{
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *k;
+
+	/* a reciprocal request of an earlier exchange may wait */
+	k = g_strconcat(chan, "|", writer->handle, NULL);
+	e2e_json_remove(e2e_json_get(reader->kr, "pending"), k);
+	g_free(k);
+	req = e2e_build_keyreq(reader->kr, &reader->id, chan, writer->handle, &error);
+	g_assert_nonnull(req);
+	g_hash_table_remove_all(writer->stamps);
+	deliver_keyreq(writer, reader, req, writer->handle, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(reader, writer, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+}
+
+/* one wire from from, decrypted by to (as the sender from->handle) */
+static void decrypt_from(PEER *to, PEER *from, const char *chan, const char *wire,
+                         E2E_IN_RESULT *r)
+{
+	E2E_IN_PARAMS in;
+
+	in_params(&in, to, from->nick, from->handle, chan, NULL);
+	e2e_decrypt_incoming(to->kr, &to->id, &in, wire, r);
+}
+
+static void assert_placeholder(PEER *to, PEER *from, const E2E_IN_RESULT *r, const char *part)
+{
+	char *text = e2e_in_placeholder(to->kr, r, from->nick, from->handle);
+
+	if (strstr(text, part) == NULL)
+		g_error("placeholder \"%s\" lacks \"%s\"", text, part);
+	g_assert_null(strchr(text, '\n'));
+	g_free(text);
+}
+
+/* every encrypted message that cannot be read says why, and what became
+   of the key request - nothing is hidden without a word */
+static void test_hidden_messages(void)
+{
+	PEER a, b;
+	E2E_IN_RESULT r;
+	E2E_IN_PARAMS in;
+	char *wire;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	wire = wire_from(&a, "#test", "hello bob");
+
+	/* no key from alice yet: the key is requested */
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_NO_SESSION);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+	g_assert_nonnull(r.keyreq);
+	assert_placeholder(&b, &a, &r, "[E2E: encrypted message not read - no key from alice (" ALICE ") yet - key requested]");
+	e2e_in_result_clear(&r);
+	/* the next one while the request waits for its answer */
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_NO_SESSION);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_WAITING);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "waiting for the answer");
+	e2e_in_result_clear(&r);
+	/* asked within 30 s (for another context): not again */
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "#test|" ALICE);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_RECENT);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "key requested a moment ago");
+	e2e_in_result_clear(&r);
+	/* E2E off here: shown as such, nothing asked */
+	e2e_json_set_int(path_get(b.kr, "channels", "#test", NULL), "enabled", 0);
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_OFF);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "E2E is off here, so it is not requested (/e2e on)");
+	e2e_in_result_clear(&r);
+	e2e_json_set_int(path_get(b.kr, "channels", "#test", NULL), "enabled", 1);
+
+	/* with the key it reads */
+	give_key(&a, &b, "#test");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "hello bob");
+	e2e_in_result_clear(&r);
+
+	/* changed on the way: rejected, visibly */
+	{
+		char *bad = g_strdup(wire), *ct = strchr(bad, ':') + 1;
+
+		/* a byte of the ciphertext, well inside it */
+		ct[4] = ct[4] == 'A' ? 'B' : 'A';
+		decrypt_from(&b, &a, "#test", bad, &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+		/* (their key may have changed without us: asked for) */
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		g_assert_nonnull(r.keyreq);
+		assert_placeholder(&b, &a, &r, "[E2E rejected: it does not open with their key");
+		assert_placeholder(&b, &a, &r, "- their current key requested]");
+		e2e_in_result_clear(&r);
+		g_free(bad);
+	}
+	/* too old (a replay, history played back): not taken, said so -
+	   no key exchange to advise */
+	fake_now += 3600;
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "[E2E: an encrypted message from 60 min ago not read - too old to verify");
+	{
+		char *text = e2e_in_placeholder(b.kr, &r, a.nick, a.handle);
+
+		g_assert_null(strstr(text, "handshake"));
+		g_free(text);
+	}
+	e2e_in_result_clear(&r);
+	/* our own, played back by a bouncer: the same, and our nick is not
+	   named */
+	{
+		E2E_IN_PARAMS own;
+
+		in_params(&own, &a, "alice", ALICE, "#test", NULL);
+		own.is_own_line = TRUE;
+		e2e_decrypt_incoming(a.kr, &a.id, &own, wire, &r);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+		g_assert_true(r.own);
+		{
+			char *text = e2e_in_placeholder(a.kr, &r, "alice", ALICE);
+
+			g_assert_nonnull(strstr(text, "your own encrypted message from 60 min ago"));
+			g_assert_null(strstr(text, "alice"));
+			g_free(text);
+		}
+		e2e_in_result_clear(&r);
+	}
+	fake_now -= 3600;
+	/* ahead: a clock */
+	fake_now -= E2E_TS_TOLERANCE + 100;
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+	assert_placeholder(&b, &a, &r, "ahead not read - a clock is far off");
+	e2e_in_result_clear(&r);
+	fake_now += E2E_TS_TOLERANCE + 100;
+
+	/* declined here: not read and not asked again, said so */
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "#test|" ALICE);
+	e2e_json_set_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "status", "revoked");
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REVOKED);
+	g_assert_null(r.keyreq);
+	g_assert_null(path_get(b.kr, "pending", "#test|" ALICE, NULL));
+	assert_placeholder(&b, &a, &r, "[E2E rejected: you declined or revoked alice (" ALICE ") here - /e2e unrevoke alice");
+	e2e_in_result_clear(&r);
+
+	/* an old context of unknown network: off here, said so */
+	{
+		E2E_JSON *kr = e2e_keyring_new();
+
+		e2e_json_free(b.kr);
+		b.kr = kr;
+		legacy_fixture_fill(b.kr);
+		in_params(&in, &b, "alice", ALICE, "#test", &net_a);
+		e2e_decrypt_incoming(b.kr, &b.id, &in, wire, &r);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_BLOCKED);
+		assert_placeholder(&b, &a, &r, "/e2e adopt");
+		e2e_in_result_clear(&r);
+	}
+	g_free(wire);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+#define ALICE2 "alice2@127.0.0.1"
+
+/* a key exchange blocked by a trust change is recorded so that it can be
+   told (with the address it came from and the nick), and the messages of
+   that peer say what blocks them */
+static void test_trust_change_notices(void)
+{
+	PEER a, b, mallory;
+	GPtrArray *changes;
+	E2E_IN_RESULT r;
+	E2E_JSON *row;
+	char *wire, *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	/* bob may get alice's key too: she asks, he accepts her */
+	enable(&b, "#test", "auto-accept");
+	give_key(&b, &a, "#test");
+	enable(&b, "#test", "normal");
+	changes = e2e_trust_changes(b.kr, NULL);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+
+	/* alice comes back from another host, the same key: her messages
+	   ask for her key under the new address ... */
+	a.handle = ALICE2;
+	wire = wire_from(&a, "#test", "still me");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_NO_SESSION);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+	g_assert_nonnull(r.keyreq);
+	/* the first line already says what will block it */
+	assert_placeholder(&b, &a, &r, "no key from alice at this address (" ALICE2 ") yet - key requested; alice had a key at " ALICE ": if it is the same, the new address blocks it - /e2e reverify " ALICE2 "]");
+	/* ... her answer is blocked as a handle change, and recorded */
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, r.keyreq, ALICE2, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	e2e_in_result_clear(&r);
+	g_assert_false(deliver_keyrsp(&b, &a, rsp));
+	g_free(rsp);
+	g_free(recip);
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 1);
+	row = g_ptr_array_index(changes, 0);
+	g_assert_cmpstr(e2e_json_get_string(row, "change"), ==, "handle_changed");
+	g_assert_cmpstr(e2e_json_get_string(row, "new_fp"), ==, a.id.fp_hex);
+	g_assert_cmpstr(e2e_json_get_string(row, "old_handle"), ==, ALICE);
+	g_assert_cmpstr(e2e_json_get_string(row, "nick"), ==, "alice");
+	g_assert_cmpstr(e2e_json_get_string(row, "channel"), ==, "#test");
+	g_ptr_array_unref(changes);
+	changes = e2e_trust_changes(b.kr, ALICE);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	/* her next message says what blocks it and how to settle it; no key
+	   is asked for (the answer would be blocked the same way) */
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_TRUST);
+	g_assert_null(r.keyreq);
+	assert_placeholder(&b, &a, &r, "the known key of alice now comes from a new address, " ALICE2 "; if it is the same person: /e2e reverify " ALICE2 "]");
+	/* the same request forwarded by someone else: whose key it is */
+	{
+		char *text = e2e_in_placeholder(b.kr, &r, "mallory", ALICE2);
+
+		g_assert_cmpstr(text, ==, "[E2E: encrypted message not read - mallory (" ALICE2 ") uses the known key of alice; only if mallory is alice: /e2e reverify " ALICE2 "]");
+		g_free(text);
+	}
+	e2e_in_result_clear(&r);
+	g_free(wire);
+
+	/* her own request from the new address is blocked the same way */
+	e2e_json_set(b.kr, "pending_trust_change", e2e_json_new(E2E_JSON_ARRAY));
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_null(recip);
+	g_assert_null(path_get(b.kr, "pending_inbound", ALICE2 "|#test", NULL));
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 1);
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(changes, 0), "change"), ==, "handle_changed");
+	g_ptr_array_unref(changes);
+	g_free(req);
+
+	/* someone else's key under alice's old address: a key change */
+	peer_init(&mallory, "alice", ALICE, -1);
+	req = e2e_build_keyreq(mallory.kr, &mallory.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &mallory, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(b.kr, ALICE);
+	g_assert_cmpuint(changes->len, ==, 1);
+	row = g_ptr_array_index(changes, 0);
+	g_assert_cmpstr(e2e_json_get_string(row, "change"), ==, "fingerprint_changed");
+	g_assert_cmpstr(e2e_json_get_string(row, "old_fp"), ==, a.id.fp_hex);
+	g_assert_cmpstr(e2e_json_get_string(row, "new_fp"), ==, mallory.id.fp_hex);
+	g_ptr_array_unref(changes);
+	/* the session of the old key cannot read the new key's messages:
+	   the key change is what the user is told */
+	enable(&mallory, "#test", "normal");
+	wire = wire_from(&mallory, "#test", "who am I");
+	decrypt_from(&b, &mallory, "#test", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_TRUST);
+	assert_placeholder(&b, &mallory, &r, "the identity key of alice (" ALICE ") has CHANGED; compare fingerprints with them, then /e2e reverify " ALICE "]");
+	e2e_in_result_clear(&r);
+	g_free(wire);
+
+	/* revoked: recorded as such; unrevoked, the record no longer counts */
+	e2e_json_set_string(path_get(b.kr, "peers", a.id.fp_hex, NULL), "status", "revoked");
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 1);
+	g_assert_cmpstr(e2e_json_get_string(g_ptr_array_index(changes, 0), "change"), ==, "revoked");
+	g_ptr_array_unref(changes);
+	r.why = E2E_IN_WHY_TRUST;
+	{
+		char *text = e2e_in_placeholder(b.kr, &r, "alice", ALICE2);
+
+		g_assert_cmpstr(text, ==, "[E2E: encrypted message not read - alice (" ALICE2 ") is revoked: /e2e unrevoke alice restores them]");
+		g_free(text);
+	}
+	/* unrevoked: the record of the revocation no longer counts (it took
+	   the place of the new address's, which her next exchange records
+	   again) */
+	e2e_json_set_string(path_get(b.kr, "peers", a.id.fp_hex, NULL), "status", "trusted");
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	peer_free(&a);
+	peer_free(&b);
+	peer_free(&mallory);
+}
+
+/* alice (auto-accept) and bob (normal) read each other on #test, then
+   alice comes back as ALICE2 with the same key: bob's request for her
+   key under the new address is answered, and the answer is blocked */
+static void handle_change_setup(PEER *a, PEER *b)
+{
+	E2E_IN_RESULT r;
+	char *wire, *rsp = NULL, *recip = NULL;
+
+	peer_init(a, "alice", ALICE, -1);
+	peer_init(b, "bob", BOB, -1);
+	enable(a, "#test", "auto-accept");
+	enable(b, "#test", "auto-accept");
+	give_key(a, b, "#test");
+	give_key(b, a, "#test");
+	enable(b, "#test", "normal");
+	a->handle = ALICE2;
+	wire = wire_from(a, "#test", "still me");
+	decrypt_from(b, a, "#test", wire, &r);
+	g_assert_nonnull(r.keyreq);
+	g_hash_table_remove_all(a->stamps);
+	deliver_keyreq(a, b, r.keyreq, ALICE2, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(b, a, rsp));
+	e2e_in_result_clear(&r);
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
+}
+
+/* /e2e reverify accepts the change that waits: a known key at a new
+   address is moved there (what it was accepted for with it), a new key
+   at a known address replaces the old one; asked for the key again, the
+   peer's next message reads */
+static void test_reverify(void)
+{
+	PEER a, b, mallory;
+	E2E_REVERIFY rv;
+	E2E_IN_RESULT r;
+	GPtrArray *changes;
+	char *wire, *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	handle_change_setup(&a, &b);
+	g_assert_nonnull(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	g_assert_nonnull(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	/* by the nick: where it is now (live) is the address of the change */
+	e2e_reverify(b.kr, "alice", ALICE2, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpstr(rv.handle, ==, ALICE2);
+	g_assert_cmpstr(rv.old_handle, ==, ALICE);
+	g_assert_cmpstr(rv.fp, ==, a.id.fp_hex);
+	g_assert_cmpstr(rv.nick, ==, "alice");
+	/* the session of her blocked answer is hers now: nothing to ask */
+	g_assert_cmpuint(rv.installed->len, ==, 1);
+	g_assert_cmpstr(g_ptr_array_index(rv.installed, 0), ==, "#test");
+	g_assert_cmpuint(rv.ctxs->len, ==, 0);
+	e2e_reverify_clear(&rv);
+	/* the key is the new address's, with what it was accepted for and
+	   given; the old sessions are gone, nothing waits any more */
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE2);
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	g_assert_cmpstr(path_str(b.kr, "accepted", ALICE2 "|#test", "fp"), ==, a.id.fp_hex);
+	g_assert_null(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_cmpstr(path_str(b.kr, "outgoing_recipients", "#test|" ALICE2, "handle"), ==, ALICE2);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpstr(path_str(b.kr, "incoming", ALICE2 "|#test", "status"), ==, "trusted");
+	changes = e2e_trust_changes(b.kr, NULL);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(b.kr, "pending_trust_change")), ==, 0);
+	/* her next message reads */
+	wire = wire_from(&a, "#test", "read me now");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "read me now");
+	e2e_in_result_clear(&r);
+	g_free(wire);
+	/* a new exchange with the new address is no change any more */
+	req = e2e_build_keyreq(b.kr, &b.id, "#test", ALICE2, &error);
+	g_assert_nonnull(req);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE2, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	wire = wire_from(&a, "#test", "read me again");
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "read me again");
+	e2e_in_result_clear(&r);
+	g_free(wire);
+	/* and her requests from there are answered: she was accepted */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* a later request of hers for the same channel takes the place of
+	   the record: the session of her blocked answer stays with it */
+	handle_change_setup(&a, &b);
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(b.kr, ALICE2);
+	g_assert_cmpuint(changes->len, ==, 1);
+	g_assert_nonnull(e2e_json_get(g_ptr_array_index(changes, 0), "session_sk"));
+	g_ptr_array_unref(changes);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpuint(rv.installed->len, ==, 1);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* by the new address, and by the old one (the address the key is at) */
+	handle_change_setup(&a, &b);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+	handle_change_setup(&a, &b);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpstr(rv.handle, ==, ALICE2);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* blocked only as her own request (no answer of hers kept): the
+	   key is asked for again where it was */
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&a, &b, "#test");
+	give_key(&b, &a, "#test");
+	a.handle = ALICE2;
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#test|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	e2e_reverify(b.kr, ALICE2, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpuint(rv.installed->len, ==, 0);
+	g_assert_cmpuint(rv.ctxs->len, ==, 1);
+	g_assert_cmpstr(g_ptr_array_index(rv.ctxs, 0), ==, "#test");
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+
+	/* two new addresses claim the key: by the old one nothing is
+	   guessed; by one of them, that one */
+	handle_change_setup(&a, &b);
+	a.handle = "alice3@127.0.0.1";
+	wire = wire_from(&a, "#test", "x");
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_nonnull(r.keyreq);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, r.keyreq, a.handle, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(&b, &a, rsp));
+	e2e_in_result_clear(&r);
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	e2e_reverify(b.kr, "alice3@127.0.0.1", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, "alice3@127.0.0.1");
+	peer_free(&a);
+	peer_free(&b);
+
+	/* a new key at a known address: installed in place of the old one */
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&a, &b, "#test");
+	give_key(&b, &a, "#test");
+	peer_init(&mallory, "alice", ALICE, -1);
+	req = e2e_build_keyreq(mallory.kr, &mallory.id, "#test", BOB, &error);
+	g_hash_table_remove_all(b.stamps);
+	deliver_keyreq(&b, &mallory, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	/* a fingerprint that is not the new key's: nothing changes */
+	e2e_reverify(b.kr, ALICE, NULL, "0000", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_BAD_FP);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, "0000000x", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_BAD_FP);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, "00000000", &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NO_MATCH);
+	g_assert_cmpuint(rv.candidates->len, ==, 1);
+	e2e_reverify_clear(&rv);
+	g_assert_nonnull(path_get(b.kr, "peers", a.id.fp_hex, NULL));
+	e2e_reverify(b.kr, ALICE, NULL, mallory.id.fp_hex, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_INSTALLED);
+	g_assert_cmpstr(rv.old_fp, ==, a.id.fp_hex);
+	e2e_reverify_clear(&rv);
+	g_assert_null(path_get(b.kr, "peers", a.id.fp_hex, NULL));
+	g_assert_cmpstr(path_str(b.kr, "peers", mallory.id.fp_hex, "last_handle"), ==, ALICE);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	/* nothing waits any more: the address's data goes */
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_PURGED);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(b.kr, ALICE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NOTHING);
+	e2e_reverify_clear(&rv);
+	peer_free(&a);
+	peer_free(&b);
+	peer_free(&mallory);
+}
+
+/* /e2e decline and /e2e forget of someone who has our key: they get no
+   later key of ours, and the next rotation does not take them for
+   someone a keyring of rpe2e.pl left behind */
+static void test_stop_giving_key(void)
+{
+	PEER a, b;
+	E2E_GATE_RESULT g;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "auto-accept");
+	give_key(&b, &a, "#test");
+	g_assert_nonnull(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_true(e2e_stop_giving_key(b.kr, ALICE, "#test"));
+	g_assert_null(path_get(b.kr, "outgoing_recipients", "#test|" ALICE, NULL));
+	g_assert_null(path_get(b.kr, "accepted", ALICE "|#test", NULL));
+	/* twice: nothing of theirs is left */
+	g_assert_false(e2e_stop_giving_key(b.kr, ALICE, "#test"));
+	/* a rotation then: no REKEY to her, and no warning about her */
+	e2e_json_set_int(path_get(b.kr, "outgoing", "#test", NULL), "pending_rotation", 1);
+	e2e_gate_decide(b.kr, TRUE, &b.id, NULL, "#test", "new key", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_null(g.notices);
+	g_assert_null(g.warnings);
+	e2e_gate_result_clear(&g);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* a network labelled by its tag (no chatnet) whose tag changed, or whose
+   label changed case: a channel with E2E on under the old label is not
+   sent in clear text under the new one */
+static void test_gate_relabeled(void)
+{
+	E2E_NET old_tag = { (char *) "libera", E2E_CASEMAP_RFC1459, FALSE, TRUE };
+	E2E_NET new_tag = { (char *) "libera2", E2E_CASEMAP_RFC1459, FALSE, TRUE };
+	E2E_NET chatnet = { (char *) "Libera", E2E_CASEMAP_RFC1459, FALSE, FALSE };
+	E2E_NET other = { (char *) "OFTC", E2E_CASEMAP_RFC1459, FALSE, FALSE };
+	E2E_GATE_RESULT g;
+	PEER a;
+	char *ctx;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable_scoped(&a, &old_tag, "#secret");
+	e2e_gate_decide(a.kr, TRUE, &a.id, &old_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	/* the tag changed: refused, with what to do */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	g_assert_nonnull(strstr(g.message, "E2E is on for #secret on the network \"libera\", and this one is \"libera2\" (the server's tag: it has no chatnet)"));
+	g_assert_nonnull(strstr(g.message, "NOT sent"));
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide_dry(a.kr, TRUE, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* a chatnet of the same name in another case: refused too */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &chatnet, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_REFUSE);
+	e2e_gate_result_clear(&g);
+	/* another named network is another network */
+	e2e_gate_decide(a.kr, TRUE, &a.id, &other, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	/* /e2e off there settles it: clear text */
+	ctx = e2e_ctx_scoped(&new_tag, "#secret");
+	enable(&a, ctx, "normal");
+	e2e_json_set_int(path_get(a.kr, "channels", ctx, NULL), "enabled", 0);
+	g_free(ctx);
+	e2e_gate_decide(a.kr, TRUE, &a.id, &new_tag, "#secret", "hi", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	peer_free(&a);
+}
+
+/* what a line becomes at the gate, with E2E on for #test: the action,
+   and for CIPHER that no wire holds the text */
+static E2E_GATE_ACTION gate_bot(PEER *a, gboolean kr_ok, const char *chan, const char *body)
+{
+	E2E_GATE_RESULT g;
+	E2E_GATE_ACTION action;
+	guint i;
+
+	e2e_gate_decide(a->kr, kr_ok, &a->id, NULL, chan, body, no_resolve, NULL, &g);
+	action = g.action;
+	for (i = 0; g.wires != NULL && i < g.wires->len; i++)
+		g_assert_null(strstr(g_ptr_array_index(g.wires, i), body));
+	/* warned about where E2E is on */
+	if (action == E2E_GATE_BYPASS)
+		g_assert_true((g.message != NULL) == (strcmp(chan, "#test") == 0));
+	e2e_gate_result_clear(&g);
+	return action;
+}
+
+/* bot-command lines ('.' or '!' and a letter) are encrypted like any
+   other unless e2e_bot_bypass is on; an unreadable keyring refuses them
+   either way */
+static void test_bot_bypass_setting(void)
+{
+	static const char *const bots[] = { "!secret x", ".op", "!seen bob", NULL };
+	static const char *const never[] = { "plain text", "...", "!!", "!", ". op", NULL };
+	PEER a;
+	int i, on;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#test", "normal");
+	g_assert_false(e2e_bot_bypass);	/* the default */
+	for (on = 0; on < 2; on++) {
+		e2e_bot_bypass = on;
+		for (i = 0; bots[i] != NULL; i++) {
+			g_assert_cmpint(gate_bot(&a, TRUE, "#test", bots[i]), ==,
+			                on ? E2E_GATE_BYPASS : E2E_GATE_CIPHER);
+			g_assert_cmpint(gate_bot(&a, FALSE, "#test", bots[i]), ==, E2E_GATE_REFUSE);
+			/* where E2E is off it is clear text anyway */
+			g_assert_cmpint(gate_bot(&a, TRUE, "#plain", bots[i]), ==,
+			                on ? E2E_GATE_BYPASS : E2E_GATE_PASS);
+		}
+		for (i = 0; never[i] != NULL; i++) {
+			g_assert_cmpint(gate_bot(&a, TRUE, "#test", never[i]), ==, E2E_GATE_CIPHER);
+			g_assert_cmpint(gate_bot(&a, FALSE, "#test", never[i]), ==, E2E_GATE_REFUSE);
+		}
+	}
+	e2e_bot_bypass = FALSE;
+	peer_free(&a);
+}
+
+/* a chunk the server delivers again is dropped, not shown twice: a
+   whole message, one part of a long one; it is forgotten after twice the
+   timestamp window, and the memory stays bounded */
+static void test_replay(void)
+{
+	gint64 start;
+	PEER a, b;
+	E2E_GATE_RESULT g;
+	E2E_IN_PARAMS in;
+	E2E_IN_RESULT r;
+	E2E_REPLAY *rp;
+	char *longtext, *one;
+	guint i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	in_params(&in, &b, "alice", ALICE, "#test", NULL);
+	in.replay = rp;
+
+	/* one message, twice */
+	one = wire_from(&a, "#test", "only once");
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	g_assert_null(r.plain);
+	assert_placeholder(&b, &a, &r, "repeated encrypted message from alice");
+	e2e_in_result_clear(&r);
+	/* other spellings of the same chunk open all the same: the same
+	   chunk (a trailing space, the msgid in upper case, two spaces after
+	   the prefix, a leading zero) */
+	{
+		char **f = g_strsplit(one, " ", -1), *msgid_up = g_ascii_strup(f[1], -1);
+		char *variants[5];
+		int v;
+
+		g_assert_cmpuint(g_strv_length(f), ==, 5);
+		variants[0] = g_strconcat(one, " ", NULL);
+		variants[1] = g_strjoin(" ", f[0], msgid_up, f[2], f[3], f[4], NULL);
+		variants[2] = g_strjoin("  ", f[0], f[1], NULL);
+		variants[3] = g_strconcat(f[0], " ", f[1], " 0", f[2], " ", f[3], " ", f[4], NULL);
+		variants[4] = NULL;
+		{
+			char *rest = g_strjoin(" ", variants[2], f[2], f[3], f[4], NULL);
+
+			g_free(variants[2]);
+			variants[2] = rest;
+		}
+		for (v = 0; variants[v] != NULL; v++) {
+			e2e_decrypt_incoming(b.kr, &b.id, &in, variants[v], &r);
+			if (r.why != E2E_IN_WHY_REPEAT)
+				g_error("variant \"%s\": action %d why %d", variants[v], r.action, r.why);
+			e2e_in_result_clear(&r);
+			g_free(variants[v]);
+		}
+		g_free(msgid_up);
+		g_strfreev(f);
+	}
+	/* the same chunk from someone else, or in another channel, is
+	   another one (it would not open there anyway) */
+	{
+		E2E_WIRE *w = e2e_wire_parse(one);
+
+		g_assert_false(e2e_replay_check(rp, "#other", ALICE, w));
+		g_assert_false(e2e_replay_check(rp, "#test", BOB, w));
+		e2e_wire_free(w);
+	}
+
+	/* a long message: every part reads once, a part again is dropped */
+	longtext = g_strnfill(500, 'q');
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", longtext, no_resolve, NULL, &g);
+	g_assert_cmpuint(g.wires->len, >, 1);
+	for (i = 0; i < g.wires->len; i++) {
+		e2e_decrypt_incoming(b.kr, &b.id, &in, g_ptr_array_index(g.wires, i), &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+		e2e_in_result_clear(&r);
+	}
+	e2e_decrypt_incoming(b.kr, &b.id, &in, g_ptr_array_index(g.wires, 1), &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	e2e_gate_result_clear(&g);
+	g_free(longtext);
+
+	g_free(one);
+	e2e_replay_free(rp);
+
+	/* the whole timestamp window: read first at its very start (the
+	   chunk 300 s ahead of our clock), the repeat at its very end */
+	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	in.replay = rp;
+	one = wire_from(&a, "#test", "edge");
+	start = fake_now;
+	fake_now -= E2E_TS_TOLERANCE;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	fake_now += 2 * E2E_TS_TOLERANCE;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	/* a second later the timestamp check refuses it: forgotten then */
+	fake_now += 1;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, one, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_STALE);
+	e2e_in_result_clear(&r);
+	fake_now += E2E_TS_TOLERANCE + 2;
+	{
+		E2E_WIRE *w = e2e_wire_parse(one);
+
+		g_assert_false(e2e_replay_check(rp, "#test", ALICE, w));
+		g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+		e2e_wire_free(w);
+	}
+	fake_now = start;
+	g_free(one);
+	e2e_replay_free(rp);
+
+	/* bounded: the oldest go first */
+	rp = e2e_replay_new(8);
+	{
+		E2E_WIRE w;
+		unsigned char ct[17] = { 0 };
+
+		memset(&w, 0, sizeof(w));
+		w.ts = fake_now;
+		w.part = w.total = 1;
+		w.ct = ct;
+		w.ctlen = sizeof(ct);
+		for (i = 0; i < 100; i++) {
+			w.msgid[0] = i;
+			g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+			g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
+		}
+		g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+		w.msgid[0] = 0;
+		g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	}
+	e2e_replay_free(rp);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* an export carries the REKEY nonces taken: a REKEY recorded before the
+   export is not taken again after the import */
+static void test_export_seen_rekeys(void)
+{
+	PEER a, b;
+	unsigned char key[32];
+	E2E_JSON *doc, *kr;
+	char *rekey, *body, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	memset(key, 0x5a, sizeof(key));
+	rekey = e2e_build_rekey(&a.id, "#test", b.id.pk, key);
+	body = unframe(rekey);
+	g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", body));
+	g_assert_false(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", body));
+
+	doc = e2e_keyring_export(b.kr);
+	g_assert_nonnull(e2e_json_get(doc, "seenRekeys"));
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_nonnull(kr);
+	g_assert_false(e2e_handle_rekey(kr, &b.id, NULL, ALICE, "alice", body));
+	e2e_json_free(kr);
+	/* an export without them (repartee's) cannot know: taken once */
+	e2e_json_remove(doc, "seenRekeys");
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_true(e2e_handle_rekey(kr, &b.id, NULL, ALICE, "alice", body));
+	e2e_json_free(kr);
+	/* junk in the member is left out, the rest is read */
+	{
+		static const char junk[] = "{\"x\":1,\"fp|#c\":{\"n\":\"s\",\"m\":5}}";
+		const char *perr = NULL;
+
+		e2e_json_set(doc, "seenRekeys", e2e_json_parse(junk, strlen(junk), &perr));
+	}
+	kr = e2e_keyring_import(doc, &error);
+	g_assert_nonnull(kr);
+	g_assert_null(path_get(kr, "seen_rekeys", "x", NULL));
+	g_assert_null(path_get(kr, "seen_rekeys", "fp|#c", "n", NULL));
+	g_assert_nonnull(path_get(kr, "seen_rekeys", "fp|#c", "m", NULL));
+	e2e_json_free(kr);
+	e2e_json_free(doc);
+	g_free(body);
+	g_free(rekey);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* revoked in one channel, the person writes in another where no key of
+   theirs is stored: lifting the revocation there lets the next key
+   exchange through (the warning names /e2e unrevoke) */
+static void test_unrevoke_peer(void)
+{
+	PEER a, b;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&a, "#b", "auto-accept");
+	enable(&b, "#a", "normal");
+	enable(&b, "#b", "normal");
+	give_key(&a, &b, "#a");
+	e2e_json_set_string(path_get(b.kr, "peers", a.id.fp_hex, NULL), "status", "revoked");
+	/* in #b her answer is refused */
+	req = e2e_build_keyreq(b.kr, &b.id, "#b", ALICE, &error);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_false(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	/* no session of hers in #b: nothing to trust there */
+	g_assert_cmpint(e2e_unrevoke(b.kr, ALICE, "#b", NULL), ==, 0);
+	g_assert_true(e2e_unrevoke_peer(b.kr, ALICE));
+	g_assert_false(e2e_unrevoke_peer(b.kr, ALICE));
+	/* the next exchange is taken */
+	req = e2e_build_keyreq(b.kr, &b.id, "#b", ALICE, &error);
+	g_assert_nonnull(req);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* alice rotates: her REKEY reaches bob or it does not */
+static char *rotate_wire(PEER *a, const char *chan, const char *text, char **rekey)
+{
+	E2E_GATE_RESULT g;
+	char *wire;
+
+	e2e_json_set_int(path_get(a->kr, "outgoing", chan, NULL), "pending_rotation", 1);
+	e2e_gate_decide(a->kr, TRUE, &a->id, NULL, chan, text, no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_nonnull(g.notices);
+	*rekey = unframe(g_ptr_array_index(g.notices, 1));
+	wire = g_strdup(g_ptr_array_index(g.wires, 0));
+	e2e_gate_result_clear(&g);
+	return wire;
+}
+
+/* A REKEY that did not reach us: her next chunk does not open, and her
+   current key is asked for at once (rate-limited) - her answer sets it
+   up. A REKEY that did: the key it replaced still opens what she sent
+   just before, for E2E_PREV_KEY_GRACE seconds. */
+static void test_rekey_lost_and_late(void)
+{
+	PEER a, b;
+	E2E_IN_RESULT r;
+	char *before, *after, *rekey, *rsp = NULL, *recip = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+
+	/* the REKEY is lost */
+	after = rotate_wire(&a, "#test", "after a lost rekey", &rekey);
+	g_free(rekey);
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+	g_assert_nonnull(r.keyreq);
+	{
+		char *body = unframe(r.keyreq);
+
+		g_hash_table_remove_all(a.stamps);
+		e2e_handle_keyreq(a.kr, &a.id, a.stamps, NULL, BOB, "bob", body, ALICE, &rsp, &recip);
+		g_free(body);
+	}
+	e2e_in_result_clear(&r);
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(&b, &a, rsp));
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	/* the next chunk again: asked a moment ago, not again */
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	g_free(after);
+
+	/* the REKEY arrives, a chunk under the key before comes after it */
+	before = wire_from(&a, "#test", "sent just before");
+	after = rotate_wire(&a, "#test", "under the new key", &rekey);
+	g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", rekey));
+	g_free(rekey);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	/* never exported, and kept by a prune while the grace lasts */
+	{
+		E2E_JSON *doc = e2e_keyring_export(b.kr);
+		char *text = e2e_json_encode(doc, FALSE);
+
+		g_assert_null(strstr(text, "prev_sk"));
+		g_assert_null(strstr(text, "prev_until"));
+		e2e_wipe(text, strlen(text));
+		g_free(text);
+		e2e_json_free(doc);
+	}
+	g_assert_cmpuint(e2e_prune_prev_keys(b.kr), ==, 0);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	decrypt_from(&b, &a, "#test", after, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	decrypt_from(&b, &a, "#test", before, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	g_assert_cmpstr(r.plain, ==, "sent just before");
+	e2e_in_result_clear(&r);
+	/* after the grace the old key opens nothing and goes */
+	fake_now += E2E_PREV_KEY_GRACE + 1;
+	g_hash_table_remove_all(b.stamps);
+	decrypt_from(&b, &a, "#test", before, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+	g_assert_true(r.save_needed);
+	e2e_in_result_clear(&r);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	fake_now -= E2E_PREV_KEY_GRACE + 1;
+	/* in a quiet context, where no message comes: the prune */
+	{
+		char *w2 = rotate_wire(&a, "#test", "once more", &rekey);
+
+		g_assert_true(e2e_handle_rekey(b.kr, &b.id, NULL, ALICE, "alice", rekey));
+		g_free(rekey);
+		g_free(w2);
+	}
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	fake_now += E2E_PREV_KEY_GRACE + 1;
+	g_assert_cmpuint(e2e_prune_prev_keys(b.kr), ==, 1);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_sk", NULL));
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", "prev_until", NULL));
+	fake_now -= E2E_PREV_KEY_GRACE + 1;
+	g_free(before);
+	g_free(after);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* a raw "\001action x\001" (any case) is a /me to irssi: encrypted like
+   ACTION, not let out as another CTCP; and no spelling of a raw PRIVMSG
+   line - tags, a source prefix, leading spaces, a command in lower case,
+   in a buffer of several lines - gets past the gate */
+static void test_raw_lines_gated(void)
+{
+	static const char *const lines[] = {
+		"PRIVMSG #test :secret",
+		"privmsg #test :secret",
+		"  PRIVMSG #test :secret",
+		":me PRIVMSG #test :secret",
+		"@+draft/x=y PRIVMSG #test :secret",
+		"@a=b :me!u@h PrivMsg #test :secret",
+		NULL
+	};
+	E2E_GATE_RESULT g;
+	PEER a;
+	char *msg, *m, *t;
+	int i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#test", "normal");
+	/* the action, in lower case */
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001action secret\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001Action secret\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	e2e_gate_result_clear(&g);
+	/* another CTCP stays the clear-text escape hatch */
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "\001VERSION\001", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_PASS);
+	e2e_gate_result_clear(&g);
+	for (i = 0; lines[i] != NULL; i++) {
+		char *buf = g_strconcat("NICK x\r\n", lines[i], NULL);
+
+		/* one line (what the outgoing hook parses) */
+		{
+			char *tags, *target, *body;
+
+			g_assert_true(e2e_parse_privmsg_line(lines[i], &tags, &target, &body));
+			g_assert_cmpstr(target, ==, "#test");
+			e2e_gate_decide(a.kr, TRUE, &a.id, NULL, target, body, no_resolve, NULL, &g);
+			g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+			e2e_gate_result_clear(&g);
+			g_free(tags);
+			g_free(target);
+			g_free(body);
+		}
+		/* in a buffer of several lines */
+		g_assert_true(e2e_buffer_has_privmsg(buf, strlen(buf)));
+		msg = e2e_gate_multiline(a.kr, TRUE, NULL, buf, strlen(buf), no_resolve, NULL);
+		g_assert_nonnull(msg);
+		g_free(msg);
+		/* with rpe2e.pl loaded, as the script's guard sees it */
+		g_assert_cmpint(e2e_script_guard(a.kr, TRUE, FALSE, FALSE, NULL, buf, strlen(buf),
+		                                 no_resolve, NULL, &m, &t), ==, E2E_GATE_REFUSE);
+		g_free(m);
+		g_free(t);
+		g_free(buf);
+	}
+	peer_free(&a);
+}
+
+#define EVE "eve@127.0.0.1"
+
+/* alice's known key shows up at eve's address on #a (a forwarded
+   request), and eve's address presents a new key of its own on #b:
+   /e2e reverify, by alice's nick or eve's address, takes neither without
+   the fingerprint - it would accept a new key under alice's name, or
+   bind her nick to another key */
+static void test_reverify_mixed_changes(void)
+{
+	PEER me, a, eve, eve2, fwd;
+	E2E_REVERIFY rv;
+	GPtrArray *changes;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&eve, "eve", EVE, -1);
+	peer_init(&eve2, "eve", EVE, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	enable(&a, "#a", "auto-accept");
+	enable(&eve, "#b", "auto-accept");
+	give_key(&a, &me, "#a");
+	give_key(&eve, &me, "#b");
+	/* alice's request, forwarded by eve */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#a|" BOB);
+	req = e2e_build_keyreq(a.kr, &a.id, "#a", BOB, &error);
+	fwd = a;
+	fwd.handle = EVE;
+	fwd.nick = "eve";
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &fwd, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	/* eve's address with a new key */
+	req = e2e_build_keyreq(eve2.kr, &eve2.id, "#b", BOB, &error);
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &eve2, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	changes = e2e_trust_changes(me.kr, EVE);
+	g_assert_cmpuint(changes->len, ==, 2);
+	g_ptr_array_unref(changes);
+
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	e2e_reverify(me.kr, EVE, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_AMBIGUOUS);
+	e2e_reverify_clear(&rv);
+	/* nothing moved */
+	g_assert_cmpstr(path_str(me.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	g_assert_cmpstr(path_str(me.kr, "peers", eve.id.fp_hex, "last_handle"), ==, EVE);
+	g_assert_null(path_get(me.kr, "peers", eve2.id.fp_hex, NULL));
+	/* named by its fingerprint: that one, alice's key stays hers */
+	e2e_reverify(me.kr, EVE, NULL, eve2.id.fp_hex, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_INSTALLED);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(me.kr, "peers", eve2.id.fp_hex, "last_handle"), ==, EVE);
+	g_assert_cmpstr(path_str(me.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&eve);
+	peer_free(&eve2);
+}
+
+/* a slot of the cap of all senders is free (the slots are kept in the
+   stamps table, "\001auto|<n>") */
+static gboolean auto_keyreq_budget_free(GHashTable *stamps)
+{
+	int i;
+
+	for (i = 0; i < E2E_AUTO_KEYREQ_BURST; i++) {
+		char *k = g_strdup_printf("\001auto|%d", i);
+		gint64 *when = g_hash_table_lookup(stamps, k);
+
+		g_free(k);
+		if (when == NULL || fake_now - *when >= E2E_AUTO_KEYREQ_WINDOW)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* automatic KEYREQs: once per 30 s per address AND context (a query
+   right after a channel's exchange is asked for too), and at most
+   E2E_AUTO_KEYREQ_BURST in E2E_AUTO_KEYREQ_WINDOW s of all senders
+   together (a flood of clones is no flood of NOTICEs and writes) */
+static void test_auto_keyreq_limits(void)
+{
+	PEER me, clone;
+	E2E_IN_RESULT r;
+	E2E_IN_PARAMS in;
+	int i, sent = 0, busy = 0;
+
+	peer_init(&me, "me", BOB, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	peer_init(&clone, "c", "c@h", -1);
+	enable(&clone, "#a", "normal");
+	enable(&clone, "#b", "normal");
+	{
+		char *wa = wire_from(&clone, "#a", "x"), *wb = wire_from(&clone, "#b", "x");
+
+		/* one sender, two contexts: both asked */
+		in_params(&in, &me, "c", "c@h", "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, wa, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		in_params(&in, &me, "c", "c@h", "#b", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, wb, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(wa);
+		g_free(wb);
+	}
+	/* 50 clones, one wire each, in the same second */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	for (i = 0; i < 50; i++) {
+		char *h = g_strdup_printf("clone%d@h", i), *w = wire_from(&clone, "#a", "x");
+
+		in_params(&in, &me, "clone", h, "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		if (r.ask == E2E_IN_ASK_SENT) {
+			sent++;
+			g_assert_nonnull(r.keyreq);
+		} else {
+			g_assert_cmpint(r.ask, ==, E2E_IN_ASK_BUSY);
+			g_assert_null(r.keyreq);
+			assert_placeholder(&me, &clone, &r, "not requested now: many key requests at once");
+			busy++;
+		}
+		e2e_in_result_clear(&r);
+		g_free(w);
+		g_free(h);
+	}
+	g_assert_cmpint(sent, ==, E2E_AUTO_KEYREQ_BURST);
+	g_assert_cmpint(busy, ==, 50 - E2E_AUTO_KEYREQ_BURST);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "pending")), ==, 2 + E2E_AUTO_KEYREQ_BURST);
+	/* the cap is full: a key the user confirmed is still asked for -
+	   without a session here, and with one that no longer opens her
+	   chunks (her REKEY lost); one that became trusted by itself (she
+	   answered our automatic request: a clone can do that) is not */
+	{
+		PEER a;
+		char *w, *rekey, *rsp2 = NULL, *recip2 = NULL;
+
+		peer_init(&a, "alice", ALICE, -1);
+		enable(&a, "#a", "auto-accept");
+		enable(&a, "#b", "auto-accept");
+		give_key(&a, &me, "#a");
+		g_assert_false(auto_keyreq_budget_free(me.stamps));
+		w = wire_from(&a, "#b", "known");
+		in_params(&in, &me, "alice", ALICE, "#b", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_BUSY);
+		e2e_in_result_clear(&r);
+		/* /e2e accept alice: confirmed */
+		g_assert_cmpint(e2e_accept(me.kr, &me.id, ALICE, "#a", NULL, BOB, &rsp2, &recip2), ==,
+		                E2E_ACCEPT_TRUSTED);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+		w = rotate_wire(&a, "#a", "after a lost rekey", &rekey);
+		g_free(rekey);
+		in_params(&in, &me, "alice", ALICE, "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.why, ==, E2E_IN_WHY_REJECTED);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+		peer_free(&a);
+	}
+	/* and the ceiling of every handshake NOTICE holds for them too */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	free_budgets(me.stamps);
+	{
+		int n_sent = 0;
+
+		for (i = 0; i < E2E_HANDSHAKE_CEILING + 5; i++) {
+			PEER f;
+			char *h = g_strdup_printf("friend%d@h", i), *w, *rsp2 = NULL, *recip2 = NULL;
+
+			peer_init(&f, "f", h, -1);
+			enable(&f, "#a", "auto-accept");
+			enable(&f, "#b", "auto-accept");
+			give_key(&f, &me, "#a");
+			e2e_accept(me.kr, &me.id, h, "#a", NULL, BOB, &rsp2, &recip2);
+			w = wire_from(&f, "#b", "x");
+			in_params(&in, &me, "f", h, "#b", NULL);
+			e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+			n_sent += r.ask == E2E_IN_ASK_SENT;
+			e2e_in_result_clear(&r);
+			g_free(w);
+			g_free(h);
+			peer_free(&f);
+		}
+		g_assert_cmpint(n_sent, ==, E2E_HANDSHAKE_CEILING);
+	}
+	/* a clone that got none is not counted as asked: later it is */
+	fake_now += E2E_AUTO_KEYREQ_WINDOW;
+	{
+		char *w = wire_from(&clone, "#a", "x");
+
+		in_params(&in, &me, "clone", "clone49@h", "#a", NULL);
+		e2e_decrypt_incoming(me.kr, &me.id, &in, w, &r);
+		g_assert_cmpint(r.ask, ==, E2E_IN_ASK_SENT);
+		e2e_in_result_clear(&r);
+		g_free(w);
+	}
+	fake_now -= 2 * E2E_AUTO_KEYREQ_WINDOW;
+	peer_free(&me);
+	peer_free(&clone);
+}
+
+/* a query's request, accepted: the keyless row it left under the
+   peer's context goes (the query's sessions are under "@<own>"; /e2e list
+   showed it as "pending" for good) */
+static void test_accept_dm_leaves_no_row(void)
+{
+	PEER a, b;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&b, "@" ALICE, "normal");
+	req = e2e_build_keyreq(a.kr, &a.id, "@" ALICE, BOB, &error);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|@" ALICE, NULL));
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "@" ALICE, "@" BOB, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_SENT);
+	g_assert_nonnull(rsp);
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|@" ALICE, NULL));
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+#define ZED "zed@z.example"
+
+/* /e2e reverify <nick> goes only through keys we trust known as that nick
+   and refuses a nick known at several addresses; a new key at an address
+   whose key was only seen asking is a new request, not a changed
+   identity */
+static void test_reverify_nick_rules(void)
+{
+	PEER me, a, zed, zed2, a2;
+	E2E_REVERIFY rv;
+	GPtrArray *changes;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&me, "#a", "normal");
+	enable(&me, "#b", "normal");
+	enable(&a, "#a", "auto-accept");
+	give_key(&a, &me, "#a");
+	/* a stranger takes the nick and asks with a key, then another key */
+	peer_init(&zed, "alice", ZED, -1);
+	peer_init(&zed2, "alice", ZED, -1);
+	req = e2e_build_keyreq(zed.kr, &zed.id, "#a", BOB, &error);
+	deliver_keyreq(&me, &zed, req, BOB, &rsp, &recip);
+	g_free(req);
+	g_assert_cmpstr(path_str(me.kr, "peers", zed.id.fp_hex, "status"), ==, "pending");
+	req = e2e_build_keyreq(zed2.kr, &zed2.id, "#b", BOB, &error);
+	g_hash_table_remove_all(me.stamps);
+	deliver_keyreq(&me, &zed2, req, BOB, &rsp, &recip);
+	g_free(req);
+	/* a new request, no identity change */
+	changes = e2e_trust_changes(me.kr, NULL);
+	g_assert_cmpuint(changes->len, ==, 0);
+	g_ptr_array_unref(changes);
+	g_assert_nonnull(path_get(me.kr, "pending_inbound", ZED "|#b", NULL));
+	g_assert_null(path_str(me.kr, "peers", zed.id.fp_hex, "last_handle"));
+	/* by the nick: alice's trusted key only; nothing of zed's moves */
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, !=, E2E_REVERIFY_INSTALLED);
+	g_assert_cmpint(rv.result, !=, E2E_REVERIFY_REBOUND);
+	e2e_reverify_clear(&rv);
+	g_assert_cmpstr(path_str(me.kr, "peers", zed2.id.fp_hex, "status"), ==, "pending");
+	/* two trusted keys known as alice at two addresses: refused */
+	peer_init(&a2, "alice", "alice@other.example", -1);
+	enable(&a2, "#a", "auto-accept");
+	give_key(&a, &me, "#a");
+	give_key(&a2, &me, "#a");
+	e2e_reverify(me.kr, "alice", NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_NICK_AMBIGUOUS);
+	g_assert_cmpuint(rv.candidates->len, ==, 2);
+	e2e_reverify_clear(&rv);
+	g_assert_nonnull(path_get(me.kr, "peers", a.id.fp_hex, NULL));
+	g_assert_nonnull(path_get(me.kr, "peers", a2.id.fp_hex, NULL));
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&a2);
+	peer_free(&zed);
+	peer_free(&zed2);
+}
+
+/* KEYREQs of people the user did not confirm, that would store
+   something or be answered: E2E_INBOUND_BURST in E2E_AUTO_KEYREQ_WINDOW
+   s together - 40 clones on an auto-accept channel get 5 answers and 5
+   writes, a confirmed friend is still answered; requests for a context
+   with E2E off cost nothing */
+static void test_inbound_budget(void)
+{
+	PEER me, friend;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *before, *after;
+	int i, answered = 0;
+
+	peer_init(&me, "me", BOB, -1);
+	enable(&me, "#auto", "auto-accept");
+	peer_init(&friend, "friend", "friend@h", -1);
+	enable(&friend, "#auto", "auto-accept");
+	give_key(&friend, &me, "#auto");
+	g_assert_cmpint(e2e_accept(me.kr, &me.id, "friend@h", "#auto", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_TRUSTED);
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	free_budgets(me.stamps);
+	/* junk contexts first: nothing spent */
+	for (i = 0; i < 20; i++) {
+		PEER c;
+		char *h = g_strdup_printf("junk%d@h", i);
+
+		peer_init(&c, "c", h, -1);
+		req = e2e_build_keyreq(c.kr, &c.id, "#junk", BOB, &error);
+		deliver_keyreq(&me, &c, req, BOB, &rsp, &recip);
+		g_assert_null(rsp);
+		g_free(req);
+		g_free(h);
+		peer_free(&c);
+	}
+	before = e2e_keyring_snapshot(me.kr);
+	for (i = 0; i < 40; i++) {
+		PEER c;
+		char *h = g_strdup_printf("clone%d@h", i);
+
+		peer_init(&c, "c", h, -1);
+		req = e2e_build_keyreq(c.kr, &c.id, "#auto", BOB, &error);
+		deliver_keyreq(&me, &c, req, BOB, &rsp, &recip);
+		answered += rsp != NULL;
+		g_free(rsp);
+		g_free(recip);
+		rsp = recip = NULL;
+		g_free(req);
+		g_free(h);
+		peer_free(&c);
+	}
+	after = e2e_keyring_snapshot(me.kr);
+	g_assert_cmpstr(before, !=, after);
+	g_assert_cmpint(answered, ==, E2E_INBOUND_BURST);
+	g_assert_cmpuint(e2e_json_size(e2e_json_get(me.kr, "peers")), ==, 1 + E2E_INBOUND_BURST);
+	/* the friend: answered all the same */
+	e2e_json_remove(e2e_json_get(friend.kr, "pending"), "#auto|" BOB);
+	req = e2e_build_keyreq(friend.kr, &friend.id, "#auto", BOB, &error);
+	deliver_keyreq(&me, &friend, req, BOB, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	g_free(before);
+	g_free(after);
+	peer_free(&me);
+	peer_free(&friend);
+}
+
+/* an exchange the user started confirms the key that answers it; one
+   of ours that went out by itself does not. A nick known at several
+   addresses is told as such (/e2e handshake refuses it then) */
+static void test_user_started_confirms(void)
+{
+	PEER me, a, b2;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&me, "#a", "normal");
+	give_key(&a, &me, "#a");
+	g_assert_null(path_get(me.kr, "peers", a.id.fp_hex, "confirmed", NULL));
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#a|" BOB);
+	req = e2e_build_keyreq(me.kr, &me.id, "#a", ALICE, &error);
+	e2e_mark_user_keyreq(me.kr, "#a", ALICE);
+	g_assert_true(e2e_json_truthy(path_get(me.kr, "pending", "#a|" ALICE, "by_user", NULL)));
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &me, req, ALICE, &rsp, &recip);
+	g_assert_true(deliver_keyrsp(&me, &a, rsp));
+	g_assert_true(e2e_json_truthy(path_get(me.kr, "peers", a.id.fp_hex, "confirmed", NULL)));
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	g_assert_cmpuint(e2e_nick_addresses(me.kr, "ALICE"), ==, 1);
+	peer_init(&b2, "alice", "alice@elsewhere", -1);
+	enable(&b2, "#a", "auto-accept");
+	give_key(&b2, &me, "#a");
+	g_assert_cmpuint(e2e_nick_addresses(me.kr, "alice"), ==, 2);
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&b2);
+}
+
+
+/* a keyring of before (or of rpe2e.pl, an import): its trusted keys count
+   as confirmed, once - a key trusted afterwards by itself does not */
+static void test_migrate_confirmed(void)
+{
+	PEER me, a, b2;
+
+	peer_init(&me, "me", BOB, -1);
+	peer_init(&a, "alice", ALICE, -1);
+	enable(&a, "#a", "auto-accept");
+	enable(&me, "#a", "normal");
+	give_key(&a, &me, "#a");
+	g_assert_false(e2e_handle_confirmed(me.kr, ALICE));
+	g_assert_true(e2e_migrate_confirmed(me.kr));
+	g_assert_true(e2e_handle_confirmed(me.kr, ALICE));
+	g_assert_nonnull(e2e_json_get(me.kr, E2E_CONFIRM_MIGRATED));
+	/* once */
+	g_assert_false(e2e_migrate_confirmed(me.kr));
+	peer_init(&b2, "carol", CAROL, -1);
+	enable(&b2, "#a", "auto-accept");
+	give_key(&b2, &me, "#a");
+	g_assert_false(e2e_migrate_confirmed(me.kr));
+	g_assert_false(e2e_handle_confirmed(me.kr, CAROL));
+	/* export and import: carol stays unconfirmed, alice confirmed */
+	{
+		E2E_JSON *doc = e2e_keyring_export(me.kr), *kr;
+		char *error = NULL;
+
+		g_assert_nonnull(e2e_json_get(doc, "confirmedMigrated"));
+		kr = e2e_keyring_import(doc, &error);
+		g_assert_nonnull(kr);
+		g_assert_false(e2e_migrate_confirmed(kr));
+		g_assert_true(e2e_handle_confirmed(kr, ALICE));
+		g_assert_false(e2e_handle_confirmed(kr, CAROL));
+		e2e_json_free(kr);
+		/* an export without the marker (an older one): still no
+		   migration on import */
+		e2e_json_remove(doc, "confirmedMigrated");
+		kr = e2e_keyring_import(doc, &error);
+		g_assert_false(e2e_migrate_confirmed(kr));
+		g_assert_false(e2e_handle_confirmed(kr, CAROL));
+		e2e_json_free(kr);
+		e2e_json_free(doc);
+	}
+	peer_free(&me);
+	peer_free(&a);
+	peer_free(&b2);
+}
+
+/* a KEYRSP built while a rotation is due hands out the current key
+   without using the rotation up - the next line rotates, with its
+   REKEYs */
+static void test_keyrsp_and_rotation(void)
+{
+	PEER a, b;
+	E2E_GATE_RESULT g;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	e2e_json_set_int(path_get(a.kr, "outgoing", "#test", NULL), "pending_rotation", 1);
+	e2e_json_remove(e2e_json_get(b.kr, "pending"), "#test|" ALICE);
+	req = e2e_build_keyreq(b.kr, &b.id, "#test", ALICE, &error);
+	g_hash_table_remove_all(a.stamps);
+	deliver_keyreq(&a, &b, req, ALICE, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	g_assert_true(e2e_json_truthy(path_get(a.kr, "outgoing", "#test", "pending_rotation", NULL)));
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "rotates now", no_resolve, NULL, &g);
+	g_assert_cmpint(g.action, ==, E2E_GATE_CIPHER);
+	g_assert_nonnull(g.notices);
+	e2e_gate_result_clear(&g);
+	e2e_gate_decide(a.kr, TRUE, &a.id, NULL, "#test", "no rotation", no_resolve, NULL, &g);
+	e2e_gate_result_clear(&g);
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* a request that waited too long goes with the all-zero session row it
+   left: /e2e accept then finds nothing and says so, and nothing opens
+   under the all-zero key */
+static void test_request_expiry(void)
+{
+	PEER a, b;
+	E2E_IN_RESULT r;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL, *wire;
+	unsigned char zero[32] = { 0 };
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&b, "#test", "normal");
+	enable(&a, "#test", "normal");
+	req = e2e_build_keyreq(a.kr, &a.id, "#test", BOB, &error);
+	deliver_keyreq(&b, &a, req, BOB, &rsp, &recip);
+	g_free(req);
+	g_assert_nonnull(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpuint(e2e_prune_old_requests(b.kr), ==, 0);
+	fake_now += E2E_PENDING_INBOUND_TTL + 1;
+	g_assert_cmpuint(e2e_prune_old_requests(b.kr), ==, 1);
+	g_assert_null(path_get(b.kr, "pending_inbound", ALICE "|#test", NULL));
+	g_assert_null(path_get(b.kr, "incoming", ALICE "|#test", NULL));
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "#test", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_NOTHING);
+	/* a row of the all-zero key, trusted (as rpe2e.pl could write): never
+	   used */
+	{
+		E2E_JSON *row = e2e_json_new(E2E_JSON_OBJECT);
+		char *z = e2e_b64_encode(zero, 32);
+
+		e2e_json_set_string(row, "fp", a.id.fp_hex);
+		e2e_json_set_string(row, "sk", z);
+		e2e_json_set_string(row, "status", "trusted");
+		e2e_json_set(e2e_json_get(b.kr, "incoming"), ALICE "|#test", row);
+		g_free(z);
+	}
+	g_assert_cmpint(e2e_accept(b.kr, &b.id, ALICE, "#test", NULL, BOB, &rsp, &recip), ==,
+	                E2E_ACCEPT_NO_KEY);
+	{
+		GPtrArray *w;
+		const char *err = NULL;
+
+		w = e2e_encrypt_plain(zero, "#test", "forged", fake_now, &err);
+		wire = g_strdup(g_ptr_array_index(w, 0));
+		g_ptr_array_unref(w);
+	}
+	decrypt_from(&b, &a, "#test", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_null(r.plain);
+	e2e_in_result_clear(&r);
+	fake_now -= E2E_PENDING_INBOUND_TTL + 1;
+	g_free(wire);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -5571,6 +7285,26 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/handshake-normal", test_handshake_normal_mode);
 	g_test_add_func("/e2e/proto/handshake-modes", test_handshake_modes);
 	g_test_add_func("/e2e/proto/trust-changes", test_trust_changes);
+	g_test_add_func("/e2e/proto/hidden-messages", test_hidden_messages);
+	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
+	g_test_add_func("/e2e/proto/reverify", test_reverify);
+	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
+	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
+	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
+	g_test_add_func("/e2e/proto/replay", test_replay);
+	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
+	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
+	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
+	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
+	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
+	g_test_add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
+	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
+	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
+	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
+	g_test_add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
+	g_test_add_func("/e2e/proto/keyrsp-and-rotation", test_keyrsp_and_rotation);
+	g_test_add_func("/e2e/proto/request-expiry", test_request_expiry);
+	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
 	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
 	g_test_add_func("/e2e/proto/gate", test_gate);
 	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
@@ -5580,22 +7314,22 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/incoming", test_incoming);
 	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
 	g_test_add_func("/e2e/proto/export-import", test_export_import);
-	g_test_add_func("/e2e/review/c1-keyrsp-is-no-acceptance", test_review_c1);
-	g_test_add_func("/e2e/review/c2-rekey-needs-session", test_review_c2);
-	g_test_add_func("/e2e/review/i2-multiline-buffer", test_review_i2);
-	g_test_add_func("/e2e/review/i3-dm-handle-changed", test_review_i3);
-	g_test_add_func("/e2e/review/i5-no-key-no-trust", test_review_i5);
-	g_test_add_func("/e2e/review/m1-control-characters", test_review_m1);
-	g_test_add_func("/e2e/review/m6-keyrsp-binding", test_review_m6);
-	g_test_add_func("/e2e/review/m7-rekey-replay", test_review_m7);
-	g_test_add_func("/e2e/review/m8-limits", test_review_m8);
-	g_test_add_func("/e2e/review/m10-robustness", test_review_m10);
-	g_test_add_func("/e2e/review2/i3-unresolved-nick", test_review2_i3_unresolved);
-	g_test_add_func("/e2e/review2/m7-rekey-replay-after-many", test_review2_rekey_replay);
-	g_test_add_func("/e2e/review2/m8-growth-from-wires", test_review2_growth);
-	g_test_add_func("/e2e/review2/rekey-to-accepted-only", test_review2_rekey_recipients);
-	g_test_add_func("/e2e/review2/queued-buffer-privmsg", test_review2_buffer_privmsg);
-	g_test_add_func("/e2e/review2/query-off-this-address", test_review2_query_off);
+	g_test_add_func("/e2e/proto/keyrsp-is-no-acceptance", test_keyrsp_is_no_acceptance);
+	g_test_add_func("/e2e/proto/rekey-needs-session", test_rekey_needs_session);
+	g_test_add_func("/e2e/proto/multiline-buffer", test_multiline_buffer);
+	g_test_add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
+	g_test_add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
+	g_test_add_func("/e2e/proto/control-characters", test_control_characters);
+	g_test_add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
+	g_test_add_func("/e2e/proto/rekey-replay", test_rekey_replay);
+	g_test_add_func("/e2e/proto/limits", test_limits);
+	g_test_add_func("/e2e/proto/robustness", test_robustness);
+	g_test_add_func("/e2e/proto/unresolved-nick", test_unresolved_nick);
+	g_test_add_func("/e2e/proto/rekey-replay-after-many", test_rekey_replay_after_many);
+	g_test_add_func("/e2e/proto/growth-from-wires", test_growth_from_wires);
+	g_test_add_func("/e2e/proto/rekey-to-accepted-only", test_rekey_to_accepted_only);
+	g_test_add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
+	g_test_add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
 	g_test_add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
 	g_test_add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
 	g_test_add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);

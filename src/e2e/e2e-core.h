@@ -5,6 +5,7 @@
 
 #include "module.h"
 #include "e2e-json.h"
+#include "e2e-keyring.h"
 #include "e2e-proto.h"
 #include "e2e-state.h"
 
@@ -31,6 +32,9 @@ E2E_JSON *e2e_load(void);
 /* the same; *lost: the keyring is lost (a corrupt one was moved aside),
    the one returned is empty and must not be used for anything */
 E2E_JSON *e2e_load_full(gboolean *lost);
+/* the same; *status (when not NULL) how it was read - a READ_ERROR one
+   is an empty stand-in, not to be read, asked or answered with */
+E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *status);
 /* a corrupt keyring was moved aside and /e2e reset not run yet */
 gboolean e2e_keyring_is_lost(void);
 /* drops the PRIVMSGs waiting in irssi's flood queues and every line
@@ -56,6 +60,12 @@ void e2e_server_net(SERVER_REC *server, E2E_NET *net);
    (one without a chatnet by its address, unless it is up) */
 gboolean e2e_legacy_ok(void);
 void e2e_send_notice(SERVER_REC *server, const char *nick, const char *body);
+/* the same for a person the user did not confirm (handle: their
+   address): in the module's strangers' queue (e2e-outq.h), which leaves
+   only while nothing else waits; at once when nothing does. TRUE when
+   it left at once */
+gboolean e2e_send_notice_stranger(SERVER_REC *server, const char *nick, const char *body,
+                                  const char *handle);
 /* the 30 s limiter of the KEYREQs we send */
 GHashTable *e2e_keyreq_out_stamps(void);
 /* FALSE (after telling the user once) while rpe2e.pl is loaded; a change
@@ -99,6 +109,16 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who);
    reason: "inactive" "lost" "not_connected" "no_request" "mismatch"). */
 void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, const char *handle,
                     const char *fingerprint);
+
+/* The key exchanges of handle that a trust change blocks (e2e_trust_changes:
+   a new address, a new key, revoked), each as a warning with the command
+   that settles it, in the window of ctx (or of nick; else the active
+   one): each one at most once a minute per server, unless force */
+void e2e_tell_trust_changes(SERVER_REC *server, const char *ctx, const char *nick,
+                            const E2E_JSON *kr, const char *handle, gboolean force);
+/* a warning ("[E2E] text" in the warning colour) in a window item, NULL:
+   the active one */
+void e2e_print_warning(void *item, const char *fmt, ...) G_GNUC_PRINTF(2, 3);
 
 /* e2e_rotate_for_damaged() found entries (pairs "<handle>", "<ctx>"):
    told in item's window (NULL: the active one) */

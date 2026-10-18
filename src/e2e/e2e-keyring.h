@@ -35,7 +35,7 @@
 
 #include "e2e-json.h"
 
-#define E2E_LOST_HINT "E2E state is LOST: nothing is sent to any channel or query (except bot commands) and nothing is saved until you run /e2e reset (a new keyring and identity; E2E is then off everywhere until /e2e on)"
+#define E2E_LOST_HINT "E2E state is LOST: nothing is sent to any channel or query and nothing is saved until you run /e2e reset (a new keyring and identity; E2E is then off everywhere until /e2e on)"
 
 typedef enum {
 	E2E_LOAD_OK,		/* read - or absent: an empty keyring */

@@ -39,7 +39,7 @@
  rows are LEGACY: e2e_ctx_find() uses them where they are (incoming
  traffic, commands), and only the user's own encrypted line takes them
  over, e2e_ctx_resolve() / e2e_adopt_legacy(), which marks the name as
- that network's (R-E18: a stranger's KEYREQ or wire must not bind it).
+ that network's (a stranger's KEYREQ or wire must not bind it).
  On several networks an old context is BLOCKED - the gate refuses it,
  nothing is decrypted or answered with it - until /e2e adopt binds it to
  one network, or /e2e off writes a scoped config for this one; a name
@@ -69,10 +69,13 @@ typedef struct {
 	char *label;		/* NULL when the server has no chatnet and no tag */
 	E2E_CASEMAP casemap;
 	gboolean legacy_ok;	/* whether unscoped rows may be used here */
+	gboolean from_tag;	/* the label is the server's tag (no chatnet): it
+				   can change with the next connection */
 } E2E_NET;
 
-/* label from chatnet (if non-empty) or tag (if non-empty), else NULL;
-   casemap from the CASEMAPPING value (NULL when the server sent none) */
+/* label from chatnet (if non-empty) or tag (if non-empty, from_tag),
+   else NULL; casemap from the CASEMAPPING value (NULL when the server
+   sent none) */
 void e2e_net_init(E2E_NET *net, const char *chatnet, const char *tag, const char *casemapping,
                   gboolean legacy_ok);
 /* frees the label; safe to call twice */
@@ -83,7 +86,7 @@ void e2e_net_clear(E2E_NET *net);
 E2E_CASEMAP e2e_casemap_parse(const char *value);
 /* the map of a server: e2e_casemap_parse(value) once it named its
    CASEMAPPING (value) or ended its MOTD without one (motd_done: it sends
-   none, rfc1459); UNICODE before (R-E24, R-E26) */
+   none, rfc1459); UNICODE before */
 E2E_CASEMAP e2e_casemap_of_server(const char *value, gboolean motd_done);
 /*
  The folded form of name under map (NULL for NULL):
@@ -151,7 +154,7 @@ char *e2e_casefold_ex(const char *name, E2E_CASEMAP map, gboolean *exact);
    case folding) - no rfc1459 specials, nothing dropped, no
    normalisation but in the last - and NULL for a name that is not valid
    UTF-8. Two names that differ here may be two channels to the server
-   although e2e_casefold() joins them (R-E22, R-E26, R-E28, R-E29).
+   although e2e_casefold() joins them.
    Never persisted, as e2e_casefold(). */
 char *e2e_casefold_narrow(const char *name, E2E_CASEMAP map);
 
@@ -231,7 +234,7 @@ char *e2e_ctx_resolve(E2E_JSON *kr, const E2E_NET *net, const char *wire, gboole
    LEGACY the bare name (the old rows used where they are) - the scoped
    name when this network has rows of its own as well -, NULL for
    BLOCKED. For everything that is not the user's own outgoing line:
-   incoming messages and handshakes, commands (R-E18). */
+   incoming messages and handshakes, commands. */
 char *e2e_ctx_find(const E2E_JSON *kr, const E2E_NET *net, const char *wire);
 /*
  Moves every bare row of wire to "<label>\x1f<wire>": channels, outgoing,
