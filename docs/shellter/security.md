@@ -79,7 +79,8 @@ user on the box can influence go through one helper (`src/core/safe-file.c`):
 - **The web certificate and key** are replaced the same way when they are
   missing, damaged or about to expire. A link or anything else but a
   regular file in their place is neither used nor replaced: fe-web says so
-  and does not start until it is removed.
+  and does not start; once it is removed, `/set fe_web_enabled on` (or a
+  restart) starts it.
 - **The external credentials file** is written where a link at its path
   points, as before, through a temporary file in that file's directory;
   the file there must be a regular file of your own (a link that leads to

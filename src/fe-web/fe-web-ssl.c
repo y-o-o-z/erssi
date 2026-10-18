@@ -170,7 +170,8 @@ static gboolean refused_in_place(const char *path)
 	       S_ISDIR(st.st_mode) ? "a directory" : "not a regular file";
 	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 	          "fe-web-ssl: %s is %s - it is neither used nor replaced by a new key "
-	          "and certificate; fe-web starts once it is removed (or is the file itself)",
+	          "and certificate; remove it (or put the file itself there), then "
+	          "/SET fe_web_enabled ON again or restart",
 	          path, what);
 	return TRUE;
 }

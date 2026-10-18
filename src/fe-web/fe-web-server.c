@@ -1726,7 +1726,7 @@ gboolean fe_web_server_init(void)
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web: FATAL: SSL/TLS not initialized!");
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: SSL certificate generation failed. Check OpenSSL installation.");
+		          "fe-web: the TLS key and certificate could not be loaded or made (see above)");
 		return FALSE;
 	}
 

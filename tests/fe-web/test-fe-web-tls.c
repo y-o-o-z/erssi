@@ -15,7 +15,7 @@
  pair is made, written to a temporary file and renamed into place. A key
  or a certificate that is a link, a FIFO or anything but a regular file is
  neither used nor replaced (a FIFO does not hang the start): fe-web says so
- and does not start until it is gone. A client that pins the certificate completes a handshake with
+ and does not start; once it is gone, the next start makes a new pair. A client that pins the certificate completes a handshake with
  the names 127.0.0.1 and localhost, and data goes both ways.
 */
 
