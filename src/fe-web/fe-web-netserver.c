@@ -422,6 +422,17 @@ void fe_web_handle_network_remove(WEB_CLIENT_REC *client, const char *json_str)
 	g_free(request_id);
 }
 
+/* The server of the setup with this address, port and network (or none
+ * on either side). server_setup_find() falls back to a server with the
+ * same address on another port, which is another server here: its
+ * settings must not change, nor may it be removed, for this one. */
+static SERVER_SETUP_REC *find_server(const char *address, int port, const char *chatnet)
+{
+	SERVER_SETUP_REC *rec = server_setup_find(address, port, chatnet);
+
+	return rec != NULL && rec->port == port ? rec : NULL;
+}
+
 /* Handle server_add request */
 void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 {
@@ -454,7 +465,7 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 
 	/* Check if server already exists */
 	chatnet = fe_web_json_get_string(json_str, "chatnet");
-	existing = IRC_SERVER_SETUP(server_setup_find(address, port, chatnet));
+	existing = IRC_SERVER_SETUP(find_server(address, port, chatnet));
 	is_new = (existing == NULL);
 	
 	if (is_new) {
@@ -526,9 +537,9 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 		rec->no_cap = fe_web_json_get_int(json_str, "no_cap", 0);
 	}
 
-	/* Add/modify server; a changed one is written into the config too
-	 * (its address, port and network are the same, the lookup found it
-	 * by them), as /SERVER MODIFY does */
+	/* Add/modify server; a changed one is written into the config too,
+	 * as /SERVER MODIFY does (find_server() found it by its address and
+	 * port, so its config node is found by them) */
 	if (is_new) {
 		server_setup_add(SERVER_SETUP(rec));
 	} else {
@@ -569,7 +580,7 @@ void fe_web_handle_server_remove(WEB_CLIENT_REC *client, const char *json_str)
 		return;
 	}
 
-	rec = server_setup_find(address, port, chatnet);
+	rec = find_server(address, port, chatnet);
 	if (rec == NULL) {
 		msg = g_strdup_printf("Server '%s:%d' not found", address, port);
 		send_command_result(client, request_id, FALSE, msg, "SERVER_NOT_FOUND");

@@ -227,6 +227,39 @@ static void test_server_password_mask_keeps_value(void)
 	teardown();
 }
 
+/* Another port of a known address is another server: added, and the
+ * first one keeps its settings; a remove of a port there is none of
+ * removes nothing */
+static void test_server_other_port(void)
+{
+	SERVER_SETUP_REC *plain, *tls;
+	char *heard;
+
+	say_quiet("{\"type\":\"server_add\",\"id\":\"1\",\"address\":\"irc.p.example\","
+	          "\"port\":6667,\"chatnet\":\"PNet\"}");
+	heard = say("{\"type\":\"server_add\",\"id\":\"2\",\"address\":\"irc.p.example\","
+	            "\"port\":6697,\"chatnet\":\"PNet\",\"use_tls\":1}");
+	g_assert_nonnull(strstr(heard, "Server 'irc.p.example:6697' added successfully"));
+	g_free(heard);
+	g_assert_cmpuint(g_slist_length(setupservers), ==, 2);
+	plain = server_setup_find("irc.p.example", 6667, "PNet");
+	tls = server_setup_find("irc.p.example", 6697, "PNet");
+	g_assert_nonnull(plain);
+	g_assert_nonnull(tls);
+	g_assert_true(plain != tls);
+	g_assert_cmpint(plain->port, ==, 6667);
+	g_assert_false(plain->use_tls);
+	g_assert_cmpint(tls->port, ==, 6697);
+	g_assert_true(tls->use_tls);
+
+	heard = say("{\"type\":\"server_remove\",\"id\":\"3\",\"address\":\"irc.p.example\","
+	            "\"port\":7000,\"chatnet\":\"PNet\"}");
+	g_assert_nonnull(strstr(heard, "SERVER_NOT_FOUND"));
+	g_free(heard);
+	g_assert_cmpuint(g_slist_length(setupservers), ==, 2);
+	teardown();
+}
+
 /* ---- saving ---- */
 
 /* each edit is in the file at once, with settings_autosave ON */
@@ -340,6 +373,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/netserver/autosendcmd-masked", test_autosendcmd_masked);
 	g_test_add_func("/fe-web/netserver/server-password-mask-keeps-value",
 	                test_server_password_mask_keeps_value);
+	g_test_add_func("/fe-web/netserver/server-other-port", test_server_other_port);
 	g_test_add_func("/fe-web/netserver/edits-saved", test_edits_saved);
 	g_test_add_func("/fe-web/netserver/autosave-off-not-saved", test_autosave_off_not_saved);
 	g_test_add_func("/fe-web/netserver/changed-file-not-overwritten",
