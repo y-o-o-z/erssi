@@ -131,6 +131,8 @@
                  keyring.json.bak-<time> (checked as the keyring is, and
                  refused without a whole identity - EXPORT refuses that
                  too); the previous one is kept as keyring.json.bak-<time>.
+                 Only a regular file is read: a symlink is not followed,
+                 a FIFO, device or directory is refused at once.
                  The key changes (REKEY) already taken are part of
                  erssi's exports; an export without them (repartee's)
                  starts their replay protection anew - an old key change
@@ -337,9 +339,12 @@
     there - only that request, by its exact ident@host.
 
     Keyrings: a keyring that cannot be read is never overwritten, and
-    messages are not sent until it can be read again; the subcommands (but
-    HELP and IMPORT) refuse then, so that EXPORT never writes an empty
-    export and nothing claims a change that was not saved. One that is not
+    messages are not sent until it can be read again - so is one that is
+    not a regular file of yours (keyring.json as a symlink, which is not
+    followed: link the rpe2e directory instead; a FIFO, a device). The
+    subcommands (but HELP and IMPORT) refuse then, so that EXPORT never
+    writes an empty export and nothing claims a change that was not
+    saved. One that is not
     valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
     state is then LOST: nothing is sent to any channel or query and
     nothing is saved, also after a restart, until you run /E2E RESET (a

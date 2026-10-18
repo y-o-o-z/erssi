@@ -353,6 +353,59 @@ def main():
         os.chmod(ring, 0o600)
         assert "damaged" in log_since(a, off) and not dest.exists(), log_since(a, off)
 
+    def t_special_files():
+        """/e2e import of a FIFO, a device, a directory or a symlink
+        answers at once that it is no regular file (a FIFO opened the
+        plain way would hang the client), /e2e export writes into none
+        of them, and a keyring.json that is a FIFO or a symlink is not
+        read: nothing is replaced"""
+        a = st["alice"]
+        ring = a.home / "rpe2e" / "keyring.json"
+        fp = keyring(a)["identity"]["fp"]
+        exp = work / "special-export.json"
+        a.type_and_wait(f"/e2e export {exp}")
+        assert harness.wait_until(exp.exists, WAIT)
+        fifo = work / "special.fifo"
+        os.mkfifo(fifo, 0o600)
+        link = work / "special.link"
+        link.symlink_to(exp)
+        nul = work / "special.null"
+        nul.symlink_to("/dev/null")
+        cases = [(fifo, "not a regular file (a FIFO)"),
+                 (link, "a symbolic link (not followed)"),
+                 (nul, "a symbolic link (not followed)"),
+                 (Path("/dev/null"), "not a regular file (a device)"),
+                 (work, "not a regular file (a directory)")]
+        for f, why in cases:
+            off = log_size(a)
+            a.type_and_wait(f"/e2e import {f}")
+            assert wait_log(a, off, f"import failed: {f}: {why}"), (f, log_since(a, off))
+            assert keyring(a)["identity"]["fp"] == fp, f
+        for f in (fifo, nul):
+            off = log_size(a)
+            a.type_and_wait(f"/e2e export {f}")
+            assert wait_log(a, off, "export failed: "), (f, log_since(a, off))
+        assert fifo.is_fifo() and nul.is_symlink()
+        good = work / "special-keyring.json"
+        a.type_and_wait("/unload e2e")
+        ring.rename(good)
+        try:
+            for make, why in ((lambda: os.mkfifo(ring, 0o600), "not a regular file (a FIFO)"),
+                              (lambda: ring.symlink_to(good), "a symbolic link (not followed)")):
+                make()
+                off = log_size(a)
+                a.type_and_wait("/load e2e")
+                assert wait_log(a, off, f"cannot read keyring {ring}: {why}"), log_since(a, off)
+                a.type_and_wait("/unload e2e")
+                assert ring.is_fifo() or ring.is_symlink()
+                ring.unlink()
+        finally:
+            if ring.exists() or ring.is_symlink():
+                ring.unlink()
+            good.rename(ring)
+        a.type_and_wait("/load e2e")
+        assert keyring(a)["identity"]["fp"] == fp
+
     def t_corrupt_keyring():
         """/load e2e on a corrupt keyring says so at once; a line typed
         then is shown marked [NOT SENT], the warning after it"""
@@ -408,7 +461,8 @@ def main():
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
                       t_accept_live_nick, t_bot_lines, t_plain_marked, t_unreadable_keyring,
-                      t_reset_force, t_import_identity, t_corrupt_keyring, t_wire])
+                      t_reset_force, t_import_identity, t_special_files, t_corrupt_keyring,
+                      t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

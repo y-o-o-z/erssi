@@ -467,6 +467,124 @@ static void test_backup_and_new_file(void)
 	remove_tree();
 }
 
+/* a keyring.json that is no regular file of the user's - a FIFO (a plain
+   open would wait for a writer for ever), a symlink (to a keyring, to
+   /dev/null), a directory, a device, a file of another user: refused at
+   once with the reason, never read, replaced or moved aside. An export
+   never goes into one either. The alarm ends a test that would hang. */
+static void assert_refused(const char *p, const char *reason)
+{
+	E2E_LOAD_STATUS status;
+	E2E_JSON *kr;
+	GStatBuf before, after;
+	char *error = NULL, *notice = NULL, *data;
+	gsize len;
+
+	g_assert_cmpint(lstat(p, &before), ==, 0);
+	kr = e2e_keyring_load_checked(p, &status, &error);
+	g_assert_cmpint(status, ==, E2E_LOAD_READ_ERROR);
+	if (strstr(error, reason) == NULL)
+		g_error("%s: \"%s\" without \"%s\"", p, error, reason);
+	g_free(error);
+	error = NULL;
+	e2e_json_free(kr);
+	kr = e2e_keyring_load(p, &notice);
+	g_assert_nonnull(strstr(notice, "cannot read keyring"));
+	g_assert_nonnull(strstr(notice, reason));
+	g_free(notice);
+	g_assert_false(e2e_keyring_save(p, kr, &error));
+	g_assert_nonnull(strstr(error, "keyring NOT saved"));
+	g_free(error);
+	error = NULL;
+	e2e_json_free(kr);
+	g_assert_null(e2e_keyring_backup(p, &error));
+	g_assert_nonnull(strstr(error, reason));
+	g_free(error);
+	error = NULL;
+	/* /e2e import reads the same way (any owner) */
+	if (strstr(reason, "another user") == NULL) {
+		data = e2e_read_regular_file(p, E2E_MAX_KEYRING_SIZE, FALSE, &len, &error);
+		g_assert_null(data);
+		g_assert_nonnull(strstr(error, reason));
+		g_free(error);
+		error = NULL;
+	}
+	g_assert_cmpint(lstat(p, &after), ==, 0);
+	g_assert_cmpint(after.st_mode, ==, before.st_mode);
+	g_assert_cmpint(after.st_ino, ==, before.st_ino);
+}
+
+static void test_special_files(void)
+{
+	char *real, *data, *error = NULL;
+	GStatBuf st;
+	gsize len;
+
+	alarm(20);
+	setup();
+	real = g_build_filename(dir, "real.json", NULL);
+	spew(real, "{\"identity\":null}");
+
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	assert_refused(path, "not a regular file (a FIFO)");
+	/* /e2e export to it: refused, the FIFO stays */
+	g_assert_false(e2e_write_new_file(path, "{}", 2, &error));
+	g_free(error);
+	error = NULL;
+	g_assert_cmpint(lstat(path, &st), ==, 0);
+	g_assert_true(S_ISFIFO(st.st_mode));
+	g_unlink(path);
+
+	g_assert_cmpint(symlink(real, path), ==, 0);
+	assert_refused(path, "a symbolic link (not followed)");
+	g_unlink(path);
+	g_assert_cmpint(symlink("/dev/null", path), ==, 0);
+	assert_refused(path, "a symbolic link (not followed)");
+	g_assert_false(e2e_write_new_file(path, "{}", 2, &error));
+	g_free(error);
+	error = NULL;
+	g_unlink(path);
+	/* dangling: not "no keyring yet", which the next save would replace */
+	g_assert_cmpint(symlink("nowhere", path), ==, 0);
+	assert_refused(path, "a symbolic link (not followed)");
+	g_assert_false(e2e_keyring_lost(path));
+	g_unlink(path);
+
+	g_assert_cmpint(g_mkdir(path, 0700), ==, 0);
+	assert_refused(path, "not a regular file (a directory)");
+	g_rmdir(path);
+
+	assert_refused("/dev/null", "not a regular file (a device)");
+	g_assert_false(e2e_write_new_file("/dev/null", "{}", 2, &error));
+	g_free(error);
+	error = NULL;
+
+	/* a keyring of another user is not this user's keyring; /e2e
+	   import may read such a file */
+	if (geteuid() != 0 && lstat("/etc/passwd", &st) == 0 && S_ISREG(st.st_mode) &&
+	    st.st_uid != geteuid()) {
+		assert_refused("/etc/passwd", "belongs to another user");
+		data = e2e_read_regular_file("/etc/passwd", E2E_MAX_KEYRING_SIZE, FALSE, &len, &error);
+		g_assert_nonnull(data);
+		g_free(data);
+	}
+
+	/* and a keyring that is one still reads */
+	g_assert_cmpint(rename(real, path), ==, 0);
+	data = e2e_read_regular_file(path, 5, TRUE, &len, &error);
+	g_assert_null(data);
+	g_assert_nonnull(strstr(error, "larger than"));
+	g_free(error);
+	error = NULL;
+	data = e2e_read_regular_file(path, E2E_MAX_KEYRING_SIZE, TRUE, &len, &error);
+	g_assert_cmpstr(data, ==, "{\"identity\":null}");
+	g_assert_cmpuint(len, ==, strlen(data));
+	g_free(data);
+	g_free(real);
+	remove_tree();
+	alarm(0);
+}
+
 /* what contrib/rpe2e/rpe2e-from-repartee writes: json.dump(indent=3,
    sort_keys=True), \u escapes, a final newline */
 static char *migration_tool_text(const char *fp, const char *pkb, const char *skb)
@@ -782,6 +900,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/keyring/wrong-layout", test_wrong_layout);
 	g_test_add_func("/e2e/keyring/partial-write", test_partial_write);
 	g_test_add_func("/e2e/keyring/backup-and-new-file", test_backup_and_new_file);
+	g_test_add_func("/e2e/keyring/special-files", test_special_files);
 	g_test_add_func("/e2e/keyring/migration-tool-file", test_migration_tool_file);
 	g_test_add_func("/e2e/legacy/files-load", test_legacy_files_load);
 	g_test_add_func("/e2e/legacy/export-keeps-scope", test_legacy_export_keeps_scope);
