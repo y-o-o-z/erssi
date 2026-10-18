@@ -721,9 +721,19 @@ if ['wasm32', 'wasm64'].contains(host_machine.cpu_family())
   error('irssi\'s signal dispatch calls every handler through one function type, ' +
         'which WebAssembly does not allow')
 endif
-if cflags_joined.contains('-fsanitize=cfi') and not cflags_joined.contains('-fno-sanitize=cfi-icall')
+# the last of the arguments that turn the indirect call check on or off wins
+cfi_icall = false
+foreach arg : get_option('c_args')
+  if arg.startswith('-fsanitize=') or arg.startswith('-fno-sanitize=')
+    kinds = arg.split('=')[1].split(',')
+    if 'cfi' in kinds or 'cfi-icall' in kinds
+      cfi_icall = arg.startswith('-fsanitize=')
+    endif
+  endif
+endforeach
+if cfi_icall
   error('CFLAGS turn on -fsanitize=cfi, whose indirect call check stops at irssi\'s first ' +
-        'signal: add -fno-sanitize=cfi-icall at their end')
+        'signal: add -fno-sanitize=cfi-icall after it')
 endif
 
 ##############
