@@ -156,7 +156,28 @@ static char *ssl_file_path(const char *name)
 	return g_strdup_printf("%s/%s", get_irssi_dir(), name);
 }
 
-static gboolean load_key_and_cert(void)
+/* A link (a client may pin the certificate it points to) or anything else
+ * but a regular file at path is neither used nor replaced by a new pair:
+ * said, and TRUE */
+static gboolean refused_in_place(const char *path)
+{
+	struct stat st;
+	const char *what;
+
+	if (lstat(path, &st) != 0 || S_ISREG(st.st_mode))
+		return FALSE;
+	what = S_ISLNK(st.st_mode) ? "a symbolic link" :
+	       S_ISDIR(st.st_mode) ? "a directory" : "not a regular file";
+	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+	          "fe-web-ssl: %s is %s - it is neither used nor replaced by a new key "
+	          "and certificate; fe-web starts once it is removed (or is the file itself)",
+	          path, what);
+	return TRUE;
+}
+
+/* 1: the stored pair is used; 0: a new pair is to be made (missing,
+ * damaged, expiring, a key others could read); -1: a file in the way */
+static int load_key_and_cert(void)
 {
 	char *key_path, *cert_path;
 	FILE *f;
@@ -164,10 +185,19 @@ static gboolean load_key_and_cert(void)
 	X509 *x509 = NULL;
 	time_t tomorrow;
 	struct stat st;
+	gboolean key_refused, cert_refused;
 	int fd;
 
 	key_path = ssl_file_path(FE_WEB_KEY_FILE);
 	cert_path = ssl_file_path(FE_WEB_CERT_FILE);
+	/* both are looked at, so both are said */
+	key_refused = refused_in_place(key_path);
+	cert_refused = refused_in_place(cert_path);
+	if (key_refused || cert_refused) {
+		g_free(key_path);
+		g_free(cert_path);
+		return -1;
+	}
 
 	/* not through a symbolic link, never a FIFO (which would hang the
 	 * start), a regular file only (safe_file_open_read()) */
@@ -204,12 +234,12 @@ static gboolean load_key_and_cert(void)
 		EVP_PKEY_free(pkey);
 		X509_free(x509);
 		ERR_clear_error();
-		return FALSE;
+		return 0;
 	}
 
 	server_key = pkey;
 	server_cert = x509;
-	return TRUE;
+	return 1;
 }
 
 /* The key and the certificate replace the old files as a whole
@@ -271,8 +301,14 @@ int fe_web_ssl_prepare(void)
 	if (fe_web_ssl_ctx != NULL)
 		return TRUE;
 
-	if (load_key_and_cert())
+	switch (load_key_and_cert()) {
+	case 1:
 		goto have_cert;
+	case -1:
+		return FALSE;
+	default:
+		break;
+	}
 
 	/* Generate RSA key */
 	server_key = generate_rsa_key();

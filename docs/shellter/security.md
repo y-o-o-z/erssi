@@ -71,11 +71,15 @@ user on the box can influence go through one helper (`src/core/safe-file.c`):
 - **Appending** (mentions log, debug logs) — only to a regular file of your
   own with no other hard link, never through a symbolic link, with mode
   0600.
-- **Replacing** (files erssi installs into `~/.erssi`, the web certificate
-  and key) — a new file in the same directory with its mode from the start
-  (0600; an installed file that is updated keeps its mode), written out to
-  the disk and renamed over the old one: a crash leaves the old or the new
-  file, and a link at the path is replaced, not followed.
+- **Replacing** (files erssi installs into `~/.erssi`) — a new file in the
+  same directory with its mode from the start (0600; an installed file
+  that is updated keeps its mode), written out to the disk and renamed over
+  the old one: a crash leaves the old or the new file, and a link at the
+  path is replaced, not followed.
+- **The web certificate and key** are replaced the same way when they are
+  missing, damaged or about to expire. A link or anything else but a
+  regular file in their place is neither used nor replaced: fe-web says so
+  and does not start until it is removed.
 - **The external credentials file** is written where a link at its path
   points, as before, through a temporary file in that file's directory;
   the file there must be a regular file of your own. A file that cannot be
