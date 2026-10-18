@@ -146,8 +146,20 @@ def main():
                 found = [m for m in maps if m.endswith("/" + so)]
                 assert found, f"{so} is not loaded"
                 assert all(Path(m).is_relative_to(prefix) for m in found), f"{so} from {found}"
+            check_set_default(e, ("help_path", "perl_use_lib"), prefix)
             e.quit()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
+
+    def check_set_default(e, keys, prefix):
+        """/SET -default writes no default into the config: the key goes,
+        so a default under this release's prefix is never left behind"""
+        cfg = e.save_config(*(f"/set {k} /nonexistent/{k}" for k in keys))
+        assert all(f"/nonexistent/{k}" in cfg for k in keys), "the values were not saved"
+        cfg = e.save_config(*(f"/set -default {k}" for k in keys))
+        for k in keys:
+            assert k not in cfg, f"/set -default {k} saved it:\n{cfg}"
+        if prefix is not None:
+            assert str(prefix) not in cfg, f"the prefix in the config:\n{cfg}"
 
     def t_prefix_a():
         check_prefix("a")
@@ -169,6 +181,8 @@ def main():
             help_dir = compiled / Path(inst.helpdir).relative_to(prefix)
             assert e.wait_file(e.all_log(), f"help_path {help_dir}", WAIT), \
                 f"help_path is not the compiled {help_dir}"
+            # (its perl_use_lib is the harness's, under this install)
+            check_set_default(e, ("help_path",), None)
             e.quit()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
 

@@ -206,55 +206,53 @@ static void cmd_set(char *data)
 		set_print_pattern(key);
 	else {
 		rec = settings_get_record(key);
-		if (rec != NULL) {
+		if (rec != NULL && set_default && !clear) {
+			/* the default: the key goes from the config, so a default
+			   that changes (an update, a relocated prefix) applies,
+			   and none is written into the file */
+			settings_reset(key);
+		} else if (rec != NULL) {
 			/* change the setting */
 			switch (rec->type) {
 			case SETTING_TYPE_BOOLEAN:
 				if (clear)
 					settings_set_bool(key, FALSE);
-				else if (set_default)
-					settings_set_bool(key, rec->default_value.v_bool);
 				else
 					set_boolean(key, value);
 				break;
 			case SETTING_TYPE_INT:
 				if (clear)
 					settings_set_int(key, 0);
-				else if (set_default)
-					settings_set_int(key, rec->default_value.v_int);
 				else
 					set_int(key, value);
 				break;
 			case SETTING_TYPE_CHOICE:
-				if (clear || set_default)
+				if (clear)
 					settings_set_choice(key, rec->choices[rec->default_value.v_int]);
 				else
 					set_choice(key, value);
 				break;
 			case SETTING_TYPE_STRING:
-				settings_set_str(key, clear ? "" :
-						 set_default ? rec->default_value.v_string :
-						 value);
+				settings_set_str(key, clear ? "" : value);
 				break;
 			case SETTING_TYPE_TIME:
-				if (!settings_set_time(key, clear ? "0" :
-						       set_default ? rec->default_value.v_string : value))
+				if (!settings_set_time(key, clear ? "0" : value))
 					printformat(NULL, NULL, MSGLEVEL_CLIENTERROR, TXT_INVALID_TIME);
 				break;
 			case SETTING_TYPE_LEVEL:
-				if (!settings_set_level(key, clear ? "" :
-							set_default ? rec->default_value.v_string : value))
+				if (!settings_set_level(key, clear ? "" : value))
 					printformat(NULL, NULL, MSGLEVEL_CLIENTERROR, TXT_INVALID_LEVEL);
 				break;
 			case SETTING_TYPE_SIZE:
-				if (!settings_set_size(key, clear ? "0" :
-						       set_default ? rec->default_value.v_string : value))
+				if (!settings_set_size(key, clear ? "0" : value))
 					printformat(NULL, NULL, MSGLEVEL_CLIENTERROR, TXT_INVALID_SIZE);
 				break;
 			case SETTING_TYPE_ANY:
 				/* Unpossible! */
 				break;
 			}
+		}
+		if (rec != NULL) {
 			signal_emit("setup changed", 0);
 			printformat(NULL, NULL, MSGLEVEL_CLIENTCRAP, TXT_SET_TITLE, rec->section);
 			set_print(rec);

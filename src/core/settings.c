@@ -417,6 +417,26 @@ gboolean settings_set_choice(const char *key, const char *value)
 	return TRUE;
 }
 
+void settings_reset(const char *key)
+{
+	SETTINGS_REC *rec;
+	CONFIG_NODE *node;
+
+	rec = g_hash_table_lookup(settings, key);
+	if (rec == NULL) {
+		g_warning("Changing unknown setting '%s'", key);
+		return;
+	}
+	/* no new section for a key that is not there */
+	node = iconfig_node_traverse("settings", FALSE);
+	node = node == NULL ? NULL : iconfig_node_section(node, rec->module, -1);
+	if (node == NULL)
+		return;
+	iconfig_node_set_str(node, key, NULL);
+	if (node->value == NULL)
+		iconfig_node_remove(iconfig_node_traverse("settings", FALSE), node);
+}
+
 void settings_set_str(const char *key, const char *value)
 {
         iconfig_node_set_str(settings_get_node(key), key, value);
