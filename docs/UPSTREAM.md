@@ -138,17 +138,15 @@ Not meant for erssi main.
   `scripts/webjournal.pl` with their help files in `scripts/help/`.
   They are separate scripts. Upstream may or may not want them.
   The author's own scripts were removed (`e97edf72`). Commits: `cd3e6246
-  1fc4bae4 1a66c953 c77acd0f d57d4d4f 914e7f09 eef343d4 393dae3d c33e18e6
-  23216f09 e97edf72 1fcedd8b`.
+  1fc4bae4 1a66c953 d57d4d4f eef343d4 393dae3d c33e18e6 23216f09
+  e97edf72 1fcedd8b`.
 - End-to-end encryption: the `e2e` module (`src/e2e`, `-Dwith-e2e`) speaks
   RPE2E v1.0 natively with OpenSSL only; it replaced the Perl script that
   was in `contrib/rpe2e` (only the repartee migration tool and the MIT
   licence stay there). It is proposed upstream as PR #11
   (branch `upstream/e2e`, based on erssi-org main). Before that, the contrib history: A patch series for a
   third-party web client was added and later removed (`e97edf72`).
-  Commits: `ec8861b9 2739e24e e97c5fec 02900930 ffa2d3cf 3fc9dead
-  1dac3524 12fa67b5 ea42643b 581745f6 8bdd53cd 216037a5 9605def3 0be4b809
-  bdfa60ef 3cc9f4cc 3635ec86 069bedf9`.
+  Commits: `e97c5fec 12fa67b5 216037a5 069bedf9`.
 - Housekeeping (2): `fe870095` removes erssi-org development files and
   workflows; `d7b01c56` changes example names in fe-web comments.
   If you take `6ceb578a`, `d7b01c56` gives its comment a neutral
