@@ -24,10 +24,11 @@
  that is no regular file of this user (a symlink, which is not followed,
  a FIFO, a device, a directory); a file that is not JSON is moved aside
  to keyring.json.corrupt-<time>; a write goes to a new 0600 file
- (O_EXCL), is fsync'ed and renamed over, then the directory is fsync'ed. Unlike rpe2e.pl, a keyring moved aside is not
- replaced by an empty one: while keyring.json is missing and a
- keyring.json.corrupt-* exists, the state is LOST (nothing is saved, the
- gate refuses) until e2e_keyring_start_fresh (/e2e reset).
+ (O_EXCL), is fsync'ed and renamed over, then the directory is
+ fsync'ed. Unlike rpe2e.pl, a keyring moved aside is not replaced by an
+ empty one: while keyring.json is missing and a keyring.json.corrupt-*
+ exists, the state is LOST (nothing is saved, the gate refuses) until
+ e2e_keyring_start_fresh (/e2e reset).
 
  Members of this client only, kept by rpe2e.pl as unknown members:
      "accepted": { "<handle>|<ctx>": { "fp", "accepted_at", "by" } },

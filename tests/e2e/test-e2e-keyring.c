@@ -491,6 +491,10 @@ static void assert_refused(const char *p, const char *reason)
 	kr = e2e_keyring_load(p, &notice);
 	g_assert_nonnull(strstr(notice, "cannot read keyring"));
 	g_assert_nonnull(strstr(notice, reason));
+	/* a link says how to fix it; nothing else does */
+	g_assert_true((strstr(notice, "replace the link with the file, or link the whole "
+	                      "rpe2e directory instead") != NULL) ==
+	              (strstr(reason, "symbolic link") != NULL));
 	g_free(notice);
 	g_assert_false(e2e_keyring_save(p, kr, &error));
 	g_assert_nonnull(strstr(error, "keyring NOT saved"));

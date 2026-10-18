@@ -40,6 +40,8 @@
 #define O_DIRECTORY 0
 #endif
 
+#define E2E_REASON_SYMLINK "a symbolic link (not followed)"
+
 static const char *const object_members[] = {
 	"peers", "outgoing", "incoming", "channels", "pending",
 	"outgoing_recipients", "pending_inbound",
@@ -144,7 +146,7 @@ static int open_regular(const char *path, gboolean own, struct stat *st, char **
 		saved = errno;
 		/* ELOOP on Linux, EMLINK on FreeBSD */
 		if (lstat(path, &lst) == 0 && S_ISLNK(lst.st_mode))
-			*error = g_strdup("a symbolic link (not followed)");
+			*error = g_strdup(E2E_REASON_SYMLINK);
 		else
 			*error = g_strdup(g_strerror(saved));
 		errno = saved;
@@ -350,8 +352,12 @@ E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, cha
 		*notice = g_strdup_printf("keyring %s: the corrupt keyring was moved aside (%s.corrupt-*). " E2E_LOST_HINT,
 		                          path, path);
 	} else if (*status == E2E_LOAD_READ_ERROR) {
-		*notice = g_strdup_printf("cannot read keyring %s: %s — E2E state not loaded, nothing is saved until it is readable",
-		                          path, error);
+		/* a link shared with another client worked before: say how to
+		   keep sharing it */
+		*notice = g_strdup_printf("cannot read keyring %s: %s — E2E state not loaded, nothing is saved until it is readable%s",
+		                          path, error,
+		                          strcmp(error, E2E_REASON_SYMLINK) == 0 ?
+		                          ". keyring.json must be a regular file: replace the link with the file, or link the whole rpe2e directory instead" : "");
 	}
 	g_free(error);
 	return kr;
