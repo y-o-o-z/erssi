@@ -11,7 +11,9 @@
  The input is the byte stream after the handshake, cut into reads at
  "@@READ@@": frame headers (7/16/64-bit lengths, masks), text frames with
  JSON, binary frames with AES-GCM data, ping, pong, close, frames split
- over reads and several frames in one read.
+ over reads and several frames in one read, fragmented messages, and the
+ frames that fail the connection (reserved bits, unknown opcodes, text
+ that is not UTF-8, too big).
 */
 
 #include <irssi/src/fe-fuzz/fe-web/fe-web-fuzz.h>

@@ -678,6 +678,184 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	return 1;
 }
 
+/* Close codes (RFC 6455 7.4.1) */
+#define WS_CLOSE_PROTOCOL_ERROR 1002
+#define WS_CLOSE_INVALID_DATA 1007 /* a text message that is not UTF-8 */
+#define WS_CLOSE_TOO_BIG 1009
+
+/* Fail the connection (RFC 6455 7.1.7): a close frame with 'code' after
+ * what is queued, then close. Nothing more of the client is read. */
+static void close_with_status(WEB_CLIENT_REC *client, int code)
+{
+	guchar status[2];
+	guchar *close_frame;
+	gsize close_len;
+
+	status[0] = code >> 8;
+	status[1] = code & 0xff;
+	close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2, &close_len);
+	fe_web_client_send_raw(client, close_frame, close_len);
+	g_free(close_frame);
+	fe_web_close_client_flushed(client);
+}
+
+/* What RFC 6455 refuses in the header of a frame, as a close code; 0 when
+ * the frame may come. Checked before its payload is waited for, so that a
+ * frame that is refused anyway is not buffered first. */
+static int frame_refused(WEB_CLIENT_REC *client, guchar first_byte, int opcode,
+                         guint64 payload_len)
+{
+	/* 5.2: no extension is ever negotiated, so the reserved bits are 0 */
+	if ((first_byte & 0x70) != 0)
+		return WS_CLOSE_PROTOCOL_ERROR;
+
+	switch (opcode) {
+	case WS_OPCODE_TEXT:
+	case WS_OPCODE_BINARY:
+		/* 5.4: the fragments of one message are not interleaved
+		 * with another message (only control frames come between) */
+		if (client->fragments != NULL)
+			return WS_CLOSE_PROTOCOL_ERROR;
+		return payload_len > FE_WEB_MAX_FRAME ? WS_CLOSE_TOO_BIG : 0;
+	case WS_OPCODE_CONTINUATION:
+		/* a continuation of no message */
+		if (client->fragments == NULL)
+			return WS_CLOSE_PROTOCOL_ERROR;
+		if (payload_len > FE_WEB_MAX_FRAME - client->fragments->len ||
+		    client->fragments_count >= FE_WEB_MAX_FRAGMENTS)
+			return WS_CLOSE_TOO_BIG;
+		return 0;
+	case WS_OPCODE_CLOSE:
+	case WS_OPCODE_PING:
+	case WS_OPCODE_PONG:
+		return 0;
+	default:
+		/* 5.2: an opcode with no meaning */
+		return WS_CLOSE_PROTOCOL_ERROR;
+	}
+}
+
+/* Valid UTF-8 (RFC 3629). U+0000 is a character like any other: a text
+ * message holding one is not refused for it (g_utf8_validate() with a
+ * length stops at a NUL byte). */
+static gboolean utf8_valid(const guchar *data, gsize len)
+{
+	const gchar *p = (const gchar *) data, *end;
+
+	while (!g_utf8_validate(p, len, &end)) {
+		if (*end != '\0')
+			return FALSE;
+		len -= end + 1 - p;
+		p = end + 1;
+	}
+	return TRUE;
+}
+
+/* A whole message, unmasked, with a NUL after its 'len' bytes: a text
+ * message is JSON, a binary one is encrypted JSON. Takes 'data'. Returns
+ * FALSE when the client is closed for it. */
+static gboolean handle_websocket_message(WEB_CLIENT_REC *client, int opcode, guchar *data,
+                                         gsize len)
+{
+	/* 8.1: a text message is UTF-8, or the connection fails; the
+	 * check is on the whole message, so a character may be split
+	 * between two fragments */
+	if (opcode == WS_OPCODE_TEXT && !utf8_valid(data, len)) {
+		g_free(data);
+		close_with_status(client, WS_CLOSE_INVALID_DATA);
+		return FALSE;
+	}
+
+	/* Binary frame = encrypted data */
+	if (opcode == WS_OPCODE_BINARY) {
+		unsigned char *decrypted;
+		int decrypted_len;
+		const unsigned char *key;
+
+		if (!client->encryption_enabled) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: [%s] Received encrypted data but encryption not enabled", client->id);
+			g_free(data);
+			fe_web_close_client(client);
+			return FALSE;
+		}
+
+		key = fe_web_crypto_get_key();
+		if (key == NULL) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: [%s] Encryption key not available", client->id);
+			g_free(data);
+			fe_web_close_client(client);
+			return FALSE;
+		}
+
+		/* Allocate buffer for decrypted data */
+		decrypted = g_malloc(len + 1);
+
+		/* Decrypt */
+		if (!fe_web_crypto_decrypt(data, len, key, decrypted, &decrypted_len)) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web: [%s] Decryption failed - wrong password or tampered data", client->id);
+			g_free(data);
+			g_free(decrypted);
+			fe_web_close_client(client);
+			return FALSE;
+		}
+
+		/* Null-terminate decrypted JSON */
+		g_free(data);
+		data = g_malloc(decrypted_len + 1);
+		memcpy(data, decrypted, decrypted_len);
+		data[decrypted_len] = '\0';
+		g_free(decrypted);
+	}
+
+	/* Handle JSON message */
+	fe_web_client_handle_message(client, (const char *) data);
+	g_free(data);
+	return TRUE;
+}
+
+/* A text, binary or continuation frame that frame_refused() let through:
+ * a whole message, or a fragment of one (RFC 6455 5.4), which is kept
+ * until the last one (FIN set) comes. Returns FALSE when the client is
+ * closed. */
+static gboolean handle_data_frame(WEB_CLIENT_REC *client, int fin, int opcode,
+                                  const guchar *payload, gsize len, const guchar mask_key[4])
+{
+	guchar *data;
+	gsize start;
+
+	/* every frame here is masked */
+	if (opcode != WS_OPCODE_CONTINUATION && fin) {
+		data = g_malloc(len + 1);
+		memcpy(data, payload, len);
+		fe_web_websocket_unmask(data, len, mask_key);
+		data[len] = '\0';
+		return handle_websocket_message(client, opcode, data, len);
+	}
+
+	if (opcode != WS_OPCODE_CONTINUATION) {
+		client->fragments = g_byte_array_new();
+		client->fragments_opcode = opcode;
+		client->fragments_count = 0;
+	}
+	/* each frame has its own mask, from its first byte */
+	start = client->fragments->len;
+	g_byte_array_append(client->fragments, payload, len);
+	fe_web_websocket_unmask(client->fragments->data + start, len, mask_key);
+	client->fragments_count++;
+	if (!fin)
+		return TRUE;
+
+	/* the last fragment: the message is complete */
+	len = client->fragments->len;
+	g_byte_array_append(client->fragments, (const guchar *) "", 1);
+	data = g_byte_array_free(client->fragments, FALSE);
+	client->fragments = NULL;
+	return handle_websocket_message(client, client->fragments_opcode, data, len);
+}
+
 /* Handle WebSocket data */
 static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 {
@@ -687,8 +865,8 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 	guint64 payload_len;
 	guchar mask_key[4];
 	const guchar *payload;
-	int ret;
-	guchar *unmasked_payload;
+	int ret, refused;
+	gsize header_len;
 	gsize frame_total_len;
 
 	/* output_failed: the client is closed shortly, nothing it asks for
@@ -698,97 +876,50 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 		 * the connection on one that is not masked. Refused on its
 		 * header (the mask bit of byte 2), whatever the opcode, before
 		 * its payload is waited for or anything of it is handled; the
-		 * frames after it in the buffer are not handled either.
-		 * 1002 = protocol error. */
+		 * frames after it in the buffer are not handled either. */
 		if (client->input_buffer->len >= 2 &&
 		    (client->input_buffer->data[1] & 0x80) == 0) {
-			static const guchar status[2] = { 0x03, 0xEA };
-			guchar *close_frame;
-			gsize close_len;
-
-			close_frame = fe_web_websocket_create_frame(WS_OPCODE_CLOSE, status, 2,
-			                                            &close_len);
-			fe_web_client_send_raw(client, close_frame, close_len);
-			g_free(close_frame);
-			fe_web_close_client_flushed(client);
+			close_with_status(client, WS_CLOSE_PROTOCOL_ERROR);
 			return;
 		}
 
-		/* Try to parse frame */
-		ret = fe_web_websocket_parse_frame(client->input_buffer->data,
+		ret = fe_web_websocket_parse_header(client->input_buffer->data,
 		                                    client->input_buffer->len,
 		                                    &fin, &opcode, &masked,
-		                                    &payload_len, mask_key, &payload);
+		                                    &payload_len, mask_key, &header_len);
 
 		if (ret == 0) {
-			/* Incomplete frame - wait for more data */
+			/* Incomplete header - wait for more data */
 			break;
 		}
 
 		if (ret < 0) {
-			/* Invalid frame - close connection */
-			fe_web_close_client(client);
+			/* a control frame that is too long or fragmented */
+			close_with_status(client, WS_CLOSE_PROTOCOL_ERROR);
 			return;
 		}
 
+		refused = frame_refused(client, client->input_buffer->data[0], opcode,
+		                        payload_len);
+		if (refused != 0) {
+			close_with_status(client, refused);
+			return;
+		}
+
+		if (payload_len > client->input_buffer->len - header_len) {
+			/* Incomplete payload - wait for more data */
+			break;
+		}
+		payload = client->input_buffer->data + header_len;
+
 		/* Calculate total frame length */
-		frame_total_len = (payload - client->input_buffer->data) + payload_len;
+		frame_total_len = header_len + payload_len;
 
 		/* Handle different opcodes */
-		if (opcode == WS_OPCODE_TEXT || opcode == WS_OPCODE_BINARY) { /* binary = encrypted */
-			/* every frame here is masked */
-			unmasked_payload = g_malloc(payload_len + 1);
-			memcpy(unmasked_payload, payload, payload_len);
-			fe_web_websocket_unmask(unmasked_payload, payload_len, mask_key);
-			unmasked_payload[payload_len] = '\0';
-
-			/* Binary frame = encrypted data */
-			if (opcode == WS_OPCODE_BINARY) {
-				unsigned char *decrypted;
-				int decrypted_len;
-				const unsigned char *key;
-
-				if (!client->encryption_enabled) {
-					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-					          "fe-web: [%s] Received encrypted data but encryption not enabled", client->id);
-					g_free(unmasked_payload);
-					fe_web_close_client(client);
-					return;
-				}
-
-				key = fe_web_crypto_get_key();
-				if (key == NULL) {
-					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-					          "fe-web: [%s] Encryption key not available", client->id);
-					g_free(unmasked_payload);
-					fe_web_close_client(client);
-					return;
-				}
-
-				/* Allocate buffer for decrypted data */
-				decrypted = g_malloc(payload_len);
-
-				/* Decrypt */
-				if (!fe_web_crypto_decrypt(unmasked_payload, payload_len, key, decrypted, &decrypted_len)) {
-					printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-					          "fe-web: [%s] Decryption failed - wrong password or tampered data", client->id);
-					g_free(unmasked_payload);
-					g_free(decrypted);
-					fe_web_close_client(client);
-					return;
-				}
-
-				/* Null-terminate decrypted JSON */
-				g_free(unmasked_payload);
-				unmasked_payload = g_malloc(decrypted_len + 1);
-				memcpy(unmasked_payload, decrypted, decrypted_len);
-				unmasked_payload[decrypted_len] = '\0';
-				g_free(decrypted);
-			}
-
-			/* Handle JSON message */
-			fe_web_client_handle_message(client, (const char *)unmasked_payload);
-			g_free(unmasked_payload);
+		if (opcode == WS_OPCODE_TEXT || opcode == WS_OPCODE_BINARY ||
+		    opcode == WS_OPCODE_CONTINUATION) { /* binary = encrypted */
+			if (!handle_data_frame(client, fin, opcode, payload, payload_len, mask_key))
+				return;
 		} else if (opcode == WS_OPCODE_CLOSE) {
 			/* RFC 6455 5.5.1: answer with a Close frame (echoing the
 			 * status code), then close - the client then sees an orderly

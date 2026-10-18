@@ -49,13 +49,11 @@ char *fe_web_websocket_compute_accept(const char *client_key)
 	return accept_key;
 }
 
-/* Parse WebSocket frame header */
-int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
-                                  int *fin, int *opcode, int *masked,
-                                  guint64 *payload_len, guchar mask_key[4],
-                                  const guchar **payload)
+/* Parse a WebSocket frame header */
+int fe_web_websocket_parse_header(const guchar *data, gsize data_len, int *fin, int *opcode,
+                                  int *masked, guint64 *payload_len, guchar mask_key[4],
+                                  gsize *header_len)
 {
-	gsize header_len;
 	guint64 len;
 	const guchar *p;
 
@@ -114,20 +112,37 @@ int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
 		p += 4;
 	}
 
-	header_len = p - data;
+	*header_len = p - data;
+	return 1;
+}
+
+/* Parse WebSocket frame header */
+int fe_web_websocket_parse_frame(const guchar *data, gsize data_len,
+                                  int *fin, int *opcode, int *masked,
+                                  guint64 *payload_len, guchar mask_key[4],
+                                  const guchar **payload)
+{
+	gsize header_len;
+	int ret;
+
+	ret = fe_web_websocket_parse_header(data, data_len, fin, opcode, masked, payload_len,
+	                                    mask_key, &header_len);
+	if (ret != 1) {
+		return ret;
+	}
 
 	/* Larger than any message a web client sends: refuse instead of
 	 * buffering it (and keep the length check below from overflowing) */
-	if (len > FE_WEB_MAX_FRAME) {
+	if (*payload_len > FE_WEB_MAX_FRAME) {
 		return -1;
 	}
 
 	/* Check if we have complete frame */
-	if (len > data_len - header_len) {
+	if (*payload_len > data_len - header_len) {
 		return 0; /* Incomplete frame */
 	}
 
-	*payload = p;
+	*payload = data + header_len;
 	return 1; /* Complete frame */
 }
 
