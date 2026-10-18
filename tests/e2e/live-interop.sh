@@ -79,7 +79,13 @@ bad()  { printf '  FAIL %s\n' "$*"; fail=$((fail + 1)); }
 cleanup() {
     tmux -L "$SOCK" kill-server 2>/dev/null || true
     if [ -n "$IRCD_PID" ]; then kill $IRCD_PID 2>/dev/null || true; fi
-    if [ "${KEEP_WORK:-}" = 1 ]; then echo "work dir kept: $WORK"; else rm -rf "$WORK"; fi
+    if [ "${KEEP_WORK:-}" = 1 ]; then echo "work dir kept: $WORK"; return; fi
+    # an erssi that got SIGHUP may still be writing its config for a moment
+    n=0
+    until rm -rf "$WORK" 2>/dev/null; do
+        n=$((n + 1)); [ $n -ge 50 ] && break
+        sleep 0.1
+    done
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM
@@ -162,6 +168,15 @@ quick() {  # quick <nick> <text>: the same, without waiting
     sleep 0.2
 }
 
+wait_after() {  # wait_after <file> <line count before> <fixed string> <seconds>
+    local n=0
+    while [ $n -lt "$4" ]; do
+        tail -n +$(($2 + 1)) "$1" 2>/dev/null | grep -qF -- "$3" && return 0
+        sleep 1
+        n=$((n + 1))
+    done
+    return 1
+}
 wait_for() {  # wait_for <file> <fixed string> <seconds>
     local n=0
     while [ $n -lt "$3" ]; do
@@ -1236,6 +1251,7 @@ else
 fi
 # rpe2e.pl compares names exactly: #MULTI is #multi to this (ascii)
 # server, and E2E is on for #multi in the script's own entry
+BOB_MARK=$(wc -l < "$WORK/bob/all.log")
 say bob "/msg #MULTI other case to multi"
 sleep 1
 if grep -aqF "other case to multi" "$WORK/wire.log"; then
@@ -1243,8 +1259,11 @@ if grep -aqF "other case to multi" "$WORK/wire.log"; then
 else
     pass "rpe2e.pl loaded: #MULTI (E2E on for #multi in its entry) is not sent in plain text"
 fi
-if wait_for "$WORK/bob/all.log" "rpe2e.pl compares names exactly" 5; then
-    pass "bob is told rpe2e.pl compares names exactly"
+# rpe2e.pl 0.2.2 lets #MULTI through and the module's guard says why;
+# 0.2.3 refuses it itself and names the right spelling
+if wait_after "$WORK/bob/all.log" "$BOB_MARK" "rpe2e.pl compares names exactly" 5 ||
+   wait_after "$WORK/bob/all.log" "$BOB_MARK" "message NOT sent; write the name as #multi" 1; then
+    pass "bob is told why #MULTI was not sent"
 else
     bad "bob is not told why #MULTI was not sent"
 fi
@@ -1275,11 +1294,13 @@ k = json.load(open(p, encoding="utf-8"))
 k["channels"]["zed"] = {"enabled": 1, "mode": "normal"}
 json.dump(k, open(p, "w", encoding="utf-8"))
 PY
+BOB_MARK=$(wc -l < "$WORK/bob/all.log")
 say bob "/script exec Irssi::server_find_tag('E2E')->send_raw('PRIVMSG ZED :script bare nick secret')"
 sleep 1
 if grep -aqF "script bare nick secret" "$WORK/wire.log"; then
     bad "rpe2e.pl loaded: ZED (E2E on for zed in its entry) went out in plain text"
-elif wait_for "$WORK/bob/all.log" "rpe2e.pl does not find it under that name" 5; then
+elif wait_after "$WORK/bob/all.log" "$BOB_MARK" "rpe2e.pl does not find it under that name" 5 ||
+     wait_after "$WORK/bob/all.log" "$BOB_MARK" "cannot encrypt PM without peer handle" 1; then
     pass "rpe2e.pl loaded: ZED (E2E on for zed in its entry) is not sent in plain text, and bob is told why"
 else
     bad "rpe2e.pl loaded: ZED was not sent, but bob is not told why"
@@ -1482,15 +1503,24 @@ if wait_for "$WORK/bob/e2e-state.log" "E2E $CHAN {\"v\":1,\"state\":\"off\"" 10 
 else
     bad "web, rpe2e.pl loaded: the module reports something else (log: $(tail -n 1 "$WORK/bob/e2e-state.log" 2>/dev/null))"
 fi
-BOB_KR=$(md5sum < "$WORK/bob/rpe2e/keyring.json")
+# what an accept would change; rpe2e.pl 0.2.3 also rewrites the file on
+# its own timers (pruning), so what an accept adds is compared, not bytes
+kr_trust() {
+    python3 - "$1" <<'PY2'
+import json, sys
+k = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({s: k.get(s) for s in ("accepted", "outgoing_recipients", "pending_inbound")}, sort_keys=True))
+PY2
+}
+BOB_KR=$(kr_trust "$WORK/bob/rpe2e/keyring.json")
 WIRE_MARK=$(wc -l < "$WORK/wire.log")
 say bob "/e2etest_action $CHAN accept alice@127.0.0.1"
 sleep 2
 if grep -aqF "web client asked to accept alice@127.0.0.1 on $CHAN, but the native e2e module is inactive while rpe2e.pl is loaded — nothing sent" "$WORK/bob/all.log" &&
-   [ "$(md5sum < "$WORK/bob/rpe2e/keyring.json")" = "$BOB_KR" ] &&
+   [ "$(kr_trust "$WORK/bob/rpe2e/keyring.json")" = "$BOB_KR" ] &&
    ! tail -n +$((WIRE_MARK + 1)) "$WORK/wire.log" | grep -aq "^bob NOTICE alice :.RPEE2E KEYRSP" &&
    grep -aqxF "E2E $CHAN alice@127.0.0.1 inactive" "$WORK/bob/e2e-refused.log"; then
-    pass "web action, rpe2e.pl loaded: refused (inactive), keyring untouched"
+    pass "web action, rpe2e.pl loaded: refused (inactive), nothing accepted"
 else
     bad "web action, rpe2e.pl loaded: not refused, or the keyring changed"
 fi
