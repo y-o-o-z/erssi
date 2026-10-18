@@ -4,6 +4,7 @@ Back to the [README](../../README.md).
 
 - [Rules](#rules)
 - [A release](#a-release)
+- [Binary packages](#binary-packages)
 - [Re-signing the release tags](#re-signing-the-release-tags)
 
 ## Rules
@@ -36,6 +37,169 @@ Back to the [README](../../README.md).
    The subject is `shellter-install.sh: verified and signed release
    shellter-vX`. From then on, `curl … | sh` installs the release and
    checks it against that commit.
+5. Build the binary packages, sign them and upload them to the release
+   (see [Binary packages](#binary-packages)).
+
+## Binary packages
+
+A release has a binary package for each supported platform, built from
+its signed tag by `utils/build-binary.sh` (POSIX sh) on that platform.
+The platforms are `debian13-amd64` and `freebsd14-amd64`.
+
+### What a package is
+
+- **Relocatable.** The build is configured with `-Drelocatable=true`. erssi
+  then finds its prefix when it starts: the directory two levels above the
+  real path of its executable (`/proc/self/exe` on Linux, `sysctl
+  KERN_PROC_PATHNAME` on FreeBSD), so `<prefix>/bin/erssi`. The modules,
+  the Perl modules (`Irssi.pm` and its `.so` files), `/help`, the themes,
+  the scripts, the `startup` file and the system config come from there,
+  wherever the tree is unpacked. If the executable cannot be found, erssi
+  uses the compiled paths; `G_MESSAGES_DEBUG=erssi` shows why.
+  `erssi --print-prefix` prints the prefix in use. A build without the
+  option uses the compiled paths, as before.
+- **The tarball** `erssi-<version>-<platform>.tar.xz` has one top
+  directory, `erssi-<version>-<platform>/`. It holds the installed tree
+  (`bin/erssi`, `lib/…`, `share/…`, `include/…`), stripped, and a
+  `MANIFEST` of sorted `key=value` lines:
+
+  | key | value |
+  |---|---|
+  | `built` | the commit's time, UTC (`2026-10-18T12:00:00Z`) |
+  | `commit` | the tag's commit, 40 hex digits |
+  | `libc` | `glibc 2.41` or `freebsd 14.5` |
+  | `needed` | the shared libraries the binary and its modules need (sonames from `readelf -d`, space-separated, sorted) |
+  | `perl_version` | `perl -e 'print $^V'` without the `v` (`5.40.1`) |
+  | `platform` | `<os><major>-<arch>`: `os` is the `ID` of `/etc/os-release` or `freebsd`; `major` is from `VERSION_ID` or `freebsd-version -u`; `arch` is `amd64` (`x86_64`) or `arm64` (`aarch64`) |
+  | `tag` | `shellter-v<version>` |
+  | `version` | the version |
+
+  The packing is reproducible as far as it can be: the entries sorted,
+  owner and group 0, every entry dated to the commit
+  (`SOURCE_DATE_EPOCH`), the modes without the umask, and no paths of the
+  build directory in the binary.
+- **The release assets:** every tarball, `SHA256SUMS` (lines
+  `<sha256>  <tarball>`, sorted) and `SHA256SUMS.sig`, an SSH signature by
+  the release key in the namespace `erssi-release`.
+
+### What build-binary.sh does
+
+`sh utils/build-binary.sh [--out DIR] shellter-vX`:
+
+1. Clones the repository it is in (or `--repo DIR`) into a new work
+   directory. It checks that `shellter-vX` is an annotated tag named
+   `shellter-vX`, signed by the release key. The key and its fingerprint
+   are the ones `shellter-install.sh` carries. It also checks that the
+   tree names that version (`utils/check-version.sh`).
+2. Configures a new build directory: `-Drelocatable=true
+   -Dbuildtype=release`, with Perl, OTR, the proxy, fe-web, E2E, the
+   image preview and utf8proc all required. The hardening flags of
+   `meson.build` apply as in every build.
+3. Builds the tree and runs the **full** `meson test` suite, with HOME and
+   TMPDIR inside the work directory. A failed test means no package.
+4. Installs into a staging directory, strips the ELF files, refuses a
+   symbolic link whose target is absolute or has a `..` in it (the
+   installer refuses those too), writes the
+   `MANIFEST` and packs the tarball into `--out` (default: the current
+   directory).
+
+The work directory goes at the end (`--keep-work` keeps it, with the
+logs: `setup.log`, `build.log`, `test.log`). Nothing of `~/.erssi` or
+the user's git config is used. Each step prints one line.
+
+### Debian 13
+
+Build on a Debian 13 host, or in a clean Debian 13 chroot, with packages
+from the Debian 13 archive only:
+
+```sh
+sudo apt install git ca-certificates gcc meson ninja-build pkgconf libglib2.0-dev \
+  libssl-dev libperl-dev libutf8proc-dev libgcrypt20-dev libotr5-dev \
+  libcurl4-openssl-dev libchafa-dev python3 perl binutils xz-utils openssh-client
+```
+
+A chroot without root, made by mmdebstrap (`sudo apt install mmdebstrap`
+once). `--mode=unshare` needs the user's ranges in `/etc/subuid` and
+`/etc/subgid`:
+
+```sh
+mmdebstrap --mode=unshare --variant=apt \
+  --include=git,ca-certificates,gcc,meson,ninja-build,pkgconf,libglib2.0-dev,libssl-dev,libperl-dev,libutf8proc-dev,libgcrypt20-dev,libotr5-dev,libcurl4-openssl-dev,libchafa-dev,python3,perl,binutils,xz-utils,openssh-client \
+  --customize-hook='chroot "$1" useradd -m builder' \
+  --customize-hook='chroot "$1" su builder -c "git clone https://github.com/y-o-o-z/erssi.git ~/erssi && sh ~/erssi/utils/build-binary.sh --repo ~/erssi --out ~/out shellter-vX"' \
+  --customize-hook='copy-out /home/builder/out .' \
+  trixie /dev/null
+```
+
+The build runs as an ordinary user (`builder`), not as root. The chroot is
+thrown away at the end, and the tarball is copied out to `./out`.
+
+### FreeBSD 14
+
+Build on a FreeBSD 14 host or VM, with packages from `pkg` (OpenSSL
+from the base system):
+
+```sh
+pkg install git meson ninja pkgconf glib perl5 utf8proc libgcrypt libotr curl chafa python3
+git clone https://github.com/y-o-o-z/erssi.git ~/erssi
+sh ~/erssi/utils/build-binary.sh --out ~/out shellter-vX
+```
+
+`MANIFEST` records the perl version (from `perl5` of the quarterly
+branch) and the FreeBSD version the package was built on.
+
+### Signing and uploading
+
+Put both tarballs into one directory on the machine with the release
+key:
+
+```sh
+mkdir ~/release-X && cp out/erssi-X-*.tar.xz ~/release-X/
+sh utils/build-binary.sh --sums ~/release-X           # writes SHA256SUMS
+cd ~/release-X
+ssh-keygen -Y sign -n erssi-release -f "$(git -C ~/src/erssi config user.signingkey)" SHA256SUMS
+```
+
+`ssh-keygen -Y sign -n erssi-release -f <release key> SHA256SUMS` writes
+`SHA256SUMS.sig`. The release key is the key that signs the commits and
+tags (`user.signingkey`). Check the signature and the sums the way the
+installer does. The allowed signer is the key of `utils/allowed_signers`
+with the namespace `erssi-release`:
+
+```sh
+printf '%s namespaces="erssi-release" %s\n' 136268860+y-o-o-z@users.noreply.github.com \
+  "$(cut -d' ' -f3,4 ~/src/erssi/utils/allowed_signers)" > release_signers
+ssh-keygen -Y verify -f release_signers -I 136268860+y-o-o-z@users.noreply.github.com \
+  -n erssi-release -s SHA256SUMS.sig < SHA256SUMS
+sha256sum -c SHA256SUMS
+rm release_signers
+```
+
+Then upload them to the GitHub release of the tag:
+
+```sh
+gh release upload shellter-vX erssi-X-*.tar.xz SHA256SUMS SHA256SUMS.sig
+```
+
+The assets are then at
+`https://github.com/y-o-o-z/erssi/releases/download/shellter-vX/<asset>`.
+
+### Testing the packager
+
+`tests/version/test-build-binary.sh` runs `build-binary.sh` on a
+throwaway repository holding this tree, tagged with a throwaway key:
+- `build-binary verify`: the tags it refuses, and `--sums`;
+- `build-binary package`: a whole package of the tree. It checks the
+  name, the top directory, the order, owner and dates of the entries,
+  the `MANIFEST` and erssi running from two places;
+- `build-binary tests-fail`: no package when a test fails.
+
+The last two build the tree from scratch, a few minutes each. In them
+the build's own tests are limited to one (`BUILD_BINARY_TESTS`, which a
+release never sets). `live relocatable` (tests/live/test_relocatable.py)
+installs a relocatable build to two different places, and runs erssi
+from both. In a build without the option it checks that the compiled
+paths stay.
 
 ## Re-signing the release tags
 
