@@ -301,17 +301,6 @@ void shellter_defaults_init(void)
 	}
 }
 
-/* `text' for printtext: a % is not a colour code */
-static char *escape_percent(const char *text)
-{
-	char **parts, *escaped;
-
-	parts = g_strsplit(text, "%", -1);
-	escaped = g_strjoinv("%%", parts);
-	g_strfreev(parts);
-	return escaped;
-}
-
 char *shellter_defaults_format_note(int count, int state, const char *fname,
                                     const char *reason)
 {
@@ -320,7 +309,9 @@ char *shellter_defaults_format_note(int count, int state, const char *fname,
 	if (count == 0 || state == SHELLTER_DEFAULTS_NO_FILE)
 		return NULL;
 
-	path = escape_percent(fname != NULL ? fname : "the config");
+	/* printed as the argument of "%s", which printtext() does not
+	 * expand: a % in the path or the reason stays as it is */
+	path = g_strdup(fname != NULL ? fname : "the config");
 	switch (state) {
 	case SHELLTER_DEFAULTS_SAVED:
 		note = g_strdup_printf("%d settings keep their Shellter Edition values, "
@@ -334,7 +325,7 @@ char *shellter_defaults_format_note(int count, int state, const char *fname,
 		                       "changed; fix it and restart erssi", count, path);
 		break;
 	default:
-		why = escape_percent(reason != NULL ? reason : "unknown error");
+		why = g_strdup(reason != NULL ? reason : "unknown error");
 		note = g_strdup_printf("%d settings keep their Shellter Edition values "
 		                       "for now (built-in defaults before 2026.10.0), but "
 		                       "writing %s failed: %s - /SAVE to retry",

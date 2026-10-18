@@ -560,12 +560,13 @@ static void test_note_save_failed(void)
 	                "failed: Disk quota exceeded - /SAVE to retry");
 	g_free(note);
 
-	/* the reason is text too */
+	/* a % in the path and in the reason stays one (the note is the
+	   argument of printtext "%s", which is not expanded) */
 	note = shellter_defaults_format_note(2, SHELLTER_DEFAULTS_SAVE_FAILED, "/tmp/a%b/config",
 	                                     "100% full");
 	g_assert_cmpstr(note, ==, "2 settings keep their Shellter Edition values for now "
-	                "(built-in defaults before 2026.10.0), but writing /tmp/a%%b/config "
-	                "failed: 100%% full - /SAVE to retry");
+	                "(built-in defaults before 2026.10.0), but writing /tmp/a%b/config "
+	                "failed: 100% full - /SAVE to retry");
 	g_free(note);
 }
 
@@ -582,7 +583,7 @@ static void test_note_percent_and_none(void)
 
 	note = shellter_defaults_format_note(3, SHELLTER_DEFAULTS_SAVED, "/tmp/a%b/config", NULL);
 	g_assert_cmpstr(note, ==, "3 settings keep their Shellter Edition values, now written "
-	                "in /tmp/a%%b/config (they were built-in defaults before 2026.10.0)");
+	                "in /tmp/a%b/config (they were built-in defaults before 2026.10.0)");
 	g_free(note);
 
 	g_assert_null(shellter_defaults_format_note(0, SHELLTER_DEFAULTS_SAVED, "/x/config", NULL));
