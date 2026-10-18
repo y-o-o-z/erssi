@@ -112,11 +112,13 @@ logs of the side panels and of terminal resizes (`/set sidepanel_debug on`,
 `~/.erssi`, never in `/tmp`, and never written through a link.
 
 Files the fork reads or writes at a path that a setting, you or another
-user on the box can influence go through one helper (`src/core/safe-file.c`):
+user on the box can influence go through one helper (`src/core/safe-file.c`);
+the E2E keyring and replay memory, whose buffers must also be wiped, and
+the fe-web socket lock open their files the same way in their own code:
 
 - **Reading** — opened once without waiting (a FIFO or a device put there
   cannot hang erssi) and checked on that descriptor: anything but a regular
-  file is refused, with a size limit. A symbolic link as the file itself is
+  file is refused, and the readers of whole files set a size limit. A symbolic link as the file itself is
   refused where none is expected (the image cache, the web certificate and
   key, `default-files.sha256`, the mentions and debug logs); it is followed
   for files you may well keep as links: help pages in `~/.erssi/help` and

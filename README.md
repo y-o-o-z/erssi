@@ -88,7 +88,7 @@ Every command has a page in `/help`. The full lists:
 **Encryption you can rely on** (new in 2026.10.3)
 
 - **Nothing disappears** — an encrypted message that cannot be read leaves a line in its place that says why and what to run; a known key from a new address gets a warning with the exact `/e2e reverify` command.
-- **Plain text is marked** — a line in an encrypted channel or query that came in unencrypted shows `[plain]`, also one under the peer's nick from another address or under your own nick; bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
+- **Plain text is marked** — a line in an encrypted channel or query that came in unencrypted shows `[plain]` (since 2026.10.4 also one under the peer's nick from another address or under your own nick); bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
 - **Tested against repartee** — `meson test` includes live tests against repartee and `rpe2e.pl` (run when they are installed), covering key changes, a reset and a flood of key requests.
 
 **Nicks, networks and windows** (new in 2026.10.1 and 2026.10.2)
