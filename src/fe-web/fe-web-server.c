@@ -842,8 +842,11 @@ static gboolean handle_data_frame(WEB_CLIENT_REC *client, int fin, int opcode,
 	}
 	/* each frame has its own mask, from its first byte */
 	start = client->fragments->len;
-	g_byte_array_append(client->fragments, payload, len);
-	fe_web_websocket_unmask(client->fragments->data + start, len, mask_key);
+	/* an empty first fragment leaves data NULL: no NULL + 0 */
+	if (len > 0) {
+		g_byte_array_append(client->fragments, payload, len);
+		fe_web_websocket_unmask(client->fragments->data + start, len, mask_key);
+	}
 	client->fragments_count++;
 	if (!fin)
 		return TRUE;
