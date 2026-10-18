@@ -5,9 +5,11 @@
  * waiting retry is a GLib timer with its own data: image_fetch_deinit()
  * and cancelling remove the timer and free the data, so nothing fires
  * after the module is gone, and a retry that fired is not freed again.
- * No request is made: the failure is reported by hand.
+ * No request is made: the failure is reported by hand. The socket a
+ * download opens is close-on-exec.
  */
 #include <irssi/src/common.h>
+#include <sys/wait.h>
 /* 3 seconds in erssi */
 #define IMAGE_FETCH_RETRY_DELAY_MS 200
 #include <irssi/src/image-preview/image-preview-fetch.c>
@@ -73,6 +75,62 @@ static void fail_page_fetch(const char *url)
 	/* from now on the line is gone */
 	preview_present = FALSE;
 	preview_lookups = 0;
+}
+
+/* Does a shell started with every descriptor left open (as a child of a
+ * fork and exec) have descriptor 'fd'; -1: /proc/self/fd does not say */
+static int child_has_fd(int fd)
+{
+	char *script, *argv[4];
+	int status;
+
+	if (!g_file_test("/proc/self/fd", G_FILE_TEST_IS_DIR))
+		return -1;
+	script = g_strdup_printf("test -e /proc/self/fd/%d", fd);
+	argv[0] = "/bin/sh";
+	argv[1] = "-c";
+	argv[2] = script;
+	argv[3] = NULL;
+	g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_LEAVE_DESCRIPTORS_OPEN, NULL, NULL,
+	                           NULL, NULL, &status, NULL));
+	g_free(script);
+	g_assert_true(WIFEXITED(status));
+	return WEXITSTATUS(status) == 0;
+}
+
+/* The socket a download connects with is not inherited by a program
+ * started while the download runs (/EXEC, a script's child, /UPGRADE):
+ * it is close-on-exec */
+static void test_socket_cloexec(void)
+{
+	struct curl_sockaddr address;
+	struct sockaddr_in *sin = (struct sockaddr_in *) &address.addr;
+	curl_socket_t fd;
+	int inherited;
+
+	memset(&address, 0, sizeof(address));
+	address.family = AF_INET;
+	address.socktype = SOCK_STREAM;
+	address.protocol = IPPROTO_TCP;
+	address.addrlen = sizeof(*sin);
+	sin->sin_family = AF_INET;
+	sin->sin_port = htons(80);
+	/* TEST-NET-1: public to the filter, never connected to here */
+	sin->sin_addr.s_addr = htonl(0xC0000201);
+
+	fd = open_public_socket(NULL, CURLSOCKTYPE_IPCXN, &address);
+	g_assert_cmpint(fd, >=, 0);
+	g_assert_cmpint(fcntl(fd, F_GETFD) & FD_CLOEXEC, ==, FD_CLOEXEC);
+
+	if (child_has_fd(fd) != -1) {
+		/* a copy without close-on-exec is inherited: the check works */
+		inherited = fcntl(fd, F_DUPFD, 0);
+		g_assert_cmpint(inherited, >=, 0);
+		g_assert_cmpint(child_has_fd(inherited), ==, 1);
+		close(inherited);
+		g_assert_cmpint(child_has_fd(fd), ==, 0);
+	}
+	close(fd);
 }
 
 static gboolean quit_loop(gpointer loop)
@@ -153,6 +211,7 @@ int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
 
+	g_test_add_func("/image-fetch/socket_cloexec", test_socket_cloexec);
 	g_test_add_func("/image-fetch/deinit_removes_retry", test_deinit_removes_retry);
 	g_test_add_func("/image-fetch/fired_retry", test_fired_retry);
 	g_test_add_func("/image-fetch/cancel", test_cancel);

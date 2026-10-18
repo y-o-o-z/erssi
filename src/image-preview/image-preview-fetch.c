@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 /* Maximum HTML size for og:image extraction (512KB) */
 #define MAX_HTML_SIZE (512 * 1024)
@@ -250,14 +251,26 @@ static gboolean address_is_public(const struct sockaddr *sa)
 	return FALSE;
 }
 
+/* The socket of a download is close-on-exec: neither /EXEC children nor
+ * the programs scripts start, nor the binary /UPGRADE runs, get it. curl
+ * does not set that on its sockets, so it is done here. */
 static curl_socket_t open_public_socket(void *clientp, curlsocktype purpose,
                                         struct curl_sockaddr *address)
 {
+	curl_socket_t fd;
+
 	if (!address_is_public(&address->addr)) {
 		image_preview_debug_print("FETCH: refusing to connect to a local address");
 		return CURL_SOCKET_BAD;
 	}
-	return socket(address->family, address->socktype, address->protocol);
+#ifdef SOCK_CLOEXEC
+	fd = socket(address->family, address->socktype | SOCK_CLOEXEC, address->protocol);
+#else
+	fd = socket(address->family, address->socktype, address->protocol);
+	if (fd != CURL_SOCKET_BAD)
+		fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
+	return fd;
 }
 
 /* Options for every request: web only, public addresses, size and speed
