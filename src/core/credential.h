@@ -78,6 +78,17 @@ gboolean credential_encrypt_config(void);
 gboolean credential_decrypt_config(void);
 
 /* File operations */
+/* a larger credentials file is not read */
+#define CREDENTIAL_FILE_MAX (1024 * 1024)
+/* the credentials file at path, parsed: a regular file of the user's own,
+ * also through a symbolic link, never a FIFO or a device; a missing file
+ * is an empty one when missing_ok (else NULL, as for a file that is
+ * refused or does not parse - error, when not NULL, gets the reason) */
+CONFIG_REC *credential_file_open(const char *path, gboolean missing_ok, char **error);
+/* config written to path (NULL: its own) with mode 0600, replacing the
+ * old file (where a link points); -1 when that is no regular file of the
+ * user's own or the write fails - error, when not NULL, gets the reason */
+int credential_file_write(CONFIG_REC *config, const char *path, char **error);
 gboolean credential_external_save(void);
 gboolean credential_external_load(void);
 gboolean credential_external_reload(void);
@@ -86,6 +97,12 @@ gboolean credential_external_reload(void);
 void credential_config_write_hook(CONFIG_REC *config);
 void credential_config_read_hook(CONFIG_REC *config);
 void credential_unlock_config(void);
+
+/* NULL, or the lines of the warning to print at startup when the
+ * configuration still uses the old encryption or the external file, or
+ * holds encrypted values: what is and is not protected, and the commands
+ * that go back to plain storage (free with g_strfreev()) */
+char **credential_legacy_warning(void);
 
 /* Helper functions */
 const char *credential_context_to_string(CredentialContext context);

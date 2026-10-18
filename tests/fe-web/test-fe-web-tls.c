@@ -11,9 +11,11 @@
  harness. The key and the self-signed certificate are made at the first
  start and kept in ~/.erssi/fe-web-key.pem (mode 0600) and
  fe-web-cert.pem, so a web client can pin the certificate: they must stay
- the same across restarts. A key that others can read, or that is a link,
- is not used: a new pair is made, written to a temporary file and renamed
- into place. A client that pins the certificate completes a handshake with
+ the same across restarts. A key that others can read is not used: a new
+ pair is made, written to a temporary file and renamed into place. A key
+ or a certificate that is a link, a FIFO or anything but a regular file is
+ neither used nor replaced (a FIFO does not hang the start): fe-web says so
+ and does not start; once it is gone, the next start makes a new pair. A client that pins the certificate completes a handshake with
  the names 127.0.0.1 and localhost, and data goes both ways.
 */
 
@@ -82,16 +84,20 @@ static void assert_private_file(const char *path)
 	g_assert_cmpuint(st.st_uid, ==, getuid());
 }
 
-/* nothing of the temporary-file-and-rename save is left over */
+/* nothing of the temporary-file-and-rename save is left over: no file
+ * named after the key or the certificate with something after it */
 static void assert_no_temporary_files(void)
 {
-	char *tmp = g_strconcat(key_path, ".tmp", NULL);
+	GDir *dir = g_dir_open(fe_web_fuzz_home(), 0, NULL);
+	const char *name;
 
-	g_assert_false(g_file_test(tmp, G_FILE_TEST_EXISTS));
-	g_free(tmp);
-	tmp = g_strconcat(cert_path, ".tmp", NULL);
-	g_assert_false(g_file_test(tmp, G_FILE_TEST_EXISTS));
-	g_free(tmp);
+	g_assert_nonnull(dir);
+	while ((name = g_dir_read_name(dir)) != NULL) {
+		if (g_str_has_prefix(name, "fe-web-key.pem.") ||
+		    g_str_has_prefix(name, "fe-web-cert.pem."))
+			g_error("temporary file left: %s", name);
+	}
+	g_dir_close(dir);
 }
 
 static void test_made_at_first_start(void)
@@ -159,28 +165,89 @@ static void test_readable_key_replaced(void)
 	}
 }
 
-/* A link at the key's path is not followed: a new key replaces the link,
- * the file it pointed to stays as it was */
-static void test_key_link_not_followed(void)
+/* fe_web_ssl_prepare() after a restart that refuses the files in place:
+ * FALSE, the reason printed for path */
+static void assert_refused(const char *path, const char *what)
 {
-	char *elsewhere, *key, *cert;
+	char *out, *want;
 
+	fe_web_ssl_deinit();
+	g_free(fe_web_fuzz_take_printed());
+	g_assert_false(fe_web_ssl_prepare());
+	g_assert_null(fe_web_ssl_ctx);
+	out = fe_web_fuzz_take_printed();
+	want = g_strdup_printf("%s is %s - it is neither used nor replaced", path, what);
+	if (strstr(out, want) == NULL)
+		g_error("expected \"%s\", got:\n%s", want, out);
+	g_free(want);
+	g_free(out);
+}
+
+/* A link at the key's or the certificate's path (a client may pin the
+ * certificate it points to) is neither followed nor replaced by a new
+ * pair: fe-web says so and does not start; the link and the file it
+ * points to stay as they are. Once the link is gone, a new pair is made. */
+static void test_link_not_replaced(void)
+{
+	char *paths[2], *elsewhere, *kept;
+	int i;
+
+	paths[0] = key_path;
+	paths[1] = cert_path;
+	for (i = 0; i < 2; i++) {
+		reset();
+		g_assert_true(fe_web_ssl_prepare());
+		kept = read_file(paths[i]);
+		elsewhere = g_build_filename(fe_web_fuzz_home(), "elsewhere.pem", NULL);
+		g_assert_cmpint(rename(paths[i], elsewhere), ==, 0);
+		g_assert_cmpint(symlink(elsewhere, paths[i]), ==, 0);
+
+		assert_refused(paths[i], "a symbolic link");
+		g_assert_true(g_file_test(paths[i], G_FILE_TEST_IS_SYMLINK));
+		g_assert_true(file_is(elsewhere, kept));
+		assert_no_temporary_files();
+
+		g_assert_cmpint(unlink(paths[i]), ==, 0);
+		g_free(restart());
+		assert_private_file(key_path);
+		unlink(elsewhere);
+		g_free(elsewhere);
+		g_free(kept);
+	}
+}
+
+/* A FIFO at the key's or the certificate's path: never opened (the start
+ * does not wait for a writer; alarm() ends a test that hangs), neither
+ * used nor replaced */
+static void test_fifo_not_read(void)
+{
+	char *both[2];
+	int i;
+
+	both[0] = key_path;
+	both[1] = cert_path;
+	for (i = 0; i < 2; i++) {
+		reset();
+		g_assert_true(fe_web_ssl_prepare());
+		g_assert_cmpint(unlink(both[i]), ==, 0);
+		g_assert_cmpint(mkfifo(both[i], 0600), ==, 0);
+		alarm(5);
+		assert_refused(both[i], "not a regular file");
+		alarm(0);
+		g_assert_false(g_file_test(both[i], G_FILE_TEST_IS_REGULAR));
+		assert_no_temporary_files();
+		unlink(both[i]);
+	}
+}
+
+/* a link to /dev/null as the key: refused, the link stays */
+static void test_key_dev_null_link(void)
+{
 	reset();
-	g_assert_true(fe_web_ssl_prepare());
-	key = read_file(key_path);
-	cert = read_file(cert_path);
-	elsewhere = g_build_filename(fe_web_fuzz_home(), "elsewhere.pem", NULL);
-	g_assert_cmpint(rename(key_path, elsewhere), ==, 0);
-	g_assert_cmpint(symlink(elsewhere, key_path), ==, 0);
-
-	g_free(restart());
-	assert_private_file(key_path);
-	g_assert_false(file_is(cert_path, cert));
-	g_assert_true(file_is(elsewhere, key));
-	unlink(elsewhere);
-	g_free(elsewhere);
-	g_free(key);
-	g_free(cert);
+	g_assert_cmpint(symlink("/dev/null", key_path), ==, 0);
+	assert_refused(key_path, "a symbolic link");
+	g_assert_true(g_file_test(key_path, G_FILE_TEST_IS_SYMLINK));
+	unlink(key_path);
 }
 
 /* a damaged certificate, or one of another key: a new pair */
@@ -428,7 +495,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/made-at-first-start", test_made_at_first_start);
 	g_test_add_func("/fe-web/tls/reused-after-restart", test_reused_after_restart);
 	g_test_add_func("/fe-web/tls/readable-key-replaced", test_readable_key_replaced);
-	g_test_add_func("/fe-web/tls/key-link-not-followed", test_key_link_not_followed);
+	g_test_add_func("/fe-web/tls/link-not-replaced", test_link_not_replaced);
+	g_test_add_func("/fe-web/tls/fifo-not-read", test_fifo_not_read);
+	g_test_add_func("/fe-web/tls/key-dev-null-link", test_key_dev_null_link);
 	g_test_add_func("/fe-web/tls/damaged-files-replaced", test_damaged_files_replaced);
 	g_test_add_func("/fe-web/tls/save-failure", test_save_failure);
 	g_test_add_func("/fe-web/tls/handshake-with-pin", test_handshake_with_pin);

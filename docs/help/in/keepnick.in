@@ -63,9 +63,10 @@
     yours to that network is on that nick, nor when the network has a
     keepnick of its own. A manual /NICK pauses it too.
 
-    The nicks of keepnick.pl (the file ~/.erssi/keepnick) are imported
-    once into the networks that keep no nick yet; the file is left as it
-    is, with the script's keepnick_quiet and keepnick_autosave. While the
+    The nicks of keepnick.pl (the file ~/.erssi/keepnick, a regular file
+    or a link to one; a FIFO there is not read) are imported once into
+    the networks that keep no nick yet; the file is left as it is, with
+    the script's keepnick_quiet and keepnick_autosave. While the
     keepnick.pl script is loaded, the built-in keepnick is off (also
     keepnick_auto) and these commands are the script's.
 

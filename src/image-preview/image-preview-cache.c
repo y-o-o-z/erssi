@@ -14,6 +14,7 @@
 
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/misc.h>
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/core/levels.h>
 
@@ -41,34 +42,34 @@ static struct {
 /* Minimum file size for a valid image (100 bytes - magic + some data) */
 #define MIN_IMAGE_SIZE 100
 
-/* Validate that a file contains an actual image (not HTML or other garbage) */
+/* Validate that a file contains an actual image (not HTML or other garbage).
+ * The cache's own file only: opened once, not through a symbolic link, and
+ * checked on that descriptor (a FIFO put there does not hang erssi). */
 static gboolean validate_image_file(const char *path)
 {
-	FILE *fp;
 	unsigned char magic[12];
-	size_t nread;
+	ssize_t nread;
 	struct stat st;
+	int fd;
 
-	/* First check file exists and has reasonable size */
-	if (stat(path, &st) != 0) {
-		image_preview_debug_print("CACHE: validate_image_file - stat failed for %s", path);
+	fd = safe_file_open_read(path, 0, &st);
+	if (fd < 0) {
+		image_preview_debug_print("CACHE: validate_image_file - can't open %s: %s", path,
+		                          safe_file_strerror(errno));
 		return FALSE;
 	}
 
 	if (st.st_size < MIN_IMAGE_SIZE) {
 		image_preview_debug_print("CACHE: validate_image_file - file too small (%lld bytes): %s",
 		                          (long long)st.st_size, path);
+		close(fd);
 		return FALSE;
 	}
 
-	fp = fopen(path, "rb");
-	if (fp == NULL) {
-		image_preview_debug_print("CACHE: validate_image_file - can't open %s", path);
-		return FALSE;
-	}
-
-	nread = fread(magic, 1, sizeof(magic), fp);
-	fclose(fp);
+	do
+		nread = read(fd, magic, sizeof(magic));
+	while (nread < 0 && errno == EINTR);
+	close(fd);
 
 	if (nread < 4)
 		return FALSE;
@@ -183,7 +184,8 @@ gboolean image_cache_has(const char *url)
 		return FALSE;
 
 	valid = FALSE;
-	if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+	/* lstat: a symbolic link is no entry of the cache (nor removed) */
+	if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
 		/* Also validate the file content */
 		if (validate_image_file(path)) {
 			valid = TRUE;
@@ -215,7 +217,7 @@ char *image_cache_get(const char *url)
 	if (path == NULL)
 		return NULL;
 
-	if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+	if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
 		/* Validate that the cached file is actually an image */
 		if (!validate_image_file(path)) {
 			/* Corrupted cache entry (HTML, empty, etc.) - remove it */
@@ -232,69 +234,6 @@ char *image_cache_get(const char *url)
 	cache_stats.misses++;
 	g_free(path);
 	return NULL;
-}
-
-/* Store image in cache (by moving/copying source file) */
-gboolean image_cache_store(const char *url, const char *source_path)
-{
-	char *cache_path;
-	struct stat st;
-	gchar *contents = NULL;
-	gsize length = 0;
-	GError *error = NULL;
-
-	if (url == NULL || source_path == NULL)
-		return FALSE;
-
-	cache_path = generate_cache_path(url);
-	if (cache_path == NULL)
-		return FALSE;
-
-	/* Check if source exists */
-	if (stat(source_path, &st) != 0) {
-		g_free(cache_path);
-		return FALSE;
-	}
-
-	/* If source and cache paths are the same, we're done */
-	if (g_strcmp0(source_path, cache_path) == 0) {
-		g_free(cache_path);
-		cache_stats.total_size += st.st_size;
-		cache_stats.entry_count++;
-		return TRUE;
-	}
-
-	/* Try to rename (move) first */
-	if (rename(source_path, cache_path) == 0) {
-		cache_stats.total_size += st.st_size;
-		cache_stats.entry_count++;
-		g_free(cache_path);
-		return TRUE;
-	}
-
-	/* Rename failed, try copy */
-	if (!g_file_get_contents(source_path, &contents, &length, &error)) {
-		g_warning("image-cache: Failed to read %s: %s", source_path, error->message);
-		g_error_free(error);
-		g_free(cache_path);
-		return FALSE;
-	}
-
-	if (!g_file_set_contents(cache_path, contents, length, &error)) {
-		g_warning("image-cache: Failed to write %s: %s", cache_path, error->message);
-		g_error_free(error);
-		g_free(contents);
-		g_free(cache_path);
-		return FALSE;
-	}
-
-	g_free(contents);
-	g_free(cache_path);
-
-	cache_stats.total_size += length;
-	cache_stats.entry_count++;
-
-	return TRUE;
 }
 
 /* TRUE for the name of a file the cache writes: the SHA-256 of the URL in
@@ -471,6 +410,26 @@ static void cache_cleanup(const char *keep_name)
 void image_cache_cleanup(void)
 {
 	cache_cleanup(NULL);
+}
+
+/* image_preview_cache_size is a soft limit (see cache_cleanup()): this is
+ * the hard one. No new download, a retry included (image_fetch_start()),
+ * starts while the cache, counted again now, holds more than
+ * IMAGE_CACHE_HARD_FACTOR times the setting - files that are too new to be
+ * removed. A download that started below that adds at most
+ * image_preview_max_file_size, and at most MAX_CONCURRENT_FETCHES run at a
+ * time (image-preview-fetch.c), so the cache never holds more than that
+ * factor times the setting plus those downloads. 0 keeps its meaning of
+ * no lasting cache - every file goes once it is old enough - and has no
+ * hard limit. */
+gboolean image_cache_full(void)
+{
+	gint64 limit = settings_get_size(IMAGE_PREVIEW_CACHE_SIZE);
+
+	if (limit <= 0)
+		return FALSE;
+	cache_cleanup(NULL);
+	return cache_stats.total_size > (gint64) IMAGE_CACHE_HARD_FACTOR * limit;
 }
 
 /* Keeps the cache within its size limit after path was written to it;

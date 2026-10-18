@@ -66,8 +66,9 @@ int shellter_save_at_start(char **reason);
    mainconfig (config_last_error() stays for parse errors). */
 void shellter_defaults_init(void);
 
-/* The note printed after the banner (printtext text, a % in the path is
-   doubled), or NULL when nothing was written. The caller frees it. */
+/* The note printed after the banner (as the argument of printtext "%s",
+   which is not expanded), or NULL when nothing was written. The caller
+   frees it. */
 char *shellter_defaults_note(void);
 
 /* The note for `count' settings (NULL when 0, or in the state NO_FILE) in

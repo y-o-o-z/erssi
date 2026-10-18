@@ -711,6 +711,32 @@ if (no_sanitize_function.length() > 0 and cflags_joined.contains('-fsanitize=')
   warning('CFLAGS turn on -fsanitize=function, which stops at irssi\'s first signal: ' +
           'add -fno-sanitize=function at their end')
 endif
+# The dispatch needs a calling convention where the caller passes the
+# arguments and cleans them up, so a handler may declare fewer than the six
+# it is called with (docs/shellter/security.md, "Known limitations";
+# tests/core/test-signal-abi.c checks it on the build's machine). Targets
+# that check the type of every indirect call - WebAssembly, clang's
+# control-flow integrity for indirect calls - stop at the first signal.
+if ['wasm32', 'wasm64'].contains(host_machine.cpu_family())
+  error('irssi\'s signal dispatch calls every handler through one function type, ' +
+        'which WebAssembly does not allow')
+endif
+# the last of the arguments that turn the indirect call check on or off wins
+cfi_icall = false
+foreach arg : get_option('c_args')
+  if arg.startswith('-fsanitize=') or arg.startswith('-fno-sanitize=')
+    kinds = arg.split('=')[1].split(',')
+    if 'cfi' in kinds or 'cfi-icall' in kinds
+      cfi_icall = arg.startswith('-fsanitize=')
+    elif 'all' in kinds and arg.startswith('-fno-sanitize=')
+      cfi_icall = false
+    endif
+  endif
+endforeach
+if cfi_icall
+  error('CFLAGS turn on -fsanitize=cfi, whose indirect call check stops at irssi\'s first ' +
+        'signal: add -fno-sanitize=cfi-icall after it')
+endif
 
 ##############
 # irssi-1.pc #

@@ -4,7 +4,8 @@
  * removed until the cache fits, the image just downloaded and the files
  * written within the download time limit (downloads in progress, images
  * not shown yet) stay, and only the cache's own regular files directly in
- * its directory are touched;
+ * its directory are touched; while more than twice the limit of new
+ * files is held, the cache is full (no new download);
  * other files, directories and symlinks (and what they point to) are left
  * alone.
  */
@@ -303,6 +304,112 @@ static void test_foreign_entries(void)
 	teardown();
 }
 
+/* PNG magic and enough bytes to pass for an image */
+static void write_png(const char *path)
+{
+	char data[200];
+
+	memset(data, 0, sizeof(data));
+	memcpy(data, "\x89PNG\r\n\x1a\n", 8);
+	g_assert_true(g_file_set_contents(path, data, sizeof(data), NULL));
+}
+
+/* a cached image is the cache's own regular file: a link with the URL's
+ * cache name is no cached image (it would show any file it points to);
+ * neither the link nor what it points to is removed */
+static void test_get_symlink(void)
+{
+	const char *url = "https://example.invalid/linked.png";
+	char *path, *target;
+
+	setup();
+	path = generate_cache_path(url);
+	target = g_build_filename(outside, "other.png", NULL);
+	write_png(target);
+	g_assert_cmpint(symlink(target, path), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(image_cache_has(url));
+	g_assert_true(g_file_test(path, G_FILE_TEST_IS_SYMLINK));
+	g_assert_true(g_file_test(target, G_FILE_TEST_IS_REGULAR));
+
+	/* the same image as the cache's own file is found */
+	g_unlink(path);
+	write_png(path);
+	g_assert_true(image_cache_has(url));
+	g_free(path);
+	path = image_cache_get(url);
+	g_assert_nonnull(path);
+	g_free(path);
+	g_free(target);
+	teardown();
+}
+
+/* a FIFO or a link to /dev/null under the cache name: not an image, and
+ * looking at it does not hang (alarm() ends a hanging test) */
+static void test_get_fifo_dev_null(void)
+{
+	const char *url = "https://example.invalid/fifo.png";
+	char *path;
+
+	setup();
+	alarm(5);
+	path = generate_cache_path(url);
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(validate_image_file(path));
+	g_unlink(path);
+	g_assert_cmpint(symlink("/dev/null", path), ==, 0);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(validate_image_file(path));
+	alarm(0);
+	g_free(path);
+	teardown();
+}
+
+/* the hard limit: no new download while the cache holds more than twice
+ * image_preview_cache_size of files too new to be removed; files that can
+ * be removed are removed first, and do not count */
+static void test_full(void)
+{
+	setup();
+	size_limit = 1000;
+	g_assert_false(image_cache_full());
+
+	/* over the limit, but not twice: downloads go on */
+	make_file(HASH("1") ".png", 1500, 10);
+	g_assert_false(image_cache_full());
+	g_assert_true(exists(HASH("1") ".png"));
+
+	/* new files over twice the limit: full */
+	make_file(HASH("2") ".png", 600, 10);
+	g_assert_true(image_cache_full());
+	g_assert_true(exists(HASH("1") ".png"));
+	g_assert_true(exists(HASH("2") ".png"));
+
+	/* once they are old enough to go, they make room: no longer full */
+	make_file(HASH("1") ".png", 1500, 1000);
+	g_assert_false(image_cache_full());
+	g_assert_false(exists(HASH("1") ".png"));
+	g_assert_true(exists(HASH("2") ".png"));
+	teardown();
+}
+
+/* 0: no lasting cache, as before the hard limit - every file goes once it
+ * is old enough, and downloads are never refused */
+static void test_full_size_zero(void)
+{
+	setup();
+	size_limit = 0;
+	make_file(HASH("1") ".png", 1500, 10);
+	g_assert_false(image_cache_full());
+	make_file(HASH("2") ".png", 1500, 1000);
+	image_cache_cleanup();
+	g_assert_true(exists(HASH("1") ".png"));
+	g_assert_false(exists(HASH("2") ".png"));
+	g_assert_false(image_cache_full());
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -312,6 +419,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-cache/recent_files", test_recent_files);
 	g_test_add_func("/image-cache/age", test_age);
 	g_test_add_func("/image-cache/foreign_entries", test_foreign_entries);
+	g_test_add_func("/image-cache/get_symlink", test_get_symlink);
+	g_test_add_func("/image-cache/full", test_full);
+	g_test_add_func("/image-cache/full_size_zero", test_full_size_zero);
+	g_test_add_func("/image-cache/get_fifo_dev_null", test_get_fifo_dev_null);
 
 	return g_test_run();
 }

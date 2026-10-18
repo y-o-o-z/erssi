@@ -11,6 +11,7 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/core/levels.h>
+#include <irssi/src/core/safe-file.h>
 
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
@@ -19,6 +20,7 @@
 #include <openssl/evp.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/crypto.h>
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -154,7 +156,29 @@ static char *ssl_file_path(const char *name)
 	return g_strdup_printf("%s/%s", get_irssi_dir(), name);
 }
 
-static gboolean load_key_and_cert(void)
+/* A link (a client may pin the certificate it points to) or anything else
+ * but a regular file at path is neither used nor replaced by a new pair:
+ * said, and TRUE */
+static gboolean refused_in_place(const char *path)
+{
+	struct stat st;
+	const char *what;
+
+	if (lstat(path, &st) != 0 || S_ISREG(st.st_mode))
+		return FALSE;
+	what = S_ISLNK(st.st_mode) ? "a symbolic link" :
+	       S_ISDIR(st.st_mode) ? "a directory" : "not a regular file";
+	printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+	          "fe-web-ssl: %s is %s - it is neither used nor replaced by a new key "
+	          "and certificate; remove it (or put the file itself there), then "
+	          "/SET fe_web_enabled ON again or restart",
+	          path, what);
+	return TRUE;
+}
+
+/* 1: the stored pair is used; 0: a new pair is to be made (missing,
+ * damaged, expiring, a key others could read); -1: a file in the way */
+static int load_key_and_cert(void)
 {
 	char *key_path, *cert_path;
 	FILE *f;
@@ -162,14 +186,24 @@ static gboolean load_key_and_cert(void)
 	X509 *x509 = NULL;
 	time_t tomorrow;
 	struct stat st;
+	gboolean key_refused, cert_refused;
 	int fd;
 
 	key_path = ssl_file_path(FE_WEB_KEY_FILE);
 	cert_path = ssl_file_path(FE_WEB_CERT_FILE);
+	/* both are looked at, so both are said */
+	key_refused = refused_in_place(key_path);
+	cert_refused = refused_in_place(cert_path);
+	if (key_refused || cert_refused) {
+		g_free(key_path);
+		g_free(cert_path);
+		return -1;
+	}
 
-	fd = open(key_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-	if (fd >= 0 && (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() ||
-	                (st.st_mode & 077) != 0)) {
+	/* not through a symbolic link, never a FIFO (which would hang the
+	 * start), a regular file only (safe_file_open_read()) */
+	fd = safe_file_open_read(key_path, 0, &st);
+	if (fd >= 0 && (st.st_uid != getuid() || (st.st_mode & 077) != 0)) {
 		/* someone else may have read or replaced it: not used */
 		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 		          "fe-web-ssl: %s can be read by other users or is not yours - "
@@ -186,7 +220,7 @@ static gboolean load_key_and_cert(void)
 			close(fd);
 		}
 	}
-	if ((f = fopen(cert_path, "r")) != NULL) {
+	if ((f = safe_file_fopen_read(cert_path, 0)) != NULL) {
 		x509 = PEM_read_X509(f, NULL, NULL, NULL);
 		fclose(f);
 	}
@@ -201,41 +235,42 @@ static gboolean load_key_and_cert(void)
 		EVP_PKEY_free(pkey);
 		X509_free(x509);
 		ERR_clear_error();
-		return FALSE;
+		return 0;
 	}
 
 	server_key = pkey;
 	server_cert = x509;
-	return TRUE;
+	return 1;
 }
 
+/* The key and the certificate replace the old files as a whole
+ * (safe_file_write()): a new file with mode 0600 from the start, written
+ * out to the disk, then renamed - never a half-written key, and a link at
+ * the path is replaced, not followed */
 static gboolean write_pem_file(const char *name, EVP_PKEY *pkey, X509 *x509)
 {
-	char *path, *tmp_path;
-	FILE *f;
-	int fd, ok;
+	char *path, *data;
+	long len;
+	BIO *bio;
+	int ok;
 
-	path = ssl_file_path(name);
-	tmp_path = g_strconcat(path, ".tmp", NULL);
-	unlink(tmp_path);
-	fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-	f = fd < 0 ? NULL : fdopen(fd, "w");
-	if (f == NULL) {
-		if (fd >= 0)
-			close(fd);
-		g_free(path);
-		g_free(tmp_path);
+	bio = BIO_new(BIO_s_mem());
+	if (bio == NULL)
 		return FALSE;
+	ok = pkey != NULL ? PEM_write_bio_PrivateKey(bio, pkey, NULL, NULL, 0, NULL, NULL) :
+	                    PEM_write_bio_X509(bio, x509);
+	len = BIO_get_mem_data(bio, &data);
+	if (ok && len > 0) {
+		path = ssl_file_path(name);
+		ok = safe_file_write(path, data, len, 0600);
+		g_free(path);
+	} else {
+		ok = FALSE;
 	}
-	ok = pkey != NULL ? PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL) :
-	                    PEM_write_X509(f, x509);
-	ok = fclose(f) == 0 && ok;
-	if (ok)
-		ok = rename(tmp_path, path) == 0;
-	else
-		unlink(tmp_path);
-	g_free(path);
-	g_free(tmp_path);
+	/* the private key in memory: cleared before it is freed */
+	if (len > 0)
+		OPENSSL_cleanse(data, len);
+	BIO_free(bio);
 	return ok;
 }
 
@@ -267,8 +302,14 @@ int fe_web_ssl_prepare(void)
 	if (fe_web_ssl_ctx != NULL)
 		return TRUE;
 
-	if (load_key_and_cert())
+	switch (load_key_and_cert()) {
+	case 1:
 		goto have_cert;
+	case -1:
+		return FALSE;
+	default:
+		break;
+	}
 
 	/* Generate RSA key */
 	server_key = generate_rsa_key();

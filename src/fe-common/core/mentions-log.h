@@ -13,7 +13,9 @@ char *mentions_log_line(time_t when, const char *tag, const char *where, const c
 
 /* Append LINE to PATH. Missing parent directories are created with mode 0700,
  * the file with mode 0600; an existing regular file owned by us is tightened to 0600.
- * Anything that is not a regular file (a directory, a FIFO) fails without blocking. */
+ * A symbolic link as PATH, a hard link to another file, a file of another user and
+ * anything that is not a regular file (a directory, a FIFO) fail without blocking
+ * (safe_file_open_append()); a directory above that is a link is followed. */
 gboolean mentions_log_append(const char *path, const char *line, GError **error);
 
 /* Empty or NULL SETTING gives <irssi_dir>/logs/mentions.log (NULL when IRSSI_DIR is

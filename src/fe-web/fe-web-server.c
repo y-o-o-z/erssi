@@ -1871,9 +1871,8 @@ gboolean fe_web_server_init(void)
 	 * the Unix socket uses TLS too) */
 	if (!fe_web_ssl_prepare()) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: FATAL: SSL/TLS not initialized!");
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web: SSL certificate generation failed. Check OpenSSL installation.");
+		          "fe-web: not started: the TLS key and certificate could not be loaded or "
+		          "made (see above)");
 		return FALSE;
 	}
 

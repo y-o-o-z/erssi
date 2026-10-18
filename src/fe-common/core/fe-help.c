@@ -23,10 +23,13 @@
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/misc.h>
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/core/settings.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/formats.h>
+
+#include <unistd.h>
 
 static int commands_equal(COMMAND_REC *rec, COMMAND_REC *rec2)
 {
@@ -118,6 +121,9 @@ static void help_category(GSList *cmdlist, int items)
 	g_free(linebuf);
 }
 
+/* a help page is a few kilobytes: a larger file is no help page */
+#define HELP_FILE_MAX (1024 * 1024)
+
 static int show_help_file(const char *file)
 {
         const char *helppath;
@@ -135,14 +141,27 @@ static int show_help_file(const char *file)
 
 	handle = NULL;
 	for (tmp = paths; *tmp != NULL; tmp++) {
-		/* helpdir/command or helpdir/category/command */
+		struct stat st;
+		int fd;
+
+		/* helpdir/command or helpdir/category/command. A regular file
+		   only: a FIFO would hang erssi, a directory shows nothing. A
+		   link is followed - help pages and help directories are often
+		   links (installed by scripts, kept in dotfiles), and ~/.erssi
+		   is the user's own. Quiet: with Capsicum, no warning for each
+		   directory tried */
 		path = g_strdup_printf("%s/%s", *tmp, file);
-		handle = g_io_channel_new_file(path, "r", NULL);
+		fd = safe_file_open_read(path, SAFE_FILE_FOLLOW | SAFE_FILE_QUIET, &st);
 		g_free(path);
-
-		if (handle != NULL)
+		if (fd >= 0 && st.st_size > HELP_FILE_MAX) {
+			close(fd);
+			fd = -1;
+		}
+		if (fd >= 0) {
+			handle = g_io_channel_unix_new(fd);
+			g_io_channel_set_close_on_unref(handle, TRUE);
 			break;
-
+		}
 	}
 
 	g_strfreev(paths);

@@ -31,6 +31,8 @@
 #include <irssi/src/fe-common/core/fe-windows.h>
 
 #include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 /* === Helper functions === */
 
@@ -138,15 +140,24 @@ void cmd_credential_list(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 	if (credential_storage_mode == CREDENTIAL_STORAGE_EXTERNAL) {
 		char *path = g_strdup_printf("%s/%s", get_irssi_dir(),
 		                             credential_external_file ? credential_external_file : ".credentials");
-		config = config_open(path, -1);
-		g_free(path);
+		char *error = NULL;
+		struct stat st;
 
-		if (config == NULL || config_parse(config) != 0) {
+		if (lstat(path, &st) != 0 && errno == ENOENT) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-			         "No credentials file found or file is empty");
-			if (config) config_close(config);
+			          "No credentials file yet (%s)", path);
+			g_free(path);
 			return;
 		}
+		config = credential_file_open(path, FALSE, &error);
+		if (config == NULL) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "Cannot read the credentials file %s: %s", path, error);
+			g_free(error);
+			g_free(path);
+			return;
+		}
+		g_free(path);
 	} else {
 		/* Config mode - use mainconfig */
 		config = mainconfig;
@@ -377,6 +388,9 @@ void cmd_credential_decrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 void cmd_credential_reload(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	if (credential_external_reload()) {
+		/* the networks read their settings again, now with the
+		   credentials (as after /CREDENTIAL PASSWD) */
+		signal_emit("setup reread", 1, mainconfig->fname);
 		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 		         "Successfully reloaded external credentials");
 	} else {
@@ -454,6 +468,25 @@ void credential_show_status(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 
 /* === Initialization and deinitialization === */
 
+static guint legacy_warning_tag;
+
+/* once per start, in the status window: printed when the windows are
+   there, not at every connect */
+static gboolean print_legacy_warning(gpointer data)
+{
+	char **lines, **line;
+
+	legacy_warning_tag = 0;
+	lines = credential_legacy_warning();
+	if (lines == NULL)
+		return G_SOURCE_REMOVE;
+	/* an argument is printed as it is: a % in a path stays one */
+	for (line = lines; *line != NULL; line++)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "%s", *line);
+	g_strfreev(lines);
+	return G_SOURCE_REMOVE;
+}
+
 void fe_credential_init(void)
 {
 	/* Register main command */
@@ -470,10 +503,17 @@ void fe_credential_init(void)
 
 	/* Command options */
 	command_set_options("credential", "");
+
+	legacy_warning_tag = g_idle_add(print_legacy_warning, NULL);
 }
 
 void fe_credential_deinit(void)
 {
+	if (legacy_warning_tag != 0) {
+		g_source_remove(legacy_warning_tag);
+		legacy_warning_tag = 0;
+	}
+
 	/* Remove main command */
 	command_unbind("credential", (SIGNAL_FUNC) cmd_credential);
 

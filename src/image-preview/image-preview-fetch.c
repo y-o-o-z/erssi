@@ -14,10 +14,14 @@
 
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
+#include <irssi/src/core/safe-file.h>
+#include <irssi/src/core/levels.h>
+#include <irssi/src/fe-common/core/printtext.h>
 
 #include <curl/curl.h>
 #include <string.h>
 #include <errno.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -996,6 +1000,28 @@ static void fetch_rec_free(IMAGE_FETCH_REC *fetch)
 	g_free(fetch);
 }
 
+/* The download is written in place, under the cache's name (see
+ * cache_cleanup() for why files being downloaded keep that name): not
+ * through a symbolic link, never into a FIFO or another user's file. A
+ * partial file is removed when the download fails, and a cached file is
+ * checked for an image's magic bytes before it is shown. */
+static FILE *open_cache_file(const char *path)
+{
+	FILE *fp;
+	int fd, err;
+
+	fd = safe_file_open_truncate(path, 0600);
+	if (fd < 0)
+		return NULL;
+	fp = fdopen(fd, "wb");
+	if (fp == NULL) {
+		err = errno;
+		close(fd);
+		errno = err;
+	}
+	return fp;
+}
+
 /* Start stage 2: fetch actual image from og:image URL */
 static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_image_url)
 {
@@ -1021,7 +1047,7 @@ static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_imag
 	fetch->received_bytes = 0;  /* Reset for stage 2 */
 
 	/* Open cache file for image */
-	fetch->fp = fopen(fetch->cache_path, "wb");
+	fetch->fp = open_cache_file(fetch->cache_path);
 	if (fetch->fp == NULL) {
 		image_preview_debug_print("FETCH: stage2 failed to open cache file: %s", strerror(errno));
 		fetch_complete(fetch, FALSE, "Failed to open cache file");
@@ -1114,6 +1140,18 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 		return FALSE;
 	}
 
+	/* the cache's hard limit (image_cache_full()), for every download -
+	 * a retry too: files too new to be removed fill it, no more until
+	 * they age */
+	if (image_cache_full()) {
+		image_preview_debug_print("FETCH: cache over twice its size limit");
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "Image preview: the cache holds more than twice "
+		          "image_preview_cache_size of files from the last minutes - no new "
+		          "download until they can be removed (/IMAGE CLEAR empties the cache)");
+		return FALSE;
+	}
+
 	/* Create fetch record */
 	fetch = g_new0(IMAGE_FETCH_REC, 1);
 	fetch->url = g_strdup(url);
@@ -1137,7 +1175,7 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 		fetch->html_buffer = NULL;
 
 		/* Open output file */
-		fetch->fp = fopen(cache_path, "wb");
+		fetch->fp = open_cache_file(cache_path);
 		if (fetch->fp == NULL) {
 			g_warning("image-fetch: Failed to open %s for writing: %s",
 			          cache_path, strerror(errno));

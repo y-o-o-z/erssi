@@ -18,11 +18,13 @@
 #include "src/fe-ansi/term.h"
 
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/safe-file.h>
 
 #ifdef HAVE_CHAFA
 #include <chafa.h>
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -380,6 +382,7 @@ GString *image_render_chafa(const char *image_path,
 	ChafaPixelMode pixel_mode;
 	GString *output = NULL;
 	unsigned char *pixels = NULL;
+	FILE *fp;
 	int img_width, img_height, img_channels;
 	int target_cols, target_rows;
 	float aspect_ratio;
@@ -394,14 +397,25 @@ GString *image_render_chafa(const char *image_path,
 	image_preview_debug_print("CHAFA: Rendering %s (max %dx%d)",
 	                          image_path, max_cols, max_rows);
 
+	/* opened once, the same file for both reads: not through a symbolic
+	 * link (only the cache's own files are shown), and a FIFO put there
+	 * does not hang erssi */
+	fp = safe_file_fopen_read(image_path, 0);
+	if (fp == NULL) {
+		image_preview_debug_print("CHAFA: Not loading %s: %s", image_path,
+		                          safe_file_strerror(errno));
+		return NULL;
+	}
 	/* Load image using stb_image - at most 40 megapixels */
-	if (!stbi_info(image_path, &img_width, &img_height, &img_channels) ||
+	if (!stbi_info_from_file(fp, &img_width, &img_height, &img_channels) ||
 	    (gint64)img_width * img_height > 40 * 1000 * 1000) {
 		image_preview_debug_print("CHAFA: Not loading %s: unknown format or too large",
 		                          image_path);
+		fclose(fp);
 		return NULL;
 	}
-	pixels = stbi_load(image_path, &img_width, &img_height, &img_channels, 4);
+	pixels = stbi_load_from_file(fp, &img_width, &img_height, &img_channels, 4);
+	fclose(fp);
 	if (pixels == NULL) {
 		image_preview_debug_print("CHAFA: Failed to load image: %s",
 		                          stbi_failure_reason());

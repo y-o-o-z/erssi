@@ -15,13 +15,13 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/special-vars.h>
+#include <irssi/src/core/safe-file.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -69,42 +69,27 @@ static void sanitize_for_filename(char *str)
 	}
 }
 
-/* A debug log of the user's own (see resize-debug.h). O_NOFOLLOW: a
- * symbolic link put in its place is not followed; O_NONBLOCK: a FIFO
- * does not hang erssi (it is refused by the fstat, as is anything else
- * that is no regular file of this user). */
+/* A debug log of the user's own (see resize-debug.h): a symbolic link put
+ * in its place is not followed, a FIFO does not hang erssi, and anything
+ * else that is no regular file of this user is refused
+ * (safe_file_open_append()). */
 FILE *debug_log_open(const char *path)
 {
-	struct stat st;
 	FILE *fp;
-	int fd;
+	int fd, err;
 
 	g_return_val_if_fail(path != NULL, NULL);
 
-	fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC,
-	          S_IRUSR | S_IWUSR);
+	fd = safe_file_open_append(path, S_IRUSR | S_IWUSR);
 	if (fd < 0)
 		return NULL;
-	if (fstat(fd, &st) < 0)
-		goto fail;
-	if (!S_ISREG(st.st_mode) || st.st_uid != geteuid()) {
-		errno = EPERM;
-		goto fail;
-	}
-	/* a log an older erssi made with the umask's mode */
-	if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0 && fchmod(fd, S_IRUSR | S_IWUSR) < 0)
-		goto fail;
 	fp = fdopen(fd, "a");
-	if (fp != NULL)
-		return fp;
-fail:
-	{
-		int err = errno;
-
+	if (fp == NULL) {
+		err = errno;
 		close(fd);
 		errno = err;
 	}
-	return NULL;
+	return fp;
 }
 
 /* Get terminal info and build log filename */

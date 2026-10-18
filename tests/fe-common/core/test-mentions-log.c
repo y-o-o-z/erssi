@@ -4,6 +4,8 @@
 #include <irssi/src/common.h>
 #include <irssi/src/fe-common/core/mentions-log.h>
 
+#include "../../test-tmpdir.h"
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -202,6 +204,8 @@ static void test_append_to_fifo_fails(void)
 	path = g_build_filename(tmp, "fifo", NULL);
 	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
 
+	/* an open() that waits for a reader ends the test (and fails it) */
+	alarm(5);
 	/* no reader: must fail at once instead of blocking */
 	g_assert_false(mentions_log_append(path, "x\n", &error));
 	g_assert_nonnull(error);
@@ -219,9 +223,130 @@ static void test_append_to_fifo_fails(void)
 		g_assert_cmpint(read(rd, buf, sizeof(buf)), <=, 0);
 	}
 	close(rd);
+	alarm(0);
 
 	g_remove(path);
 	g_rmdir(tmp);
+	g_free(path);
+	g_free(tmp);
+}
+
+/* a link where the log goes (a log path in a shared directory, set up by
+   someone else): the file it points to is neither written nor changed */
+static void test_append_to_symlink_fails(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *target, *path, *content = NULL;
+	struct stat st;
+
+	g_assert_no_error(error);
+	target = g_build_filename(tmp, "target", NULL);
+	path = g_build_filename(tmp, "mentions.log", NULL);
+	g_assert_true(g_file_set_contents(target, "keep\n", -1, NULL));
+	g_assert_cmpint(chmod(target, 0644), ==, 0);
+	g_assert_cmpint(symlink(target, path), ==, 0);
+
+	g_assert_false(mentions_log_append(path, "x\n", &error));
+	g_assert_nonnull(error);
+	g_assert_nonnull(strstr(error->message, "symbolic link"));
+	g_clear_error(&error);
+	g_assert_true(g_file_get_contents(target, &content, NULL, NULL));
+	g_assert_cmpstr(content, ==, "keep\n");
+	g_assert_cmpint(stat(target, &st), ==, 0);
+	g_assert_cmpuint(st.st_mode & 07777, ==, 0644);
+
+	g_free(content);
+	g_remove(path);
+	g_remove(target);
+	g_rmdir(tmp);
+	g_free(target);
+	g_free(path);
+	g_free(tmp);
+}
+
+/* a hard link to another file of the user's (another user can make one
+   in a shared directory where the system allows it): nothing is appended
+   to that file, its mode stays */
+static void test_append_to_hard_link_fails(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *target, *path, *content = NULL;
+	struct stat st;
+
+	g_assert_no_error(error);
+	target = g_build_filename(tmp, "profile", NULL);
+	path = g_build_filename(tmp, "mentions.log", NULL);
+	g_assert_true(g_file_set_contents(target, "keep\n", -1, NULL));
+	g_assert_cmpint(chmod(target, 0644), ==, 0);
+	g_assert_cmpint(link(target, path), ==, 0);
+
+	g_assert_false(mentions_log_append(path, "; evil\n", &error));
+	g_assert_nonnull(error);
+	g_assert_nonnull(strstr(error->message, "other hard links"));
+	g_clear_error(&error);
+	g_assert_true(g_file_get_contents(target, &content, NULL, NULL));
+	g_assert_cmpstr(content, ==, "keep\n");
+	g_assert_cmpint(stat(target, &st), ==, 0);
+	g_assert_cmpuint(st.st_mode & 07777, ==, 0644);
+
+	g_free(content);
+	g_remove(path);
+	g_remove(target);
+	g_rmdir(tmp);
+	g_free(target);
+	g_free(path);
+	g_free(tmp);
+}
+
+/* a link to /dev/null: refused, nothing is written there */
+static void test_append_to_dev_null_link_fails(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *path;
+
+	g_assert_no_error(error);
+	path = g_build_filename(tmp, "mentions.log", NULL);
+	g_assert_cmpint(symlink("/dev/null", path), ==, 0);
+	g_assert_false(mentions_log_append(path, "x\n", &error));
+	g_assert_nonnull(error);
+	g_clear_error(&error);
+
+	g_remove(path);
+	g_rmdir(tmp);
+	g_free(path);
+	g_free(tmp);
+}
+
+/* the log directory may be a link (logs on another disk): followed */
+static void test_append_in_linked_directory(void)
+{
+	GError *error = NULL;
+	char *tmp = g_dir_make_tmp("mentions-XXXXXX", &error);
+	char *real, *link, *path, *content = NULL;
+
+	g_assert_no_error(error);
+	real = g_build_filename(tmp, "real", NULL);
+	link = g_build_filename(tmp, "logs", NULL);
+	g_assert_cmpint(g_mkdir(real, 0700), ==, 0);
+	g_assert_cmpint(symlink(real, link), ==, 0);
+	path = g_build_filename(link, "mentions.log", NULL);
+	g_assert_true(mentions_log_append(path, "x\n", &error));
+	g_assert_no_error(error);
+	g_free(path);
+	path = g_build_filename(real, "mentions.log", NULL);
+	g_assert_true(g_file_get_contents(path, &content, NULL, NULL));
+	g_assert_cmpstr(content, ==, "x\n");
+
+	g_free(content);
+	g_remove(path);
+	g_remove(link);
+	g_rmdir(real);
+	g_rmdir(tmp);
+	g_free(real);
+	g_free(link);
 	g_free(path);
 	g_free(tmp);
 }
@@ -291,6 +416,8 @@ static void test_server_nick(void)
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
+	/* every temporary file in one directory, removed also after a failure */
+	test_tmpdir_setup();
 
 	g_test_add_func("/mentions_log/line_format", test_line_format);
 	g_test_add_func("/mentions_log/line_utf8_bytes", test_line_utf8_bytes);
@@ -303,6 +430,11 @@ int main(int argc, char **argv)
 	g_test_add_func("/mentions_log/append_tightens_mode", test_append_tightens_mode);
 	g_test_add_func("/mentions_log/append_to_directory_fails", test_append_to_directory_fails);
 	g_test_add_func("/mentions_log/append_to_fifo_fails", test_append_to_fifo_fails);
+	g_test_add_func("/mentions_log/append_to_symlink_fails", test_append_to_symlink_fails);
+	g_test_add_func("/mentions_log/append_to_hard_link_fails", test_append_to_hard_link_fails);
+	g_test_add_func("/mentions_log/append_to_dev_null_link_fails",
+	                test_append_to_dev_null_link_fails);
+	g_test_add_func("/mentions_log/append_in_linked_directory", test_append_in_linked_directory);
 	g_test_add_func("/mentions_log/path", test_path);
 	g_test_add_func("/mentions_log/path_relative", test_path_relative);
 	g_test_add_func("/mentions_log/network_excluded", test_network_excluded);

@@ -94,10 +94,13 @@ void image_cache_init(void);
 void image_cache_deinit(void);
 gboolean image_cache_has(const char *url);
 char *image_cache_get(const char *url);
-gboolean image_cache_store(const char *url, const char *source_path);
 void image_cache_clear_all(void);
 void image_cache_cleanup(void);
 void image_cache_enforce_limit(const char *path);
+/* no new download while the cache holds more than this many times
+ * image_preview_cache_size (see image_cache_full()) */
+#define IMAGE_CACHE_HARD_FACTOR 2
+gboolean image_cache_full(void);
 void image_cache_print_stats(void);
 
 /* Async fetch management */
