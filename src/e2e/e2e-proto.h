@@ -344,12 +344,16 @@ gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
    way, and repartee and rpe2e.pl show such a repeat again. A chunk is
    remembered by a SHA-256 of its storage context (network included),
    sender and parsed fields (msgid, ts, part, total, nonce, ciphertext -
-   not its spelling) for as long as the timestamp check would take it, at
-   most max of them (the oldest go first: memory stays bounded under a
-   flood; only chunks that opened under a trusted key are remembered). */
+   not its spelling) for as long as the timestamp check would take it;
+   only chunks that opened are remembered, so lines that do not open
+   push nothing out. Each sender in each context has a quota of
+   per_sender: at it, that sender's own oldest chunk goes, never anyone
+   else's; max bounds all of them together (then the sender with the
+   most loses its oldest). */
 typedef struct _E2E_REPLAY E2E_REPLAY;
-#define E2E_REPLAY_MAX 4096
-E2E_REPLAY *e2e_replay_new(guint max);
+#define E2E_REPLAY_MAX 16384
+#define E2E_REPLAY_PER_SENDER 512
+E2E_REPLAY *e2e_replay_new(guint max, guint per_sender);
 void e2e_replay_free(E2E_REPLAY *r);
 /* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
 gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w);

@@ -2565,7 +2565,7 @@ void e2e_core_init(void)
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
 	trust_notice = e2e_stamps_new();
-	replay = e2e_replay_new(E2E_REPLAY_MAX);
+	replay = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);

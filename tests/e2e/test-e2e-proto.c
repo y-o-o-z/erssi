@@ -6311,6 +6311,150 @@ static void test_bot_bypass_setting(void)
 	peer_free(&a);
 }
 
+/* a wire as the parser would give it, told apart by n */
+static void synthetic_wire(E2E_WIRE *w, unsigned char *ct, gsize ctlen, guint n)
+{
+	memset(w, 0, sizeof(*w));
+	memset(ct, 0, ctlen);
+	w->ts = fake_now;
+	w->part = w->total = 1;
+	memcpy(w->msgid, &n, sizeof(n));
+	w->ct = ct;
+	w->ctlen = ctlen;
+}
+
+/* one sender's flood of lines that open pushes out only its own: mallory,
+   with a session in #test, sends 10 000; alice's line read before stays
+   a repeat. 10 000 lines that do not open (under alice's address) push
+   out nothing. Bounded in time. */
+static void test_replay_flood(void)
+{
+	PEER a, b, m;
+	E2E_IN_PARAMS in_a, in_m;
+	E2E_IN_RESULT r;
+	E2E_REPLAY *rp;
+	char *alice_line, *first = NULL, *last = NULL, *wire, *text;
+	gint64 t0;
+	guint i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	peer_init(&m, "mallory", MAL, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&m, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	give_key(&m, &b, "#test");
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	in_params(&in_a, &b, "alice", ALICE, "#test", NULL);
+	in_params(&in_m, &b, "mallory", MAL, "#test", NULL);
+	in_a.replay = in_m.replay = rp;
+
+	alice_line = wire_from(&a, "#test", "alice before the flood");
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+
+	t0 = g_get_monotonic_time();
+	for (i = 0; i < 10000; i++) {
+		text = g_strdup_printf("flood %u", i);
+		wire = wire_from(&m, "#test", text);
+		g_free(text);
+		e2e_decrypt_incoming(b.kr, &b.id, &in_m, wire, &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+		e2e_in_result_clear(&r);
+		g_assert_cmpuint(e2e_replay_size(rp), <=, 1 + E2E_REPLAY_PER_SENDER);
+		if (i == 0)
+			first = wire;
+		else if (i == 9999)
+			last = wire;
+		else
+			g_free(wire);
+	}
+	/* a few ms per line even under a sanitizer: no quadratic step */
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 120 * G_USEC_PER_SEC);
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1 + E2E_REPLAY_PER_SENDER);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	g_assert_null(r.plain);
+	e2e_in_result_clear(&r);
+	/* mallory's own recent lines are still repeats; its first one fell
+	   out of its quota - only its own flood did that */
+	e2e_decrypt_incoming(b.kr, &b.id, &in_m, last, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_m, first, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+
+	/* lines under alice's address that do not open with her key enter
+	   nothing */
+	for (i = 0; i < 10000; i++) {
+		e2e_decrypt_incoming(b.kr, &b.id, &in_a, i % 2 == 0 ? first : last, &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+		g_assert_cmpint(r.why, !=, E2E_IN_WHY_REPEAT);
+		e2e_in_result_clear(&r);
+		g_hash_table_remove_all(b.stamps);
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1 + E2E_REPLAY_PER_SENDER);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+
+	e2e_replay_free(rp);
+	g_free(alice_line);
+	g_free(first);
+	g_free(last);
+	peer_free(&a);
+	peer_free(&b);
+	peer_free(&m);
+}
+
+/* the quota and the cap: at its quota a sender loses its own oldest;
+   at the cap the sender holding the most loses its oldest - a sender
+   with fewer is never the one */
+static void test_replay_partitions(void)
+{
+	E2E_REPLAY *rp;
+	E2E_WIRE w;
+	unsigned char ct[17];
+	char sender[32];
+	guint i, n = 0, victim;
+
+	rp = e2e_replay_new(8, 4);
+	victim = n;
+	synthetic_wire(&w, ct, sizeof(ct), n++);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	/* one sender at its quota: its own oldest go */
+	for (i = 0; i < 100; i++) {
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", MAL, &w));
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 5);
+	synthetic_wire(&w, ct, sizeof(ct), n - 4);
+	g_assert_true(e2e_replay_check(rp, "#test", MAL, &w));
+	synthetic_wire(&w, ct, sizeof(ct), n - 5);
+	g_assert_false(e2e_replay_check(rp, "#test", MAL, &w));
+	/* many senders: the cap takes from whoever holds the most first */
+	for (i = 0; i < 50; i++) {
+		g_snprintf(sender, sizeof(sender), "s%u@127.0.0.1", i);
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", sender, &w));
+		g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
+		/* alice's one entry goes only once every sender holds one */
+		if (i < 6) {
+			synthetic_wire(&w, ct, sizeof(ct), victim);
+			g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+		}
+	}
+	/* the same chunk in another context or from another sender is
+	   another one */
+	synthetic_wire(&w, ct, sizeof(ct), n - 1);
+	g_assert_true(e2e_replay_check(rp, "#test", "s49@127.0.0.1", &w));
+	g_assert_false(e2e_replay_check(rp, "#other", "s49@127.0.0.1", &w));
+	e2e_replay_free(rp);
+}
+
 /* a chunk the server delivers again is dropped, not shown twice: a
    whole message, one part of a long one; it is forgotten after twice the
    timestamp window, and the memory stays bounded */
@@ -6330,7 +6474,7 @@ static void test_replay(void)
 	enable(&a, "#test", "auto-accept");
 	enable(&b, "#test", "normal");
 	give_key(&a, &b, "#test");
-	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	in_params(&in, &b, "alice", ALICE, "#test", NULL);
 	in.replay = rp;
 
@@ -6405,7 +6549,7 @@ static void test_replay(void)
 
 	/* the whole timestamp window: read first at its very start (the
 	   chunk 300 s ahead of our clock), the repeat at its very end */
-	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	in.replay = rp;
 	one = wire_from(&a, "#test", "edge");
 	start = fake_now;
@@ -6435,7 +6579,7 @@ static void test_replay(void)
 	e2e_replay_free(rp);
 
 	/* bounded: the oldest go first */
-	rp = e2e_replay_new(8);
+	rp = e2e_replay_new(8, 8);
 	{
 		E2E_WIRE w;
 		unsigned char ct[17] = { 0 };
@@ -7294,6 +7438,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/replay", test_replay);
+	g_test_add_func("/e2e/proto/replay-flood", test_replay_flood);
+	g_test_add_func("/e2e/proto/replay-partitions", test_replay_partitions);
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);

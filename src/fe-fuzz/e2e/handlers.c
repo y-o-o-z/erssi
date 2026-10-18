@@ -345,7 +345,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		peers[i].kr = e2e_json_copy(peer_seed[i].kr);
 		peers[i].id = peer_seed[i].id;
 	}
-	replay = e2e_replay_new(16);
+	replay = e2e_replay_new(16, 4);
 	stamps = e2e_stamps_new();
 	for (n = 0; lines[n] != NULL; n++)
 		step(kr, peers, replay, stamps, lines[n]);

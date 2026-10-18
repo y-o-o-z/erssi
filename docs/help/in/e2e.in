@@ -404,10 +404,13 @@
     (each part is shown on its own). A part read before that the server
     delivers again - in any spelling - is dropped while its timestamp is
     still taken (5 minutes either way), with "repeated message from <nick>
-    dropped" (once a minute per sender); the last 4096 parts read are
-    remembered, so a flood can push an older one out, and after a restart
-    nothing is - a repeat within the 5 minutes of the timestamp check is
-    then shown again, as in repartee. A key request carries no ident@host:
+    dropped" (once a minute per sender). Only parts that opened are
+    remembered, the last 512 of each sender in each channel or query: a
+    sender's flood pushes out only that sender's own older parts, never
+    anyone else's (16384 are kept in all; past that, the sender holding
+    the most loses its oldest). After a restart nothing is remembered - a
+    repeat within the 5 minutes of the timestamp check is then shown
+    again, as in repartee. A key request carries no ident@host:
     someone who forwards your peer's request before the peer's first
     contact with you ties that key to their own address, and the peer's
     own request is then held back as a changed address until /E2E REVERIFY
