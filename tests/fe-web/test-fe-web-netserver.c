@@ -277,19 +277,14 @@ static void test_edits_saved(void)
 	g_free(heard);
 	assert_saved("chatnets/SaveNet", "nick", "saver");
 	assert_saved("chatnets/SaveNet", "autosendcmd", "/msg NickServ id x");
-	value = saved_value("chatnets/SaveNet", "sasl_password");
-	g_assert_nonnull(value);
-	g_assert_cmpstr(value, !=, "***");
-	g_free(value);
+	assert_saved("chatnets/SaveNet", "sasl_password", "s3cret");
 
 	/* an edit with the masks sent back */
 	say_quiet("{\"type\":\"network_add\",\"id\":\"2\",\"name\":\"SaveNet\","
 	          "\"nick\":\"saver2\",\"sasl_password\":\"***\",\"autosendcmd\":\"***\"}");
 	assert_saved("chatnets/SaveNet", "nick", "saver2");
 	assert_saved("chatnets/SaveNet", "autosendcmd", "/msg NickServ id x");
-	value = saved_value("chatnets/SaveNet", "sasl_password");
-	g_assert_cmpstr(value, !=, "***");
-	g_free(value);
+	assert_saved("chatnets/SaveNet", "sasl_password", "s3cret");
 
 	/* a server, then a change of it */
 	say_quiet("{\"type\":\"server_add\",\"id\":\"3\",\"address\":\"irc.save.example\","
