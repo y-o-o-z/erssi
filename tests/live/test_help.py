@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """/HELP for the fork's own settings and for $nickmode.
 Usage: test_help.py <build dir> [<source dir>]"""
+import os
 import shutil
 import sys
 import tempfile
@@ -62,8 +63,39 @@ def main():
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
+    def t_user_help_dir():
+        """~/.erssi/help: a page there, also one that is a link (to a file
+        of the user's own elsewhere), is shown; a FIFO there is no page and
+        does not hang erssi; a directory in the way of a page is passed
+        over for the installed page"""
+        w = Path(tempfile.mkdtemp(prefix="help.", dir=work))
+        with harness.Erssi(inst, w, "alice", harness.config(1, "alice"), args=("--noconnect",)) as alice:
+            alice.start()
+            alice.wait_ready()
+            log = alice.all_log()
+            alice.type_and_wait(f"/set help_path {inst.helpdir}")
+            assert alice.wait_file(log, str(inst.helpdir), 10), "help_path not set"
+            user = alice.home / "help"
+            user.mkdir(exist_ok=True)
+            (user / "mypage").write_text("my own help page\n")
+            elsewhere = w / "dotfiles-help"
+            elsewhere.write_text("linked help page\n")
+            (user / "linkedpage").symlink_to(elsewhere)
+            os.mkfifo(user / "fifopage", 0o600)
+            (user / "term_notify").mkdir()
+            alice.type_and_wait("/help mypage")
+            assert alice.wait_file(log, "my own help page", 10), "/help mypage"
+            alice.type_and_wait("/help linkedpage")
+            assert alice.wait_file(log, "linked help page", 10), "/help linkedpage"
+            alice.type_and_wait("/help fifopage")
+            assert alice.wait_file(log, "No help for fifopage", 10), "/help fifopage hung"
+            alice.type_and_wait("/help term_notify")
+            assert alice.wait_file(log, TOPICS["term_notify"], 10), "/help term_notify"
+            alice.quit()
+            assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
+
     try:
-        harness.main([t_install, t_help])
+        harness.main([t_install, t_help, t_user_help_dir])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)
