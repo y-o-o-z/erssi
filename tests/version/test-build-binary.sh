@@ -228,6 +228,18 @@ EOF
     done
     unlink "$TR/bin/bad"
 
+    # a meson install that put a file outside the prefix is refused and
+    # the file named; the prefix alone (and the directories to it) passes
+    ST=$tmp/stage
+    prefix=$(sed -n 's/^BUILD_PREFIX=//p' "$BB")
+    mkdir -p "$ST$prefix/bin" && : > "$ST$prefix/bin/erssi" || exit 1
+    sh "$BB" --check-stage "$ST" > "$tmp/stage.out" 2>&1
+    check "--check-stage: only the prefix ($prefix) passes" [ $? = 0 ]
+    mkdir -p "$ST/etc" && : > "$ST/etc/erssi.conf" || exit 1
+    sh "$BB" --check-stage "$ST" > "$tmp/stage.out" 2>&1
+    check "--check-stage: a file in /etc is refused" [ $? = 1 ]
+    check "--check-stage: and named" grep -q "outside $prefix - no package: .*/etc/erssi.conf" "$tmp/stage.out"
+
     # SHA256SUMS over the tarballs of one release, sorted, signed and
     # checked with the commands of releasing.md
     D=$tmp/release

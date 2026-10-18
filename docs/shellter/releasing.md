@@ -97,9 +97,10 @@ The platforms are `debian13-amd64` and `freebsd14-amd64`.
    `meson.build` apply as in every build.
 3. Builds the tree and runs the **full** `meson test` suite, with HOME and
    TMPDIR inside the work directory. A failed test means no package.
-4. Installs into a staging directory, strips the ELF files, refuses a
-   symbolic link whose target is absolute or has a `..` in it (the
-   installer refuses those too), writes the
+4. Installs into a staging directory and strips the ELF files. It
+   refuses a file installed outside the prefix (it would be missing from
+   the package) and a symbolic link whose target is absolute or has a
+   `..` in it (the installer refuses those too). Then it writes the
    `MANIFEST` and packs the tarball into `--out` (default: the current
    directory).
 

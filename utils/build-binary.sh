@@ -22,6 +22,9 @@
 #   build-binary.sh --sums DIR
 #       Writes DIR/SHA256SUMS over the tarballs in DIR (one release) and
 #       prints the command that signs it.
+#   build-binary.sh --check-stage DIR
+#       Only the check that DIR (a meson install --destdir) holds nothing
+#       outside the build prefix; for the packager's test.
 #   build-binary.sh --check-tree DIR
 #       Only the checks of an installed tree (as unpacked: bin/erssi,
 #       lib/...) that a package build makes, and the needed= line of its
@@ -193,6 +196,22 @@ check_tree() {
     [ -n "$NEEDED" ] || die "readelf found no shared libraries"
 }
 
+# meson install --destdir STAGE put everything under BUILD_PREFIX: a
+# file installed elsewhere (an absolute install_dir, /etc say) would be
+# missing from the package, so it is refused rather than dropped
+check_stage() {
+    stage=$1
+    [ -d "$stage$BUILD_PREFIX" ] || die "nothing installed under $BUILD_PREFIX"
+    outside=$(find "$stage" -path "$stage$BUILD_PREFIX" -prune -o -print | while IFS= read -r p; do
+            # the directories leading to the prefix
+            case $stage$BUILD_PREFIX/ in
+                "$p"/*) continue ;;
+            esac
+            printf '%s\n' "${p#"$stage"}"
+        done)
+    [ -z "$outside" ] || die "meson installed files outside $BUILD_PREFIX - no package: $(printf '%s\n' "$outside" | head -n 3 | tr '\n' ' ')"
+}
+
 # ── a package ────────────────────────────────────────────────────────
 REPO=
 OUT=.
@@ -207,6 +226,10 @@ while [ $# -gt 0 ]; do
         --keep-work) KEEP=1; shift ;;
         --sums) [ $# -ge 2 ] || usage "--sums needs a directory"; SUMS=$2; shift 2 ;;
         # the checks of an installed tree alone, for the packager's test
+        --check-stage)
+            [ $# -eq 2 ] || usage "--check-stage takes one directory"
+            check_stage "$2"
+            exit 0 ;;
         --check-tree)
             [ $# -eq 2 ] || usage "--check-tree takes one directory"
             check_tree "$2"
@@ -332,6 +355,7 @@ meson install -C "$BUILD" --no-rebuild --destdir "$STAGE" --quiet > "$WORK/insta
     { tail -n 20 "$WORK/install.log" >&2; die "meson install failed - no package"; }
 PKG=$WORK/pkg/$NAME
 mkdir "$WORK/pkg" || die "cannot make $WORK/pkg"
+check_stage "$STAGE"
 mv "$STAGE$BUILD_PREFIX" "$PKG" || die "cannot move the installed tree"
 check_tree "$PKG"
 
