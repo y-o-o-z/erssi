@@ -202,6 +202,10 @@ afterwards](#what-installed-copies-do-afterwards)).
    and refuse the moved release ("points to …, but this installer expects
    …"). It fails closed. After that:
    - the CI job "Every pinned release points to its commit" passes;
+   - the commit statuses: after a rewrite every release tag has a new
+     commit, and the CI tests each of them again, one after another, with
+     `main`. That can take hours; until a job has run, its status shows
+     "pending", which is not a failure;
    - `verify-tag` passes in a new clone;
    - `curl … | sh -s -- --prefix ~/erssi-check --src ~/erssi-check-src`
      installs the newest release with "signed · commit recorded"; remove
