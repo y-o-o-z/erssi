@@ -39,7 +39,8 @@ class HomeOnly(harness.Erssi):
     def _prepare(self):
         for d in ("logs", "scripts/autorun"):
             (self.home / d).mkdir(parents=True, exist_ok=True)
-        text = "\n".join(line for line in self.config_text.splitlines() if "perl_use_lib" not in line)
+        # without the harness's perl_use_lib (a line of a test's own stays)
+        text = "\n".join(line for line in self.config_text.splitlines() if "@PERLLIB@" not in line)
         (self.home / "config").write_text(text.replace("@HOME@", str(self.home)) + "\n")
 
 
@@ -167,6 +168,50 @@ def main():
     def t_prefix_b_moved_and_linked():
         check_prefix("b")
 
+    def t_stale_release_paths():
+        """help_path and perl_use_lib saved by another release of the
+        installer's layout (<p>/releases/0.9/...) are taken as the
+        default of this one (releases/1.0), with one warning line each,
+        and are gone from the next /SAVE; /help and a Perl script work"""
+        if "b" not in st:
+            raise harness.SkipCase("not a relocatable build")
+        inst, prefix = st["b"]
+        old = prefix.parent / "0.9"
+        perl_rel = Path(inst.perllib).relative_to(prefix)
+        cfg = harness.config(1, "alice").replace(
+            'theme = "default";', f'theme = "default"; help_path = "{old}/share/irssi/help";').replace(
+            'perl_use_lib = "@PERLLIB@";', f'perl_use_lib = "{old / perl_rel}";')
+        assert str(old) in cfg and "@PERLLIB@" not in cfg
+        w = Path(tempfile.mkdtemp(prefix="run-stale.", dir=work))
+        with HomeOnly(inst, w, "alice", cfg, args=("--noconnect",)) as e:
+            e.start()
+            e.wait_ready()
+            log = e.all_log()
+            # the warnings are printed at no message level (not logged):
+            # read on the screen. perl_use_lib's at the start, help_path's
+            # at the first /help (a short one, so both stay on the screen)
+            e.type_and_wait("/help nosuchtopic_x")
+            e.sync_output()
+
+            def warned(k):
+                return [ln for ln in e.screen() if f"{k} pointed into another release ({old}/" in ln]
+            for k in ("help_path", "perl_use_lib"):
+                assert harness.wait_until(lambda: warned(k), WAIT), \
+                    f"no warning for {k}:\n" + "\n".join(e.screen())
+                assert len(warned(k)) == 1, f"{k}: " + "\n".join(warned(k))
+            e.type_and_wait(f"/help {HELP_TOPIC}")
+            assert e.wait_file(log, HELP_LINE, WAIT), f"/help {HELP_TOPIC} with a stale help_path"
+            e.type_and_wait("/script load usercount")
+            assert e.wait_file(log, "Loaded script usercount", WAIT), "no Perl script with a stale perl_use_lib"
+            # now the defaults of this release
+            e.type_and_wait("/set help_path", "/set perl_use_lib")
+            assert e.wait_file(log, f"help_path {prefix}/share/irssi/help", WAIT), "help_path is not the default"
+            assert e.wait_file(log, f"perl_use_lib {inst.perllib}", WAIT), "perl_use_lib is not the default"
+            saved = e.save_config()
+            assert str(old) not in saved, f"the old release in the config:\n{saved}"
+            e.quit()
+            assert e.sanitizer_reports() == [], e.sanitizer_reports()
+
     def t_not_relocatable():
         if "plain" not in st:
             raise harness.SkipCase("a relocatable build")
@@ -194,7 +239,8 @@ def main():
         if tree is not None:
             harness.main([t_unpacked_tree])
         else:
-            harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_not_relocatable])
+            harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_stale_release_paths,
+                          t_not_relocatable])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)

@@ -133,7 +133,7 @@ static int show_help_file(const char *file)
 	GString *buf;
 	gsize tpos;
 
-        helppath = settings_get_str("help_path");
+        helppath = get_install_setting("help_path");
 
 	/* ~/.erssi/help first: help for scripts and local overrides */
 	path = g_strdup_printf("%s/help:%s", get_irssi_dir(), helppath);

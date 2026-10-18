@@ -57,7 +57,11 @@ The platforms are `debian13-amd64` and `freebsd14-amd64`.
   wherever the tree is unpacked. If the executable cannot be found, erssi
   uses the compiled paths; `G_MESSAGES_DEBUG=erssi` shows why.
   `erssi --print-prefix` prints the prefix in use. A build without the
-  option uses the compiled paths, as before.
+  option uses the compiled paths, as before. In the installer's layout
+  (`<prefix>/releases/<version>/`), a `help_path` or `perl_use_lib`
+  saved in the config that points into another release is dropped: this
+  release's default applies, with one warning line. `/SET -default`
+  writes no default into the config.
 - **The tarball** `erssi-<version>-<platform>.tar.xz` has one top
   directory, `erssi-<version>-<platform>/`. It holds the installed tree
   (`bin/erssi`, `lib/…`, `share/…`, `include/…`), stripped, and a

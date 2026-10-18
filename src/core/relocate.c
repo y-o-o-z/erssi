@@ -21,6 +21,8 @@
 
 #include "module.h"
 #include <irssi/src/core/relocate.h>
+#include <irssi/src/core/settings.h>
+#include <irssi/src/core/signals.h>
 
 #ifdef ERSSI_RELOCATABLE
 #include <limits.h>
@@ -128,6 +130,46 @@ const char *get_install_path(const char *compiled)
 	return path;
 }
 
+/* PATH is DIR or under it */
+static gboolean path_in(const char *path, const char *dir)
+{
+	size_t len = strlen(dir);
+
+	return strncmp(path, dir, len) == 0 && (path[len] == '/' || path[len] == '\0');
+}
+
+const char *get_install_setting(const char *key)
+{
+	/* the keys warned about: the config can be read again from the
+	   file during the run (the value comes back), one line is enough */
+	static GHashTable *warned;
+	const char *value, *prefix;
+	char *releases, *name, *msg;
+
+	value = settings_get_str(key);
+	prefix = get_install_prefix();
+	releases = g_path_get_dirname(prefix);
+	name = g_path_get_basename(releases);
+	if (strcmp(name, "releases") == 0 && path_in(value, releases) &&
+	    strcmp(value, releases) != 0 && !path_in(value, prefix)) {
+		if (warned == NULL)
+			warned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+		msg = g_hash_table_contains(warned, key) ? NULL :
+		      g_strdup_printf("%s pointed into another release (%s) - this release's "
+		                      "default applies", key, value);
+		settings_reset(key);
+		if (msg != NULL) {
+			g_hash_table_add(warned, g_strdup(key));
+			signal_emit("gui dialog", 2, "warning", msg);
+			g_free(msg);
+		}
+		value = settings_get_str(key);
+	}
+	g_free(releases);
+	g_free(name);
+	return value;
+}
+
 #else /* not relocatable: the compiled paths */
 
 const char *get_install_prefix(void)
@@ -138,6 +180,11 @@ const char *get_install_prefix(void)
 const char *get_install_path(const char *compiled)
 {
 	return compiled;
+}
+
+const char *get_install_setting(const char *key)
+{
+	return settings_get_str(key);
 }
 
 #endif

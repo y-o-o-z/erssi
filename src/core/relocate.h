@@ -19,4 +19,12 @@ const char *get_install_prefix(void);
    string returned lives as long as the process. */
 const char *get_install_path(const char *compiled);
 
+/* settings_get_str(KEY) of a setting whose default is a path under the
+   prefix (help_path, perl_use_lib). In the binary installer's layout
+   (<p>/releases/<version>/bin/erssi), a value that points into another
+   release (one /SET -default wrote before 2026.10.4, say) would name an
+   old or removed tree: it is removed from the config, so the default of
+   this release applies, with one warning line. */
+const char *get_install_setting(const char *key);
+
 #endif
