@@ -2086,6 +2086,47 @@ binary-update)
     check "... nothing changed" current_is 2026.10.5
     check "... and kept" releases_are 2026.10.4 2026.10.5
     ;;
+binary-old-keygen)
+    # an ssh-keygen that cannot check SSH signatures (before OpenSSH 8.1, no
+    # -Y) and a git before 2.34: no binary here, the source build as before
+    # this installer had packages
+    binary_tools
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    record 2026.10.4 "$c4"
+    good_pkg 2026.10.4 "$c4"
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\nfor a in "$@"; do [ "$a" != -Y ] || { echo "unknown option -- Y" >&2; echo "usage: ssh-keygen [-q] [-b bits] ..." >&2; exit 1; }; done\nexec "$TEST_W/bin/ssh-keygen" "$@"\n' | stand ssh-keygen
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\n[ "$1" != --version ] || { echo "git version 2.30.2"; exit 0; }\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool ssh-keygen git
+    run_bin
+    check "old ssh-keygen: installed" [ "$RC" = 0 ]
+    check "... one line why" grep -qF 'this ssh-keygen cannot check SSH signatures (OpenSSH 8.1 or newer is needed) - no binary package' "$W/out"
+    check "... built from source" grep -q 'building from source instead' "$W/out" && grep -q 'Building' "$W/out"
+    check "... with the warning of the source build" grep -q 'signatures cannot be checked here' "$W/out"
+    check "... not called tampering" no_grep 'refusing' "$W/out"
+    check "... nothing downloaded" no_grep 'Downloading.*sha256' "$W/out"
+    check "... METHOD=source" grep -qx METHOD=source "$CONF"
+    run_bin --binary
+    check "old ssh-keygen, --binary: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'no binary install (--binary): this ssh-keygen cannot check SSH signatures' "$W/out"
+    # an ssh-keygen that can: a SHA256SUMS without a line for this platform
+    # is a source build before its signature counts - even a bad one
+    rm -f "$W/shim/ssh-keygen" "$W/shim/git"
+    rm -rf "$W/rel/shellter-v2026.10.4"
+    make_pkg 2026.10.4 "$c4" freebsd14-amd64
+    sign_sums 2026.10.4 "$W/other"
+    run_bin
+    check "no line for the platform, badly signed: built from source" [ "$RC" = 0 ]
+    check "... the reason" grep -q 'no package for debian13-amd64 in shellter-v2026.10.4' "$W/out"
+    check "... not refused" no_grep 'refusing' "$W/out"
+    # with a line for this platform, the bad signature is refused
+    make_pkg 2026.10.4 "$c4"
+    sign_sums 2026.10.4 "$W/other"
+    run_bin
+    check "a line for the platform, badly signed: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'does not carry a valid signature by the erssi Shellter release key - refusing to install' "$W/out"
+    ;;
 binary-fallback)
     # no package for this system: the source build, as before
     binary_tools

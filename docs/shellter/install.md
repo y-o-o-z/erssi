@@ -73,10 +73,13 @@ on FreeBSD), and installs it only when every check passes:
 A signature, checksum or manifest that does not verify stops the
 installer ("refusing to install, nothing was changed"). A release without
 packages, no package for your platform, another Perl, missing libraries
-or an erssi that does not start here are not errors: the installer says why (for missing libraries
-with the `apt` or `pkg` command that installs them) and builds from source
-instead; `--binary` stops there instead. Without ssh-keygen, a sha256
-tool, xz (GNU tar) or curl/fetch the source build runs as well.
+or an erssi that does not start here are not errors: the installer says
+why (for missing libraries with the `apt` or `pkg` command that installs
+them) and builds from source instead; `--binary` stops there instead.
+Without a sha256 tool, xz (GNU tar), curl/fetch, or an ssh-keygen that
+can check SSH signatures (OpenSSH 8.1 or newer; the installer tries it on
+a signature it carries) the source build runs as well, as it did before
+there were packages.
 
 What goes where:
 

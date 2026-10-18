@@ -20,7 +20,7 @@ foreach c : ['ascii', 'utf8',
     'release-signature', 'release-newest', 'release-pinned',
     'update', 'update-same-version', 'update-branch', 'saved-settings',
     'binary-platform', 'binary-install', 'binary-refused', 'binary-switch',
-    'binary-rollback-uninstall', 'binary-dry-run', 'binary-update', 'binary-fallback']
+    'binary-rollback-uninstall', 'binary-dry-run', 'binary-update', 'binary-old-keygen', 'binary-fallback']
   test('installer ' + c, find_program('sh'),
     args : [files('test-shellter-install.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 60)

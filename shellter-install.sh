@@ -88,6 +88,16 @@ RELEASE_FINGERPRINT='SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw'
 REPO_DEFAULT=https://github.com/y-o-o-z/erssi.git
 # the release assets of the default repository: <base>/shellter-v<version>/<asset>
 BINARY_BASE_DEFAULT=https://github.com/y-o-o-z/erssi/releases/download
+# A fixed message signed once with a throwaway key (namespace erssi-probe):
+# ssh-keygen proves it can check SSH signatures (-Y verify, OpenSSH 8.1+)
+# by verifying it, before any signature of a release counts as bad
+PROBE_KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM+P2rYYHCSZZqWFSr5FeU+UzW+Pfou6WwVVY21luNSS'
+PROBE_SIG='-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgz4/athgcJJlmpYVKvkV5T5TNb4
+9+i7pbBVVjbWW41JIAAAALZXJzc2ktcHJvYmUAAAAAAAAABnNoYTUxMgAAAFMAAAALc3No
+LWVkMjU1MTkAAABAl/SNOpZPDqDX4lqGV2GRdxwlMh9vgV0ameb+vFBuDrre1SigohZndm
+gEVGAHMwzYnHcHITvNK47wzKTJCfzdBw==
+-----END SSH SIGNATURE-----'
 MESON_PIP="meson==1.12.1"
 NINJA_PIP="ninja==1.13.2"
 
@@ -549,6 +559,19 @@ download() {
         *) run_logged cp "$BINARY_BASE/$2/$1" "$3" ;;
     esac
 }
+# ssh-keygen here can check SSH signatures: it verifies PROBE_SIG (an old
+# one, before OpenSSH 8.1, has no -Y and cannot)
+can_check_sig() {
+    have ssh-keygen || return 1
+    pd=$(mktemp -d) || return 1
+    printf 'probe namespaces="erssi-probe" %s\n' "$PROBE_KEY" > "$pd/signers"
+    printf '%s\n' "$PROBE_SIG" > "$pd/sig"
+    pr=0
+    printf 'erssi ssh-keygen -Y probe\n' |
+        ssh-keygen -Y verify -f "$pd/signers" -I probe -n erssi-probe -s "$pd/sig" > /dev/null 2>&1 || pr=1
+    rm -rf "$pd"
+    return "$pr"
+}
 # SHA256SUMS in the directory $1 carries a valid SSH signature
 # (SHA256SUMS.sig) by the release key for erssi releases: RELEASE_SIGNER
 # with the namespace erssi-release instead of git's, and the fingerprint
@@ -779,6 +802,7 @@ binary_install() {
     if [ -z "$PLATFORM" ]; then why="no binary package: the platform cannot be told"
     elif [ -z "$PERL_V" ]; then why="no binary package without perl"
     elif ! have ssh-keygen; then why="no ssh-keygen to check the signature of a binary package"
+    elif ! can_check_sig; then why="this ssh-keygen cannot check SSH signatures (OpenSSH 8.1 or newer is needed) - no binary package"
     elif ! have sha256sum && ! have sha256 && ! have shasum; then why="no sha256sum to check a binary package"
     elif ! can_unxz; then why="no xz to unpack a binary package"
     else
@@ -843,10 +867,15 @@ binary_install() {
     if ! download SHA256SUMS "$REF" "$STAGE/SHA256SUMS" || ! download SHA256SUMS.sig "$REF" "$STAGE/SHA256SUMS.sig"; then
         binary_fallback "no binary packages found for $REF"; return 0
     fi
+    # not signed yet: only enough to tell there is no package for this
+    # platform, and build from source (which blocking the download would
+    # do as well); nothing else in it counts before the signature
+    if [ -z "$(sum_of "$STAGE/SHA256SUMS" "$ASSET")" ]; then
+        binary_fallback "no package for $PLATFORM in $REF"; return 0
+    fi
     verify_sums "$STAGE" ||
         die "the SHA256SUMS of $REF does not carry a valid signature by the erssi Shellter release key - refusing to install, nothing was changed (report it)"
     want=$(sum_of "$STAGE/SHA256SUMS" "$ASSET")
-    if [ -z "$want" ]; then binary_fallback "no package for $PLATFORM in $REF"; return 0; fi
     download "$ASSET" "$REF" "$STAGE/$ASSET" || die "cannot download $ASSET - nothing was changed; try again later"
     got=$(sha256_of "$STAGE/$ASSET")
     [ "$got" = "$want" ] ||
