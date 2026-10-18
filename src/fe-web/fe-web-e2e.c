@@ -1,7 +1,7 @@
 /*
  fe-web-e2e.c : E2E state and key-request actions for web clients
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by

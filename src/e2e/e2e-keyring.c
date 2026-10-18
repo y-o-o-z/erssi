@@ -1,7 +1,9 @@
 /*
  e2e-keyring.c : keyring.json on disk, as rpe2e.pl 0.2.2 keeps it
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
+    Ported from rpe2e.pl, Copyright (c) 2026 outragedevs, MIT licence
+    (contrib/rpe2e/LICENSE).
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
