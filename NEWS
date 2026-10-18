@@ -1,3 +1,138 @@
+shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.4
+
+	Ready-made binary packages for Debian 13 and FreeBSD 14, and the
+	answer to another full review of the code: files are opened safely
+	everywhere, a failed save no longer loses the config, and the limits
+	of end-to-end encryption are written down.
+
+	+ Binary packages
+	  - on Debian 13 and FreeBSD 14 (amd64) the install command and
+	    erssi --update install the release's ready-made binary in seconds.
+	    It is installed only if its SHA256SUMS is signed by the release
+	    key, its checksum matches, and its MANIFEST names the release, its
+	    commit, the platform and the system's Perl. Anywhere else, or when
+	    a library is missing, erssi is built from source as before; the
+	    missing library is named with the apt or pkg command for it
+	  - binary installs keep releases side by side in
+	    <prefix>/releases/<version> and switch <prefix>/current in one
+	    step, keeping the previous release for --rollback. New installer
+	    options: --binary, --source, --binary-base, --keep N (default 2),
+	    --dry-run, --rollback and --uninstall (removes the prefix and its
+	    ~/.local/bin link, never ~/.erssi)
+	  - a package whose signature, checksum or manifest does not verify,
+	    or that holds a link with an absolute target or a .. in it, stops
+	    the installer and nothing is changed. Packages unpack with your own
+	    owner and permissions
+	  - where ssh-keygen cannot check SSH signatures (OpenSSH before 8.1)
+	    the installer says so in one line and builds from source
+	  - an install without --ref no longer replaces a newer installed
+	    erssi with an older release; it says so and names --ref
+	  - erssi can be built relocatable (meson setup -Drelocatable=true):
+	    the installed tree then works wherever it is unpacked, finding its
+	    modules, Perl modules, help, themes and scripts next to its own
+	    executable. utils/build-binary.sh builds a signed release's
+	    package after the full test suite, in an empty environment;
+	    docs/shellter/releasing.md has the steps
+	  - in the binary layout, a help_path or perl_use_lib entry saved by
+	    another release is moved to this release, with one warning
+
+	+ Screen
+	  - with the side panels on, the cells under a panel on the statusbar
+	    rows no longer keep old text until /REDRAW: a line printed at start
+	    or after /UPGRADE, a statusbar's own text after a panel was hidden
+	    and shown, or after a statusbar spanning the screen was made a
+	    window statusbar
+	  - warnings shown while erssi starts appear once, not twice
+	  - /SET -default <setting> removes the setting from the config, so it
+	    follows the built-in default, also after an update
+
+	+ End-to-end encryption
+	  - replay protection survives restarts, /upgrade and /unload: the
+	    messages read are remembered in ~/.erssi/rpe2e/replay.cache
+	    (digests and times only, mode 0600). A message the server delivers
+	    again within the 5-minute window is dropped
+	  - one sender flooding valid encrypted lines cannot push other
+	    people's messages out of that memory: each sender has room for 512
+	    parts per channel or query (16384 in all)
+	  - a plain private message under an E2E peer's nick from another
+	    address (someone took the nick, or the server forged it) is marked
+	    "[plain, from <ident@host>]"; plain lines under your own nick in an
+	    E2E channel or query are marked [plain] too
+	  - the keyring, the replay memory and /e2e import read only regular
+	    files: a symlink is not followed, a FIFO, device or directory is
+	    refused at once with the reason (a FIFO used to hang erssi). A
+	    keyring.json that is a symlink is now an unreadable keyring: put
+	    the file back, or link the whole rpe2e directory instead
+	  - /help e2e and docs/shellter/security.md say what end-to-end
+	    encryption protects and what it does not: no forward secrecy (as
+	    in repartee), no NOTICEs, CTCPs other than ACTION or metadata, and
+	    nothing on your own machine once decrypted
+
+	+ Files and the configuration
+	  - a /SAVE or autosave that fails because the disk or quota is full
+	    keeps the old ~/.erssi/config and says so; it could put a truncated
+	    config in place before. A failed save no longer makes later web
+	    edits or /KEEPNICK report "the config file has errors"
+	  - files at paths others can influence are opened safely: a FIFO in
+	    place of the external credentials file, the web TLS key or
+	    certificate, ~/.erssi/keepnick, a help page, a shipped theme or an
+	    image cache file no longer hangs erssi. Symbolic links are refused
+	    where none is expected (the mentions and debug logs, the image
+	    cache, the TLS files) and followed for help pages, ~/.erssi/keepnick,
+	    installed themes and the external credentials file. The mentions
+	    and debug logs are written only to a regular file of your own with
+	    no other hard link
+	  - the image cache never exceeds twice image_preview_cache_size plus
+	    three downloads: no download, retries included, starts while it
+	    holds more than twice the limit (the limit itself stays soft, as
+	    /help image says); image_preview_cache_size 0 keeps no lasting
+	    cache, as before
+
+	+ Credentials
+	  - fixed: with credential_storage_mode external, every start emptied
+	    the external credentials file
+	  - a configuration that still uses the old credential encryption or
+	    the external file gets one warning at startup saying what is and
+	    is not protected and how to go back to plain storage
+	  - if the external file cannot be read (a link to a volume that is
+	    not mounted, a syntax error), erssi says why and does not write it
+	    until /CREDENTIAL RELOAD reads it; new passwords stay in
+	    ~/.erssi/config meanwhile. /CREDENTIAL RELOAD gives the networks
+	    their credentials at once
+	  - /SAVE in external mode no longer copies the loaded credentials into
+	    ~/.erssi/config; a failed /CREDENTIAL MIGRATE CONFIG leaves the
+	    storage mode as it was, and it works when there is no external file
+
+	+ Web frontend (fe-web)
+	  - editing a network from a web client no longer replaces its SASL
+	    password with "***"; autosendcmd (often a NickServ password) is sent
+	    masked, and the mask sent back keeps it
+	  - network and server changes from a web client are saved at once
+	    (with autosave on); a server added on an address that already has
+	    one on another port is a new server, not a change of the other one
+	  - WebSocket messages split into several frames are accepted; frames
+	    that break RFC 6455 close the connection with 1002, 1007 or 1009
+	    instead of being dropped silently
+	  - a TLS key or certificate that is a link or not a regular file is
+	    refused with a clear reason (the file, and that fe-web did not
+	    start) instead of being replaced
+
+	+ Other
+	  - image downloads in progress are no longer inherited by /EXEC
+	    children, script children or /UPGRADE
+	  - docs/shellter/security.md "Known limitations" explains irssi's
+	    one-function-type signal dispatch, why it works on every platform
+	    erssi builds for, and why clang builds leave out
+	    -fsanitize=function; a test checks what it relies on
+	  - tests remove their temporary files also after a failure or a hang
+	  - the static fuzz build uses the system's OpenSSL: the only one in
+	    Meson's WrapDB (3.0.10) is out of support, so subprojects/openssl.wrap
+	    is gone
+	  - only .github/workflows/shellter-ci.yml is left (contents: read,
+	    switched off like before); the workflows inherited from erssi-org,
+	    which never ran here, are removed
+
 shellter-v2026.10.3 2026-10-18  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.3
 

@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-2026.10.3-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-2026.10.4-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -18,7 +18,7 @@ who live on IRCnet: a polished default theme, help for every command, a
 built-in Mentions window, end-to-end encryption, a signed installer that
 also updates, and a security review of the parts that face the network.
 
-![erssi Shellter Edition 2026.10.3 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
+![erssi Shellter Edition 2026.10.4 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
 
 ## Install
 
@@ -93,14 +93,20 @@ like system config files, what changes when upgrading from 1.3.x):
 
 | Component | Version |
 |---|---|
-| **erssi Shellter Edition 2026.10.3** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 2026.10.4** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.3`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.4`). |
 
 ## What this edition adds
 
 Every command has a page in `/help`. The full lists:
 [docs/shellter/features.md](docs/shellter/features.md).
+
+**Ready-made binaries** (new in 2026.10.4)
+
+- **Installed in seconds** — on Debian 13 and FreeBSD 14 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
+- **Checked before anything changes** — the signature on `SHA256SUMS`, the package's checksum and its manifest must all match, or nothing is installed.
+- **Releases side by side** — each release in its own directory, `current` switched in one step, `--rollback` to the previous one.
 
 **Encryption you can rely on** (new in 2026.10.3)
 
