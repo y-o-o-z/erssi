@@ -1,7 +1,7 @@
 /*
  test-e2e-keyring.c : keyring.json - the format of rpe2e.pl and its safety
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -529,7 +529,7 @@ static void test_migration_tool_file(void)
 	remove_tree();
 }
 
-/* I4: once a corrupt keyring is moved aside, nothing is sent and nothing
+/* once a corrupt keyring is moved aside, nothing is sent and nothing
    saved until the user starts a new one */
 static void test_corrupt_fails_closed(void)
 {

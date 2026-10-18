@@ -1,7 +1,7 @@
 /*
  test-e2e-scope.c : network scope of contexts and CASEMAPPING folding
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by

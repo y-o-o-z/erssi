@@ -1,7 +1,7 @@
 /*
  test-e2e-proto.c : key exchange, outbound gate and decryption of RPE2E
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -954,7 +954,7 @@ static void exchange(PEER *to, PEER *from, const char *ctx)
 	g_free(recip);
 }
 
-/* C1: a session we asked for is no permission to give our key away */
+/* a session we asked for is no permission to give our key away */
 static void test_keyrsp_is_no_acceptance(void)
 {
 	PEER a, m;
@@ -1016,7 +1016,7 @@ static void test_keyrsp_is_no_acceptance(void)
 	peer_free(&m);
 }
 
-/* C2: a REKEY replaces a trusted session of that handle and context, it
+/* a REKEY replaces a trusted session of that handle and context, it
    never creates one; a DM request names its sender */
 static void test_rekey_needs_session(void)
 {
@@ -1111,7 +1111,7 @@ static void test_rekey_needs_session(void)
 	peer_free(&b);
 }
 
-/* M7: a REKEY is used once */
+/* a REKEY is used once */
 static void test_rekey_replay(void)
 {
 	PEER a, b;
@@ -1261,7 +1261,7 @@ static void test_no_key_no_trust(void)
 	peer_free(&m);
 }
 
-/* M1: no line breaks or NUL out of a decrypted message */
+/* no line breaks or NUL out of a decrypted message */
 static void test_control_characters(void)
 {
 	PEER a, b;
@@ -1296,11 +1296,12 @@ static void test_control_characters(void)
 	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
 	g_assert_cmpstr(r.plain, ==, "one two three four \002bold\002 \00304red");
 	e2e_in_result_clear(&r);
+	g_free(line);
 	peer_free(&a);
 	peer_free(&b);
 }
 
-/* M6: a KEYRSP answers our request to that handle, and only one that
+/* a KEYRSP answers our request to that handle, and only one that
    opens counts */
 static void test_keyrsp_binding(void)
 {
@@ -1344,7 +1345,7 @@ static void test_keyrsp_binding(void)
 	peer_free(&m);
 }
 
-/* M8: what strangers can make us store is bounded, the handshakes are
+/* what strangers can make us store is bounded, the handshakes are
    rate-limited */
 static void test_limits(void)
 {
@@ -1400,7 +1401,7 @@ static void test_limits(void)
 	peer_free(&a);
 }
 
-/* M10: timestamps from an imported keyring, rotations, long targets */
+/* timestamps from an imported keyring, rotations, long targets */
 static void test_robustness(void)
 {
 	PEER a, b;
@@ -1537,7 +1538,7 @@ static void test_unresolved_nick(void)
 	e2e_json_free(kr);
 }
 
-/* M7: replaying an old REKEY after many newer ones */
+/* replaying an old REKEY after many newer ones */
 static void test_rekey_replay_after_many(void)
 {
 	PEER a, b;
@@ -1582,7 +1583,7 @@ static void test_rekey_replay_after_many(void)
 	peer_free(&b);
 }
 
-/* M8: wires from many handles, half of them answering our KEYREQ */
+/* wires from many handles, half of them answering our KEYREQ */
 static void test_growth_from_wires(void)
 {
 	PEER a, b;
@@ -3550,7 +3551,7 @@ static E2E_GATE_ACTION dm_gate(PEER *a, const E2E_NET *net, const char *nick, co
 	return action;
 }
 
-/* N3a: after the user's DM line to bob, a second network: bob on E2E is
+/* after the user's DM line to bob, a second network: bob on E2E is
    read and written to, everything old is refused, nothing in clear */
 static void test_regress_second_network(void)
 {
@@ -3602,7 +3603,7 @@ static void assert_nothing_scoped(E2E_JSON *kr)
 	}
 }
 
-/* N3b: on the only network, everything that comes in - wires, DMs, KEYREQ,
+/* on the only network, everything that comes in - wires, DMs, KEYREQ,
    KEYRSP, REKEY - reads and answers with old rows where they are and
    binds nothing to the network */
 static void test_regress_inbound_never_adopts(void)
@@ -3636,7 +3637,7 @@ static void test_regress_inbound_never_adopts(void)
 	peer_free(&c);
 }
 
-/* N3c: a REKEY taken on one side of the takeover is a replay on the other
+/* a REKEY taken on one side of the takeover is a replay on the other
    - in a DM and on #test, on this network and on another */
 static void test_regress_replay_across_adoption(void)
 {
@@ -4202,7 +4203,8 @@ static void test_casemap_superset(void)
 						g_error("map %d: %s is another channel than %s, yet refused",
 						        maps[m], variant, name->str);
 				}
-							g_free(vfold);
+				g_free(line);
+				g_free(vfold);
 				g_free(variant);
 			}
 			g_free(want);

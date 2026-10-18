@@ -1,7 +1,7 @@
 /*
  test-e2e-state.c : the E2E state of a window, the waiting key requests
 
-    Copyright (C) 2026
+    Copyright (C) 2026 the Shellter team
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
