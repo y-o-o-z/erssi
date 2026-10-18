@@ -104,6 +104,11 @@ def main():
         a.type_and_wait("/server add -network E2E 127.0.0.1 7 srvpw")
         assert target.read_text() == OLD, target.read_text()
         a.type_and_wait("/credential reload")
+        # the networks have the reloaded credentials at once (no /RELOAD)
+        off = len(log(a))
+        a.type_and_wait("/network list")
+        listed = log(a)[off:]
+        assert "sasl_username: keep-user" in listed, listed
         a.type_and_wait("/server add -network E2E 127.0.0.1 7 srvpw")
         text = target.read_text()
         assert "keep-me" in text and "keep-user" in text and "srvpw" in text, text

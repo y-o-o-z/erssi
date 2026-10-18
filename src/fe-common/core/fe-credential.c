@@ -388,6 +388,9 @@ void cmd_credential_decrypt(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 void cmd_credential_reload(const char *data, SERVER_REC *server, WI_ITEM_REC *item)
 {
 	if (credential_external_reload()) {
+		/* the networks read their settings again, now with the
+		   credentials (as after /CREDENTIAL PASSWD) */
+		signal_emit("setup reread", 1, mainconfig->fname);
 		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 		         "Successfully reloaded external credentials");
 	} else {

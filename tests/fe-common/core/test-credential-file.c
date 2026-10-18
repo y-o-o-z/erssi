@@ -34,13 +34,16 @@
 #define FILE_NAME "creds-test"
 #define CONTENT "chatnets = { Net = { sasl_password = \"from-the-file\"; }; };\n"
 
-static char *last_error;
+static char *last_error, *last_note;
 
 static void sig_gui_dialog(const char *type, const char *text)
 {
-	if (g_strcmp0(type, "error") == 0) {
-		g_free(last_error);
-		last_error = g_strdup(text);
+	char **last = g_strcmp0(type, "error") == 0 ? &last_error :
+	              g_strcmp0(type, "info") == 0 ? &last_note : NULL;
+
+	if (last != NULL) {
+		g_free(*last);
+		*last = g_strdup(text);
 	}
 }
 
@@ -78,6 +81,8 @@ static void setup(void)
 	credential_remove("Net", CREDENTIAL_CONTEXT_SASL_PASSWORD);
 	g_free(last_error);
 	last_error = NULL;
+	g_free(last_note);
+	last_note = NULL;
 	alarm(HANG_SECONDS);
 }
 
@@ -440,7 +445,31 @@ static void test_migrate_missing_file(void)
 	signal_emit("setup changed", 0);
 	g_assert_cmpint(credential_storage_mode, ==, CREDENTIAL_STORAGE_CONFIG);
 	g_assert_null(last_error);
+	g_assert_nonnull(last_note);
+	g_assert_nonnull(strstr(last_note, "nothing to move"));
 	teardown();
+}
+
+/* the file was removed while erssi runs: what was loaded from it is in
+ * memory only, and MIGRATE CONFIG says that nothing was moved */
+static void test_migrate_file_removed(void)
+{
+	char *path = path_of(FILE_NAME);
+
+	setup();
+	g_assert_true(g_file_set_contents(path, CONTENT, -1, NULL));
+	settings_set_str("credential_storage_mode", "external");
+	credential_storage_mode = CREDENTIAL_STORAGE_EXTERNAL;
+	g_assert_true(credential_external_load());
+	g_assert_cmpint(g_unlink(path), ==, 0);
+	settings_set_str("credential_storage_mode", "config");
+	signal_emit("setup changed", 0);
+	g_assert_cmpint(credential_storage_mode, ==, CREDENTIAL_STORAGE_CONFIG);
+	g_assert_nonnull(last_note);
+	g_assert_nonnull(strstr(last_note, "nothing was moved"));
+	g_assert_nonnull(strstr(last_note, "enter them again"));
+	teardown();
+	g_free(path);
 }
 
 /* MIGRATE CONFIG through a link: the passwords are in the configuration
@@ -667,6 +696,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/credential/file/save_refused_after_failed_load",
 	                test_save_refused_after_failed_load);
 	g_test_add_func("/credential/file/migrate_missing_file", test_migrate_missing_file);
+	g_test_add_func("/credential/file/migrate_file_removed", test_migrate_file_removed);
 	g_test_add_func("/credential/file/migrate_link_empties_target",
 	                test_migrate_link_empties_target);
 	g_test_add_func("/credential/file/read_fill_not_saved", test_read_fill_not_saved);

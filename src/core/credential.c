@@ -1046,10 +1046,18 @@ gboolean credential_migrate_to_config(void)
 
 	external_path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
 	if (lstat(external_path, &st) != 0 && errno == ENOENT) {
-		/* no file (and no link): nothing to move */
-		credential_file_note("Credentials: there is no %s - nothing to move; the "
-		                      "credentials are kept in the configuration now",
-		                      external_path);
+		/* no file (and no link): nothing to move. Credentials loaded
+		   from it before it was removed are in memory only - they are
+		   not moved, which is said */
+		if (credentials != NULL)
+			credential_file_note("Credentials: there is no %s - nothing was moved; "
+			                     "the credentials loaded from it earlier are not in "
+			                     "the configuration: enter them again (/NETWORK ADD "
+			                     "-sasl_password, /SERVER ADD -password)", external_path);
+		else
+			credential_file_note("Credentials: there is no %s - nothing to move; the "
+			                     "credentials are kept in the configuration now",
+			                     external_path);
 		g_free(external_path);
 		return settings_save(NULL, FALSE);
 	}

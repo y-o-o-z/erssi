@@ -90,7 +90,10 @@ user on the box can influence go through one helper (`src/core/safe-file.c`):
   password moves out of `~/.erssi/config` only once the external file
   holds it, `/credential migrate config` that fails leaves
   `credential_storage_mode` as it was, and `/save` does not write the
-  credentials loaded from the external file into the configuration.
+  credentials loaded from the external file into the configuration -
+  except while that file cannot be read or written: then a network or
+  server you change keeps its passwords in `~/.erssi/config` until
+  `/credential reload` succeeds.
 
 The upstream code that reads `~/.erssi/config`, the startup file, themes,
 the `/upgrade` session and `/cat` follows links as irssi always has.
