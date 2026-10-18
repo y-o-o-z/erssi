@@ -17,17 +17,13 @@
 #include "module.h"
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/capsicum.h>
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/fe-common/core/mentions-log.h>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <glib/gstdio.h>
-
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
 
 /* Every C0 control (CR, LF, TAB and ESC included), DEL, every UTF-8 encoded
    C1 control (U+0080-U+009F) and every byte 0x80-0x9F that is not part of
@@ -100,8 +96,7 @@ char *mentions_log_line(time_t when, const char *tag, const char *where, const c
 gboolean mentions_log_append(const char *path, const char *line, GError **error)
 {
 	char *dir;
-	int fd, err, flags;
-	struct stat st;
+	int fd, err;
 	const char *p;
 	size_t left;
 
@@ -115,38 +110,16 @@ gboolean mentions_log_append(const char *path, const char *line, GError **error)
 #endif
 	g_free(dir);
 
-	/* O_NONBLOCK: a FIFO without a reader must not block the client; a
-	   non-regular file is refused below before anything is written */
-#ifdef HAVE_CAPSICUM
-	fd = capsicum_open_wrapper(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NONBLOCK,
-	                           0600);
-#else
-	fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NONBLOCK, 0600);
-#endif
+	/* a regular file of the user's own, not through a symbolic link (a
+	   log path in a shared directory could point anywhere), and never a
+	   FIFO, which would block the client */
+	fd = safe_file_open_append(path, 0600);
 	if (fd == -1) {
 		err = errno;
 		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(err),
-		            "cannot open %s: %s", path, g_strerror(err));
+		            "cannot open %s: %s", path, safe_file_strerror(err));
 		return FALSE;
 	}
-
-	if (fstat(fd, &st) != 0) {
-		err = errno;
-		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(err),
-		            "cannot stat %s: %s", path, g_strerror(err));
-		close(fd);
-		return FALSE;
-	}
-	if (!S_ISREG(st.st_mode)) {
-		g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "%s is not a regular file", path);
-		close(fd);
-		return FALSE;
-	}
-	flags = fcntl(fd, F_GETFL);
-	if (flags != -1)
-		(void) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-	if (st.st_uid == getuid() && (st.st_mode & 07777) != 0600)
-		(void) fchmod(fd, 0600);
 
 	p = line;
 	left = strlen(line);

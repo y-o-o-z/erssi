@@ -42,7 +42,10 @@
     With mentions_log on, every entry is also appended to a log file in
     the form "YYYY-MM-DD HH:MM:SS [tag] place <nick> text", so it survives
     a restart. The file is created with mode 0600 and a missing directory
-    with mode 0700. Control characters in the text are written as spaces.
+    with mode 0700. It is written only when it is a regular file of your
+    own: a symbolic link, a FIFO or another user's file in its place is
+    not written to (a directory above it may be a link). Control
+    characters in the text are written as spaces.
 
     Networks named in mentions_exclude_networks are left out, both from the
     window and from the log (for example a relay network). This
