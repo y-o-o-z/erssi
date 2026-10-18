@@ -378,6 +378,9 @@ fi
 # not --no-rebuild: some test programs (the fuzz corpus replays) are not
 # built by default, and meson test builds them
 if ! meson test -C "$BUILD" --print-errorlogs "$@" > "$WORK/test.log" 2>&1; then
+    # what failed inside the tests (meson shows only the end of their
+    # output): the failed cases' lines of the whole log
+    grep -E '^ *(FAIL|not ok)[ -]' "$BUILD/meson-logs/testlog.txt" 2>/dev/null | head -n 40 | cut -c1-300 >&2
     grep -E '^ *[0-9]+/[0-9]+ .* (FAIL|ERROR|TIMEOUT) ' "$WORK/test.log" >&2
     tail -n 8 "$WORK/test.log" >&2
     die "tests failed - no package (the log: $WORK/test.log with --keep-work)"
