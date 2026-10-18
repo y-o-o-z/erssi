@@ -31,8 +31,8 @@ Built for a shared shell box.
   connection with the status the RFC gives: unmasked frames, reserved
   bits, unknown opcodes, a continuation of nothing, a message started
   inside another and oversized or fragmented control frames (1002), a
-  text message that is not UTF-8 (1007), a message that is too big
-  (1009). Nothing after it is handled.
+  text message or close reason that is not UTF-8 (1007), a message that
+  is too big (1009). Nothing after it is handled.
 - **TLS certificate** — kept in `~/.erssi/fe-web-cert.pem`, so a web client
   can pin exactly that certificate and nothing else listening on the port
   can receive the password. The key is made only once fe-web is enabled,

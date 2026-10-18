@@ -930,11 +930,24 @@ static void fe_web_handle_websocket_data(WEB_CLIENT_REC *client)
 			 * payload is masked; only the 2-byte status code is echoed,
 			 * and only a code an endpoint may send (7.4): 1005, 1006 and
 			 * 1015 never go in a close frame, and an undefined code or a
-			 * status cut to one byte is answered as a protocol error. */
+			 * status cut to one byte is answered as a protocol error; a
+			 * reason after the status that is not UTF-8, with 1007. */
 			guchar status[2] = { 0x03, 0xE8 }; /* 1000 normal closure */
 			guchar *close_frame;
 			gsize close_len;
 
+			if (payload_len > 2) {
+				/* 5.5.1: the reason after the status is UTF-8 */
+				guchar reason[125];
+				gsize i;
+
+				for (i = 2; i < payload_len; i++)
+					reason[i - 2] = payload[i] ^ mask_key[i % 4];
+				if (!utf8_valid(reason, payload_len - 2)) {
+					close_with_status(client, WS_CLOSE_INVALID_DATA);
+					return;
+				}
+			}
 			if (payload_len >= 2) {
 				int code = ((payload[0] ^ mask_key[0]) << 8) |
 				           (payload[1] ^ mask_key[1]);

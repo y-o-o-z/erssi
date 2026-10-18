@@ -17,8 +17,8 @@
    message while a fragmented one is open, and a control frame that is
    too long or fragmented;
  - 1007 for a text message that is not UTF-8 (8.1), also when the bad
-   sequence spans two fragments; a character split between two fragments
-   is fine;
+   sequence spans two fragments (a character split between two fragments
+   is fine), and for a close frame whose reason is not UTF-8 (5.5.1);
  - 1009 for a frame or message that is too big, or too many fragments.
  Nothing after the refused frame is handled.
 */
@@ -258,6 +258,21 @@ static void test_invalid_utf8_across_fragments_closes_1007(void)
 	assert_refused(data, close_1007);
 }
 
+/* the reason of a close frame is UTF-8 too (5.5.1) */
+static void test_close_reason_utf8(void)
+{
+	static const guchar normal[] = { 0x88, 0x02, 0x03, 0xE8 };
+	GByteArray *data = g_byte_array_new();
+
+	add_frame(data, 0x88, "\x03\xe8" "bye \xff", 7);
+	assert_refused(data, close_1007);
+
+	/* a valid one: the status is echoed */
+	data = g_byte_array_new();
+	add_frame(data, 0x88, "\x03\xe8" "bye \xc5\xbc", 8);
+	assert_refused(data, normal);
+}
+
 /* U+0000 is valid UTF-8: not refused as invalid data */
 static void test_nul_is_utf8(void)
 {
@@ -448,6 +463,7 @@ int main(int argc, char **argv)
 	                test_invalid_utf8_closes_1007);
 	g_test_add_func("/fe-web/fragments/invalid-utf8-across-fragments-closes-1007",
 	                test_invalid_utf8_across_fragments_closes_1007);
+	g_test_add_func("/fe-web/fragments/close-reason-utf8", test_close_reason_utf8);
 	g_test_add_func("/fe-web/fragments/nul-is-utf8", test_nul_is_utf8);
 	g_test_add_func("/fe-web/fragments/binary-not-checked-as-utf8",
 	                test_binary_not_checked_as_utf8);
