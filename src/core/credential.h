@@ -78,6 +78,15 @@ gboolean credential_encrypt_config(void);
 gboolean credential_decrypt_config(void);
 
 /* File operations */
+/* a larger credentials file is not read */
+#define CREDENTIAL_FILE_MAX (1024 * 1024)
+/* the credentials file at path, parsed: not through a symbolic link, never
+ * a FIFO or a device; a missing file is an empty one when missing_ok
+ * (else NULL, as for a file that is refused or does not parse) */
+CONFIG_REC *credential_file_open(const char *path, gboolean missing_ok);
+/* config written to path (NULL: its own) with mode 0600, replacing the old
+ * file; -1 when the path is a symbolic link or no regular file */
+int credential_file_write(CONFIG_REC *config, const char *path);
 gboolean credential_external_save(void);
 gboolean credential_external_load(void);
 gboolean credential_external_reload(void);

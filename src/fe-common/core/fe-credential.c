@@ -138,13 +138,12 @@ void cmd_credential_list(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 	if (credential_storage_mode == CREDENTIAL_STORAGE_EXTERNAL) {
 		char *path = g_strdup_printf("%s/%s", get_irssi_dir(),
 		                             credential_external_file ? credential_external_file : ".credentials");
-		config = config_open(path, -1);
+		config = credential_file_open(path, FALSE);
 		g_free(path);
 
-		if (config == NULL || config_parse(config) != 0) {
+		if (config == NULL) {
 			printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 			         "No credentials file found or file is empty");
-			if (config) config_close(config);
 			return;
 		}
 	} else {

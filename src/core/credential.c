@@ -35,6 +35,8 @@
 
 
 
+#include <irssi/src/core/safe-file.h>
+
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -96,6 +98,62 @@ static const char *autosendcmd_patterns[] = {
 };
 
 /* === Helper functions === */
+
+/* an empty configuration that credential_file_write() writes to path: for
+ * a file written as a whole, whatever it held before is not read */
+static CONFIG_REC *credential_file_new(const char *path)
+{
+	CONFIG_REC *config = config_open(NULL, 0600);
+
+	config_change_file_name(config, path, 0600);
+	return config;
+}
+
+/* The external credentials file and config.decrypted hold passwords, at a
+ * path a setting names. Read once through safe_file_read(): a FIFO put
+ * there does not hang the start, a symbolic link is not followed (the
+ * passwords would come from the file it points to), and anything but a
+ * regular file is refused. */
+CONFIG_REC *credential_file_open(const char *path, gboolean missing_ok)
+{
+	CONFIG_REC *config;
+	char *data;
+
+	g_return_val_if_fail(path != NULL, NULL);
+
+	if (!safe_file_read(path, 0, CREDENTIAL_FILE_MAX, &data, NULL)) {
+		if (errno != ENOENT || !missing_ok)
+			return NULL;
+		data = g_strdup("");
+	}
+	config = credential_file_new(path);
+	if (config_parse_data(config, data, path) != 0) {
+		config_close(config);
+		config = NULL;
+	}
+	g_free(data);
+	return config;
+}
+
+/* config_write() replaces the file through a temporary one, but resolves a
+ * symbolic link first and writes where it points: refused here, as is
+ * anything else that is not a regular file. The rest of the check is done
+ * by the rename (a link swapped in after it is replaced, not followed). */
+int credential_file_write(CONFIG_REC *config, const char *path)
+{
+	struct stat st;
+
+	g_return_val_if_fail(config != NULL, -1);
+
+	if (path == NULL)
+		path = config->fname;
+	g_return_val_if_fail(path != NULL, -1);
+	if (lstat(path, &st) == 0 && !S_ISREG(st.st_mode)) {
+		errno = S_ISDIR(st.st_mode) ? EISDIR : S_ISLNK(st.st_mode) ? ELOOP : EINVAL;
+		return -1;
+	}
+	return config_write(config, path, 0600);
+}
 
 static void credential_free(CREDENTIAL_REC *rec)
 {
@@ -735,17 +793,9 @@ gboolean credential_migrate_to_external(void)
 	}
 
 	external_path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
-	external_config = config_open(external_path, 0600);
+	/* what the file held is replaced */
+	external_config = credential_file_new(external_path);
 	g_free(external_path);
-
-	if (external_config == NULL) {
-		g_warning("Failed to open external config");
-		config_close(source_config);
-		return FALSE;
-	}
-
-	/* Clear existing content of external file */
-	config_nodes_remove_all(external_config);
 
 	src_root = source_config->mainnode;
 	dst_root = external_config->mainnode;
@@ -835,7 +885,7 @@ gboolean credential_migrate_to_external(void)
 	}
 
 	/* Save external file */
-	if (config_write(external_config, NULL, 0600) != 0) {
+	if (credential_file_write(external_config, NULL) != 0) {
 		g_warning("Failed to write external credentials file");
 		success = FALSE;
 	}
@@ -875,17 +925,11 @@ gboolean credential_migrate_to_config(void)
 	}
 
 	external_path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
-	external_config = config_open(external_path, -1);
+	external_config = credential_file_open(external_path, FALSE);
 	g_free(external_path);
 
 	if (external_config == NULL) {
-		g_warning("Failed to open external config");
-		return FALSE;
-	}
-
-	if (config_parse(external_config) != 0) {
-		g_warning("Failed to parse external config");
-		config_close(external_config);
+		g_warning("Failed to read external config");
 		return FALSE;
 	}
 
@@ -1082,7 +1126,7 @@ gboolean credential_decrypt_config(void)
 
 	/* Save decrypted version to config.decrypted */
 	decrypted_path = g_strdup_printf("%s/config.decrypted", get_irssi_dir());
-	if (config_write(decrypted_config, decrypted_path, 0600) != 0) {
+	if (credential_file_write(decrypted_config, decrypted_path) != 0) {
 		g_warning("Failed to write decrypted config to: %s", decrypted_path);
 		success = FALSE;
 	}
@@ -1117,6 +1161,7 @@ void credential_unlock_config(void)
 }
 
 
+/* the external file, parsed (a missing one is empty) */
 static CONFIG_REC *credential_config_open(void)
 {
 	char *path;
@@ -1127,7 +1172,7 @@ static CONFIG_REC *credential_config_open(void)
 	}
 	
 	path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
-	config = config_open(path, 0600);
+	config = credential_file_open(path, TRUE);
 	g_free(path);
 	
 	return config;
@@ -1142,19 +1187,16 @@ gboolean credential_external_save(void)
 	GHashTableIter iter;
 	char *network_name;
 	CREDENTIAL_REC *rec;
+	char *path;
 	int ret;
 
 	if (credential_external_file == NULL) {
 		return FALSE;
 	}
 
-	config = credential_config_open();
-	if (config == NULL) {
-		return FALSE;
-	}
-	
-	/* Clear existing content */
-	config_nodes_remove_all(config);
+	path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
+	config = credential_file_new(path);
+	g_free(path);
 	
 	root = config->mainnode;
 	servers_node = config_node_section(config, root, "servers", NODE_TYPE_LIST);
@@ -1253,7 +1295,7 @@ gboolean credential_external_save(void)
 	g_hash_table_destroy(proxies_hash);
 
 	/* Save file */
-	ret = config_write(config, NULL, 0600);
+	ret = credential_file_write(config, NULL);
 	config_close(config);
 
 	return ret == 0;
@@ -1271,11 +1313,6 @@ gboolean credential_external_load(void)
 	
 	config = credential_config_open();
 	if (config == NULL) {
-		return FALSE;
-	}
-	
-	if (config_parse(config) != 0) {
-		config_close(config);
 		return FALSE;
 	}
 	

@@ -336,3 +336,27 @@ test('test-credential-save test', test_test_credential_save,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# the external credentials file: a regular file only, never through a link
+test_test_credential_file = executable('test-credential-file',
+  files(
+    'test-credential-file.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential-file test', test_test_credential_file,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 30)
+
