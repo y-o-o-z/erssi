@@ -36,6 +36,7 @@
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/misc.h>
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/servers.h>
@@ -48,6 +49,9 @@
 #include <irssi/src/fe-common/core/formats.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
+
+/* the script's file holds one line per network: a larger one is not read */
+#define KEEPNICK_FILE_MAX (1024 * 1024)
 
 static char *import_note;	/* printed once the windows are there */
 static guint import_note_tag;
@@ -445,7 +449,10 @@ static void import_script_file(void)
 		return;
 
 	path = g_build_filename(get_irssi_dir(), "keepnick", NULL);
-	if (!g_file_get_contents(path, &text, NULL, NULL)) {
+	/* a FIFO or device there would hang the start: only a regular file
+	   is read. A link to one is followed - the user's own file in the
+	   user's own directory, which dotfile managers often link */
+	if (!safe_file_read(path, SAFE_FILE_FOLLOW, KEEPNICK_FILE_MAX, &text, NULL)) {
 		g_free(path);
 		return;
 	}

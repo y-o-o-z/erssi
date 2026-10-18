@@ -570,6 +570,32 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         assert "imported" not in log.read_text(), log.read_text()
         finish(a)
 
+    def t_migrate_fifo():
+        """~/.erssi/keepnick is a FIFO: the start does not wait for a writer
+        (it would hang there), nothing is imported"""
+        def fifo(e):
+            e.home.mkdir(parents=True, exist_ok=True)
+            os.mkfifo(e.home / "keepnick", 0o600)
+
+        a = erssi("migrate-fifo", 1, "alice", args=("--noconnect",), join=False, before=fifo)
+        out = run(a, "/listnick")
+        assert "Keepnick: No nicks in keep list" in out, out
+        assert "imported" not in a.all_log().read_text(), a.all_log().read_text()
+        finish(a)
+
+    def t_migrate_link():
+        """~/.erssi/keepnick as a link to the user's own file (a dotfile
+        manager's): read through the link"""
+        def linked(e):
+            e.home.mkdir(parents=True, exist_ok=True)
+            real = e.home.parent / "keepnick-real"
+            real.write_text("E2E\tzed\n")
+            (e.home / "keepnick").symlink_to(real)
+
+        a = erssi("migrate-link", 1, "alice", args=("--noconnect",), join=False, before=linked)
+        assert a.wait_file(a.all_log(), "Keepnick: imported 1 nick", WAIT), a.all_log().read_text()
+        finish(a)
+
     def t_script_loaded():
         """the Perl script keepnick: the built-in steps back (its commands
         are the script's), a regain by the script through its own redirect
@@ -800,7 +826,8 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
                       t_late_484, t_monitor, t_monitor_user, t_monitor_cleared, t_bad_bytes, t_nick_delay,
                       t_refused, t_invalid, t_autosave_guard,
                       t_manual_pause_forced_not, t_auto, t_auto_pause, t_auto_off, t_two_servers,
-                      t_casemapping, t_upgrade, t_migrate, t_script_loaded, t_auto_script])
+                      t_casemapping, t_upgrade, t_migrate, t_migrate_fifo, t_migrate_link, t_script_loaded,
+                      t_auto_script])
     finally:
         cleanup()
         if not harness.keep_work():
