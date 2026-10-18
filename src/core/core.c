@@ -152,6 +152,9 @@ static void sig_gui_dialog(const char *type, const char *text)
 {
 	dialog_type_queue = g_slist_append(dialog_type_queue, g_strdup(type));
 	dialog_text_queue = g_slist_append(dialog_text_queue, g_strdup(text));
+	/* sent again at "irssi init finished": a front end that already
+	   listens would print it twice */
+	signal_stop();
 }
 
 static void sig_init_finished(void)
