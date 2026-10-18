@@ -44,10 +44,12 @@ news=$(read_file NEWS) || {
   echo "check-version: cannot read NEWS from $source" >&2
   exit 2
 }
-news_first=$(printf '%s\n' "$news" | head -n 1)
+# sed reads to the end: head would close the pipe early, and with SIGPIPE
+# ignored (as in CI services) printf then fails on a NEWS over 64 KB
+news_first=$(printf '%s\n' "$news" | sed -n 1p)
 
 version=$(printf '%s\n' "$meson_build" |
-  sed -n "s/^  version : '\\([^']*\\)',.*/\\1/p" | head -n 1)
+  sed -n "s/^  version : '\\([^']*\\)',.*/\\1/p" | sed -n 1p)
 
 status=0
 problem() {

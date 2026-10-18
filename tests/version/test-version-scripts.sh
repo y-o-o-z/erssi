@@ -103,6 +103,19 @@ cv 'erssi header' 2026.10.0 'erssi-v2026.10.0 2026-10-12' '' 1 \
 cv 'month mismatch' 2026.10.0 'shellter-v2026.10.0 2026-11-02' shellter-v2026.10.0 1 \
   'check-version: 2026.10.0 is not the month of its release date 2026-11-02'
 
+# a NEWS larger than a pipe buffer, with SIGPIPE ignored as a service
+# manager may leave it: the first line is read without an error
+n=$((n + 1)); d="$tmp/cv$n"
+mkfix "$d" 2026.10.0 'shellter-v2026.10.0 2026-10-12'
+awk 'BEGIN { for (i = 0; i < 4000; i++) print "\t  - an older release line, long enough to fill the pipe" }' >> "$d/NEWS"
+err=$( (trap '' PIPE; sh "$root/utils/check-version.sh" "$d" shellter-v2026.10.0) 2>&1 >/dev/null)
+st=$?
+if [ "$st" = 0 ] && [ -z "$err" ]; then
+  pass 'NEWS over 64 KB, SIGPIPE ignored'
+else
+  fail 'NEWS over 64 KB, SIGPIPE ignored' "status=$st stderr=$err"
+fi
+
 cv 'impossible release day' 2026.10.0 'shellter-v2026.10.0 2026-10-99' shellter-v2026.10.0 1 \
   "check-version: NEWS: the release has no date (2026-10-99), expected 'shellter-v2026.10.0 YYYY-MM-DD'"
 cv 'impossible release month' 2026.10.0 'shellter-v2026.10.0 2026-00-12' shellter-v2026.10.0 1 \
