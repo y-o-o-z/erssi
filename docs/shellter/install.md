@@ -3,6 +3,7 @@
 Back to the [README](../../README.md).
 
 - [Install](#install)
+- [Binary packages](#binary-packages)
 - [Options](#options)
 - [FreeBSD](#freebsd)
 - [Update](#update)
@@ -13,13 +14,17 @@ Back to the [README](../../README.md).
 
 ## Install
 
-One command, no root, about two minutes on a shell box:
+One command, no root:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-The installer checks the system first.
+On Debian 13 and FreeBSD 14 (amd64) this installs the ready-made binary
+of the newest release in seconds (see [Binary packages](#binary-packages)).
+Anywhere else, with `--source`, or when the binary cannot be used here, it
+builds the release from source, about two minutes on a shell box; for
+that the installer checks the system first.
 
 - **As root** it lists the packages erssi needs (required and recommended,
   named for apt, dnf, apk, pacman, zypper or FreeBSD pkg) and installs them
@@ -33,13 +38,77 @@ The installer checks the system first.
   FreeBSD - the installer stops and names the package to ask for
   (`pkg install ninja`).
 
-It then builds the newest release recorded in the installer, only if its
-tag points to the recorded commit and carries a valid signature by the
-release key (checked with git 2.34+ and ssh-keygen; without them the
-installer warns and checks the commit only), runs the test suite and
-installs to `~/.local/opt/erssi`, linked as `~/.local/bin/erssi`. Every step
-is one line; the build output goes to `~/.local/state/erssi/install.log`,
-shown when a step fails. Works on Linux and FreeBSD.
+The source build takes the newest release recorded in the installer, only
+if its tag points to the recorded commit and carries a valid signature by
+the release key (checked with git 2.34+ and ssh-keygen; without them the
+installer warns and checks the commit only), and runs the test suite.
+Either way erssi is installed to `~/.local/opt/erssi`, linked as
+`~/.local/bin/erssi`. Every step is one line; the output of the steps goes
+to `~/.local/state/erssi/install.log`, shown when a step fails. Works on
+Linux and FreeBSD.
+
+## Binary packages
+
+A release can carry one package per platform:
+`erssi-<version>-<platform>.tar.xz` (platforms `debian13-amd64` and
+`freebsd14-amd64`), listed in the release's `SHA256SUMS`, which the release
+key signs (`SHA256SUMS.sig`). The installer tells the platform from
+`uname`, `/etc/os-release` (or `freebsd-version`) and `perl -e 'print $^V'`,
+downloads `SHA256SUMS`, `SHA256SUMS.sig` and the package with curl (fetch
+on FreeBSD), and installs it only when every check passes:
+
+- `SHA256SUMS` carries a valid SSH signature by the release key, made for
+  erssi releases (namespace `erssi-release`; a signature made for git
+  commits and tags does not count);
+- the package has the sha256 that `SHA256SUMS` gives for it, and every file
+  in it is below its one top directory;
+- its `MANIFEST` names the release (`version`, `tag`), the commit the
+  installer records for it (on `--update`: the commit of the signed release
+  tag), your platform and the version of your Perl (erssi embeds Perl, so a
+  package runs only with the Perl it was built with);
+- the libraries it needs are there (`ldd` finds them all), and its erssi
+  starts, says it is that release and finds its own files where it was
+  unpacked (`erssi --print-prefix`).
+
+A signature, checksum or manifest that does not verify stops the
+installer ("refusing to install, nothing was changed"). A release without
+packages, no package for your platform, another Perl, missing libraries
+or an erssi that does not start here are not errors: the installer says why (for missing libraries
+with the `apt` or `pkg` command that installs them) and builds from source
+instead; `--binary` stops there instead. Without ssh-keygen, a sha256
+tool, xz (GNU tar) or curl/fetch the source build runs as well.
+
+What goes where:
+
+| Path | What it is |
+|---|---|
+| `<prefix>/releases/<version>/` | The unpacked release, with its `MANIFEST`. |
+| `<prefix>/current` | Link to `releases/<version>`, the release in use, switched in one step (a new link renamed over the old one). |
+| `<prefix>/previous` | Link to the release in use before; `--rollback` returns to it. |
+| `<prefix>/bin/erssi` | Link to `../current/bin/erssi`; `~/.local/bin/erssi` links to it as before. |
+| `<prefix>/share/irssi/shellter-install.conf` | `METHOD=binary`, `VERSION`, `COMMIT`, `PLATFORM` and the settings below. |
+
+The new release is unpacked next to the one in use and moved into place
+before `current` is switched, so an interrupted install leaves the release
+in use as it was. After the switch, old releases beyond `--keep N` (two by
+default; the one `--rollback` returns to counts first) are removed.
+
+With the installer of the installed release (or the `curl … | sh` command
+with `-s --` and the same options):
+
+```sh
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --rollback    # back to the previous release
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --rollback    # and forward again
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --dry-run     # check the newest package, change nothing
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --uninstall   # remove ~/.local/opt/erssi
+```
+
+After `--rollback`, `/upgrade` in a running erssi loads the release it
+switched to. `--uninstall` removes the prefix and the `~/.local/bin/erssi`
+link to it; `~/.erssi` (configuration, logs, keys) and the source
+directory stay. It removes only a prefix this installer installed that
+holds nothing but erssi (never the home, `~/.local`, `/usr`, `/usr/local`
+or `/opt`).
 
 ## Options
 
@@ -51,9 +120,17 @@ shown when a step fails. Works on Linux and FreeBSD.
 | `--no-test` | Skip the test suite (`--test` runs it again). |
 | `--clean` | Remove the build directory afterwards, for small disk quotas (`--no-clean` keeps it again). |
 | `--yes` | Install the packages as root without asking. |
+| `--binary` | Install from the release's package only, and stop if that is not possible (this run only). |
+| `--source` | Always build from source, also on `erssi --update` (until `--binary`). |
+| `--binary-base <url\|dir>` | Where the packages are: a directory or URL holding `shellter-vX.Y.Z/` (default: the GitHub releases of `y-o-o-z/erssi`; another `--repo` has none unless given). |
+| `--keep N` | Old releases of a binary install kept (default 2). |
+| `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
+| `--rollback` | Switch a binary install back to the previous release (again: forward). |
+| `--uninstall` | Remove the prefix and `~/.local/bin/erssi`; `~/.erssi` stays. |
 
-`--src`, `--repo`, `--no-test`/`--test` and `--clean`/`--no-clean` are kept
-in `<prefix>/share/irssi/shellter-install.conf`: the next install into the
+`--src`, `--repo`, `--no-test`/`--test`, `--clean`/`--no-clean`, `--source`,
+`--binary-base` and `--keep` are kept in
+`<prefix>/share/irssi/shellter-install.conf`: the next install into the
 same prefix and `erssi --update` use them again until you give them again.
 
 The source directory and its venv must be yours, and every directory above
@@ -87,8 +164,13 @@ erssi --update           # build and install it
 
 `erssi --update` runs the installer shipped with the installed release: it
 takes the newest release on GitHub that carries a valid signature by the key
-of that installer (a tag pushed by anyone else is skipped), builds, tests
-and installs it into the same prefix, with the settings of the first install.
+of that installer (a tag pushed by anyone else is skipped) and installs it
+into the same prefix, with the settings of the first install: from its
+package when there is one for your system (checked as in [Binary
+packages](#binary-packages), and the package must name the commit of the
+signed tag), otherwise built and tested from source. The installer of
+2026.10.3 and older has no binary path: it builds 2026.10.4 from source
+once, and updates from 2026.10.4 on use the packages.
 
 **The rules below hold from the 2026.10.3 installer on.** An erssi 2026.10.2
 or older runs its own, older installer on its next `erssi --update`. That
@@ -115,6 +197,7 @@ of `erssi --update`. After one update to 2026.10.3 or newer, every later
   them it stops and names the install command above (with your `--prefix`):
   the current installer checks the newest release against the commit it
   records.
+- A binary update keeps the release it replaces for `--rollback`.
 - In a running erssi, `/upgrade` then loads the new version and keeps your
   windows and channels. Connections over plain text stay up; TLS
   connections cannot be handed to the new process and reconnect once (the
@@ -164,6 +247,18 @@ tag must point to. What it checks depends on how it runs:
    for an installed copy of 2026.10.3 or newer. The copy of 2026.10.2 or
    older updates once with its own rules (see [Update](#update)), so run
    `curl … | sh` once to switch over at once.
+6. **A binary package** (2026.10.4 and newer, on its platforms). Its
+   release's `SHA256SUMS` must carry a valid SSH signature by the release
+   key in the namespace `erssi-release`, the package must match its sum
+   there, and its `MANIFEST` must name that release, the commit this
+   installer records for it (on `--update`: the commit of the signed tag
+   found as in 5), the platform and the system's Perl. The step shows
+   `signed · sha256 verified`, then `commit recorded` (or `commit of the
+   signed tag`). A package of a release this copy does not record
+   (`--ref shellter-vX.Y.Z`) is checked against the signature only, and
+   the step says `release not recorded here`. The package is trusted as
+   far as the release key is: the key signs the list of checksums, which
+   pins the package, which names its commit.
 
 ### Checking the installer yourself
 
@@ -205,6 +300,32 @@ clone), with the same options:
 git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
     -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.3
 ```
+
+### Checking a binary package yourself
+
+The release key for packages is the same key in the namespace
+`erssi-release` (in `utils/allowed_signers` it is listed for `git`). For
+release 2026.10.4 on Debian 13:
+
+```sh
+v=2026.10.4 p=debian13-amd64
+base=https://github.com/y-o-o-z/erssi/releases/download/shellter-v$v
+curl -fsSLO "$base/SHA256SUMS" -fsSLO "$base/SHA256SUMS.sig" -fsSLO "$base/erssi-$v-$p.tar.xz"
+echo '136268860+y-o-o-z@users.noreply.github.com namespaces="erssi-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS' > release_signers
+ssh-keygen -Y verify -f release_signers -I 136268860+y-o-o-z@users.noreply.github.com \
+    -n erssi-release -s SHA256SUMS.sig < SHA256SUMS
+grep " erssi-$v-$p.tar.xz\$" SHA256SUMS | sha256sum -c -     # FreeBSD: sha256 -c <sum> erssi-$v-$p.tar.xz
+tar -xJf "erssi-$v-$p.tar.xz" && cat "erssi-$v-$p/MANIFEST"
+```
+
+`ssh-keygen` must print `Good "erssi-release" signature for
+136268860+y-o-o-z@users.noreply.github.com with ED25519 key
+SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw` (the fingerprint you
+got another way, as above), `sha256sum` must print `OK`, and the
+`MANIFEST` must name `version=2026.10.4`, `tag=shellter-v2026.10.4`, your
+platform and the commit of the release (`git rev-parse
+'shellter-v2026.10.4^{commit}'` in a clone with the verified tag, or the
+`RELEASES` line of a checked installer).
 
 ## Files in ~/.erssi
 

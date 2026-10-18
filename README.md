@@ -22,54 +22,71 @@ also updates, and a security review of the parts that face the network.
 
 ## Install
 
-One command, no root, about two minutes on a shell box:
+One command, no root:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-- The installer checks the system first and lists the packages erssi needs
-  (as root it installs them once you confirm; on a user account it names
-  them for the administrator and puts a missing `meson` or `ninja` into a
-  venv).
-- It builds the newest release recorded in the installer, after checking
-  that its tag points to the recorded commit and carries a valid signature
-  by the release key, runs the test suite and installs to
-  `~/.local/opt/erssi`, linked as `~/.local/bin/erssi`.
-- The downloaded script itself is trusted as it is: it carries the release
-  key and the recorded commits that everything after it is checked
-  against. Without ssh-keygen (or with git before 2.34) only the recorded
-  commit is checked, and any other `--ref` is built unverified, with a
-  warning. How to check the script first, and what each mode verifies:
+- **Debian 13 and FreeBSD 14 (amd64): a ready-made binary, in seconds.**
+  The installer downloads the release's package and installs it only if
+  the release's `SHA256SUMS` carries a valid signature by the release key,
+  the package matches its checksum there, and its manifest names the
+  release, the commit the installer records, your platform and your Perl.
+  The libraries it needs must be there; if one is missing, the installer
+  names the `apt` or `pkg` command and builds from source instead. The
+  release goes into `~/.local/opt/erssi/releases/<version>`, `current` is
+  switched to it in one step, and the previous release stays for
+  `--rollback`.
+- **Elsewhere, or with `--source`: built from source**, about two minutes
+  on a shell box. The installer checks the system first and lists the
+  packages erssi needs (as root it installs them once you confirm; on a
+  user account it names them for the administrator and puts a missing
+  `meson` or `ninja` into a venv). It builds the newest release recorded
+  in the installer, after checking that its tag points to the recorded
+  commit and carries a valid signature by the release key, and runs the
+  test suite.
+- Either way erssi goes to `~/.local/opt/erssi`, linked as
+  `~/.local/bin/erssi`. The downloaded script itself is trusted as it is:
+  it carries the release key and the recorded commits that everything
+  after it is checked against. Without ssh-keygen (or with git before
+  2.34) the source build checks only the recorded commit, and any other
+  `--ref` is built unverified, with a warning. How to check the script and
+  a package first, and what each mode verifies:
   [What the installer verifies](docs/shellter/install.md#what-the-installer-verifies).
 - Works on Linux and FreeBSD. Options: `--prefix`, `--ref`, `--src`,
-  `--no-test`, `--clean`, `--yes`.
+  `--no-test`, `--clean`, `--yes`, `--binary`/`--source`, `--keep`,
+  `--dry-run`, `--rollback`, `--uninstall`.
 - erssi keeps its configuration in `~/.erssi/`, so it runs side by side
   with irssi. Start it inside tmux so the session survives logging out.
 
-Details (package lists, options, FreeBSD and Capsicum, rootless containers,
-the manual build): [docs/shellter/install.md](docs/shellter/install.md).
+Details (binary packages, package lists, options, FreeBSD and Capsicum,
+rootless containers, the manual build):
+[docs/shellter/install.md](docs/shellter/install.md).
 
 ### Update
 
 ```sh
 erssi --check-update     # is a newer release available?
-erssi --update           # build and install it
+erssi --update           # install it
 ```
 
 `--update` takes the newest release on GitHub that carries a valid
 signature by the release key of the installed copy and is a newer version
 (the rules of the 2026.10.3 installer: from 2026.10.2 or older, run the
-install command once instead to get them), builds, tests and installs it
-into the same prefix; `/upgrade` then loads it in a running erssi, keeping
-your windows and channels. Connections over plain text stay up; those over
-TLS cannot be handed to the new process, so they reconnect once ("[TLS]
-Client upgrade"). Coming from 1.3.9 or older (no `--update`): run the
-install command again; your `~/.erssi/config` is kept and the Shellter look
-stays.
+install command once instead to get them) and installs it into the same
+prefix: from its package where there is one for your system (checked as
+above, and its commit must be the one of the signed tag), otherwise built
+and tested from source. An erssi 2026.10.3 or older builds 2026.10.4 from
+source this once; from 2026.10.4 on, updates use the packages. `/upgrade`
+then loads the new version in a running erssi, keeping your windows and
+channels. Connections over plain text stay up; those over TLS cannot be
+handed to the new process, so they reconnect once ("[TLS] Client
+upgrade"). Coming from 1.3.9 or older (no `--update`): run the install
+command again; your `~/.erssi/config` is kept and the Shellter look stays.
 
-Details (signature check by hand, themes and `startup` updated like system
-config files, what changes when upgrading from 1.3.x):
+Details (signature check by hand, rollback, themes and `startup` updated
+like system config files, what changes when upgrading from 1.3.x):
 [docs/shellter/install.md](docs/shellter/install.md#update).
 
 ## Version
