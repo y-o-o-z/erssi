@@ -3,12 +3,11 @@ name: Shellter CI
 # Build and test of erssi Shellter Edition on every push, pull request and
 # release tag: the normal hardened build, a build with AddressSanitizer and
 # UndefinedBehaviorSanitizer running the same tests, and a check that the
-# installer is valid POSIX sh. The workflows inherited from erssi-org
-# (build, check, ABI check, fuzzing, commit lint) are kept for upstream
-# merges and switched off in this repository's Actions settings. The CI on
-# the Shellter team's own server runs these jobs on every commit and reports
-# commit statuses; this workflow is kept for GitHub Actions. utils/pre-push
-# runs the same build, tests and release checks before every push.
+# installer is valid POSIX sh. It is the only workflow of this repository
+# (the ones inherited from erssi-org are not kept) and it is switched off in
+# the Actions settings: the CI on the Shellter team's own server runs these
+# jobs on every commit and reports commit statuses. utils/pre-push runs the
+# same build, tests and release checks before every push.
 
 on:
   push:
