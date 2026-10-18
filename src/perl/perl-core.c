@@ -36,6 +36,7 @@
 #include <irssi/src/perl/perl-common.h>
 #include <irssi/src/perl/perl-signals.h>
 #include <irssi/src/perl/perl-sources.h>
+#include <irssi/src/core/relocate.h>
 
 #include "XSUB.h"
 #include "irssi-core.pl.h"
@@ -381,7 +382,7 @@ char *perl_script_get_path(const char *name)
 	if (stat(path, &statbuf) != 0) {
 		/* check from SCRIPTDIR */
 		g_free(path);
-		path = g_strdup_printf(SCRIPTDIR"/%s", file);
+		path = g_strdup_printf("%s/%s", get_install_path(SCRIPTDIR), file);
 		if (stat(path, &statbuf) != 0) {
 			g_free(path);
 			path = NULL;
@@ -463,7 +464,7 @@ void perl_core_init(void)
 
 	PERL_SYS_INIT3(&argc, &argv, &environ);
 	print_script_errors = 1;
-	settings_add_str("perl", "perl_use_lib", PERL_USE_LIB);
+	settings_add_str("perl", "perl_use_lib", get_install_path(PERL_USE_LIB));
 
 	/*PL_perl_destruct_level = 1; - this crashes with some people.. */
 	perl_signals_init();

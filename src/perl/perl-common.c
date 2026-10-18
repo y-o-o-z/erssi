@@ -40,6 +40,7 @@
 #include <irssi/src/core/channels.h>
 #include <irssi/src/core/queries.h>
 #include <irssi/src/core/nicklist.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/perl/perl-core.h>
 #include <irssi/src/perl/perl-common.h>
@@ -229,8 +230,8 @@ char *perl_get_use_list(void)
 	str = g_string_new(NULL);
 
 	use_lib = settings_get_str("perl_use_lib");
-	g_string_printf(str, "use lib qw(%s/scripts "SCRIPTDIR" %s);",
-			 get_irssi_dir(), use_lib);
+	g_string_printf(str, "use lib qw(%s/scripts %s %s);",
+			 get_irssi_dir(), get_install_path(SCRIPTDIR), use_lib);
 
         g_string_append(str, "use Irssi;");
 	if (irssi_gui != IRSSI_GUI_NONE)

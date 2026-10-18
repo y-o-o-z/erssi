@@ -26,6 +26,7 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/misc.h>
+#include <irssi/src/core/relocate.h>
 
 /* Returns the module name without path, "lib" prefix or ".so" suffix */
 static char *module_get_name(const char *path, int *start, int *end)
@@ -125,7 +126,7 @@ static GModule *module_open(const char *name)
 		}
 
 		/* module not found from home dir, try global module dir */
-		path = g_strdup_printf("%s/%s", MODULEDIR, name);
+		path = g_strdup_printf("%s/%s", get_install_path(MODULEDIR), name);
 	}
 
 	module = g_module_open(path, (GModuleFlags) 0);
@@ -156,7 +157,7 @@ static GModule *module_open(const char *name)
 
 		/* module not found from home dir, try global module dir */
 		g_free(path);
-		path = g_module_build_path(MODULEDIR, name);
+		path = g_module_build_path(get_install_path(MODULEDIR), name);
 	}
 
 	module = g_module_open(path, (GModuleFlags) 0);

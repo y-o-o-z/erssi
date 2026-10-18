@@ -27,6 +27,7 @@
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/core/recode.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/relocate.h>
 #include "default-config.h"
 
 #include <signal.h>
@@ -728,7 +729,7 @@ static CONFIG_REC *parse_configfile(const char *fname)
 	CONFIG_REC *config;
 	struct stat statbuf;
         const char *path;
-	char *str;
+	char *str, *global = NULL;
 
 	if (fname == NULL)
 		fname = get_irssi_config();
@@ -738,7 +739,8 @@ static CONFIG_REC *parse_configfile(const char *fname)
 	else {
 		/* user configuration file not found, use the default one
 		   from sysconfdir */
-                path = SYSCONFDIR"/"IRSSI_GLOBAL_CONFIG;
+		global = g_strconcat(get_install_path(SYSCONFDIR), "/" IRSSI_GLOBAL_CONFIG, NULL);
+		path = global;
 		if (stat(path, &statbuf) != 0) {
 			/* no configuration file in sysconfdir ..
 			   use the build-in configuration */
@@ -755,6 +757,7 @@ static CONFIG_REC *parse_configfile(const char *fname)
 
 		config = config_open(NULL, -1);
 	}
+	g_free(global);
 
         if (config->fname != NULL)
 		config_parse(config);

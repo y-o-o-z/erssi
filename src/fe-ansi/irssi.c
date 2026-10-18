@@ -31,6 +31,7 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/session.h>
 #include <irssi/src/core/servers.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/fe-common-core.h>
@@ -394,7 +395,7 @@ static void copy_default_files(void)
 	rec = default_files_open(irssi_dir, known_default_files);
 		
 	/* Copy themes */
-	themes_dir = g_strdup(THEMESDIR);
+	themes_dir = g_strdup(get_install_path(THEMESDIR));
 	if (stat(themes_dir, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
 		GDir *dir = g_dir_open(themes_dir, 0, NULL);
 		if (dir) {
@@ -411,7 +412,7 @@ static void copy_default_files(void)
 	}
 	g_free(themes_dir);
 	
-	startup_file = g_strdup_printf("%s/startup", PKGDATADIR);
+	startup_file = g_strdup_printf("%s/startup", get_install_path(PKGDATADIR));
 	default_files_update(rec, startup_file, "startup", FALSE);
 	g_free(startup_file);
 
@@ -512,7 +513,7 @@ static void firstrun_run_tty(void)
 	networks = firstrun_networks(mainconfig);
 	theme_list = g_ptr_array_new();
 	firstrun_add_themes(theme_list, get_irssi_dir());
-	firstrun_add_themes(theme_list, THEMESDIR);
+	firstrun_add_themes(theme_list, get_install_path(THEMESDIR));
 	g_ptr_array_sort(theme_list, firstrun_theme_cmp);
 	g_ptr_array_add(theme_list, NULL);
 	themes = (char **) g_ptr_array_free(theme_list, FALSE);
@@ -588,7 +589,7 @@ static void check_files(void)
 
 int main(int argc, char **argv)
 {
-	static int version = 0, update = 0, check_update = 0, setup = 0;
+	static int version = 0, update = 0, check_update = 0, setup = 0, print_prefix = 0;
 	static GOptionEntry options[] = {
 		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display Irssi version", NULL },
 		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
@@ -597,6 +598,10 @@ int main(int argc, char **argv)
 		  "Show whether a newer signed release is available", NULL },
 		{ "setup", 0, 0, G_OPTION_ARG_NONE, &setup, "Ask the first-run setup questions",
 		  NULL },
+		/* for the installer and the tests: the prefix this erssi takes its
+		   modules, help, themes and scripts from */
+		{ "print-prefix", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &print_prefix,
+		  "Print the installation prefix", NULL },
 		{ NULL }
 	};
 	struct stat statbuf;
@@ -615,20 +620,27 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	if (print_prefix) {
+		printf("%s\n", get_install_prefix());
+		return 0;
+	}
+
 	if (update || check_update) {
 		/* the installer of this release, installed with it: it finds the
 		 * newest release signed by the key it carries, builds and installs
 		 * it into this prefix (or runs the updater named in its config) */
-		const char *installer = PKGDATADIR "/shellter-install.sh";
+		char *installer = g_strconcat(get_install_path(PKGDATADIR), "/shellter-install.sh", NULL);
 
 		if (access(installer, R_OK) != 0) {
 			fprintf(stderr, "erssi: the installer %s is missing - update with "
 			        "shellter-install.sh, the way erssi was installed\n", installer);
+			g_free(installer);
 			return 1;
 		}
-		execl("/bin/sh", "sh", installer, "--update", "--prefix", ERSSI_PREFIX,
+		execl("/bin/sh", "sh", installer, "--update", "--prefix", get_install_prefix(),
 		      check_update ? "--check" : (char *) NULL, (char *) NULL);
 		fprintf(stderr, "erssi: cannot run %s: %s\n", installer, g_strerror(errno));
+		g_free(installer);
 		return 1;
 	}
 

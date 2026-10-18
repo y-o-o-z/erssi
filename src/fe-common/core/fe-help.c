@@ -25,6 +25,7 @@
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/safe-file.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/formats.h>
@@ -286,7 +287,7 @@ static void cmd_help(const char *data)
 
 void fe_help_init(void)
 {
-        settings_add_str("misc", "help_path", HELPDIR);
+        settings_add_str("misc", "help_path", get_install_path(HELPDIR));
 	command_bind("help", NULL, (SIGNAL_FUNC) cmd_help);
 }
 

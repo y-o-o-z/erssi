@@ -35,6 +35,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/session.h>
+#include <irssi/src/core/relocate.h>
 #ifdef HAVE_CAPSICUM
 #include <irssi/src/core/capsicum.h>
 #endif
@@ -232,6 +233,9 @@ void core_preinit(const char *path)
 	}
 
 	session_set_binary(path);
+	/* found now, while the executable can still be looked up (not
+	   later in capability mode, for example) */
+	get_install_prefix();
 }
 
 static void sig_irssi_init_finished(void)

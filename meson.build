@@ -82,6 +82,16 @@ def_scriptdir  = '-D' + 'SCRIPTDIR'  + '="' + (get_option('prefix') / scriptdir)
 def_datadir    = '-D' + 'PKGDATADIR'  + '="' + (get_option('prefix') / get_option('datadir') / incdir) + '"'
 def_prefix     = '-D' + 'ERSSI_PREFIX' + '="' + get_option('prefix') + '"'
 
+# -Drelocatable=true: the paths above are compiled in as usual, and
+# src/core/relocate.c moves the ones under the prefix to the prefix the
+# executable runs from (dirname(dirname(its real path))). For binary
+# packages, which are unpacked wherever the user wants them.
+relocatable    = get_option('relocatable')
+def_relocatable = relocatable ? ['-DERSSI_RELOCATABLE=1'] : []
+if relocatable and not ['linux', 'freebsd'].contains(host_machine.system())
+  error('-Drelocatable=true needs Linux (/proc/self/exe) or FreeBSD (sysctl KERN_PROC_PATHNAME)')
+endif
+
 def_suppress_printf_fallback = '-D' + 'SUPPRESS_PRINTF_FALLBACK'
 
 
@@ -446,7 +456,11 @@ int main()
         with_perl_lib = ''
       endif
     endif
-    if with_perl_lib == ''
+    if relocatable and with_perl_lib != ''
+      # Perl's own directories are outside the prefix: they would not move
+      error('-Drelocatable=true installs the Perl modules in the prefix: leave with-perl-lib empty')
+    endif
+    if with_perl_lib == '' and not relocatable
       if get_option('prefix') in ['/usr/local', 'C:/']
         with_perl_lib = 'site'
       elif get_option('prefix') in ['/usr']
@@ -483,7 +497,10 @@ int main()
     endif
 
     perl_use_lib = get_option('prefix') / perlmoddir
-    if set_perl_use_lib
+    if relocatable
+      # moved with the prefix at run time, so never in Perl's @INC
+      perl_library_dir += ' - relocatable, prepends to @INC with /set perl_use_lib'
+    elif set_perl_use_lib
       perl_inc = meson.get_cross_property('perl_inc', UNSET_ARR)
       if perl_inc == UNSET_ARR
         set_perl_use_lib = run_command(cross_perl, '-e', 'exit ! grep $_ eq $ARGV[0], grep /^\\//, @INC', perl_use_lib, check : false).returncode() != 0
@@ -818,7 +835,7 @@ if have_perl
   message('Perl library directory ........... : ' + perl_use_lib)
   message('                                     ' + perl_library_dir)
 endif
-message('Install prefix ................... : ' + get_option('prefix'))
+message('Install prefix ................... : ' + get_option('prefix') + (relocatable ? ' (relocatable)' : ''))
 message('')
 message('Building with Capsicum ........... : ' + have_capsicum.to_string('yes', 'no'))
 message('Building with utf8proc ........... : ' + have_libutf8proc.to_string('yes', 'no'))
