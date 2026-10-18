@@ -1029,7 +1029,7 @@ fi
 printf '\n'
 if [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
     printf '  %s%sUpdated: %s %s %s%s  %s(%s)%s\n\n' "$B" "$G" "$INSTALLED" "$S_ARROW" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
-    field "running" "in a running erssi, /upgrade loads $VERSION without disconnecting"
+    field "running" "in a running erssi, /upgrade loads $VERSION (TLS connections reconnect once)"
 else
     printf '  %s%serssi Shellter Edition %s is installed%s  %s(%s)%s\n\n' "$B" "$G" "$VERSION" "$N" "$D" "$(elapsed $(($(now) - T_START)))" "$N"
     field "start" "$RUN   (inside tmux, so it keeps running when you log out)"

@@ -115,8 +115,10 @@ of `erssi --update`. After one update to 2026.10.3 or newer, every later
   them it stops and names the install command above (with your `--prefix`):
   the current installer checks the newest release against the commit it
   records.
-- In a running erssi, `/upgrade` then loads the new version without
-  disconnecting.
+- In a running erssi, `/upgrade` then loads the new version and keeps your
+  windows and channels. Connections over plain text stay up; TLS
+  connections cannot be handed to the new process and reconnect once (the
+  channels see a quit "[TLS] Client upgrade" and a join).
 
 ## What the installer verifies
 

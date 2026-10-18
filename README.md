@@ -18,7 +18,7 @@ who live on IRCnet: a polished default theme, help for every command, a
 built-in Mentions window, end-to-end encryption, a signed installer that
 also updates, and a security review of the parts that face the network.
 
-![erssi Shellter Edition 2026.10.2 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
+![erssi Shellter Edition 2026.10.3 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
 
 ## Install
 
@@ -61,9 +61,12 @@ erssi --update           # build and install it
 signature by the release key of the installed copy and is a newer version
 (the rules of the 2026.10.3 installer: from 2026.10.2 or older, run the
 install command once instead to get them), builds, tests and installs it
-into the same prefix; `/upgrade` then loads it in a running erssi without disconnecting. Coming from 1.3.9 or older
-(no `--update`): run the install command again; your `~/.erssi/config` is
-kept and the Shellter look stays.
+into the same prefix; `/upgrade` then loads it in a running erssi, keeping
+your windows and channels. Connections over plain text stay up; those over
+TLS cannot be handed to the new process, so they reconnect once ("[TLS]
+Client upgrade"). Coming from 1.3.9 or older (no `--update`): run the
+install command again; your `~/.erssi/config` is kept and the Shellter look
+stays.
 
 Details (signature check by hand, themes and `startup` updated like system
 config files, what changes when upgrading from 1.3.x):
