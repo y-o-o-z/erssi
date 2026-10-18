@@ -154,6 +154,8 @@ request waits for `/e2e accept`. A message that cannot be read is never
 hidden: its line says why and names the command that fixes it. `/help e2e`
 has the commands.
 
+What it protects and what it does not (metadata, NOTICEs, no forward secrecy): [docs/shellter/security.md](docs/shellter/security.md#what-end-to-end-encryption-protects-and-what-it-does-not).
+
 Details and moving from `rpe2e.pl`:
 [docs/shellter/configuration.md](docs/shellter/configuration.md#end-to-end-encryption).
 

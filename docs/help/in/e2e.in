@@ -377,17 +377,50 @@
     apart (for example #a[b and #a{b), is shown with "(E2E key of
     #a[b)": the server may have moved it from that channel.
 
-    What E2E protects: the text of PRIVMSGs (and /ME) to a channel or
-    query with encryption on - nobody without the keys, the server
-    included, can read it, or change it unnoticed. Not protected: who
-    talks to whom and when (nicks, addresses, channel names, times and
-    the length of messages are visible to the server), NOTICEs, CTCPs
-    other than ACTION, and bot commands while e2e_bot_bypass is on.
-    A line in clear text in such a channel or query - from someone
-    without E2E, or put there by a hostile server under any nick - is
-    shown with "[plain]" in red before its text, so that it does not
-    look like a decrypted one (/SET e2e_mark_plain OFF turns that off;
-    your own lines are never marked).
+    What end-to-end encryption protects, and what it does not:
+
+    Protected: the text of PRIVMSGs and actions (/ME) in a channel or
+    query with encryption on, against the server and the other users:
+    nobody without the keys can read it or change it unnoticed. Once you
+    verified a person's key (/E2E VERIFY, compared over another channel),
+    the keys you get from them are really theirs.
+
+    Not protected:
+      - NOTICEs, CTCPs other than ACTION, and bot commands while
+        e2e_bot_bypass is on: they are sent in clear text;
+      - nicks, addresses, channel names, who talks to whom, when, and
+        how long the messages are (the server sees all of it);
+      - who of a channel's readers wrote a line: a sender's key there
+        is shared with everyone they let read, so one of those, with
+        the server's help, could pass a line off as the sender's;
+      - what is on your own machine: messages are decrypted locally, so
+        logs, the Mentions window, terminal notifications and web
+        clients (fe-web) get them in clear text;
+      - lines that arrive in clear text - from someone without E2E, or
+        put there by a hostile server under any nick. They are shown
+        with "[plain]" in red before the text, so that they do not look
+        decrypted (/SET e2e_mark_plain OFF turns that off; your own
+        lines are never marked).
+
+    No forward secrecy: the session keys stay in keyring.json while they
+    are used, and a new key (a rotation, REKEY) is sent wrapped to the
+    recipient's long-term identity key, as in repartee (RPE2E v1.0).
+    Whoever recorded the traffic and later gets a recipient's identity
+    private key (or keyring.json) can read those sessions - rotating keys
+    does not undo that. Keep keyring.json private (erssi writes it with
+    mode 0600, its exports too); after a suspected compromise run
+    /E2E RESET -force (a new identity), remove the old
+    keyring.json.bak-<time> copies, and have people verify your new key.
+
+    Replays: a message the server delivers again is dropped while its
+    timestamp is still taken (5 minutes either way), also after a
+    restart; each sender has room for its last 512 parts in each channel
+    or query, so a flood can make only the flooder's own older lines
+    repeatable (details under "Known limitations" below).
+
+    Forward secrecy, encrypted NOTICEs or signed lines would need a new
+    version of the protocol, shared with repartee and its scripts; erssi
+    keeps the wire format of RPE2E v1.0, so that they all understand it.
 
     Known limitations: a server that names rfc1459, ascii or
     strict-rfc1459 but folds the bytes of another code page (koi8-r,
