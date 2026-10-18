@@ -528,6 +528,14 @@ sign_sums() {
     ssh-keygen -q -Y sign -n "${3:-erssi-release}" -f "${2:-$W/key}" "$W/rel/shellter-v$1/SHA256SUMS" 2>/dev/null ||
         { echo "FAIL $CASE: ssh-keygen -Y sign"; exit 1; }
 }
+# repack VERSION [TAR ARGS...]: the package of make_pkg VERSION (Debian 13)
+# tarred again from $W/pkg, with TAR ARGS, listed and signed again
+repack() {
+    rv=$1; shift
+    rr="$W/rel/shellter-v$rv"
+    tar -C "$W/pkg/$rv-debian13-amd64" -cJf "$rr/erssi-$rv-debian13-amd64.tar.xz" "$@" "erssi-$rv-debian13-amd64" 2>/dev/null &&
+        ( cd "$rr" && sha256sum erssi-*.tar.xz ) > "$rr/SHA256SUMS" && sign_sums "$rv"
+}
 # good_pkg VERSION COMMIT [PLATFORM]: make_pkg, signed as a release is
 good_pkg() { make_pkg "$@" && sign_sums "$1"; }
 # record VERSION COMMIT...: the releases this copy of the installer records
@@ -1840,6 +1848,21 @@ binary-install)
     check "... said so" grep -q 'Checking the package.*release not recorded here' "$W/out"
     check "... current" current_is 2026.10.5
     check "... previous is 2026.10.4" [ "$(readlink "$P/previous")" = releases/2026.10.4 ]
+    # links within the package are fine; tar unpacks with the user's own
+    # owner and modes
+    make_pkg 2026.10.7 "$(fsha 2026.10.7)"
+    PT="$W/pkg/2026.10.7-debian13-amd64/erssi-2026.10.7-debian13-amd64"
+    ln -s libfe_web.so "$PT/lib/irssi/modules/libfe_web.so.0"
+    ln -s ../../share/irssi "$PT/lib/irssi/share"
+    ln "$PT/MANIFEST" "$PT/share/irssi/MANIFEST.copy"
+    repack 2026.10.7
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\necho "$*" >> "$TEST_W/tar.log"\nexec "$TEST_W/bin/tar" "$@"\n' > "$W/shim/tar" && chmod 755 "$W/shim/tar"
+    run_bin --ref shellter-v2026.10.7
+    rm -f "$W/shim/tar"
+    check "links within the package: installed" [ "$RC" = 0 ] && current_is 2026.10.7
+    check "... the links kept" [ "$(readlink "$P/releases/2026.10.7/lib/irssi/share")" = ../../share/irssi ]
+    check "... unpacked without the archive's owners and modes" grep -q -- '--no-same-owner --no-same-permissions -xJf' "$W/tar.log"
     # names as tar -C DIR . writes them, with a leading ./
     make_pkg 2026.10.6 "$(fsha 2026.10.6)"
     ( cd "$W/pkg/2026.10.6-debian13-amd64" && tar -cJf "$W/rel/shellter-v2026.10.6/erssi-2026.10.6-debian13-amd64.tar.xz" ./erssi-2026.10.6-debian13-amd64 )
@@ -1915,6 +1938,32 @@ binary-refused)
     tar -C "$W/pkg" -cJf "$R4/erssi-2026.10.4-debian13-amd64.tar.xz" 2026.10.4-debian13-amd64 evil
     ( cd "$R4" && sha256sum erssi-*.tar.xz ) > "$R4/SHA256SUMS" && sign_sums 2026.10.4
     refused "files outside the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    # a name that goes up from the top directory
+    make_pkg 2026.10.4 "$c4"
+    : > "$W/pkg/2026.10.4-debian13-amd64/evil"
+    ( cd "$W/pkg/2026.10.4-debian13-amd64" &&
+        tar -cJf "$R4/erssi-2026.10.4-debian13-amd64.tar.xz" --transform 's|^evil$|erssi-2026.10.4-debian13-amd64/../../evil|' \
+            erssi-2026.10.4-debian13-amd64 evil 2>/dev/null )
+    ( cd "$R4" && sha256sum erssi-*.tar.xz ) > "$R4/SHA256SUMS" && sign_sums 2026.10.4
+    # shellcheck disable=SC2016 # run by sh
+    check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+    refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    # links that lead out of the package
+    PT="$W/pkg/2026.10.4-debian13-amd64/erssi-2026.10.4-debian13-amd64"
+    make_pkg 2026.10.4 "$c4"
+    ln -s /etc/passwd "$PT/share/irssi/abs"
+    repack 2026.10.4
+    refused "a symbolic link to an absolute path" "holds a symbolic link that leads outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    make_pkg 2026.10.4 "$c4"
+    ln -s ../../../outside "$PT/share/irssi/up"
+    repack 2026.10.4
+    refused "a symbolic link above the top directory" "holds a symbolic link that leads outside"
+    make_pkg 2026.10.4 "$c4"
+    : > "$PT/share/irssi/h1" && ln "$PT/share/irssi/h1" "$PT/share/irssi/h2"
+    repack 2026.10.4 --transform 'flags=RSh;s|^erssi-2026.10.4-debian13-amd64/share/irssi/h[12]$|etc/passwd|'
+    # shellcheck disable=SC2016 # run by sh
+    check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+    refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
     # a missing library: named, with the package to install
     good_pkg 2026.10.4 "$c4"
     FAKE_LDD_MISSING="libchafa.so.0 libperl.so.5.40 libunknown.so.7"; export FAKE_LDD_MISSING

@@ -891,8 +891,33 @@ binary_install() {
         $0 != t && $0 != t "/" && index($0, t "/") != 1 { bad = 1 }
         /(^|\/)\.\.(\/|$)/ { bad = 1 } END { exit bad }' "$STAGE/list" ||
         die "$ASSET holds files outside $TOP/ - refusing to install, nothing was changed (report it)"
+    # a hard link only to a file of the package
+    tar -tvJf "$STAGE/$ASSET" 2>> "$LOG" | awk -v t="$TOP" '/^h/ {
+            i = index($0, " link to "); if (!i) { bad = 1; next }
+            x = substr($0, i + 9); sub(/^\.\//, "", x)
+            if (index(x, t "/") != 1 || x ~ /(^|\/)\.\.(\/|$)/) bad = 1 }
+        END { exit bad }' ||
+        die "$ASSET holds a hard link to a file outside $TOP/ - refusing to install, nothing was changed (report it)"
     mkdir "$STAGE/u" || die "cannot create a directory in $STAGE"
-    run_logged tar -xJf "$STAGE/$ASSET" -C "$STAGE/u" || die_log "unpacking $ASSET failed"
+    # owners and modes are the installing user's (and umask's), not the
+    # archive's: as root, tar would otherwise restore them
+    run_logged tar --no-same-owner --no-same-permissions -xJf "$STAGE/$ASSET" -C "$STAGE/u" ||
+        die_log "unpacking $ASSET failed"
+    # a symbolic link only within the package: relative, and never above
+    # its top directory
+    find "$STAGE/u" -type l | while IFS= read -r l; do
+            printf '%s\t%s\n' "${l#"$STAGE/u/"}" "$(readlink "$l")"
+        done | awk -F '\t' '{
+            n = split($1, a, "/"); d = 0
+            for (i = 1; i < n; i++) if (a[i] != "" && a[i] != ".") d++
+            if (substr($2, 1, 1) == "/" || $2 == "") { bad = 1; next }
+            m = split($2, b, "/")
+            for (i = 1; i <= m; i++) {
+                if (b[i] == "" || b[i] == ".") continue
+                if (b[i] == "..") { if (--d < 1) { bad = 1; next } } else d++
+            } }
+        END { exit bad }' ||
+        die "$ASSET holds a symbolic link that leads outside $TOP/ - refusing to install, nothing was changed (report it)"
     T="$STAGE/u/$TOP"
     [ -f "$T/MANIFEST" ] || die "$ASSET has no MANIFEST - refusing to install, nothing was changed (report it)"
     for k in version tag platform commit; do

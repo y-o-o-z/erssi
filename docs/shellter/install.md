@@ -81,6 +81,10 @@ can check SSH signatures (OpenSSH 8.1 or newer; the installer tries it on
 a signature it carries) the source build runs as well, as it did before
 there were packages.
 
+The package unpacks with the owner and the permissions of the installing
+user (and its umask), never those stored in it, and a symbolic link or
+hard link in it must stay inside its top directory.
+
 Without `--ref` the installer takes the newest release it records. If the
 installed erssi is newer than that (the copy of the installer an install
 leaves in the prefix records only the releases before its own), it says
