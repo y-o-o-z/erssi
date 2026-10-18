@@ -399,8 +399,14 @@
       - lines that arrive in clear text - from someone without E2E, or
         put there by a hostile server under any nick. They are shown
         with "[plain]" in red before the text, so that they do not look
-        decrypted (/SET e2e_mark_plain OFF turns that off; your own
-        lines are never marked).
+        decrypted (/SET e2e_mark_plain OFF turns that off). In a query
+        that counts wherever E2E is on for the nick: a line from another
+        address (someone took the nick, or the server says so) shows
+        "[plain, from <ident@host>]". A line under your own nick that
+        comes back from the server or a bouncer is marked too - what you
+        send encrypted comes back encrypted, so a plain one was not sent
+        so by you (or went out in clear text, such as a bot command with
+        e2e_bot_bypass on). The lines you type are never marked.
 
     No forward secrecy: the session keys stay in keyring.json while they
     are used, and a new key (a rotation, REKEY) is sent wrapped to the

@@ -264,6 +264,35 @@ def main():
         assert wait_chan(k, "encrypted from alice"), chan_log(k)[-500:]
         assert "[plain]" not in chan_log(a)[start:].split("unmarked clear text")[1], chan_log(a)[start:]
 
+    def t_plain_impostor():
+        """a plain private line under bob's nick from another address -
+        someone who took the nick, or the server - is marked with its
+        real address, where E2E is on for bob's query; a plain line under
+        alice's own nick (no echo of hers: she encrypts) is marked too"""
+        a = st["alice"]
+
+        def inject(line):
+            with harness.Client(st["port"], "injector", "injector") as c:
+                c.send(f"TESTRAW alice :{line}")
+                # the server has handled it before the connection goes
+                c.send("PING :injected")
+                c.expect("PONG")
+
+        a.type_and_wait("/query bob", "/e2e on")
+        try:
+            off = log_size(a)
+            inject(":bob!bob2@127.0.0.1 PRIVMSG alice :plain from his address")
+            assert wait_log(a, off, "[plain] plain from his address"), log_since(a, off)
+            inject(":bob!mal@evil.example PRIVMSG alice :it is me, bob - the password?")
+            assert wait_log(a, off, "[plain, from mal@evil.example] it is me, bob - the password?"), \
+                log_since(a, off)
+            inject(":alice!alice@127.0.0.1 PRIVMSG #test :words put in her mouth")
+            assert wait_chan(a, "[plain] words put in her mouth"), chan_log(a)[-500:]
+            inject(":alice!alice@127.0.0.1 PRIVMSG bob :to bob in her name")
+            assert wait_log(a, off, "[plain] to bob in her name"), log_since(a, off)
+        finally:
+            a.type_and_wait("/window goto bob", "/e2e off", "/window close")
+
     def t_replay_after_restart():
         """a line of alice's that the server delivers again is dropped,
         not shown twice - also after /unload and /load of the module and
@@ -499,9 +528,9 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_replay_after_restart,
-                      t_unreadable_keyring, t_reset_force, t_import_identity, t_special_files,
-                      t_corrupt_keyring, t_wire])
+                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_plain_impostor,
+                      t_replay_after_restart, t_unreadable_keyring, t_reset_force,
+                      t_import_identity, t_special_files, t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

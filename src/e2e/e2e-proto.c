@@ -2862,6 +2862,30 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char 
 	return dm_configs(kr, net, nick, FALSE);
 }
 
+E2E_JSON *e2e_dm_view(const E2E_JSON *kr)
+{
+	E2E_JSON *view = e2e_keyring_new(), *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	guint i;
+
+	/* the configs hold no keys: copied whole */
+	e2e_json_set(view, "channels", e2e_json_copy(e2e_json_get(kr, "channels")));
+	for (i = 0; i < keys->len; i++) {
+		const char *fp = g_ptr_array_index(keys, i);
+		E2E_JSON *peer = e2e_json_get(peers, fp), *row;
+		const char *handle = e2e_json_get_string(peer, "last_handle");
+		const char *nick = e2e_json_get_string(peer, "last_nick");
+
+		if (handle == NULL || nick == NULL)
+			continue;
+		row = e2e_json_object_member(e2e_json_get(view, "peers"), fp);
+		e2e_json_set_string(row, "last_handle", handle);
+		e2e_json_set_string(row, "last_nick", nick);
+	}
+	g_ptr_array_unref(keys);
+	return view;
+}
+
 GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
                                  const char *live)
 {

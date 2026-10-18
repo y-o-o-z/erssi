@@ -59,7 +59,10 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
   help, could pass a line off as the sender's); everything on your own
   machine, where messages are decrypted: logs, the Mentions window,
   terminal notifications and web clients get clear text. Lines that
-  arrive in clear text are shown with `[plain]` in red.
+  arrive in clear text are shown with `[plain]` in red - in a query also
+  one from another address under the peer's nick (`[plain, from
+  <ident@host>]`), and one under your own nick that you did not send
+  encrypted.
 - **No forward secrecy** — session keys stay in
   `~/.erssi/rpe2e/keyring.json` while they are used, and a new key (a
   rotation, REKEY) is sent wrapped to the recipient's long-term identity

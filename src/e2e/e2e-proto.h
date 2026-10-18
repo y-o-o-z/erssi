@@ -172,6 +172,10 @@ void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
    nick (its "nick" member, or a peer last seen as nick there), of net:
    its own configs and old unscoped ones that none of its own hides */
 GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick);
+/* what e2e_dm_configs_of and e2e_enabled_dm_elsewhere read of kr, and
+   nothing else: the channel and query configs, and each peer's last
+   handle and nick - no key, so it can be kept for every message */
+E2E_JSON *e2e_dm_view(const E2E_JSON *kr);
 /* /e2e off in the query with nick (live: its ident@host now, or NULL):
    the "@<handle>" contexts to turn off - bare, the caller finds them on
    its network */

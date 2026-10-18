@@ -6314,6 +6314,64 @@ static void test_bot_bypass_setting(void)
 	peer_free(&a);
 }
 
+/* the key-free view the plain-line marker keeps of the keyring finds the
+   same queries of a nick as the keyring itself, and holds no key */
+static void test_dm_view(void)
+{
+	PEER a, b;
+	E2E_JSON *view, *peer;
+	const E2E_NET *nets[] = { &net_a, &net_b };
+	const char *nicks[] = { "bob", "carol", "dave", "BOB" };
+	const char *lives[] = { NULL, "bob@old.host", "carol@c.host", "mal@evil.example" };
+	char *text, *x, *y;
+	const char *skb;
+	guint n, k, l;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	/* a query by its "nick" member, one by a peer last seen there */
+	enable(&b, "E2E2\x1f@bob@old.host", "normal");
+	e2e_json_set_string(path_get(b.kr, "channels", "E2E2\x1f@bob@old.host", NULL), "nick", "bob");
+	enable(&b, "@carol@c.host", "normal");
+	peer = e2e_json_object_member(e2e_json_get(b.kr, "peers"), "00ff");
+	e2e_json_set_string(peer, "pk", "PEERPUBLICKEYPEERPUBLICKEYPEERPUBLICKEY000=");
+	e2e_json_set_string(peer, "last_handle", "carol@c.host");
+	e2e_json_set_string(peer, "last_nick", "carol");
+
+	view = e2e_dm_view(b.kr);
+	for (n = 0; n < G_N_ELEMENTS(nets); n++)
+		for (k = 0; k < G_N_ELEMENTS(nicks); k++)
+			for (l = 0; l < G_N_ELEMENTS(lives); l++) {
+				x = e2e_enabled_dm_elsewhere(b.kr, nets[n], nicks[k], lives[l]);
+				y = e2e_enabled_dm_elsewhere(view, nets[n], nicks[k], lives[l]);
+				g_assert_cmpstr(x, ==, y);
+				g_free(x);
+				g_free(y);
+			}
+	x = e2e_enabled_dm_elsewhere(view, &net_b, "bob", "mal@evil.example");
+	g_assert_cmpstr(x, ==, "bob@old.host");
+	g_free(x);
+	x = e2e_enabled_dm_elsewhere(view, &net_a, "carol", "mal@evil.example");
+	g_assert_cmpstr(x, ==, "carol@c.host");
+	g_free(x);
+
+	text = e2e_json_encode(view, FALSE);
+	g_assert_null(strstr(text, "\"sk\""));
+	g_assert_null(strstr(text, "\"pk\""));
+	g_assert_null(strstr(text, "PEERPUBLICKEY"));
+	skb = e2e_json_get_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "sk");
+	g_assert_nonnull(skb);
+	g_assert_null(strstr(text, skb));
+	g_assert_null(strstr(text, e2e_json_get_string(e2e_json_get(b.kr, "identity"), "sk")));
+	g_free(text);
+	e2e_json_free(view);
+	peer_free(&a);
+	peer_free(&b);
+}
+
 /* a wire as the parser would give it, told apart by n */
 static void synthetic_wire(E2E_WIRE *w, unsigned char *ct, gsize ctlen, guint n)
 {
@@ -7675,6 +7733,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/replay-flood", test_replay_flood);
 	g_test_add_func("/e2e/proto/replay-partitions", test_replay_partitions);
 	g_test_add_func("/e2e/proto/replay-file", test_replay_file);
+	g_test_add_func("/e2e/proto/dm-view", test_dm_view);
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
