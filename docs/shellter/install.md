@@ -81,6 +81,12 @@ can check SSH signatures (OpenSSH 8.1 or newer; the installer tries it on
 a signature it carries) the source build runs as well, as it did before
 there were packages.
 
+Without `--ref` the installer takes the newest release it records. If the
+installed erssi is newer than that (the copy of the installer an install
+leaves in the prefix records only the releases before its own), it says
+so and changes nothing: `erssi --update` finds newer releases, and
+`--ref shellter-vX.Y.Z` (or `--rollback`) goes back on purpose.
+
 What goes where:
 
 | Path | What it is |
@@ -102,7 +108,7 @@ with `-s --` and the same options):
 ```sh
 sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --rollback    # back to the previous release
 sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --rollback    # and forward again
-sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --dry-run     # check the newest package, change nothing
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --update --dry-run   # download and check a newer release, change nothing
 sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --uninstall   # remove ~/.local/opt/erssi
 ```
 

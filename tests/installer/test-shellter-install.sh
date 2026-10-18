@@ -1961,6 +1961,25 @@ binary-switch)
     run_bin --keep 0 --ref shellter-v2026.10.5
     check "--keep 0: only the one in use" releases_are 2026.10.5
     check "... no previous" none_exist "$P/previous"
+    # an installer that records only older releases (the copy an install
+    # leaves in the prefix): no switch back without --ref
+    record 2026.10.4 "$(fsha 2026.10.4)"
+    run_bin --dry-run
+    check "older recorded release, --dry-run: nothing to do" [ "$RC" = 0 ]
+    check "... said so" grep -qF 'The installed 2026.10.5 is newer than shellter-v2026.10.4, the newest release this installer records - nothing was changed (erssi --update finds newer ones; --ref shellter-v2026.10.4 installs that one on purpose).' "$W/out"
+    check "... no plan to switch" no_grep 'would' "$W/out"
+    run_bin
+    check "... without --dry-run: nothing changed" current_is 2026.10.5
+    check "... nothing downloaded" no_grep 'Downloading' "$W/out"
+    run_bin --ref shellter-v2026.10.4
+    check "--ref names it: switched back on purpose" current_is 2026.10.4
+    # the source build: the same
+    rm -rf "$P"
+    release_prefix 2026.10.9 "$(fsha 2026.10.9)" shellter-v2026.10.9
+    sh "$INSTALLER" --repo "$W/repo" --prefix "$W/p" --no-test > "$W/out" 2>&1 < /dev/null
+    check "source build of an older release: nothing changed" [ $? = 0 ] && no_grep 'Building' "$W/out"
+    check "... said so" grep -qF 'The installed 2026.10.9 is newer than shellter-v2026.10.4' "$W/out"
+    check "... the installed erssi kept" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.9 (20250101 1200)" ]
     ;;
 binary-rollback-uninstall)
     binary_tools

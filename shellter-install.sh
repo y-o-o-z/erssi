@@ -1365,6 +1365,18 @@ field "source" "$(tilde "$SRC")"
 [ -n "$INSTALLED" ] && field "installed" "$INSTALLED"
 printf '\n'
 
+# Without --ref the newest release this installer records - an older one
+# than the installed erssi only on purpose (--ref, --rollback): a copy of
+# an older installer, such as the one an install leaves in the prefix,
+# must not switch back
+if [ "$UPDATE" = 0 ] && [ -z "$REF" ] && [ -n "$INSTALLED" ]; then
+    r=$(printf '%s\n' "$RELEASES" | awk 'NF >= 2 {r = $1} END {print r}')
+    if [ -n "$r" ] && newer "$INSTALLED" "${r#shellter-v}"; then
+        printf '  The installed %s is newer than %s, the newest release this installer records - nothing was changed (erssi --update finds newer ones; --ref %s installs that one on purpose).\n\n' \
+            "$INSTALLED" "$r" "$r"
+        exit 0
+    fi
+fi
 # a release with a package for this system: installed from it (and done),
 # otherwise built from source below
 if [ "$CHECK" = 0 ] && [ "$USE" != source ]; then binary_install; fi
