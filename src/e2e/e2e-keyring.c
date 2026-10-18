@@ -36,9 +36,11 @@
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
 #endif
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0
+#endif
 
-/* far above any real keyring; only stops a wrong path from eating memory */
-#define MAX_KEYRING_SIZE (64 * 1024 * 1024)
+#define E2E_REASON_SYMLINK "a symbolic link (not followed)"
 
 static const char *const object_members[] = {
 	"peers", "outgoing", "incoming", "channels", "pending",
@@ -115,34 +117,106 @@ static gboolean normalize(E2E_JSON *kr, char **error)
 	return TRUE;
 }
 
-/* the whole file, or NULL with errno set */
-static char *read_file(const char *path, size_t *len)
+static const char *file_kind(mode_t mode)
 {
+	if (S_ISDIR(mode))
+		return "a directory";
+	if (S_ISFIFO(mode))
+		return "a FIFO";
+	if (S_ISCHR(mode) || S_ISBLK(mode))
+		return "a device";
+	if (S_ISSOCK(mode))
+		return "a socket";
+	return "a special file";
+}
+
+/* path opened for reading only when it is a regular file: a symlink is
+   not followed, and a FIFO or a device neither blocks the client nor is
+   read (O_NONBLOCK until the type is known). The type is checked on the
+   descriptor itself, so nothing can swap the file after a check. own:
+   it must also belong to this user (the files in ~/.erssi/rpe2e). -1
+   with *error and errno set on failure. */
+static int open_regular(const char *path, gboolean own, struct stat *st, char **error)
+{
+	struct stat lst;
+	int fd, flags, saved;
+
+	fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0) {
+		saved = errno;
+		/* ELOOP on Linux, EMLINK on FreeBSD */
+		if (lstat(path, &lst) == 0 && S_ISLNK(lst.st_mode))
+			*error = g_strdup(E2E_REASON_SYMLINK);
+		else
+			*error = g_strdup(g_strerror(saved));
+		errno = saved;
+		return -1;
+	}
+	if (fstat(fd, st) != 0) {
+		saved = errno;
+		*error = g_strdup(g_strerror(saved));
+		goto fail;
+	}
+	if (!S_ISREG(st->st_mode)) {
+		saved = EINVAL;
+		*error = g_strdup_printf("not a regular file (%s)", file_kind(st->st_mode));
+		goto fail;
+	}
+	if (own && st->st_uid != geteuid()) {
+		saved = EPERM;
+		*error = g_strdup_printf("it belongs to another user (uid %ld)", (long) st->st_uid);
+		goto fail;
+	}
+	/* a regular file: reads block as they always did */
+	flags = fcntl(fd, F_GETFL);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != 0) {
+		saved = errno;
+		*error = g_strdup(g_strerror(saved));
+		goto fail;
+	}
+	return fd;
+fail:
+	close(fd);
+	errno = saved;
+	return -1;
+}
+
+char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *len, char **error)
+{
+	struct stat st;
 	GString *data;
 	char buf[8192];
 	ssize_t n;
 	int fd, saved;
 
-	struct stat st;
-
-	fd = open(path, O_RDONLY | O_CLOEXEC);
+	fd = open_regular(path, own, &st, error);
 	if (fd < 0)
 		return NULL;
+	if (st.st_size > 0 && (guint64) st.st_size > max) {
+		close(fd);
+		*error = g_strdup_printf("larger than %" G_GSIZE_FORMAT " bytes", max);
+		errno = EFBIG;
+		return NULL;
+	}
 	/* sized up front: a grown buffer would leave copies of the keys behind
 	   in freed memory */
-	data = g_string_sized_new(fstat(fd, &st) == 0 && st.st_size > 0 &&
-	                          st.st_size < MAX_KEYRING_SIZE ? (gsize) st.st_size + 1 : 8192);
+	data = g_string_sized_new(st.st_size > 0 ? (gsize) st.st_size + 1 : 8192);
 	for (;;) {
 		n = read(fd, buf, sizeof(buf));
 		if (n < 0 && errno == EINTR)
 			continue;
-		if (n < 0)
+		if (n < 0) {
+			saved = errno;
+			*error = g_strdup(g_strerror(saved));
 			goto fail;
+		}
 		if (n == 0)
 			break;
 		g_string_append_len(data, buf, n);
-		if (data->len > MAX_KEYRING_SIZE) {
-			errno = EFBIG;
+		/* it grew while read */
+		if (data->len > max) {
+			saved = EFBIG;
+			*error = g_strdup_printf("larger than %" G_GSIZE_FORMAT " bytes", max);
 			goto fail;
 		}
 	}
@@ -151,8 +225,8 @@ static char *read_file(const char *path, size_t *len)
 	*len = data->len;
 	return g_string_free(data, FALSE);
 fail:
-	saved = errno;
 	close(fd);
+	e2e_wipe(buf, sizeof(buf));
 	e2e_wipe(data->str, data->len);
 	g_string_free(data, TRUE);
 	errno = saved;
@@ -183,19 +257,41 @@ gboolean e2e_keyring_lost(const char *path)
 {
 	struct stat st;
 
-	return stat(path, &st) != 0 && errno == ENOENT && corrupt_one_aside(path);
+	return lstat(path, &st) != 0 && errno == ENOENT && corrupt_one_aside(path);
+}
+
+E2E_JSON *e2e_keyring_parse_checked(const char *data, size_t len, E2E_LOAD_STATUS *status,
+                                    char **error)
+{
+	const char *perr = NULL;
+	E2E_JSON *kr;
+
+	*status = E2E_LOAD_OK;
+	kr = e2e_json_parse(data, len, &perr);
+	if (kr == NULL) {
+		*status = E2E_LOAD_PARSE_ERROR;
+		*error = g_strdup("not valid JSON");
+		return e2e_keyring_new();
+	}
+	if (!normalize(kr, error)) {
+		*status = E2E_LOAD_READ_ERROR;
+		e2e_json_free(kr);
+		return e2e_keyring_new();
+	}
+	return kr;
 }
 
 E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, char **error)
 {
 	struct stat st;
-	const char *perr = NULL;
 	E2E_JSON *kr;
 	char *data;
-	size_t len;
+	gsize len;
 
 	*status = E2E_LOAD_OK;
-	if (stat(path, &st) != 0) {
+	/* lstat: a symlink, dangling or not, is no "absent" keyring that the
+	   next save would replace */
+	if (lstat(path, &st) != 0) {
 		if (errno == ENOENT && corrupt_one_aside(path)) {
 			*status = E2E_LOAD_LOST;
 			*error = g_strdup("the corrupt keyring was moved aside");
@@ -209,25 +305,14 @@ E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, ch
 		*error = g_strdup(g_strerror(errno));
 		return e2e_keyring_new();
 	}
-	data = read_file(path, &len);
+	data = e2e_read_regular_file(path, E2E_MAX_KEYRING_SIZE, TRUE, &len, error);
 	if (data == NULL) {
 		*status = E2E_LOAD_READ_ERROR;
-		*error = g_strdup(g_strerror(errno));
 		return e2e_keyring_new();
 	}
-	kr = e2e_json_parse(data, len, &perr);
+	kr = e2e_keyring_parse_checked(data, len, status, error);
 	e2e_wipe(data, len);
 	g_free(data);
-	if (kr == NULL) {
-		*status = E2E_LOAD_PARSE_ERROR;
-		*error = g_strdup("not valid JSON");
-		return e2e_keyring_new();
-	}
-	if (!normalize(kr, error)) {
-		*status = E2E_LOAD_READ_ERROR;
-		e2e_json_free(kr);
-		return e2e_keyring_new();
-	}
 	return kr;
 }
 
@@ -267,8 +352,12 @@ E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, cha
 		*notice = g_strdup_printf("keyring %s: the corrupt keyring was moved aside (%s.corrupt-*). " E2E_LOST_HINT,
 		                          path, path);
 	} else if (*status == E2E_LOAD_READ_ERROR) {
-		*notice = g_strdup_printf("cannot read keyring %s: %s — E2E state not loaded, nothing is saved until it is readable",
-		                          path, error);
+		/* a link shared with another client worked before: say how to
+		   keep sharing it */
+		*notice = g_strdup_printf("cannot read keyring %s: %s — E2E state not loaded, nothing is saved until it is readable%s",
+		                          path, error,
+		                          strcmp(error, E2E_REASON_SYMLINK) == 0 ?
+		                          ". keyring.json must be a regular file: replace the link with the file, or link the whole rpe2e directory instead" : "");
 	}
 	g_free(error);
 	return kr;
@@ -296,7 +385,7 @@ static gboolean write_all(int fd, const char *data, size_t len)
 static void fsync_dir(const char *path)
 {
 	char *dir = g_path_get_dirname(path);
-	int fd = open(dir, O_RDONLY | O_CLOEXEC);
+	int fd = open(dir, O_RDONLY | O_DIRECTORY | O_NONBLOCK | O_CLOEXEC);
 
 	if (fd >= 0) {
 		fsync(fd);
@@ -329,17 +418,60 @@ static gboolean write_new(const char *path, const char *data, size_t len, int *e
 	return TRUE;
 }
 
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error)
+{
+	char *tmp;
+	int fd, saved;
+
+	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
+	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+	if (fd < 0) {
+		*error = g_strdup_printf("cannot write %s: %s", what, g_strerror(errno));
+		g_free(tmp);
+		return FALSE;
+	}
+	/* every write is checked and the data is on disk before the rename:
+	   a full disk can no longer put a truncated file in place */
+	if (!write_all(fd, data, len) || fsync(fd) != 0) {
+		saved = errno;
+		close(fd);
+		goto fail;
+	}
+	if (close(fd) != 0) {
+		saved = errno;
+		goto fail;
+	}
+	/* rename replaces whatever is at path (a symlink too), never follows it */
+	if (rename(tmp, path) != 0) {
+		saved = errno;
+		unlink(tmp);
+		*error = g_strdup_printf("cannot replace %s: %s", what, g_strerror(saved));
+		g_free(tmp);
+		return FALSE;
+	}
+	fsync_dir(path);
+	g_free(tmp);
+	return TRUE;
+fail:
+	unlink(tmp);
+	*error = g_strdup_printf("cannot write %s (%s) — the previous %s is kept",
+	                         what, g_strerror(saved), what);
+	g_free(tmp);
+	return FALSE;
+}
+
 static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
                               char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
 	E2E_JSON *current;
-	char *data, *tmp, *err = NULL;
-	int fd, saved;
+	char *data, *err = NULL;
+	gboolean ok;
 	size_t len;
 
-	if (stat(path, &st) == 0) {
+	if (lstat(path, &st) == 0) {
 		if (fresh) {
 			*error = g_strdup_printf("%s exists — there is nothing to reset", path);
 			return FALSE;
@@ -349,7 +481,7 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 		*error = g_strdup("keyring NOT saved: the corrupt keyring was moved aside and E2E state is lost — /e2e reset starts a new one");
 		return FALSE;
 	}
-	if (stat(path, &st) == 0 || errno != ENOENT) {
+	if (lstat(path, &st) == 0 || errno != ENOENT) {
 		current = e2e_keyring_load_checked(path, &status, &err);
 		e2e_json_free(current);
 		if (status != E2E_LOAD_OK) {
@@ -362,45 +494,10 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 	data = e2e_json_encode(kr, FALSE);
 	len = strlen(data);
-	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
-	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-	if (fd < 0) {
-		*error = g_strdup_printf("cannot write keyring: %s", g_strerror(errno));
-		goto fail;
-	}
-	/* every write is checked and the data is on disk before the rename:
-	   a full disk can no longer put a truncated keyring in place */
-	if (!write_all(fd, data, len) || fsync(fd) != 0) {
-		saved = errno;
-		close(fd);
-		unlink(tmp);
-		*error = g_strdup_printf("cannot write keyring (%s) — the previous keyring is kept",
-		                         g_strerror(saved));
-		goto fail;
-	}
-	if (close(fd) != 0) {
-		saved = errno;
-		unlink(tmp);
-		*error = g_strdup_printf("cannot write keyring (%s) — the previous keyring is kept",
-		                         g_strerror(saved));
-		goto fail;
-	}
-	if (rename(tmp, path) != 0) {
-		saved = errno;
-		unlink(tmp);
-		*error = g_strdup_printf("cannot replace keyring: %s", g_strerror(saved));
-		goto fail;
-	}
-	fsync_dir(path);
+	ok = e2e_write_file_atomic(path, data, len, "keyring", error);
 	e2e_wipe(data, len);
 	g_free(data);
-	g_free(tmp);
-	return TRUE;
-fail:
-	e2e_wipe(data, len);
-	g_free(data);
-	g_free(tmp);
-	return FALSE;
+	return ok;
 }
 
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
@@ -422,16 +519,14 @@ char *e2e_keyring_backup(const char *path, char **error)
 {
 	struct stat st;
 	char *data, *bak;
-	size_t len;
+	gsize len;
 	int err = 0, n;
 
-	if (stat(path, &st) != 0 && errno == ENOENT)
+	if (lstat(path, &st) != 0 && errno == ENOENT)
 		return g_strdup("");
-	data = read_file(path, &len);
-	if (data == NULL) {
-		*error = g_strdup(g_strerror(errno));
+	data = e2e_read_regular_file(path, E2E_MAX_KEYRING_SIZE, TRUE, &len, error);
+	if (data == NULL)
 		return NULL;
-	}
 	bak = g_strdup_printf("%s.bak-%ld", path, (long) time(NULL));
 	/* two in one second (a reset, then the import of its backup): the
 	   later one gets a number, nothing is overwritten */

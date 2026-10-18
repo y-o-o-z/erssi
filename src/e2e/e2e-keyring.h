@@ -20,13 +20,15 @@
  Keys are base64; <ctx> is a channel name or "@ident@host" for a query.
 
  The same safety as rpe2e.pl: a file that exists but cannot be read is
- never replaced (the outbound gate refuses to send instead); a file that
- is not JSON is moved aside to keyring.json.corrupt-<time>; a write goes to
- a new 0600 file (O_EXCL), is fsync'ed and renamed over, then the
- directory is fsync'ed. Unlike rpe2e.pl, a keyring moved aside is not
- replaced by an empty one: while keyring.json is missing and a
- keyring.json.corrupt-* exists, the state is LOST (nothing is saved, the
- gate refuses) until e2e_keyring_start_fresh (/e2e reset).
+ never replaced (the outbound gate refuses to send instead) - nor is one
+ that is no regular file of this user (a symlink, which is not followed,
+ a FIFO, a device, a directory); a file that is not JSON is moved aside
+ to keyring.json.corrupt-<time>; a write goes to a new 0600 file
+ (O_EXCL), is fsync'ed and renamed over, then the directory is
+ fsync'ed. Unlike rpe2e.pl, a keyring moved aside is not replaced by an
+ empty one: while keyring.json is missing and a keyring.json.corrupt-*
+ exists, the state is LOST (nothing is saved, the gate refuses) until
+ e2e_keyring_start_fresh (/e2e reset).
 
  Members of this client only, kept by rpe2e.pl as unknown members:
      "accepted": { "<handle>|<ctx>": { "fp", "accepted_at", "by" } },
@@ -48,6 +50,9 @@ typedef enum {
 E2E_JSON *e2e_keyring_new(void);
 /* always returns a keyring (empty unless E2E_LOAD_OK); *error on failure */
 E2E_JSON *e2e_keyring_load_checked(const char *path, E2E_LOAD_STATUS *status, char **error);
+/* the same checks on the text of a keyring already read (/e2e import) */
+E2E_JSON *e2e_keyring_parse_checked(const char *data, size_t len, E2E_LOAD_STATUS *status,
+                                    char **error);
 /* load_keyring of rpe2e.pl: a corrupt file is moved aside first; *notice
    is the message for the user, NULL when there is none */
 E2E_JSON *e2e_keyring_load(const char *path, char **notice);
@@ -63,6 +68,18 @@ char *e2e_keyring_snapshot(const E2E_JSON *kr);
 /* a 0600 copy keyring.json.bak-<time>: its path, "" without a keyring,
    NULL on error */
 char *e2e_keyring_backup(const char *path, char **error);
+/* far above any real keyring; only stops a wrong path from eating memory */
+#define E2E_MAX_KEYRING_SIZE (64 * 1024 * 1024)
+/* the whole of path, if it is a regular file (never through a symlink,
+   never blocking on a FIFO or device: checked on the open descriptor) of
+   at most max bytes - and, own, of this user; NULL with *error (the
+   reason, such as "not a regular file (a FIFO)") and errno set */
+char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *len, char **error);
+/* data in place of path, as the keyring is written: a new 0600 file
+   next to it (O_EXCL, never through a symlink), fsync'ed, renamed over
+   path, the directory fsync'ed; what names the file in *error */
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error);
 /* a new file, 0600, never over an existing file or through a symlink */
 gboolean e2e_write_new_file(const char *path, const char *data, size_t len, char **error);
 

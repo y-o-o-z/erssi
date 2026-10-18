@@ -14,7 +14,10 @@
 */
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <irssi/src/e2e/e2e-crypto.h>
 #include <irssi/src/e2e/e2e-keyring.h>
@@ -6311,6 +6314,499 @@ static void test_bot_bypass_setting(void)
 	peer_free(&a);
 }
 
+/* the key-free view the plain-line marker keeps of the keyring finds the
+   same queries of a nick as the keyring itself, and holds no key */
+static void test_dm_view(void)
+{
+	PEER a, b;
+	E2E_JSON *view, *peer;
+	const E2E_NET *nets[] = { &net_a, &net_b };
+	const char *nicks[] = { "bob", "carol", "dave", "BOB" };
+	const char *lives[] = { NULL, "bob@old.host", "carol@c.host", "mal@evil.example" };
+	char *text, *x, *y;
+	const char *skb;
+	guint n, k, l;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	/* a query by its "nick" member, one by a peer last seen there */
+	enable(&b, "E2E2\x1f@bob@old.host", "normal");
+	e2e_json_set_string(path_get(b.kr, "channels", "E2E2\x1f@bob@old.host", NULL), "nick", "bob");
+	enable(&b, "@carol@c.host", "normal");
+	peer = e2e_json_object_member(e2e_json_get(b.kr, "peers"), "00ff");
+	e2e_json_set_string(peer, "pk", "PEERPUBLICKEYPEERPUBLICKEYPEERPUBLICKEY000=");
+	e2e_json_set_string(peer, "last_handle", "carol@c.host");
+	e2e_json_set_string(peer, "last_nick", "carol");
+
+	view = e2e_dm_view(b.kr);
+	for (n = 0; n < G_N_ELEMENTS(nets); n++)
+		for (k = 0; k < G_N_ELEMENTS(nicks); k++)
+			for (l = 0; l < G_N_ELEMENTS(lives); l++) {
+				x = e2e_enabled_dm_elsewhere(b.kr, nets[n], nicks[k], lives[l]);
+				y = e2e_enabled_dm_elsewhere(view, nets[n], nicks[k], lives[l]);
+				g_assert_cmpstr(x, ==, y);
+				g_free(x);
+				g_free(y);
+			}
+	x = e2e_enabled_dm_elsewhere(view, &net_b, "bob", "mal@evil.example");
+	g_assert_cmpstr(x, ==, "bob@old.host");
+	g_free(x);
+	x = e2e_enabled_dm_elsewhere(view, &net_a, "carol", "mal@evil.example");
+	g_assert_cmpstr(x, ==, "carol@c.host");
+	g_free(x);
+
+	text = e2e_json_encode(view, FALSE);
+	g_assert_null(strstr(text, "\"sk\""));
+	g_assert_null(strstr(text, "\"pk\""));
+	g_assert_null(strstr(text, "PEERPUBLICKEY"));
+	skb = e2e_json_get_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "sk");
+	g_assert_nonnull(skb);
+	g_assert_null(strstr(text, skb));
+	g_assert_null(strstr(text, e2e_json_get_string(e2e_json_get(b.kr, "identity"), "sk")));
+	g_free(text);
+	e2e_json_free(view);
+	peer_free(&a);
+	peer_free(&b);
+}
+
+/* a wire as the parser would give it, told apart by n */
+static void synthetic_wire(E2E_WIRE *w, unsigned char *ct, gsize ctlen, guint n)
+{
+	memset(w, 0, sizeof(*w));
+	memset(ct, 0, ctlen);
+	w->ts = fake_now;
+	w->part = w->total = 1;
+	memcpy(w->msgid, &n, sizeof(n));
+	w->ct = ct;
+	w->ctlen = ctlen;
+}
+
+/* one sender's flood of lines that open pushes out only its own: mallory,
+   with a session in #test, sends 10 000; alice's line read before stays
+   a repeat. 10 000 lines that do not open (under alice's address) push
+   out nothing. Bounded in time. */
+static void test_replay_flood(void)
+{
+	PEER a, b, m;
+	E2E_IN_PARAMS in_a, in_m;
+	E2E_IN_RESULT r;
+	E2E_REPLAY *rp;
+	char *alice_line, *first = NULL, *last = NULL, *wire, *text;
+	gint64 t0;
+	guint i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	peer_init(&m, "mallory", MAL, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&m, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	give_key(&m, &b, "#test");
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	in_params(&in_a, &b, "alice", ALICE, "#test", NULL);
+	in_params(&in_m, &b, "mallory", MAL, "#test", NULL);
+	in_a.replay = in_m.replay = rp;
+
+	alice_line = wire_from(&a, "#test", "alice before the flood");
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+
+	t0 = g_get_monotonic_time();
+	for (i = 0; i < 10000; i++) {
+		text = g_strdup_printf("flood %u", i);
+		wire = wire_from(&m, "#test", text);
+		g_free(text);
+		e2e_decrypt_incoming(b.kr, &b.id, &in_m, wire, &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+		e2e_in_result_clear(&r);
+		g_assert_cmpuint(e2e_replay_size(rp), <=, 1 + E2E_REPLAY_PER_SENDER);
+		if (i == 0)
+			first = wire;
+		else if (i == 9999)
+			last = wire;
+		else
+			g_free(wire);
+	}
+	/* a few ms per line even under a sanitizer: no quadratic step */
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 120 * G_USEC_PER_SEC);
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1 + E2E_REPLAY_PER_SENDER);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	g_assert_null(r.plain);
+	e2e_in_result_clear(&r);
+	/* mallory's own recent lines are still repeats; its first one fell
+	   out of its quota - only its own flood did that */
+	e2e_decrypt_incoming(b.kr, &b.id, &in_m, last, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_m, first, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+
+	/* lines under alice's address that do not open with her key enter
+	   nothing */
+	for (i = 0; i < 10000; i++) {
+		e2e_decrypt_incoming(b.kr, &b.id, &in_a, i % 2 == 0 ? first : last, &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+		g_assert_cmpint(r.why, !=, E2E_IN_WHY_REPEAT);
+		e2e_in_result_clear(&r);
+		g_hash_table_remove_all(b.stamps);
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1 + E2E_REPLAY_PER_SENDER);
+	e2e_decrypt_incoming(b.kr, &b.id, &in_a, alice_line, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	e2e_in_result_clear(&r);
+
+	e2e_replay_free(rp);
+	g_free(alice_line);
+	g_free(first);
+	g_free(last);
+	peer_free(&a);
+	peer_free(&b);
+	peer_free(&m);
+}
+
+/* the quota and the cap: at its quota a sender loses its own oldest;
+   at the cap the sender holding the most loses its oldest - a sender
+   with fewer is never the one */
+static void test_replay_partitions(void)
+{
+	E2E_REPLAY *rp;
+	E2E_WIRE w;
+	unsigned char ct[17];
+	char sender[32];
+	guint i, n = 0, victim;
+	gint64 t0;
+
+	rp = e2e_replay_new(8, 4);
+	victim = n;
+	synthetic_wire(&w, ct, sizeof(ct), n++);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	/* one sender at its quota: its own oldest go */
+	for (i = 0; i < 100; i++) {
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", MAL, &w));
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 5);
+	synthetic_wire(&w, ct, sizeof(ct), n - 4);
+	g_assert_true(e2e_replay_check(rp, "#test", MAL, &w));
+	synthetic_wire(&w, ct, sizeof(ct), n - 5);
+	g_assert_false(e2e_replay_check(rp, "#test", MAL, &w));
+	/* many senders: the cap takes from whoever holds the most first */
+	for (i = 0; i < 50; i++) {
+		g_snprintf(sender, sizeof(sender), "s%u@127.0.0.1", i);
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", sender, &w));
+		g_assert_cmpuint(e2e_replay_size(rp), <=, 8);
+		/* alice's one entry goes only once every sender holds one */
+		if (i < 6) {
+			synthetic_wire(&w, ct, sizeof(ct), victim);
+			g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+		}
+	}
+	/* the same chunk in another context or from another sender is
+	   another one */
+	synthetic_wire(&w, ct, sizeof(ct), n - 1);
+	g_assert_true(e2e_replay_check(rp, "#test", "s49@127.0.0.1", &w));
+	g_assert_false(e2e_replay_check(rp, "#other", "s49@127.0.0.1", &w));
+	e2e_replay_free(rp);
+
+	/* at the cap the pick costs no scan of every sender: 50 000
+	   senders, far beyond the cap, in bounded time */
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	t0 = g_get_monotonic_time();
+	for (i = 0; i < 50000; i++) {
+		g_snprintf(sender, sizeof(sender), "s%u@127.0.0.1", i);
+		synthetic_wire(&w, ct, sizeof(ct), n++);
+		g_assert_false(e2e_replay_check(rp, "#test", sender, &w));
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, E2E_REPLAY_MAX);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 10 * G_USEC_PER_SEC);
+	e2e_replay_free(rp);
+}
+
+static gboolean has_bytes(const char *data, gsize len, const void *needle, gsize nlen)
+{
+	gsize i;
+
+	for (i = 0; nlen > 0 && i + nlen <= len; i++)
+		if (memcmp(data + i, needle, nlen) == 0)
+			return TRUE;
+	return FALSE;
+}
+
+/* the file names a reason, the cache stays empty, nothing hangs */
+static void assert_replay_unread(const char *path, const char *reason)
+{
+	E2E_REPLAY *rp = e2e_replay_new(8, 4);
+	char *error = NULL;
+
+	g_assert_false(e2e_replay_load(rp, path, &error));
+	if (error == NULL || strstr(error, reason) == NULL)
+		g_error("%s: \"%s\" without \"%s\"", path, error, reason);
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 0);
+	g_free(error);
+	e2e_replay_free(rp);
+}
+
+/* the cache on disk. A restart - the cache gone, a new one read from the
+   file - still drops a repeat inside the window. The file holds digests
+   and times only (no text, key, name or address), and only what is
+   inside the window. A damaged or oversized file, a FIFO, a symlink or
+   a directory reads as empty with the reason, at once; the next save
+   replaces it (never writing through the symlink). The alarm ends a
+   test that would hang. */
+static void test_replay_file(void)
+{
+	PEER a, b;
+	E2E_IN_PARAMS in;
+	E2E_IN_RESULT r;
+	E2E_REPLAY *rp;
+	E2E_WIRE w;
+	GStatBuf st;
+	unsigned char ct[17], *sk;
+	char *dir, *path, *victim, *line, *data, *error = NULL, **lines, sender[32];
+	const char *skb;
+	gsize len, sklen;
+	gint64 start, t0;
+	guint i;
+
+	alarm(60);
+	dir = g_dir_make_tmp("e2e-replay-XXXXXX", NULL);
+	g_assert_nonnull(dir);
+	path = g_build_filename(dir, E2E_REPLAY_FILE, NULL);
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&b, "bob", BOB, -1);
+	enable(&a, "#test", "auto-accept");
+	enable(&b, "#test", "normal");
+	give_key(&a, &b, "#test");
+	in_params(&in, &b, "alice", ALICE, "#test", NULL);
+
+	/* none yet: empty, nothing to say */
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_null(error);
+	g_assert_false(e2e_replay_changed(rp));
+	in.replay = rp;
+	line = wire_from(&a, "#test", "secret words before the restart");
+	e2e_decrypt_incoming(b.kr, &b.id, &in, line, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+	e2e_in_result_clear(&r);
+	g_assert_true(e2e_replay_changed(rp));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	g_assert_false(e2e_replay_changed(rp));
+	g_assert_cmpint(g_lstat(path, &st), ==, 0);
+	g_assert_true(S_ISREG(st.st_mode));
+	g_assert_cmpint(st.st_mode & 0777, ==, 0600);
+	e2e_replay_free(rp);
+
+	/* the restart */
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	in.replay = rp;
+	e2e_decrypt_incoming(b.kr, &b.id, &in, line, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REPEAT);
+	g_assert_null(r.plain);
+	e2e_in_result_clear(&r);
+	e2e_replay_free(rp);
+
+	/* what the file holds: a header, then digests and a time */
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	skb = e2e_json_get_string(path_get(b.kr, "incoming", ALICE "|#test", NULL), "sk");
+	g_assert_nonnull(skb);
+	sk = e2e_b64_decode(skb, &sklen);
+	g_assert_nonnull(sk);
+	g_assert_false(has_bytes(data, len, sk, sklen));
+	g_assert_false(has_bytes(data, len, skb, strlen(skb)));
+	g_free(sk);
+	{
+		const char *words[] = { "secret", "alice", "127.0.0.1", "#test" };
+
+		for (i = 0; i < G_N_ELEMENTS(words); i++)
+			g_assert_false(has_bytes(data, len, words[i], strlen(words[i])));
+	}
+	lines = g_strsplit(data, "\n", -1);
+	g_assert_cmpuint(g_strv_length(lines), ==, 3);
+	g_assert_cmpstr(lines[0], ==, "erssi-e2e-replay 1");
+	g_assert_true(g_regex_match_simple("^[0-9a-f]{64} [0-9a-f]{64} [0-9]+$", lines[1], 0, 0));
+	g_assert_cmpstr(lines[2], ==, "");
+	g_strfreev(lines);
+	g_free(data);
+
+	/* out of the window: not read, and not written again */
+	start = fake_now;
+	fake_now += 2 * E2E_TS_TOLERANCE + 2;
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 0);
+	synthetic_wire(&w, ct, sizeof(ct), 1);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	fake_now = start;
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	lines = g_strsplit(data, "\n", -1);
+	g_assert_cmpuint(g_strv_length(lines), ==, 3);
+	g_strfreev(lines);
+	g_free(data);
+
+	/* a time far in the future (a clock that was ahead, a changed file)
+	   is read as the longest a chunk read now is kept: the expiry goes
+	   on behind it */
+	rp = e2e_replay_new(8, 4);
+	synthetic_wire(&w, ct, sizeof(ct), 4);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	lines = g_strsplit(data, "\n", -1);
+	g_free(data);
+	*strrchr(lines[1], ' ') = '\0';
+	data = g_strdup_printf("%s\n%s 999999999999999999\n", lines[0], lines[1]);
+	g_strfreev(lines);
+	g_assert_true(g_file_set_contents(path, data, -1, NULL));
+	g_free(data);
+	rp = e2e_replay_new(8, 4);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	g_assert_true(e2e_replay_check(rp, "#test", ALICE, &w));
+	synthetic_wire(&w, ct, sizeof(ct), 5);
+	g_assert_false(e2e_replay_check(rp, "#test", BOB, &w));
+	fake_now += 100000;
+	synthetic_wire(&w, ct, sizeof(ct), 6);
+	g_assert_false(e2e_replay_check(rp, "#test", BOB, &w));
+	g_assert_cmpuint(e2e_replay_size(rp), ==, 1);
+	e2e_replay_free(rp);
+	fake_now = start;
+	/* one expired behind a younger head (read 5 minutes ahead of our
+	   clock) is not written */
+	rp = e2e_replay_new(8, 4);
+	synthetic_wire(&w, ct, sizeof(ct), 7);
+	w.ts = fake_now + E2E_TS_TOLERANCE;
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	synthetic_wire(&w, ct, sizeof(ct), 8);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	fake_now += E2E_TS_TOLERANCE + 2;
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	fake_now = start;
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	lines = g_strsplit(data, "\n", -1);
+	g_assert_cmpuint(g_strv_length(lines), ==, 3);
+	g_strfreev(lines);
+	g_free(data);
+
+	/* damaged, all of it is not used */
+	g_assert_true(g_file_set_contents(path, "garbage\n", -1, NULL));
+	assert_replay_unread(path, "not a replay cache");
+	data = g_strconcat("erssi-e2e-replay 1\n", "zz", NULL);
+	g_assert_true(g_file_set_contents(path, data, -1, NULL));
+	g_free(data);
+	assert_replay_unread(path, "damaged");
+	/* one good line, one cut short */
+	rp = e2e_replay_new(8, 4);
+	synthetic_wire(&w, ct, sizeof(ct), 2);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	g_assert_true(g_file_get_contents(path, &data, &len, NULL));
+	{
+		char *cut = g_strndup(data, len - 5);
+		char *twice = g_strconcat(data, cut, NULL);
+
+		g_assert_true(g_file_set_contents(path, twice, -1, NULL));
+		assert_replay_unread(path, "damaged");
+		g_free(cut);
+		g_free(twice);
+	}
+	/* larger than the cap could ever write */
+	{
+		GString *big = g_string_new(data);
+
+		while (big->len < 64 + 9 * 150)
+			g_string_append(big, data + strlen("erssi-e2e-replay 1\n"));
+		g_assert_true(g_file_set_contents(path, big->str, big->len, NULL));
+		assert_replay_unread(path, "larger than");
+		g_string_free(big, TRUE);
+	}
+	g_free(data);
+
+	/* a FIFO (a plain open would wait for a writer): replaced */
+	g_unlink(path);
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	assert_replay_unread(path, "not a regular file (a FIFO)");
+	rp = e2e_replay_new(8, 4);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	g_assert_cmpint(g_lstat(path, &st), ==, 0);
+	g_assert_true(S_ISREG(st.st_mode));
+	/* a symlink: not read; the save replaces the link, not its target */
+	victim = g_build_filename(dir, "victim", NULL);
+	g_assert_true(g_file_set_contents(victim, "precious", -1, NULL));
+	g_unlink(path);
+	g_assert_cmpint(symlink(victim, path), ==, 0);
+	assert_replay_unread(path, "a symbolic link (not followed)");
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	g_assert_cmpint(g_lstat(path, &st), ==, 0);
+	g_assert_true(S_ISREG(st.st_mode));
+	g_assert_true(g_file_get_contents(victim, &data, NULL, NULL));
+	g_assert_cmpstr(data, ==, "precious");
+	g_free(data);
+	g_unlink(path);
+	g_assert_cmpint(symlink("/dev/null", path), ==, 0);
+	assert_replay_unread(path, "a symbolic link (not followed)");
+	g_unlink(path);
+	/* a directory: not read, and the save says it cannot replace it
+	   (and tries again later) */
+	g_assert_cmpint(g_mkdir(path, 0700), ==, 0);
+	assert_replay_unread(path, "not a regular file (a directory)");
+	synthetic_wire(&w, ct, sizeof(ct), 3);
+	g_assert_false(e2e_replay_check(rp, "#test", ALICE, &w));
+	g_assert_false(e2e_replay_save(rp, path, &error));
+	g_assert_nonnull(strstr(error, "cannot replace replay cache"));
+	g_free(error);
+	error = NULL;
+	g_assert_true(e2e_replay_changed(rp));
+	g_rmdir(path);
+	e2e_replay_free(rp);
+
+	/* a full cache: saved and read back in bounded time, all of it */
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	for (i = 0; i < E2E_REPLAY_MAX; i++) {
+		g_snprintf(sender, sizeof(sender), "s%u@127.0.0.1", i / E2E_REPLAY_PER_SENDER);
+		synthetic_wire(&w, ct, sizeof(ct), i);
+		g_assert_false(e2e_replay_check(rp, "#test", sender, &w));
+	}
+	g_assert_cmpuint(e2e_replay_size(rp), ==, E2E_REPLAY_MAX);
+	t0 = g_get_monotonic_time();
+	g_assert_true(e2e_replay_save(rp, path, &error));
+	e2e_replay_free(rp);
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(rp, path, &error));
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 30 * G_USEC_PER_SEC);
+	g_assert_cmpuint(e2e_replay_size(rp), ==, E2E_REPLAY_MAX);
+	synthetic_wire(&w, ct, sizeof(ct), 0);
+	g_assert_true(e2e_replay_check(rp, "#test", "s0@127.0.0.1", &w));
+	e2e_replay_free(rp);
+
+	g_unlink(path);
+	g_unlink(victim);
+	g_rmdir(dir);
+	g_free(victim);
+	g_free(path);
+	g_free(dir);
+	g_free(line);
+	peer_free(&a);
+	peer_free(&b);
+	alarm(0);
+}
+
 /* a chunk the server delivers again is dropped, not shown twice: a
    whole message, one part of a long one; it is forgotten after twice the
    timestamp window, and the memory stays bounded */
@@ -6330,7 +6826,7 @@ static void test_replay(void)
 	enable(&a, "#test", "auto-accept");
 	enable(&b, "#test", "normal");
 	give_key(&a, &b, "#test");
-	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	in_params(&in, &b, "alice", ALICE, "#test", NULL);
 	in.replay = rp;
 
@@ -6405,7 +6901,7 @@ static void test_replay(void)
 
 	/* the whole timestamp window: read first at its very start (the
 	   chunk 300 s ahead of our clock), the repeat at its very end */
-	rp = e2e_replay_new(E2E_REPLAY_MAX);
+	rp = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	in.replay = rp;
 	one = wire_from(&a, "#test", "edge");
 	start = fake_now;
@@ -6435,7 +6931,7 @@ static void test_replay(void)
 	e2e_replay_free(rp);
 
 	/* bounded: the oldest go first */
-	rp = e2e_replay_new(8);
+	rp = e2e_replay_new(8, 8);
 	{
 		E2E_WIRE w;
 		unsigned char ct[17] = { 0 };
@@ -7294,6 +7790,10 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
 	g_test_add_func("/e2e/proto/replay", test_replay);
+	g_test_add_func("/e2e/proto/replay-flood", test_replay_flood);
+	g_test_add_func("/e2e/proto/replay-partitions", test_replay_partitions);
+	g_test_add_func("/e2e/proto/replay-file", test_replay_file);
+	g_test_add_func("/e2e/proto/dm-view", test_dm_view);
 	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
 	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
 	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);

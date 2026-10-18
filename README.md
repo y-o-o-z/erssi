@@ -88,7 +88,7 @@ Every command has a page in `/help`. The full lists:
 **Encryption you can rely on** (new in 2026.10.3)
 
 - **Nothing disappears** — an encrypted message that cannot be read leaves a line in its place that says why and what to run; a known key from a new address gets a warning with the exact `/e2e reverify` command.
-- **Plain text is marked** — a line in an encrypted channel that came in unencrypted shows `[plain]`; bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
+- **Plain text is marked** — a line in an encrypted channel or query that came in unencrypted shows `[plain]`, also one under the peer's nick from another address or under your own nick; bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
 - **Tested against repartee** — `meson test` includes live tests against repartee and `rpe2e.pl` (run when they are installed), covering key changes, a reset and a flood of key requests.
 
 **Nicks, networks and windows** (new in 2026.10.1 and 2026.10.2)
@@ -153,6 +153,8 @@ wire-compatible with repartee and its WeeChat (`rpe2e.py`) and irssi
 request waits for `/e2e accept`. A message that cannot be read is never
 hidden: its line says why and names the command that fixes it. `/help e2e`
 has the commands.
+
+What it protects and what it does not (metadata, NOTICEs, no forward secrecy): [docs/shellter/security.md](docs/shellter/security.md#what-end-to-end-encryption-protects-and-what-it-does-not).
 
 Details and moving from `rpe2e.pl`:
 [docs/shellter/configuration.md](docs/shellter/configuration.md#end-to-end-encryption).

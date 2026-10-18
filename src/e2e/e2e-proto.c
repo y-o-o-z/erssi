@@ -143,6 +143,7 @@
 #include "e2e-keyring.h"
 #include "e2e-wire.h"
 
+#include <errno.h>
 #include <string.h>
 #include <time.h>
 
@@ -2861,6 +2862,30 @@ GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char 
 	return dm_configs(kr, net, nick, FALSE);
 }
 
+E2E_JSON *e2e_dm_view(const E2E_JSON *kr)
+{
+	E2E_JSON *view = e2e_keyring_new(), *peers = e2e_json_get(kr, "peers");
+	GPtrArray *keys = e2e_json_keys(peers);
+	guint i;
+
+	/* the configs hold no keys: copied whole */
+	e2e_json_set(view, "channels", e2e_json_copy(e2e_json_get(kr, "channels")));
+	for (i = 0; i < keys->len; i++) {
+		const char *fp = g_ptr_array_index(keys, i);
+		E2E_JSON *peer = e2e_json_get(peers, fp), *row;
+		const char *handle = e2e_json_get_string(peer, "last_handle");
+		const char *nick = e2e_json_get_string(peer, "last_nick");
+
+		if (handle == NULL || nick == NULL)
+			continue;
+		row = e2e_json_object_member(e2e_json_get(view, "peers"), fp);
+		e2e_json_set_string(row, "last_handle", handle);
+		e2e_json_set_string(row, "last_nick", nick);
+	}
+	g_ptr_array_unref(keys);
+	return view;
+}
+
 GPtrArray *e2e_query_off_targets(const E2E_JSON *kr, const E2E_NET *net, const char *nick,
                                  const char *live)
 {
@@ -3849,34 +3874,168 @@ static E2E_IN_ASK keyreq_for_wire(E2E_JSON *kr, const E2E_IDENTITY *id, const E2
 	return ask;
 }
 
-struct _E2E_REPLAY {
-	GHashTable *seen;	/* digest (hex) -> gint64 * expiry */
-	GQueue *order;		/* the digests, oldest first (shared keys) */
-	guint max;
+/* The chunks read lately, by sender: a partition for each context and
+   sender, with a quota of its own. A sender at its quota pushes out its
+   own oldest chunk, never another sender's - so a flood can make only
+   the flooder's own earlier lines repeatable (and only those still
+   inside the timestamp window). Dropping its new lines instead would let
+   a hostile server or sender hide what was really written. The global
+   cap only bounds memory: when it is reached the oldest chunk of the
+   sender holding the most goes (with many thousands of senders at once
+   that can be anyone's). The partitions are kept in buckets by their
+   size, so that sender is found at once, not by a scan. */
+typedef struct _REPLAY_PART REPLAY_PART;
+
+typedef struct {
+	unsigned char digest[32];	/* first: the key of r->seen */
+	gint64 until;
+	REPLAY_PART *part;
+	GList all_link;		/* in r->all */
+	GList part_link;	/* in part->entries */
+} REPLAY_ENTRY;
+
+struct _REPLAY_PART {
+	unsigned char key[32];	/* first: SHA-256 of the context and sender */
+	GQueue entries;		/* oldest first */
+	GList size_link;	/* in r->by_size[entries.length] */
 };
 
-E2E_REPLAY *e2e_replay_new(guint max)
+struct _E2E_REPLAY {
+	GHashTable *seen;	/* digest -> REPLAY_ENTRY */
+	GHashTable *parts;	/* key -> REPLAY_PART */
+	GQueue all;		/* every entry, oldest first */
+	GQueue *by_size;	/* [n]: the partitions of n entries, 1..per_sender */
+	guint top;		/* the largest n with a partition (0: none) */
+	guint max, per_sender;
+	gboolean changed;	/* since the last save */
+};
+
+/* SHA-256 digests: their first bytes are hash enough */
+static guint digest_hash(gconstpointer p)
+{
+	guint h;
+
+	memcpy(&h, p, sizeof(h));
+	return h;
+}
+
+static gboolean digest_equal(gconstpointer a, gconstpointer b)
+{
+	return memcmp(a, b, 32) == 0;
+}
+
+E2E_REPLAY *e2e_replay_new(guint max, guint per_sender)
 {
 	E2E_REPLAY *r = g_new0(E2E_REPLAY, 1);
 
-	r->seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-	r->order = g_queue_new();
+	r->seen = g_hash_table_new(digest_hash, digest_equal);
+	r->parts = g_hash_table_new(digest_hash, digest_equal);
+	g_queue_init(&r->all);
 	r->max = max > 0 ? max : 1;
+	r->per_sender = per_sender > 0 ? MIN(per_sender, r->max) : 1;
+	r->by_size = g_new0(GQueue, r->per_sender + 1);
 	return r;
+}
+
+/* part has old entries before a change of one: into its new bucket */
+static void replay_resize(E2E_REPLAY *r, REPLAY_PART *part, guint old)
+{
+	guint now = part->entries.length;
+
+	if (old > 0)
+		g_queue_unlink(&r->by_size[old], &part->size_link);
+	if (now > 0) {
+		g_queue_push_tail_link(&r->by_size[now], &part->size_link);
+		r->top = MAX(r->top, now);
+	}
+	while (r->top > 0 && r->by_size[r->top].length == 0)
+		r->top--;
+}
+
+static void replay_remove(E2E_REPLAY *r, REPLAY_ENTRY *e)
+{
+	REPLAY_PART *part = e->part;
+
+	g_queue_unlink(&r->all, &e->all_link);
+	g_queue_unlink(&part->entries, &e->part_link);
+	replay_resize(r, part, part->entries.length + 1);
+	g_hash_table_remove(r->seen, e->digest);
+	if (part->entries.length == 0) {
+		g_hash_table_remove(r->parts, part->key);
+		g_free(part);
+	}
+	g_free(e);
 }
 
 void e2e_replay_free(E2E_REPLAY *r)
 {
 	if (r == NULL)
 		return;
-	g_queue_free(r->order);
+	while (r->all.head != NULL)
+		replay_remove(r, r->all.head->data);
 	g_hash_table_destroy(r->seen);
+	g_hash_table_destroy(r->parts);
+	g_free(r->by_size);
 	g_free(r);
 }
 
 guint e2e_replay_size(const E2E_REPLAY *r)
 {
 	return g_hash_table_size(r->seen);
+}
+
+/* the expired ones go, from the oldest on (a chunk ahead of our clock
+   may stay a little past its time behind a younger one: harmless) */
+static void replay_expire(E2E_REPLAY *r, gint64 now)
+{
+	REPLAY_ENTRY *e;
+
+	while ((e = g_queue_peek_head(&r->all)) != NULL && now > e->until)
+		replay_remove(r, e);
+}
+
+/* a partition with the most entries (of those, the one that got there
+   first): where the global cap takes from. A linear scan used to pick the
+   oldest entry among the largest partitions; keeping that order would
+   need a sorted insert, so a tie now goes to the partition that reached
+   the size first - the cap still only ever takes from a largest one */
+static REPLAY_PART *replay_largest(E2E_REPLAY *r)
+{
+	return r->top > 0 ? g_queue_peek_head(&r->by_size[r->top]) : NULL;
+}
+
+static void replay_add(E2E_REPLAY *r, const unsigned char key[32],
+                       const unsigned char digest[32], gint64 until)
+{
+	REPLAY_PART *part;
+	REPLAY_ENTRY *e;
+
+	if (g_hash_table_contains(r->seen, digest))
+		return;
+	/* room first; either may free a partition, this one too */
+	part = g_hash_table_lookup(r->parts, key);
+	if (part != NULL && part->entries.length >= r->per_sender)
+		replay_remove(r, g_queue_peek_head(&part->entries));
+	while (g_hash_table_size(r->seen) >= r->max)
+		replay_remove(r, g_queue_peek_head(&replay_largest(r)->entries));
+	part = g_hash_table_lookup(r->parts, key);
+	if (part == NULL) {
+		part = g_new0(REPLAY_PART, 1);
+		memcpy(part->key, key, sizeof(part->key));
+		g_queue_init(&part->entries);
+		part->size_link.data = part;
+		g_hash_table_insert(r->parts, part->key, part);
+	}
+	e = g_new0(REPLAY_ENTRY, 1);
+	memcpy(e->digest, digest, sizeof(e->digest));
+	e->until = until;
+	e->part = part;
+	e->all_link.data = e;
+	e->part_link.data = e;
+	g_queue_push_tail_link(&r->all, &e->all_link);
+	g_queue_push_tail_link(&part->entries, &e->part_link);
+	replay_resize(r, part, part->entries.length - 1);
+	g_hash_table_insert(r->seen, e->digest, e);
 }
 
 static void append_be(GString *in, guint64 v, int bytes)
@@ -3888,25 +4047,19 @@ static void append_be(GString *in, guint64 v, int bytes)
 gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w)
 {
 	GString *in = g_string_new(NULL);
-	unsigned char digest[32];
-	gint64 now = e2e_now(), *until;
-	char *hex, *oldest;
+	unsigned char key[32], digest[32];
+	gint64 now = e2e_now();
 
-	/* the expired ones go first, from the oldest on */
-	while ((oldest = g_queue_peek_head(r->order)) != NULL) {
-		until = g_hash_table_lookup(r->seen, oldest);
-		if (until != NULL && now <= *until)
-			break;
-		g_queue_pop_head(r->order);
-		g_hash_table_remove(r->seen, oldest);
-	}
+	replay_expire(r, now);
 	/* the chunk as parsed, not as spelled: the parser takes other
 	   spellings of the same chunk (spaces, the case of the msgid, leading
 	   zeros), which open all the same. The names may hold anything but
-	   NUL: one 0 byte apart. */
+	   NUL: one 0 byte apart. Its partition: the same two names. */
 	g_string_append(in, ctx != NULL ? ctx : "");
 	g_string_append_c(in, '\0');
 	g_string_append(in, sender != NULL ? sender : "");
+	if (!e2e_sha256((const unsigned char *) in->str, in->len, key))
+		memset(key, 0, sizeof(key));
 	g_string_append_c(in, '\0');
 	g_string_append_len(in, (const char *) w->msgid, sizeof(w->msgid));
 	append_be(in, (guint64) w->ts, 8);
@@ -3917,21 +4070,146 @@ gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, co
 	if (!e2e_sha256((const unsigned char *) in->str, in->len, digest))
 		memset(digest, 0, sizeof(digest));
 	g_string_free(in, TRUE);
-	hex = e2e_hex_encode(digest, sizeof(digest));
-	if (g_hash_table_contains(r->seen, hex)) {
-		g_free(hex);
+	if (g_hash_table_contains(r->seen, digest))
 		return TRUE;
-	}
-	while (g_hash_table_size(r->seen) >= r->max &&
-	       (oldest = g_queue_pop_head(r->order)) != NULL)
-		g_hash_table_remove(r->seen, oldest);
 	/* as long as the timestamp check takes the chunk (|now - ts| <=
 	   E2E_TS_TOLERANCE, at either end), and never shorter than that from
 	   now: a clock step does not shorten it */
-	until = g_new(gint64, 1);
-	*until = MAX(w->ts, now) + E2E_TS_TOLERANCE + 1;
-	g_hash_table_insert(r->seen, hex, until);
-	g_queue_push_tail(r->order, hex);
+	replay_add(r, key, digest, MAX(w->ts, now) + E2E_TS_TOLERANCE + 1);
+	r->changed = TRUE;
+	return FALSE;
+}
+
+/* The file: a header line, then one line per chunk, oldest first -
+   "<partition> <digest> <until>", two SHA-256 in hex and a time: only
+   hashes and times (the partition is a hash of the names, which anyone
+   who can read the keyring next to it knows anyway). */
+#define REPLAY_HEADER "erssi-e2e-replay 1\n"
+#define REPLAY_LINE_MAX (64 + 1 + 64 + 1 + 18 + 1)
+
+gboolean e2e_replay_changed(const E2E_REPLAY *r)
+{
+	return r->changed;
+}
+
+gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error)
+{
+	GString *out;
+	GList *tmp;
+	gint64 now = e2e_now();
+	gboolean ok;
+	char *hex;
+
+	replay_expire(r, now);
+	out = g_string_sized_new(strlen(REPLAY_HEADER) + r->all.length * REPLAY_LINE_MAX);
+	g_string_append(out, REPLAY_HEADER);
+	for (tmp = r->all.head; tmp != NULL; tmp = tmp->next) {
+		REPLAY_ENTRY *e = tmp->data;
+
+		/* expired behind a younger head: not written */
+		if (e->until < now)
+			continue;
+		hex = e2e_hex_encode(e->part->key, sizeof(e->part->key));
+		g_string_append(out, hex);
+		g_free(hex);
+		g_string_append_c(out, ' ');
+		hex = e2e_hex_encode(e->digest, sizeof(e->digest));
+		g_string_append(out, hex);
+		g_free(hex);
+		g_string_append_printf(out, " %" G_GINT64_FORMAT "\n", e->until);
+	}
+	ok = e2e_write_file_atomic(path, out->str, out->len, "replay cache", error);
+	g_string_free(out, TRUE);
+	if (ok)
+		r->changed = FALSE;
+	return ok;
+}
+
+typedef struct {
+	unsigned char key[32], digest[32];
+	gint64 until;
+} REPLAY_ROW;
+
+/* "<64 hex> <64 hex> <1 to 18 digits>" exactly */
+static gboolean replay_parse_line(const char *line, size_t len, unsigned char key[32],
+                                  unsigned char digest[32], gint64 *until)
+{
+	char hex[65];
+	size_t i;
+	gint64 v = 0;
+
+	if (len < 64 + 1 + 64 + 1 + 1 || len > REPLAY_LINE_MAX - 1 ||
+	    line[64] != ' ' || line[129] != ' ')
+		return FALSE;
+	memcpy(hex, line, 64);
+	hex[64] = '\0';
+	if (!e2e_hex_decode(hex, key, 32))
+		return FALSE;
+	memcpy(hex, line + 65, 64);
+	if (!e2e_hex_decode(hex, digest, 32))
+		return FALSE;
+	for (i = 130; i < len; i++) {
+		if (!g_ascii_isdigit(line[i]))
+			return FALSE;
+		v = v * 10 + (line[i] - '0');
+	}
+	*until = v;
+	return TRUE;
+}
+
+gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error)
+{
+	GArray *rows;
+	char *data, *err = NULL;
+	const char *p, *end, *nl;
+	gint64 now = e2e_now();
+	gsize len;
+	guint i;
+	REPLAY_ROW row;
+
+	data = e2e_read_regular_file(path, strlen(REPLAY_HEADER) + (gsize) r->max * REPLAY_LINE_MAX,
+	                             TRUE, &len, &err);
+	if (data == NULL) {
+		/* none yet: nothing to say */
+		if (errno == ENOENT) {
+			g_free(err);
+			return TRUE;
+		}
+		*error = err;
+		return FALSE;
+	}
+	/* all of it or none: a damaged file is not half believed */
+	rows = g_array_new(FALSE, FALSE, sizeof(row));
+	p = data;
+	end = data + len;
+	if (len < strlen(REPLAY_HEADER) || memcmp(data, REPLAY_HEADER, strlen(REPLAY_HEADER)) != 0) {
+		*error = g_strdup("not a replay cache of this version");
+		goto fail;
+	}
+	for (p += strlen(REPLAY_HEADER); p < end; p = nl + 1) {
+		nl = memchr(p, '\n', end - p);
+		if (nl == NULL || !replay_parse_line(p, nl - p, row.key, row.digest, &row.until)) {
+			*error = g_strdup("damaged");
+			goto fail;
+		}
+		g_array_append_val(rows, row);
+	}
+	/* through the quota and the cap, as if read now; those whose time is
+	   over are not taken, and none is kept longer than e2e_replay_check
+	   would keep a chunk read now (a clock that was set ahead, a changed
+	   file): one far in the future would stop the expiry behind it */
+	for (i = 0; i < rows->len; i++) {
+		row = g_array_index(rows, REPLAY_ROW, i);
+		if (row.until >= now)
+			replay_add(r, row.key, row.digest,
+			           MIN(row.until, now + 2 * E2E_TS_TOLERANCE + 1));
+	}
+	g_array_free(rows, TRUE);
+	g_free(data);
+	return TRUE;
+fail:
+	g_array_free(rows, TRUE);
+	g_free(data);
 	return FALSE;
 }
 

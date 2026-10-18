@@ -264,6 +264,92 @@ def main():
         assert wait_chan(k, "encrypted from alice"), chan_log(k)[-500:]
         assert "[plain]" not in chan_log(a)[start:].split("unmarked clear text")[1], chan_log(a)[start:]
 
+    def t_plain_impostor():
+        """a plain private line under bob's nick from another address -
+        someone who took the nick, or the server - is marked with its
+        real address, where E2E is on for bob's query; a plain line under
+        alice's own nick (no echo of hers: she encrypts) is marked too"""
+        a = st["alice"]
+
+        def inject(line):
+            with harness.Client(st["port"], "injector", "injector") as c:
+                c.send(f"TESTRAW alice :{line}")
+                # the server has handled it before the connection goes
+                c.send("PING :injected")
+                c.expect("PONG")
+
+        a.type_and_wait("/query bob", "/e2e on")
+        try:
+            off = log_size(a)
+            inject(":bob!bob2@127.0.0.1 PRIVMSG alice :plain from his address")
+            assert wait_log(a, off, "[plain] plain from his address"), log_since(a, off)
+            inject(":bob!mal@evil.example PRIVMSG alice :it is me, bob - the password?")
+            assert wait_log(a, off, "[plain, from mal@evil.example] it is me, bob - the password?"), \
+                log_since(a, off)
+            inject(":alice!alice@127.0.0.1 PRIVMSG #test :words put in her mouth")
+            assert wait_chan(a, "[plain] words put in her mouth"), chan_log(a)[-500:]
+            inject(":alice!alice@127.0.0.1 PRIVMSG bob :to bob in her name")
+            assert wait_log(a, off, "[plain] to bob in her name"), log_since(a, off)
+        finally:
+            a.type_and_wait("/window goto bob", "/e2e off", "/window close")
+
+    def t_replay_after_restart():
+        """a line of alice's that the server delivers again is dropped,
+        not shown twice - also after /unload and /load of the module and
+        after bob restarts: the cache of lines read is kept on disk (only
+        hashes and times). A line read just before /quit is in it too:
+        /quit saves it, not only /unload or the 10 s timer"""
+        a, k = st["alice"], st["bob"]
+        start = len(chan_log(k))
+
+        def sent(text):
+            """alice says text, bob reads it: its wire as bob got it"""
+            wire_off = (work / "wire.log").stat().st_size
+            say(a, text)
+            assert wait_chan(k, text, start), chan_log(k)[start:]
+            wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
+            lines = [ln for ln in wire.splitlines() if ln.startswith("alice PRIVMSG #test :+RPE2E01 ")]
+            assert len(lines) == 1, wire
+            return f":alice!alice@127.0.0.1 PRIVMSG #test :{lines[0].split(' :', 1)[1]}"
+
+        def replayed(raw, text, when, warned=True):
+            """the server delivers raw to bob again; the warning comes once
+            a minute per sender: without it, a line of alice's after it
+            shows that bob has taken it"""
+            off = log_size(k)
+            with harness.Client(st["port"], "replayer", "replayer") as c:
+                c.send(f"TESTRAW bob :{raw}")
+                c.send("PING :replayed")
+                c.expect("PONG")
+            if warned:
+                assert wait_log(k, off, "repeated message from alice dropped"), (when, log_since(k, off))
+            else:
+                mark = f"after the replay {when}"
+                say(a, mark)
+                assert wait_chan(k, mark, start), chan_log(k)[start:]
+            assert chan_log(k)[start:].count(text) == 1, (when, chan_log(k)[start:])
+
+        first = sent("said only once")
+        replayed(first, "said only once", "at once")
+        k.type_and_wait("/unload e2e")
+        k.type_and_wait("/load e2e")
+        replayed(first, "said only once", "after /load e2e")
+        # after the save of /unload, and before the timer's (10 s)
+        last = sent("said just before the quit")
+        k.quit()
+        cache = k.home / "rpe2e" / "replay.cache"
+        assert cache.is_file() and (cache.stat().st_mode & 0o777) == 0o600, cache
+        text = cache.read_text()
+        for word in ("said only once", "said just", "alice", "#test", "127.0.0.1"):
+            assert word not in text, (word, text)
+        up(k)
+        replayed(first, "said only once", "after a restart")
+        replayed(last, "said just before the quit", "after a restart", warned=False)
+        # and he reads and writes as before
+        start = len(chan_log(a))
+        say(k, "back after the restart")
+        assert wait_chan(a, "back after the restart", start), chan_log(a)[start:]
+
     def t_unreadable_keyring():
         """a keyring that cannot be read: /e2e export writes no empty
         export, /e2e rotate claims nothing - both say why; a message
@@ -353,6 +439,59 @@ def main():
         os.chmod(ring, 0o600)
         assert "damaged" in log_since(a, off) and not dest.exists(), log_since(a, off)
 
+    def t_special_files():
+        """/e2e import of a FIFO, a device, a directory or a symlink
+        answers at once that it is no regular file (a FIFO opened the
+        plain way would hang the client), /e2e export writes into none
+        of them, and a keyring.json that is a FIFO or a symlink is not
+        read: nothing is replaced"""
+        a = st["alice"]
+        ring = a.home / "rpe2e" / "keyring.json"
+        fp = keyring(a)["identity"]["fp"]
+        exp = work / "special-export.json"
+        a.type_and_wait(f"/e2e export {exp}")
+        assert harness.wait_until(exp.exists, WAIT)
+        fifo = work / "special.fifo"
+        os.mkfifo(fifo, 0o600)
+        link = work / "special.link"
+        link.symlink_to(exp)
+        nul = work / "special.null"
+        nul.symlink_to("/dev/null")
+        cases = [(fifo, "not a regular file (a FIFO)"),
+                 (link, "a symbolic link (not followed)"),
+                 (nul, "a symbolic link (not followed)"),
+                 (Path("/dev/null"), "not a regular file (a device)"),
+                 (work, "not a regular file (a directory)")]
+        for f, why in cases:
+            off = log_size(a)
+            a.type_and_wait(f"/e2e import {f}")
+            assert wait_log(a, off, f"import failed: {f}: {why}"), (f, log_since(a, off))
+            assert keyring(a)["identity"]["fp"] == fp, f
+        for f in (fifo, nul):
+            off = log_size(a)
+            a.type_and_wait(f"/e2e export {f}")
+            assert wait_log(a, off, "export failed: "), (f, log_since(a, off))
+        assert fifo.is_fifo() and nul.is_symlink()
+        good = work / "special-keyring.json"
+        a.type_and_wait("/unload e2e")
+        ring.rename(good)
+        try:
+            for make, why in ((lambda: os.mkfifo(ring, 0o600), "not a regular file (a FIFO)"),
+                              (lambda: ring.symlink_to(good), "a symbolic link (not followed)")):
+                make()
+                off = log_size(a)
+                a.type_and_wait("/load e2e")
+                assert wait_log(a, off, f"cannot read keyring {ring}: {why}"), log_since(a, off)
+                a.type_and_wait("/unload e2e")
+                assert ring.is_fifo() or ring.is_symlink()
+                ring.unlink()
+        finally:
+            if ring.exists() or ring.is_symlink():
+                ring.unlink()
+            good.rename(ring)
+        a.type_and_wait("/load e2e")
+        assert keyring(a)["identity"]["fp"] == fp
+
     def t_corrupt_keyring():
         """/load e2e on a corrupt keyring says so at once; a line typed
         then is shown marked [NOT SENT], the warning after it"""
@@ -407,8 +546,9 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_unreadable_keyring,
-                      t_reset_force, t_import_identity, t_corrupt_keyring, t_wire])
+                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_plain_impostor,
+                      t_replay_after_restart, t_unreadable_keyring, t_reset_force,
+                      t_import_identity, t_special_files, t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

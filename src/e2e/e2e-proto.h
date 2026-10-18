@@ -172,6 +172,10 @@ void e2e_mark_user_keyreq(E2E_JSON *kr, const char *ctx, const char *handle);
    nick (its "nick" member, or a peer last seen as nick there), of net:
    its own configs and old unscoped ones that none of its own hides */
 GPtrArray *e2e_dm_configs_of(const E2E_JSON *kr, const E2E_NET *net, const char *nick);
+/* what e2e_dm_configs_of and e2e_enabled_dm_elsewhere read of kr, and
+   nothing else: the channel and query configs, and each peer's last
+   handle and nick - no key, so it can be kept for every message */
+E2E_JSON *e2e_dm_view(const E2E_JSON *kr);
 /* /e2e off in the query with nick (live: its ident@host now, or NULL):
    the "@<handle>" contexts to turn off - bare, the caller finds them on
    its network */
@@ -344,15 +348,31 @@ gboolean e2e_buffer_has_privmsg(const char *buf, gsize len);
    way, and repartee and rpe2e.pl show such a repeat again. A chunk is
    remembered by a SHA-256 of its storage context (network included),
    sender and parsed fields (msgid, ts, part, total, nonce, ciphertext -
-   not its spelling) for as long as the timestamp check would take it, at
-   most max of them (the oldest go first: memory stays bounded under a
-   flood; only chunks that opened under a trusted key are remembered). */
+   not its spelling) for as long as the timestamp check would take it;
+   only chunks that opened are remembered, so lines that do not open
+   push nothing out. Each sender in each context has a quota of
+   per_sender: at it, that sender's own oldest chunk goes, never anyone
+   else's; max bounds all of them together (then the sender with the
+   most loses its oldest). */
 typedef struct _E2E_REPLAY E2E_REPLAY;
-#define E2E_REPLAY_MAX 4096
-E2E_REPLAY *e2e_replay_new(guint max);
+#define E2E_REPLAY_MAX 16384
+#define E2E_REPLAY_PER_SENDER 512
+E2E_REPLAY *e2e_replay_new(guint max, guint per_sender);
 void e2e_replay_free(E2E_REPLAY *r);
 /* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
 gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w);
+/* On disk, so that a restart does not open the window again: next to
+   the keyring, written as it is (a new 0600 file, fsync'ed, renamed
+   over; never through a symlink), only the chunks still inside the
+   window, only as SHA-256 hashes and times (no text or keys). A file
+   that is missing reads as empty; one that is damaged, too large or no
+   regular file of this user reads as empty too, with *error, and is
+   replaced at the next save. Nothing else depends on it. */
+#define E2E_REPLAY_FILE "replay.cache"
+gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error);
+gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error);
+/* a chunk was remembered since the last save */
+gboolean e2e_replay_changed(const E2E_REPLAY *r);
 guint e2e_replay_size(const E2E_REPLAY *r);
 
 typedef struct {

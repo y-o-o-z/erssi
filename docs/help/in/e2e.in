@@ -131,6 +131,8 @@
                  keyring.json.bak-<time> (checked as the keyring is, and
                  refused without a whole identity - EXPORT refuses that
                  too); the previous one is kept as keyring.json.bak-<time>.
+                 Only a regular file is read: a symlink is not followed,
+                 a FIFO, device or directory is refused at once.
                  The key changes (REKEY) already taken are part of
                  erssi's exports; an export without them (repartee's)
                  starts their replay protection anew - an old key change
@@ -337,17 +339,20 @@
     there - only that request, by its exact ident@host.
 
     Keyrings: a keyring that cannot be read is never overwritten, and
-    messages are not sent until it can be read again; the subcommands (but
-    HELP and IMPORT) refuse then, so that EXPORT never writes an empty
-    export and nothing claims a change that was not saved. One that is not
-    valid JSON is moved aside to keyring.json.corrupt-<time>; the E2E
-    state is then LOST: nothing is sent to any channel or query and
-    nothing is saved, also after a restart, until you run /E2E RESET (a
-    new keyring) or /E2E IMPORT a keyring export. Which people you
-    accepted is stored in keyring.json as "accepted" (rpe2e.pl keeps it,
-    exports do not carry it): with a keyring from rpe2e.pl, repartee or an
-    import, a person asking for your key again needs one /E2E ACCEPT, and
-    does not get your new key when it rotates before that.
+    messages are not sent until it can be read again - so is one that is
+    not a regular file of yours (keyring.json as a symlink, which is not
+    followed, a FIFO, a device; for a link, replace it with the file or
+    link the whole rpe2e directory instead). The subcommands (but HELP and
+    IMPORT) refuse then, so that EXPORT never writes an empty export and
+    nothing claims a change that was not saved. One that is not valid JSON
+    is moved aside to keyring.json.corrupt-<time>; the E2E state is then
+    LOST: nothing is sent to any channel or query and nothing is saved,
+    also after a restart, until you run /E2E RESET (a new keyring) or
+    /E2E IMPORT a keyring export. Which people you accepted is stored in
+    keyring.json as "accepted" (rpe2e.pl keeps it, exports do not carry
+    it): with a keyring from rpe2e.pl, repartee or an import, a person
+    asking for your key again needs one /E2E ACCEPT, and does not get your
+    new key when it rotates before that.
 
     Channel names are compared as the server's CASEMAPPING compares
     them: ascii, rfc1459 and strict-rfc1459 exactly (rfc1459 when the
@@ -372,17 +377,56 @@
     apart (for example #a[b and #a{b), is shown with "(E2E key of
     #a[b)": the server may have moved it from that channel.
 
-    What E2E protects: the text of PRIVMSGs (and /ME) to a channel or
-    query with encryption on - nobody without the keys, the server
-    included, can read it, or change it unnoticed. Not protected: who
-    talks to whom and when (nicks, addresses, channel names, times and
-    the length of messages are visible to the server), NOTICEs, CTCPs
-    other than ACTION, and bot commands while e2e_bot_bypass is on.
-    A line in clear text in such a channel or query - from someone
-    without E2E, or put there by a hostile server under any nick - is
-    shown with "[plain]" in red before its text, so that it does not
-    look like a decrypted one (/SET e2e_mark_plain OFF turns that off;
-    your own lines are never marked).
+    What end-to-end encryption protects, and what it does not:
+
+    Protected: the text of PRIVMSGs and actions (/ME) in a channel or
+    query with encryption on, against the server and the other users:
+    nobody without the keys can read it or change it unnoticed. Once you
+    verified a person's key (/E2E VERIFY, compared over another channel),
+    the keys you get from them are really theirs.
+
+    Not protected:
+      - NOTICEs, CTCPs other than ACTION, and bot commands while
+        e2e_bot_bypass is on: they are sent in clear text;
+      - nicks, addresses, channel names, who talks to whom, when, and
+        how long the messages are (the server sees all of it);
+      - who of a channel's readers wrote a line: a sender's key there
+        is shared with everyone they let read, so one of those, with
+        the server's help, could pass a line off as the sender's;
+      - what is on your own machine: messages are decrypted locally, so
+        logs, the Mentions window, terminal notifications and web
+        clients (fe-web) get them in clear text;
+      - lines that arrive in clear text - from someone without E2E, or
+        put there by a hostile server under any nick. They are shown
+        with "[plain]" in red before the text, so that they do not look
+        decrypted (/SET e2e_mark_plain OFF turns that off). In a query
+        that counts wherever E2E is on for the nick: a line from another
+        address (someone took the nick, or the server says so) shows
+        "[plain, from <ident@host>]". A line under your own nick that
+        comes back from the server or a bouncer is marked too - what you
+        send encrypted comes back encrypted, so a plain one was not sent
+        so by you (or went out in clear text, such as a bot command with
+        e2e_bot_bypass on). The lines you type are never marked.
+
+    No forward secrecy: the session keys stay in keyring.json while they
+    are used, and a new key (a rotation, REKEY) is sent wrapped to the
+    recipient's long-term identity key, as in repartee (RPE2E v1.0).
+    Whoever recorded the traffic and later gets a recipient's identity
+    private key (or keyring.json) can read those sessions - rotating keys
+    does not undo that. Keep keyring.json private (erssi writes it with
+    mode 0600, its exports too); after a suspected compromise run
+    /E2E RESET -force (a new identity), remove the old
+    keyring.json.bak-<time> copies, and have people verify your new key.
+
+    Replays: a message the server delivers again is dropped while its
+    timestamp is still taken (5 minutes either way), also after a
+    restart; each sender has room for its last 512 parts in each channel
+    or query, so a flood can make only the flooder's own older lines
+    repeatable (details under "Known limitations" below).
+
+    Forward secrecy, encrypted NOTICEs or signed lines would need a new
+    version of the protocol, shared with repartee and its scripts; erssi
+    keeps the wire format of RPE2E v1.0, so that they all understand it.
 
     Known limitations: a server that names rfc1459, ascii or
     strict-rfc1459 but folds the bytes of another code page (koi8-r,
@@ -399,15 +443,26 @@
     (each part is shown on its own). A part read before that the server
     delivers again - in any spelling - is dropped while its timestamp is
     still taken (5 minutes either way), with "repeated message from <nick>
-    dropped" (once a minute per sender); the last 4096 parts read are
-    remembered, so a flood can push an older one out, and after a restart
-    nothing is - a repeat within the 5 minutes of the timestamp check is
-    then shown again, as in repartee. A key request carries no ident@host:
-    someone who forwards your peer's request before the peer's first
-    contact with you ties that key to their own address, and the peer's
-    own request is then held back as a changed address until /E2E REVERIFY
-    (nobody gets a key that way). The rpe2e.pl script is recognised by its
-    file name (rpe2e*.pl).
+    dropped" (once a minute per sender). Only parts that opened are
+    remembered, the last 512 of each sender in each channel or query: a
+    sender's flood pushes out only that sender's own older parts, never
+    anyone else's (16384 are kept in all; past that, the sender holding
+    the most loses its oldest - so with many thousands of senders at once
+    the cap can still push out another sender's parts). They are kept in
+    rpe2e/replay.cache next to the keyring - only hashes and times - saved
+    every 10 s when something changed, at /UPGRADE and when erssi exits,
+    so a restart does not let a repeat through (after a crash the last
+    10 s may be missing). A cache file that cannot be read (damaged, too
+    large, not a regular file of yours) is not used: the cache starts
+    empty, with a warning, and the file is replaced at the next save;
+    nothing else depends on it. Two erssi processes that share one home
+    overwrite each other's cache file (the last one to save wins): the
+    protection after a restart is then weaker, nothing fails. A key
+    request carries no ident@host: someone who forwards your peer's
+    request before the peer's first contact with you ties that key to
+    their own address, and the peer's own request is then held back as a
+    changed address until /E2E REVERIFY (nobody gets a key that way). The
+    rpe2e.pl script is recognised by its file name (rpe2e*.pl).
 
     Networks: keys, sessions and settings are kept per network - the
     chatnet name of the server, otherwise its tag - so #test on one

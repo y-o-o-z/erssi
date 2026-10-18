@@ -1962,7 +1962,6 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 {
 	E2E_JSON *doc, *kr;
 	E2E_IDENTITY id;
-	GError *gerror = NULL;
 	const char *perr = NULL;
 	char *data, *error = NULL, *bak;
 	gboolean lost, saved, created;
@@ -1972,26 +1971,30 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 		e2e_print_item(item, "usage: /e2e import <file>");
 		return;
 	}
-	if (!g_file_get_contents(path, &data, &len, &gerror)) {
-		e2e_print_item(item, "import failed: %s", gerror->message);
-		g_error_free(gerror);
+	/* a regular file only: a FIFO or device given by mistake would hang
+	   the client, a symlink is not followed */
+	data = e2e_read_regular_file(path, E2E_MAX_KEYRING_SIZE, FALSE, &len, &error);
+	if (data == NULL) {
+		e2e_print_item(item, "import failed: %s: %s", path, error);
+		g_free(error);
 		return;
 	}
 	doc = e2e_json_parse(data, len, &perr);
-	e2e_wipe(data, len);
-	g_free(data);
 	if (doc == NULL) {
 		e2e_print_item(item, "import failed: %s", perr);
+		e2e_wipe(data, len);
+		g_free(data);
 		return;
 	}
 	/* a keyring file itself (a keyring.json.bak-<time> of /e2e reset
-	   -force or of an import): read and checked as the keyring is */
+	   -force or of an import): checked as the keyring is - the text read
+	   above, not the file once more */
 	if (e2e_json_get(doc, "version") == NULL && e2e_json_get(doc, "peers") != NULL &&
 	    e2e_json_get(doc, "peers")->type == E2E_JSON_OBJECT) {
 		E2E_LOAD_STATUS status;
 		E2E_JSON *ident;
 
-		kr = e2e_keyring_load_checked(path, &status, &error);
+		kr = e2e_keyring_parse_checked(data, len, &status, &error);
 		ident = e2e_json_get(kr, "identity");
 		if (status != E2E_LOAD_OK || ident == NULL || ident->type != E2E_JSON_OBJECT) {
 			e2e_print_item(item, "import failed: %s is no usable keyring (%s)", path,
@@ -1999,11 +2002,15 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 			g_free(error);
 			e2e_json_free(kr);
 			e2e_json_free(doc);
+			e2e_wipe(data, len);
+			g_free(data);
 			return;
 		}
 	} else {
 		kr = e2e_keyring_import(doc, &error);
 	}
+	e2e_wipe(data, len);
+	g_free(data);
 	e2e_json_free(doc);
 	if (kr == NULL) {
 		e2e_print_item(item, "import failed: %s", error);

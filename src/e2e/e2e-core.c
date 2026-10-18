@@ -99,6 +99,11 @@ static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 
 static GHashTable *trust_notice;
 /* chunks read lately: a repeat is dropped */
 static E2E_REPLAY *replay;
+/* the cache on disk (E2E_REPLAY_FILE): saved every 10 s when it changed,
+   at /upgrade and when the module goes (also at /quit) */
+static char *replay_file;
+static guint replay_tag;
+static gboolean replay_save_warned;
 #define E2E_TRUST_NOTICE_INTERVAL 60
 /* "tag|handle|ctx" -> last "Pending key exchange" notice (bounded) */
 static GHashTable *pending_notice;
@@ -210,6 +215,29 @@ void e2e_warn_session_only(void *item)
 	g_free(text);
 }
 
+static void replay_save(void)
+{
+	char *error = NULL;
+
+	if (replay == NULL || replay_file == NULL || !e2e_replay_changed(replay))
+		return;
+	if (e2e_replay_save(replay, replay_file, &error)) {
+		replay_save_warned = FALSE;
+	} else if (!replay_save_warned) {
+		/* once until a save works again: it is tried every 10 s */
+		replay_save_warned = TRUE;
+		e2e_print_warning(NULL, "%s - a message the server delivers again is still dropped while erssi runs, but not after a restart",
+		                  error);
+	}
+	g_free(error);
+}
+
+static gboolean replay_save_tick(gpointer data)
+{
+	replay_save();
+	return TRUE;
+}
+
 /* /upgrade starts a process that loads autoload_modules only */
 static void sig_command_upgrade(void)
 {
@@ -219,6 +247,8 @@ static void sig_command_upgrade(void)
 	guint n;
 	char *text;
 
+	/* the new process reads it at its start */
+	replay_save();
 	if (e2e_autoload_listed(list))
 		return;
 	n = enabled_contexts(&lost);
@@ -2048,6 +2078,8 @@ static void show_placeholder(SERVER_REC *server, const char *target, const char 
    a plain line is looked up without parsing the keyring (and its keys)
    for every message */
 static GHashTable *plain_enabled, *plain_configured;
+/* e2e_dm_view of it: which queries a nick has E2E on in, at any address */
+static E2E_JSON *plain_dm;
 static struct stat plain_stat;
 static gboolean plain_valid, plain_ok;
 
@@ -2068,6 +2100,8 @@ static void plain_configs_load(void)
 			g_hash_table_remove_all(plain_enabled);
 			g_hash_table_remove_all(plain_configured);
 		}
+		e2e_json_free(plain_dm);
+		plain_dm = NULL;
 		return;
 	}
 	if (plain_valid && e2e_same_file(&st, &plain_stat))
@@ -2090,6 +2124,8 @@ static void plain_configs_load(void)
 			g_hash_table_add(plain_enabled, g_ascii_strdown(k, -1));
 	}
 	g_ptr_array_unref(keys);
+	e2e_json_free(plain_dm);
+	plain_dm = plain_ok ? e2e_dm_view(kr) : NULL;
 	e2e_json_free(kr);
 	plain_stat = st;
 	plain_valid = TRUE;
@@ -2121,38 +2157,73 @@ static gboolean plain_enabled_for(const E2E_NET *net, const char *wire)
    "[plain] " in the warning colour before its text (inside an ACTION),
    passed on like the message itself, so that a line in clear text - sent
    by someone without E2E, or put there by the server - does not look like
-   a decrypted one. Not for our own lines or other CTCPs (never
-   encrypted). Must be called from the "event privmsg" emission. */
+   a decrypted one. Not for other CTCPs (never encrypted). Must be called
+   from the "event privmsg" emission.
+   A private line counts where E2E is on for the sender's nick at any
+   address, not only at the one it came from: someone who took the nick
+   (or a server that says so) would otherwise write unmarked into the
+   query. Such a line names its real address: "[plain, from x@y]".
+   A line under our own nick comes only as an echo (a bouncer,
+   echo-message), and an echo of what we encrypted is ciphertext: a plain
+   one where E2E is on was not sent so by us, and is marked too. */
 static void mark_plain(SERVER_REC *server, const char *data, const char *sp, const char *text,
                        const char *nick, const char *address)
 {
-	char **readings, *target, *wire, *newdata;
-	gboolean on;
+	char **readings, *target, *wire = NULL, *newdata, *mark, *elsewhere = NULL;
+	gboolean on = FALSE, own;
 	E2E_NET net;
 
 	if (!settings_get_bool("e2e_mark_plain") || nick == NULL || *nick == '\0' ||
-	    is_own_nick(server, nick) || (text[0] == '\001' && g_ascii_strncasecmp(text, "\001ACTION ", 8) != 0))
+	    (text[0] == '\001' && g_ascii_strncasecmp(text, "\001ACTION ", 8) != 0))
 		return;
 	plain_configs_load();
 	if (!plain_ok || g_hash_table_size(plain_enabled) == 0)
 		return;
+	own = is_own_nick(server, nick);
 	target = g_strndup(data, sp - data);
 	readings = e2e_channel_readings(target);
-	if (readings[0] != NULL)
-		wire = g_strdup(readings[0]);
-	else
-		wire = address != NULL && *address != '\0' ? g_strconcat("@", address, NULL) : NULL;
 	e2e_server_net(server, &net);
-	on = wire != NULL && plain_enabled_for(&net, wire);
+	if (readings[0] != NULL) {
+		wire = g_strdup(readings[0]);
+		on = plain_enabled_for(&net, wire);
+	} else if (own) {
+		/* our line to target: its query, at whatever address */
+		if (!is_own_nick(server, target) && plain_dm != NULL) {
+			GPtrArray *mine = e2e_dm_configs_of(plain_dm, &net, target);
+
+			on = mine->len > 0;
+			g_ptr_array_unref(mine);
+		}
+	} else {
+		if (address != NULL && *address != '\0') {
+			wire = g_strconcat("@", address, NULL);
+			on = plain_enabled_for(&net, wire);
+		}
+		if (!on && plain_dm != NULL) {
+			elsewhere = e2e_enabled_dm_elsewhere(plain_dm, &net, nick, address);
+			on = elsewhere != NULL;
+		}
+	}
 	e2e_net_clear(&net);
 	if (on) {
+		if (elsewhere != NULL) {
+			char *shown = e2e_text_display(address != NULL && *address != '\0' ?
+			                               address : "an unknown address");
+
+			mark = g_strdup_printf("\00304[plain, from %s]\017", shown);
+			g_free(shown);
+		} else {
+			mark = g_strdup("\00304[plain]\017");
+		}
 		if (text[0] == '\001')
-			newdata = g_strdup_printf("%s :\001ACTION \00304[plain]\017 %s", target, text + 8);
+			newdata = g_strdup_printf("%s :\001ACTION %s %s", target, mark, text + 8);
 		else
-			newdata = g_strdup_printf("%s :\00304[plain]\017 %s", target, text);
+			newdata = g_strdup_printf("%s :%s %s", target, mark, text);
 		signal_continue(4, server, newdata, nick, address);
 		g_free(newdata);
+		g_free(mark);
 	}
+	g_free(elsewhere);
 	g_free(wire);
 	g_strfreev(readings);
 	g_free(target);
@@ -2565,7 +2636,18 @@ void e2e_core_init(void)
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
 	trust_notice = e2e_stamps_new();
-	replay = e2e_replay_new(E2E_REPLAY_MAX);
+	replay = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	replay_file = g_build_filename(keyring_dir, E2E_REPLAY_FILE, NULL);
+	{
+		char *error = NULL;
+
+		/* never in the way: without it the cache starts empty */
+		if (!e2e_replay_load(replay, replay_file, &error))
+			e2e_print_warning(NULL, "replay cache %s not read (%s) - it starts empty: a message the server delivers again within 5 minutes of its time may be shown again",
+			                  replay_file, error);
+		g_free(error);
+	}
+	replay_tag = g_timeout_add_seconds(10, replay_save_tick, NULL);
 	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
@@ -2638,6 +2720,11 @@ void e2e_core_deinit(void)
 	GSList *list, *tmp;
 
 	warn_unload();
+	/* while a failure can still be told (the formats go below) */
+	if (replay_tag != 0)
+		g_source_remove(replay_tag);
+	replay_tag = 0;
+	replay_save();
 	/* what still waits is not sent: told, and wiped - and the PRIVMSGs
 	   in irssi's flood queue that the gate would encrypt or refuse (the
 	   rest of a long line irssi split, typed while E2E was on): they
@@ -2706,9 +2793,14 @@ void e2e_core_deinit(void)
 		g_hash_table_destroy(plain_configured);
 	}
 	plain_enabled = plain_configured = NULL;
+	e2e_json_free(plain_dm);
+	plain_dm = NULL;
 	plain_valid = FALSE;
 	e2e_replay_free(replay);
 	replay = NULL;
+	g_free(replay_file);
+	replay_file = NULL;
+	replay_save_warned = FALSE;
 	g_hash_table_destroy(pending_notice);
 	if (state_idle_id != 0)
 		g_source_remove(state_idle_id);
