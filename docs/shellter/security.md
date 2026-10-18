@@ -75,3 +75,9 @@ plain text. Only a value still in the old form at `/save`, in config mode
 and with a master password that a value already in the new form proves
 right, is written again in the new form; the external credentials file
 is never rewritten that way.
+
+When erssi starts with a configuration that still has the old encryption
+or the external file on, or holds encrypted values, it says once in the
+status window what is and is not protected - `~/.erssi/config` itself is
+plain text, and only values the old feature encrypted are encrypted in it -
+and which commands go back to plain storage (`/help credential`).

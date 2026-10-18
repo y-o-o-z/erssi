@@ -96,6 +96,12 @@ void credential_config_write_hook(CONFIG_REC *config);
 void credential_config_read_hook(CONFIG_REC *config);
 void credential_unlock_config(void);
 
+/* NULL, or the lines of the warning to print at startup when the
+ * configuration still uses the old encryption or the external file, or
+ * holds encrypted values: what is and is not protected, and the commands
+ * that go back to plain storage (free with g_strfreev()) */
+char **credential_legacy_warning(void);
+
 /* Helper functions */
 const char *credential_context_to_string(CredentialContext context);
 CredentialContext credential_string_to_context(const char *str);

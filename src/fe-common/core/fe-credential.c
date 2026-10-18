@@ -453,6 +453,31 @@ void credential_show_status(const char *data, SERVER_REC *server, WI_ITEM_REC *i
 
 /* === Initialization and deinitialization === */
 
+static guint legacy_warning_tag;
+
+/* once per start, in the status window: printed when the windows are
+   there, not at every connect */
+static gboolean print_legacy_warning(gpointer data)
+{
+	char **lines, **line;
+
+	legacy_warning_tag = 0;
+	lines = credential_legacy_warning();
+	if (lines == NULL)
+		return G_SOURCE_REMOVE;
+	for (line = lines; *line != NULL; line++) {
+		/* printed as text: a % in a path is not a colour code */
+		char **parts = g_strsplit(*line, "%", -1);
+		char *text = g_strjoinv("%%", parts);
+
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "%s", text);
+		g_free(text);
+		g_strfreev(parts);
+	}
+	g_strfreev(lines);
+	return G_SOURCE_REMOVE;
+}
+
 void fe_credential_init(void)
 {
 	/* Register main command */
@@ -469,10 +494,17 @@ void fe_credential_init(void)
 
 	/* Command options */
 	command_set_options("credential", "");
+
+	legacy_warning_tag = g_idle_add(print_legacy_warning, NULL);
 }
 
 void fe_credential_deinit(void)
 {
+	if (legacy_warning_tag != 0) {
+		g_source_remove(legacy_warning_tag);
+		legacy_warning_tag = 0;
+	}
+
 	/* Remove main command */
 	command_unbind("credential", (SIGNAL_FUNC) cmd_credential);
 

@@ -360,3 +360,24 @@ test('test-credential-file test', test_test_credential_file,
   protocol : 'tap',
   timeout : 30)
 
+# the startup warning about the old credential encryption
+test_test_credential_warning = executable('test-credential-warning',
+  files(
+    'test-credential-warning.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential-warning test', test_test_credential_warning,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

@@ -1842,14 +1842,70 @@ void credential_config_read_hook(CONFIG_REC *config)
 
 /* === Initialization and deinitialization === */
 
-static gboolean show_startup_encryption_warning(gpointer data)
+static gboolean is_encrypted_value(CONFIG_REC *config, CONFIG_NODE *node, const char *key,
+                                   const char *value, void *data)
 {
-	if (credential_config_encrypt && !credential_has_master_password()) {
-		signal_emit("gui dialog", 2, "Credentials Locked",
-			"Configuration encryption is ON, but your credentials are\n"
-			"currently LOCKED. Use /credential passwd <password> to unlock them.");
+	return credential_is_encrypted(value);
+}
+
+char **credential_legacy_warning(void)
+{
+	GPtrArray *lines;
+	gboolean encrypted_values, external;
+	char *config_path, *readable;
+	struct stat st;
+
+	external = credential_storage_mode == CREDENTIAL_STORAGE_EXTERNAL;
+	encrypted_values = mainconfig != NULL &&
+	                   credential_foreach_config_value(mainconfig, is_encrypted_value, NULL);
+	if (!credential_config_encrypt && !external && !encrypted_values)
+		return NULL;
+
+	config_path = mainconfig != NULL && mainconfig->fname != NULL ?
+	                  g_strdup(mainconfig->fname) :
+	                  g_strdup_printf("%s/config", get_irssi_dir());
+	/* the file as it is now: a copy made by hand may still have the
+	   umask's mode until erssi writes it */
+	if (stat(config_path, &st) == 0 && (st.st_mode & 077) != 0)
+		readable = g_strdup_printf("readable by other users too (mode %04o; /SAVE "
+		                           "writes it with mode 0600)",
+		                           (unsigned int) (st.st_mode & 07777));
+	else
+		readable = g_strdup("readable only by you (mode 0600)");
+	lines = g_ptr_array_new();
+	g_ptr_array_add(lines, g_strdup(
+		"Credentials: this configuration still uses the old credential encryption or "
+		"external credentials file, which this version no longer sets up (/HELP CREDENTIAL)."));
+	g_ptr_array_add(lines, g_strdup_printf(
+		"What is protected: %s is a plain-text file, %s. "
+		"%s%s", config_path, readable,
+		encrypted_values ? "Only the passwords that the old encryption encrypted are "
+		                   "encrypted in it; everything else is plain text. " :
+		                   "Nothing in it is encrypted. ",
+		external ? "Credentials kept in the external file are plain text in it unless "
+		           "the old encryption was on." : ""));
+	if (credential_config_encrypt || external) {
+		g_ptr_array_add(lines, g_strdup_printf(
+			"To go back to plain storage: %s%s%s/SAVE.",
+			credential_config_encrypt ? "/CREDENTIAL PASSWD <master password>, " : "",
+			credential_config_encrypt ? "/CREDENTIAL DECRYPT, " : "",
+			external ? "/CREDENTIAL MIGRATE CONFIG, " : ""));
+	} else {
+		/* values left encrypted with the feature off: nothing decrypts
+		 * them any more, the passwords are entered again */
+		g_ptr_array_add(lines, g_strdup(
+			"To go back to plain storage: enter each encrypted password again "
+			"(/NETWORK ADD -sasl_password <password> <network>, "
+			"/SERVER ADD -password <password> <address>), then /SAVE."));
 	}
-	return G_SOURCE_REMOVE; /* Execute only once */
+	g_ptr_array_add(lines, g_strdup(
+		"To keep passwords out of the file: log in with a client certificate "
+		"(SASL EXTERNAL, /HELP NETWORK and /HELP SERVER) or keep your home directory "
+		"on an encrypted disk."));
+	g_ptr_array_add(lines, NULL);
+	g_free(readable);
+	g_free(config_path);
+	return (char **) g_ptr_array_free(lines, FALSE);
 }
 
 void credential_init(void)
@@ -1891,10 +1947,8 @@ void credential_init(void)
 		credential_external_load();
 	}
 
-	if (credential_config_encrypt) {
-		/* Display message with small delay so it's visible */
-		g_timeout_add(500, (GSourceFunc)show_startup_encryption_warning, NULL);
-	}
+	/* the warning about the old feature is printed by fe-credential.c, once
+	   the windows are there (credential_legacy_warning()) */
 }
 
 void credential_deinit(void)
