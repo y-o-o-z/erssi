@@ -208,9 +208,25 @@ def main():
         out = log_since(a, off)
         assert "bob is bob2@127.0.0.1 now, but the key request waiting under that nick on " \
                "E2E:#test came from zz@stale.example - nothing done" in out, out
+        # the hint never names an accept that would answer the wrong bob
+        assert "/e2e accept zz@stale.example" not in out, out
+        assert "/e2e decline zz@stale.example removes it" in out, out
         kr = json.loads(path.read_text())
         assert "zz@stale.example|E2E\x1f#test" in kr["pending_inbound"], kr["pending_inbound"]
         assert "old@gone.example|E2E\x1f#test" not in kr["pending_inbound"], kr["pending_inbound"]
+        # by its address: refused while its nick is another address
+        wire_off = (work / "wire.log").stat().st_size
+        off = log_size(a)
+        a.type_and_wait("/e2e accept zz@stale.example")
+        assert wait_log(a, off, "came under the nick bob, which is bob2@127.0.0.1 now - nothing done"), \
+            log_since(a, off)
+        time.sleep(1)
+        wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
+        assert "KEYRSP" not in wire, wire
+        kr = json.loads(path.read_text())
+        assert "zz@stale.example|E2E\x1f#test" in kr["pending_inbound"], kr["pending_inbound"]
+        for member in ("accepted", "outgoing_recipients", "peers"):
+            assert "zz@stale.example" not in json.dumps(kr.get(member, {})), (member, kr[member])
         a.type_and_wait("/e2e decline zz@stale.example")
         kr = json.loads(path.read_text())
         assert "zz@stale.example|E2E\x1f#test" not in kr["pending_inbound"], kr["pending_inbound"]

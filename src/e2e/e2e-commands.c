@@ -1103,9 +1103,12 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 		found = row == NULL ? e2e_pending_handle(kr, ctx, who, net.casemap, &n) : NULL;
 		e2e_net_clear(&net);
 		if (row == NULL && found != NULL && strcmp(found, handle) != 0) {
-			e2e_print_item(item, "%s is %s now, but the key request waiting under that nick on %s came from %s - nothing done; /e2e %s %s takes that request if you mean it",
-			               shown_text(who), shown_text(handle), shown(ctx), shown_text(found), cmd,
-			               shown_text(found));
+			/* never "/e2e accept <that address>": the answer would go
+			   to the nick, which is someone else now */
+			const char *sf = shown_text(found), *sw = shown_text(who), *sh = shown_text(handle);
+
+			e2e_print_item(item, "%s is %s now, but the key request waiting under that nick on %s came from %s - nothing done; it can be accepted once %s is back under a nick, /e2e decline %s removes it",
+			               sw, sh, shown(ctx), sf, sf, sf);
 			g_free(handle);
 			return NULL;
 		}
@@ -1130,6 +1133,23 @@ static char *pick_handle(const E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *it
 		g_free(k);
 		*nick = g_strdup(who != NULL && strchr(who, '@') == NULL ? who
 		                 : e2e_json_get_string(row, "sender_nick"));
+		/* the answer goes to the request's nick: never while that nick
+		   is another address now (it would reach the wrong person, and
+		   the absent address would be marked accepted) */
+		if (strcmp(cmd, "accept") == 0 && *nick != NULL && server != NULL &&
+		    (handle = e2e_resolve_dm_handle(server, NULL, *nick)) != NULL) {
+			if (g_ascii_strcasecmp(handle, found) != 0) {
+				const char *sf = shown_text(found), *sn = shown_text(*nick), *sh = shown_text(handle);
+
+				e2e_print_item(item, "the key request of %s on %s came under the nick %s, which is %s now - nothing done; it can be accepted once %s is back under a nick, /e2e decline %s removes it",
+				               sf, shown(ctx), sn, sh, sf, sf);
+				g_free(handle);
+				g_free(*nick);
+				*nick = NULL;
+				return NULL;
+			}
+			g_free(handle);
+		}
 		return g_strdup(found);
 	}
 	if (who == NULL) {

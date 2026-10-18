@@ -60,20 +60,23 @@
                  window of the network - the request of that address for
                  a query with it. Only requests of this window's channel
                  or query, or of that address's query, on this network
-                 are ever taken. Without a pending request, a nick marks
-                 their session here (an ident@host: their query's
-                 session) as trusted and accepts them - only when a real
-                 key from them is stored. A query's key goes only to that
-                 query's own address: a request from anyone else for it
-                 is damaged (rpe2e.pl kept such requests before) - listed
-                 by /E2E PENDING and /E2E ACCEPT, never accepted, removed
-                 by /E2E DECLINE alone in that query. Such an address
-                 that was accepted already (by an erssi before 2026-10)
-                 is damaged too: it may hold your key of the query, so
-                 that key rotates by itself with your next message there
-                 (you are told once) and the new one never reaches it;
-                 /E2E LIST shows it, and /E2E DECLINE <ident@host> (or
-                 alone) in that query removes it.
+                 are ever taken. The answer goes to the nick the request
+                 came under: while that nick is someone else here now,
+                 the request is not accepted (it waits until that
+                 address is back under a nick). Without a pending
+                 request, a nick marks their session here (an ident@host:
+                 their query's session) as trusted and accepts them -
+                 only when a real key from them is stored. A query's key
+                 goes only to that query's own address: a request from
+                 anyone else for it is damaged (rpe2e.pl kept such
+                 requests before) - listed by /E2E PENDING and /E2E
+                 ACCEPT, never accepted, removed by /E2E DECLINE alone in
+                 that query. Such an address that was accepted already (by
+                 an erssi before 2026-10) is damaged too: it may hold your
+                 key of the query, so that key rotates by itself with your
+                 next message there (you are told once) and the new one
+                 never reaches it; /E2E LIST shows it, and /E2E DECLINE
+                 <ident@host> (or alone) in that query removes it.
     DECLINE:     Declines a pending exchange, chosen as for ACCEPT; an
                  existing session gets the revoked status (their messages
                  are not read, and their key is not asked for again) and
