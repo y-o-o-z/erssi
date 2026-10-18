@@ -65,9 +65,11 @@ shellter-v2026.10.1 f8a831803d5d85bccc7818c7e79c57be61127483 signed
 shellter-v2026.10.2 d4e21dbe4573f584295ce4778539358a57f64af3 signed
 shellter-v2026.10.3 4c040de974e10d837cfeba72b1aab43e4785ccb9 signed
 "
-# who signs the releases (git allowed_signers format; utils/allowed_signers).
-# A new key also changes the fingerprint checked in signed_tag().
+# who signs the releases (git allowed_signers format; utils/allowed_signers)
+# and the fingerprint of that key (ssh-keygen -lf), which every signature
+# check also compares: a new key changes both
 RELEASE_SIGNER='136268860+y-o-o-z@users.noreply.github.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS'
+RELEASE_FINGERPRINT='SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw'
 MESON_PIP="meson==1.12.1"
 NINJA_PIP="ninja==1.13.2"
 
@@ -273,8 +275,7 @@ signed_tag() {
     if git -C "$1" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" \
             -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
             verify-tag --raw "$TAG_OBJ" 2>&1 |
-            # the fingerprint of RELEASE_SIGNER (ssh-keygen -lf)
-            grep -q '^Good "git" signature for 136268860+y-o-o-z@users.noreply.github.com with ED25519 key SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw$'; then
+            grep -qxF "Good \"git\" signature for ${RELEASE_SIGNER%% *} with ED25519 key $RELEASE_FINGERPRINT"; then
         rm -f "$signers"; return 0
     fi
     rm -f "$signers"; return 1

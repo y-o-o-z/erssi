@@ -355,7 +355,7 @@ release_key() {
 # the real one.
 patch_installer() {
     old_key=$(sed -n "s/^RELEASE_SIGNER='[^ ]* namespaces=\"git\" \([^ ]* [^ ']*\).*/\1/p" "$SRC/shellter-install.sh")
-    old_fp=$(sed -n 's/.* with ED25519 key \(SHA256:[A-Za-z0-9+/]*\)\$.*/\1/p' "$SRC/shellter-install.sh")
+    old_fp=$(sed -n "s/^RELEASE_FINGERPRINT='\(SHA256:[A-Za-z0-9+/]*\)'\$/\1/p" "$SRC/shellter-install.sh")
     new_key=$(cut -d' ' -f1,2 "$W/key.pub")
     new_fp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
     if ! { [ -n "$old_key" ] && [ -n "$old_fp" ] &&
