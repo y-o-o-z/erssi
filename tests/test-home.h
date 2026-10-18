@@ -63,8 +63,12 @@ static void test_home_setup(void)
 {
 	char *argv[] = { "test", "--home", NULL, NULL };
 
-	test_home_dir = g_dir_make_tmp("erssi-test-home-XXXXXX", NULL);
-	if (test_home_dir == NULL) {
+	/* not g_dir_make_tmp(): it makes GLib remember the temporary
+	 * directory before TMPDIR points into this tree, and later
+	 * g_dir_make_tmp() calls of the test would land outside it */
+	test_home_dir = g_build_filename(g_getenv("TMPDIR") != NULL ? g_getenv("TMPDIR") : "/tmp",
+	                                 "erssi-test-home-XXXXXX", NULL);
+	if (g_mkdtemp(test_home_dir) == NULL) {
 		g_printerr("cannot make a temporary home\n");
 		exit(1);
 	}

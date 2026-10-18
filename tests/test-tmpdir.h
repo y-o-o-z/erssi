@@ -60,8 +60,11 @@ static void test_tmpdir_signal(int sig)
 
 static void test_tmpdir_setup(void)
 {
-	test_tmpdir = g_dir_make_tmp("erssi-test-XXXXXX", NULL);
-	if (test_tmpdir == NULL) {
+	/* not g_dir_make_tmp(): it makes GLib remember the temporary
+	 * directory before TMPDIR points into this tree (see test-home.h) */
+	test_tmpdir = g_build_filename(g_getenv("TMPDIR") != NULL ? g_getenv("TMPDIR") : "/tmp",
+	                               "erssi-test-XXXXXX", NULL);
+	if (g_mkdtemp(test_tmpdir) == NULL) {
 		g_printerr("cannot make a temporary directory\n");
 		exit(1);
 	}
