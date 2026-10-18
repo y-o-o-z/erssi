@@ -280,7 +280,9 @@ else
     say "testing (the full suite)"
     set --
 fi
-if ! meson test -C "$BUILD" --no-rebuild --print-errorlogs "$@" > "$WORK/test.log" 2>&1; then
+# not --no-rebuild: some test programs (the fuzz corpus replays) are not
+# built by default, and meson test builds them
+if ! meson test -C "$BUILD" --print-errorlogs "$@" > "$WORK/test.log" 2>&1; then
     grep -E '^ *[0-9]+/[0-9]+ .* (FAIL|ERROR|TIMEOUT) ' "$WORK/test.log" >&2
     tail -n 8 "$WORK/test.log" >&2
     die "tests failed - no package (the log: $WORK/test.log with --keep-work)"

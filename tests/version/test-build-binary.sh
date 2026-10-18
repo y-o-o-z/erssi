@@ -12,7 +12,8 @@
 #               directory, sorted entries owned by 0 and dated to the commit,
 #               the MANIFEST of the release format, and erssi running from
 #               two places it is unpacked to; the build's own tests run are
-#               the relocatable live test (BUILD_BINARY_TESTS)
+#               the relocatable live test and a fuzz corpus test whose
+#               program is not built by default (BUILD_BINARY_TESTS)
 #   tests-fail  a tag whose tests fail: no package
 # Exit: 0 pass, 1 fail, 77 skip.
 # shellcheck disable=SC2016 # the awk programs and sh -c scripts take $1 themselves
@@ -238,15 +239,17 @@ case_package() {
     COMMIT=$(git -C "$R" rev-parse "$TAG^{commit}")
     EPOCH=$(git -C "$R" log -1 --format=%ct "$COMMIT")
     BUILT=$(date -u -d "@$EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$EPOCH" +%Y-%m-%dT%H:%M:%SZ)
-    export BUILD_BINARY_TESTS="live relocatable"
+    # the relocatable live test, and a test whose program ninja does not
+    # build by default (meson test must build it, as for the full suite)
+    export BUILD_BINARY_TESTS="live relocatable,fe-web fuzz corpus handshake"
     run_bb "$TAG"
     check "the package is built (exit $RC)" [ "$RC" = 0 ]
     [ "$RC" = 0 ] || { printf '%s\n' "$OUT" | tail -n 30; return; }
     T=$OUTDIR/$NAME.tar.xz
     check "only $NAME.tar.xz is written" [ "$(ls -A "$OUTDIR")" = "$NAME.tar.xz" ]
     check "the work directory is removed" [ ! -e "$tmp/work.$n" ]
-    check "it says it ran only BUILD_BINARY_TESTS" grep -q 'WARNING: only the tests live relocatable' "$tmp/out.$n"
-    check "the relocatable live test ran in the build" grep -q 'tests: Ok: 1 Fail: 0' "$tmp/out.$n"
+    check "it says it ran only BUILD_BINARY_TESTS" grep -q 'WARNING: only the tests live relocatable,fe-web fuzz corpus handshake' "$tmp/out.$n"
+    check "both tests ran in the build" grep -q 'tests: Ok: 2 Fail: 0' "$tmp/out.$n"
 
     tar_entries "$T" > "$tmp/entries" || { bad "the tarball cannot be read"; return; }
     check "one top directory $NAME/" awk -v n="$NAME" '$1 != n && index($1, n "/") != 1 { exit 1 }' "$tmp/entries"
