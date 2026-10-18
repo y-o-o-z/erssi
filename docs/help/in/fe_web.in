@@ -74,7 +74,10 @@
     them. Passwords (sasl_password, a server's password and tls_pass)
     and a network's autosendcmd, which often holds a NickServ password,
     are sent to it as "***"; a client that sends "***" back leaves the
-    stored value as it is.
+    stored value as it is. Each change is written to the config file at
+    once, as the autosave would write it: with settings_autosave ON and
+    a config file that was not changed outside erssi. Otherwise it is
+    kept until /SAVE, and the client is told so.
 
     Web clients and E2E: with the e2e module loaded, a web client is told
     the E2E state of every channel and query (off, on, waiting for keys,

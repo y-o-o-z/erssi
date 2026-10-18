@@ -9,17 +9,24 @@
  network_list and server_list send passwords, and the network's
  autosendcmd (which often holds a NickServ password), as the mask "***".
  A client that edits a network or server sends back what it got (NexusIRC
- does): the mask leaves the stored value as it is.
+ does): the mask leaves the stored value as it is. An edit is written to
+ the config file at once, so that it is there after a restart without
+ /SAVE - when irssi's own autosave would write it.
 */
 
 #include "fe-web-test.h"
 
 #include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/servers-setup.h>
+#include <irssi/src/core/settings.h>
 #include <irssi/src/irc/core/irc-chatnets.h>
 #include <irssi/src/irc/core/irc-servers-setup.h>
+#include <irssi/src/lib-config/iconfig.h>
 
+#include <fcntl.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 /* ---- a logged-in client that reads plain text frames ---- */
 
@@ -81,9 +88,62 @@ static char *network_json(const char *name)
 	return g_string_free(json, FALSE);
 }
 
+/* The config file as a restart reads it: a value of it, or NULL (freed) */
+static char *saved_value(const char *section, const char *key)
+{
+	CONFIG_REC *config;
+	char *value;
+
+	if (!g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR))
+		return NULL;
+	config = config_open(mainconfig->fname, -1);
+	g_assert_nonnull(config);
+	g_assert_cmpint(config_parse(config), ==, 0);
+	value = g_strdup(config_get_str(config, section, key, NULL));
+	config_close(config);
+	return value;
+}
+
+/* the value of 'key' of the first server of the file with this address */
+static char *saved_server_value(const char *address, const char *key)
+{
+	CONFIG_REC *config;
+	CONFIG_NODE *servers;
+	GSList *tmp;
+	char *value = NULL;
+
+	if (!g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR))
+		return NULL;
+	config = config_open(mainconfig->fname, -1);
+	g_assert_nonnull(config);
+	g_assert_cmpint(config_parse(config), ==, 0);
+	servers = config_node_traverse(config, "servers", FALSE);
+	for (tmp = servers != NULL ? config_node_first(servers->value) : NULL; tmp != NULL;
+	     tmp = config_node_next(tmp)) {
+		CONFIG_NODE *node = tmp->data;
+
+		if (g_strcmp0(config_node_get_str(node, "address", NULL), address) == 0) {
+			value = g_strdup(config_node_get_str(node, key, NULL));
+			break;
+		}
+	}
+	config_close(config);
+	return value;
+}
+
+static void assert_saved(const char *section, const char *key, const char *expected)
+{
+	char *value = saved_value(section, key);
+
+	g_assert_cmpstr(value, ==, expected);
+	g_free(value);
+}
+
 static void teardown(void)
 {
 	fe_web_fuzz_reset_setup();
+	settings_set_bool("settings_autosave", FALSE);
+	unlink(mainconfig->fname);
 }
 
 /* ---- the masks ---- */
@@ -167,15 +227,123 @@ static void test_server_password_mask_keeps_value(void)
 	teardown();
 }
 
+/* ---- saving ---- */
+
+/* each edit is in the file at once, with settings_autosave ON */
+static void test_edits_saved(void)
+{
+	char *heard, *value;
+
+	settings_set_bool("settings_autosave", TRUE);
+	unlink(mainconfig->fname);
+
+	heard = say("{\"type\":\"network_add\",\"id\":\"1\",\"name\":\"SaveNet\","
+	            "\"nick\":\"saver\",\"sasl_mechanism\":\"PLAIN\",\"sasl_username\":\"me\","
+	            "\"sasl_password\":\"s3cret\",\"autosendcmd\":\"/msg NickServ id x\"}");
+	g_assert_nonnull(strstr(heard, "Network 'SaveNet' added successfully\""));
+	g_free(heard);
+	assert_saved("chatnets/SaveNet", "nick", "saver");
+	assert_saved("chatnets/SaveNet", "autosendcmd", "/msg NickServ id x");
+	value = saved_value("chatnets/SaveNet", "sasl_password");
+	g_assert_nonnull(value);
+	g_assert_cmpstr(value, !=, "***");
+	g_free(value);
+
+	/* an edit with the masks sent back */
+	say_quiet("{\"type\":\"network_add\",\"id\":\"2\",\"name\":\"SaveNet\","
+	          "\"nick\":\"saver2\",\"sasl_password\":\"***\",\"autosendcmd\":\"***\"}");
+	assert_saved("chatnets/SaveNet", "nick", "saver2");
+	assert_saved("chatnets/SaveNet", "autosendcmd", "/msg NickServ id x");
+	value = saved_value("chatnets/SaveNet", "sasl_password");
+	g_assert_cmpstr(value, !=, "***");
+	g_free(value);
+
+	/* a server, then a change of it */
+	say_quiet("{\"type\":\"server_add\",\"id\":\"3\",\"address\":\"irc.save.example\","
+	          "\"port\":6697,\"chatnet\":\"SaveNet\",\"use_tls\":0}");
+	value = saved_server_value("irc.save.example", "chatnet");
+	g_assert_cmpstr(value, ==, "SaveNet");
+	g_free(value);
+	value = saved_server_value("irc.save.example", "use_tls");
+	g_assert_true(value == NULL || g_ascii_strcasecmp(value, "no") == 0);
+	g_free(value);
+	say_quiet("{\"type\":\"server_add\",\"id\":\"4\",\"address\":\"irc.save.example\","
+	          "\"port\":6697,\"chatnet\":\"SaveNet\",\"use_tls\":1}");
+	value = saved_server_value("irc.save.example", "use_tls");
+	g_assert_cmpstr(value, ==, "yes");
+	g_free(value);
+
+	/* and removals */
+	say_quiet("{\"type\":\"server_remove\",\"id\":\"5\",\"address\":\"irc.save.example\","
+	          "\"port\":6697,\"chatnet\":\"SaveNet\"}");
+	value = saved_server_value("irc.save.example", "chatnet");
+	g_assert_null(value);
+	say_quiet("{\"type\":\"network_remove\",\"id\":\"6\",\"name\":\"SaveNet\"}");
+	assert_saved("chatnets/SaveNet", "nick", NULL);
+	teardown();
+}
+
+/* settings_autosave OFF: in memory only, and the result says so */
+static void test_autosave_off_not_saved(void)
+{
+	char *heard;
+
+	settings_set_bool("settings_autosave", FALSE);
+	unlink(mainconfig->fname);
+	heard = say("{\"type\":\"network_add\",\"id\":\"1\",\"name\":\"OffNet\"}");
+	g_assert_nonnull(strstr(heard, "Network 'OffNet' added successfully; not saved: "
+	                               "settings_autosave is OFF; /SAVE writes it"));
+	g_free(heard);
+	g_assert_nonnull(irc_chatnet_find("OffNet"));
+	g_assert_false(g_file_test(mainconfig->fname, G_FILE_TEST_EXISTS));
+	teardown();
+}
+
+/* a config file changed outside erssi is not overwritten */
+static void test_changed_file_not_overwritten(void)
+{
+	static const char outside[] = "# edited by hand\nchatnets = { HandNet = { }; };\n";
+	char *heard, *data;
+	struct stat st;
+
+	settings_set_bool("settings_autosave", TRUE);
+	unlink(mainconfig->fname);
+	say_quiet("{\"type\":\"network_add\",\"id\":\"1\",\"name\":\"FirstNet\"}");
+	g_assert_true(g_file_test(mainconfig->fname, G_FILE_TEST_IS_REGULAR));
+
+	/* a modification time other than the one erssi saw */
+	g_assert_true(g_file_set_contents(mainconfig->fname, outside, -1, NULL));
+	g_assert_cmpint(stat(mainconfig->fname, &st), ==, 0);
+	{
+		struct timespec times[2] = { { st.st_mtime + 10, 0 }, { st.st_mtime + 10, 0 } };
+
+		g_assert_cmpint(utimensat(AT_FDCWD, mainconfig->fname, times, 0), ==, 0);
+	}
+
+	heard = say("{\"type\":\"network_add\",\"id\":\"2\",\"name\":\"SecondNet\"}");
+	g_assert_nonnull(strstr(heard, "not saved: the config file was changed outside "
+	                               "erssi; /SAVE writes it"));
+	g_free(heard);
+	g_assert_true(g_file_get_contents(mainconfig->fname, &data, NULL, NULL));
+	g_assert_cmpstr(data, ==, outside);
+	g_free(data);
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	test_init(&argc, &argv);
+	g_assert_nonnull(mainconfig->fname);
 
 	g_test_add_func("/fe-web/netserver/sasl-password-mask-keeps-value",
 	                test_sasl_password_mask_keeps_value);
 	g_test_add_func("/fe-web/netserver/autosendcmd-masked", test_autosendcmd_masked);
 	g_test_add_func("/fe-web/netserver/server-password-mask-keeps-value",
 	                test_server_password_mask_keeps_value);
+	g_test_add_func("/fe-web/netserver/edits-saved", test_edits_saved);
+	g_test_add_func("/fe-web/netserver/autosave-off-not-saved", test_autosave_off_not_saved);
+	g_test_add_func("/fe-web/netserver/changed-file-not-overwritten",
+	                test_changed_file_not_overwritten);
 
 	return g_test_run();
 }

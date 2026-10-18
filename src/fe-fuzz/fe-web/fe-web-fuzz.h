@@ -25,7 +25,9 @@
 
 /* Initialize irssi core, irc, fe-common and the parts of fe-web the
  * targets use. Commands sent by web clients are swallowed, never run, and
- * irssi's home is a fresh temporary directory. */
+ * irssi's home is a fresh temporary directory. settings_autosave is OFF,
+ * so the network and server edits of web clients are not written to the
+ * config file (a test that wants them written sets it ON). */
 void fe_web_fuzz_init(gboolean with_irc_signals);
 
 /* The temporary directory fe_web_fuzz_init() made irssi's home (and
@@ -154,8 +156,7 @@ void fe_web_fuzz_set_clock(time_t now);
 char *fe_web_fuzz_take_printed(void);
 
 /* With TRUE, commands sent by web clients run (the unit tests of what a
- * command may do); FALSE swallows them again, as fe_web_fuzz_init() does.
- * Saving the config stays swallowed. */
+ * command may do); FALSE swallows them again, as fe_web_fuzz_init() does. */
 void fe_web_fuzz_allow_commands(gboolean allow);
 
 /* Run the default main context for 'ms' milliseconds */

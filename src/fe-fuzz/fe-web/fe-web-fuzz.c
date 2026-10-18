@@ -136,6 +136,8 @@ static void fe_web_fuzz_settings(void)
 	settings_add_str("lookandfeel", "fe_web_password", "");
 	settings_add_str("lookandfeel", "fe_web_socket", "");
 	settings_set_str("fe_web_password", FE_WEB_FUZZ_PASSWORD);
+	/* no config file written for every network_add of a fuzzer */
+	settings_set_bool("settings_autosave", FALSE);
 }
 
 /* The sidebar of the terminal frontend, which fe-web clears on mark_read */
@@ -302,7 +304,6 @@ void fe_web_fuzz_init(gboolean with_irc_signals)
 	module_register("web", "fe");
 
 	signal_add_first("send command", (SIGNAL_FUNC) sig_swallow);
-	signal_add_first("save config", (SIGNAL_FUNC) sig_swallow);
 	printed = g_string_new(NULL);
 	signal_add_first("print text", (SIGNAL_FUNC) sig_capture_printed);
 

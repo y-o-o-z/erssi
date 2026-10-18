@@ -20,6 +20,9 @@
 #include <irssi/src/core/servers-setup.h>
 #include <irssi/src/irc/core/irc-servers-setup.h>
 #include <irssi/src/core/channels-setup.h>
+#include <irssi/src/core/settings.h>
+#include <irssi/src/lib-config/iconfig.h>
+#include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -53,6 +56,49 @@ static void send_command_result(WEB_CLIENT_REC *client, const char *request_id,
 	
 	fe_web_message_free(msg);
 	g_string_free(json_content, TRUE);
+}
+
+/* A web client's edit is written to the config file at once, when
+ * irssi's own autosave would write it (as /KEEPNICK does): with
+ * settings_autosave ON, a config read without errors (the part not read
+ * would be lost) and a file not changed outside erssi since it was read
+ * (those changes would be lost). Otherwise the edit is kept in memory
+ * until /SAVE. Returns NULL when the file was written, else why not, for
+ * the command result (to be freed). */
+static char *save_config(void)
+{
+	char *reason, *note;
+
+	if (mainconfig->fname == NULL)
+		return g_strdup("not saved: there is no config file");
+	if (!settings_get_bool("settings_autosave"))
+		return g_strdup("not saved: settings_autosave is OFF; /SAVE writes it");
+	if (config_last_error(mainconfig) != NULL)
+		return g_strdup("not saved: the config file has errors; /SAVE writes it");
+	if (irssi_config_is_changed(NULL))
+		return g_strdup("not saved: the config file was changed outside erssi; "
+		                "/SAVE writes it");
+	if (shellter_save_at_start(&reason))
+		return NULL;
+	note = g_strdup_printf("not saved (%s); /SAVE to try again", reason);
+	g_free(reason);
+	return note;
+}
+
+/* The result of an edit: 'done' ("Network 'x' added"), and whether the
+ * config file has it */
+static void send_saved_result(WEB_CLIENT_REC *client, const char *request_id, const char *done)
+{
+	char *note, *msg;
+
+	note = save_config();
+	if (note == NULL)
+		msg = g_strdup_printf("%s successfully", done);
+	else
+		msg = g_strdup_printf("%s successfully; %s", done, note);
+	send_command_result(client, request_id, TRUE, msg, NULL);
+	g_free(msg);
+	g_free(note);
 }
 
 /* Handle network_list request */
@@ -323,13 +369,9 @@ void fe_web_handle_network_add(WEB_CLIENT_REC *client, const char *json_str)
 
 	/* Create/update network */
 	ircnet_create(rec);
-	
-	/* Auto-save configuration */
-	signal_emit("save config", 0);
 
-	msg = g_strdup_printf("Network '%s' %s successfully", name,
-	                           is_new ? "added" : "modified");
-	send_command_result(client, request_id, TRUE, msg, NULL);
+	msg = g_strdup_printf("Network '%s' %s", name, is_new ? "added" : "modified");
+	send_saved_result(client, request_id, msg);
 	g_free(msg);
 
 	g_free(name);
@@ -371,12 +413,9 @@ void fe_web_handle_network_remove(WEB_CLIENT_REC *client, const char *json_str)
 	
 	/* Remove network */
 	chatnet_remove(CHATNET(rec));
-	
-	/* Auto-save configuration */
-	signal_emit("save config", 0);
 
-	msg = g_strdup_printf("Network '%s' removed successfully", name);
-	send_command_result(client, request_id, TRUE, msg, NULL);
+	msg = g_strdup_printf("Network '%s' removed", name);
+	send_saved_result(client, request_id, msg);
 	g_free(msg);
 
 	g_free(name);
@@ -487,17 +526,18 @@ void fe_web_handle_server_add(WEB_CLIENT_REC *client, const char *json_str)
 		rec->no_cap = fe_web_json_get_int(json_str, "no_cap", 0);
 	}
 
-	/* Add/modify server */
+	/* Add/modify server; a changed one is written into the config too
+	 * (its address, port and network are the same, the lookup found it
+	 * by them), as /SERVER MODIFY does */
 	if (is_new) {
 		server_setup_add(SERVER_SETUP(rec));
+	} else {
+		server_setup_modify(SERVER_SETUP(rec), rec->port, rec->chatnet);
 	}
-	
-	/* Auto-save configuration */
-	signal_emit("save config", 0);
 
-	msg = g_strdup_printf("Server '%s:%d' %s successfully",
-	                           address, port, is_new ? "added" : "modified");
-	send_command_result(client, request_id, TRUE, msg, NULL);
+	msg = g_strdup_printf("Server '%s:%d' %s", address, port,
+	                      is_new ? "added" : "modified");
+	send_saved_result(client, request_id, msg);
 	g_free(msg);
 
 	g_free(address);
@@ -542,12 +582,9 @@ void fe_web_handle_server_remove(WEB_CLIENT_REC *client, const char *json_str)
 
 	/* Remove server */
 	server_setup_remove(rec);
-	
-	/* Auto-save configuration */
-	signal_emit("save config", 0);
 
-	msg = g_strdup_printf("Server '%s:%d' removed successfully", address, port);
-	send_command_result(client, request_id, TRUE, msg, NULL);
+	msg = g_strdup_printf("Server '%s:%d' removed", address, port);
+	send_saved_result(client, request_id, msg);
 	g_free(msg);
 
 	g_free(address);
