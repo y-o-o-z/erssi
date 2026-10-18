@@ -952,9 +952,32 @@ static void test_save_failed(void)
 	g_free(home);
 }
 
+/* A failed /SAVE (here: the home is read-only) reports why through
+   settings_save_error() and leaves no error in mainconfig, where fe-web,
+   keepnick and the migrations would read it as a config with errors. A
+   later save that works clears the reason. */
+static void test_settings_save_failed_no_error_left(void)
+{
+	static const char config[] = "settings = { core = { nick = \"alice\"; }; };\n";
+	char *home;
+
+	if (!run_in_child_mode(config, TRUE))
+		return;
+
+	home = start_in_home();
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_false(settings_save(NULL, FALSE));
+	g_assert_nonnull(settings_save_error());
+	g_assert_null(config_last_error(mainconfig));
+	g_assert_cmpint(g_chmod(home, 0700), ==, 0);
+	g_assert_true(settings_save(NULL, FALSE));
+	g_assert_null(settings_save_error());
+	g_assert_null(config_last_error(mainconfig));
+	g_free(home);
+}
+
 /* The temporary file is written but renaming it over the config fails:
-   lib-config returns success with last_error set. That is a failed save
-   too - no "now written" note, no error left in mainconfig. */
+   a failed save - no "now written" note, no error left in mainconfig. */
 static void test_rename_failed(void)
 {
 	static const char config[] = "settings = { core = { nick = \"alice\"; }; };\n";
@@ -1085,6 +1108,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/broken_config", test_broken_config);
 	g_test_add_func("/shellter_defaults/save_failed", test_save_failed);
 	g_test_add_func("/shellter_defaults/rename_failed", test_rename_failed);
+	g_test_add_func("/shellter_defaults/settings_save_failed_no_error_left", test_settings_save_failed_no_error_left);
 	g_test_add_func("/shellter_defaults/mentions_save_failed", test_mentions_save_failed);
 	g_test_add_func("/shellter_defaults/no_user_file", test_no_user_file);
 	g_test_add_func("/shellter_defaults/statusbar_shipped_list", test_statusbar_shipped_list);

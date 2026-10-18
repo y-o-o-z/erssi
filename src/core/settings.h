@@ -132,6 +132,8 @@ void settings_clean_invalid(void);
 /* if `fname' is NULL, the default is used */
 int settings_reread(const char *fname);
 int settings_save(const char *fname, int autosave);
+/* why the last settings_save() failed, NULL when it worked */
+const char *settings_save_error(void);
 int irssi_config_is_changed(const char *fname);
 
 /* The value of key KEY in the settings block of MODULE (e.g. "fe-common/core") in

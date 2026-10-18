@@ -851,10 +851,19 @@ char *settings_get_builtin_str(const char *module, const char *key)
 	return value;
 }
 
+/* the reason of the last failed settings_save(), or NULL after one that
+   worked */
+static char *last_save_error;
+
+const char *settings_save_error(void)
+{
+	return last_save_error;
+}
+
 int settings_save(const char *fname, int autosave)
 {
 	char *str;
-	int error;
+	int error, had_error;
 
 	if (fname == NULL)
 		fname = mainconfig->fname;
@@ -862,14 +871,23 @@ int settings_save(const char *fname, int autosave)
 	/* last changes to what is written, such as credentials stored again
 	 * in their current encrypted form */
 	signal_emit("setup saving", 2, mainconfig, fname);
+	had_error = config_last_error(mainconfig) != NULL;
 	error = config_write(mainconfig, fname, 0600) != 0;
 	irssi_config_save_state(fname);
 	config_last_modifycounter = mainconfig->modifycounter;
+	g_free_and_null(last_save_error);
 	if (error) {
+		last_save_error = g_strdup(config_last_error(mainconfig) != NULL ?
+		                           config_last_error(mainconfig) : "unknown error");
 		str = g_strdup_printf("Couldn't save configuration file: %s",
-				      config_last_error(mainconfig));
+				      last_save_error);
 		signal_emit("gui dialog", 2, "error", str);
 		g_free(str);
+		/* the file is intact, and last_error means "the config read had
+		   errors" to the rest of erssi (fe-web, keepnick, migrations):
+		   a write error is not left there - settings_save_error() has it */
+		if (!had_error)
+			g_free_and_null(mainconfig->last_error);
 	}
 	signal_emit("setup saved", 2, fname, GINT_TO_POINTER(autosave));
         return !error;
@@ -943,4 +961,5 @@ void settings_deinit(void)
 	settings = NULL;
 
 	if (mainconfig != NULL) config_close(mainconfig);
+	g_free_and_null(last_save_error);
 }

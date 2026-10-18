@@ -248,19 +248,12 @@ int shellter_save_at_start(char **reason)
 	   cleared below can only be the error of this write */
 	g_return_val_if_fail(config_last_error(mainconfig) == NULL, FALSE);
 
-	/* lib-config's rename path returns success with the error set, so
-	   an error after the write is a failed write too */
-	ok = settings_save(NULL, TRUE) && config_last_error(mainconfig) == NULL;
-	if (!ok) {
-		/* The file is intact, but the reason left in last_error would
-		   look like a parse error for the rest of the run (erssi
-		   --setup, the other migrations). lib-config has no public
-		   call to clear it. */
-		if (reason != NULL)
-			*reason = g_strdup(config_last_error(mainconfig) != NULL ?
-			                   config_last_error(mainconfig) : "unknown error");
-		g_free_and_null(mainconfig->last_error);
-	}
+	/* settings_save() reports a failed write and keeps its reason out
+	   of last_error, which means a parse error to the rest of the run */
+	ok = settings_save(NULL, TRUE);
+	if (!ok && reason != NULL)
+		*reason = g_strdup(settings_save_error() != NULL ?
+		                   settings_save_error() : "unknown error");
 	return ok;
 }
 
