@@ -44,6 +44,21 @@ void image_cache_enforce_limit(const char *path)
 {
 }
 
+/* the cache's hard limit (image_cache_full() in image-preview-cache.c) */
+static gboolean cache_full;
+static int full_notices;
+
+gboolean image_cache_full(void)
+{
+	return cache_full;
+}
+
+void printtext(void *server, const char *target, int level, const char *text, ...)
+{
+	if (strstr(text, "no new download") != NULL)
+		full_notices++;
+}
+
 int settings_get_int(const char *key)
 {
 	return 10;
@@ -188,6 +203,29 @@ static void test_cache_file_refused(void)
 	g_free(dir);
 }
 
+/* the hard limit of the cache holds for a retry too: a retry that fires
+ * while the cache is full starts nothing, and the preview ends failed */
+static void test_retry_refused_when_full(void)
+{
+	image_fetch_init();
+	fail_page_fetch("https://example.invalid/full");
+	g_assert_cmpuint(g_slist_length(pending_retries), ==, 1);
+	preview_present = TRUE;
+	cache_full = TRUE;
+	full_notices = 0;
+	run_past_retry_delay();
+	g_assert_cmpint(preview_lookups, ==, 1);
+	g_assert_cmpint(full_notices, ==, 1);
+	g_assert_true(preview.fetch_failed);
+	g_assert_false(preview.fetch_pending);
+	g_assert_cmpuint(g_hash_table_size(active_fetches), ==, 0);
+	g_free(preview.error_message);
+	preview.error_message = NULL;
+	cache_full = FALSE;
+	preview_present = FALSE;
+	image_fetch_deinit();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -198,6 +236,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-fetch/fired_retry", test_fired_retry);
 	g_test_add_func("/image-fetch/cancel", test_cancel);
 	g_test_add_func("/image-fetch/cache_file_refused", test_cache_file_refused);
+	g_test_add_func("/image-fetch/retry_refused_when_full", test_retry_refused_when_full);
 
 	return g_test_run();
 }

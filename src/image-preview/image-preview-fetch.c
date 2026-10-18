@@ -15,6 +15,8 @@
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/safe-file.h>
+#include <irssi/src/core/levels.h>
+#include <irssi/src/fe-common/core/printtext.h>
 
 #include <curl/curl.h>
 #include <string.h>
@@ -1122,6 +1124,18 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 	/* Check concurrent fetch limit */
 	if (active_fetches != NULL && g_hash_table_size(active_fetches) >= MAX_CONCURRENT_FETCHES) {
 		image_preview_debug_print("FETCH: concurrent limit reached");
+		return FALSE;
+	}
+
+	/* the cache's hard limit (image_cache_full()), for every download -
+	 * a retry too: files too new to be removed fill it, no more until
+	 * they age */
+	if (image_cache_full()) {
+		image_preview_debug_print("FETCH: cache over twice its size limit");
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "Image preview: the cache holds more than twice "
+		          "image_preview_cache_size of files from the last minutes - no new "
+		          "download until they can be removed (/IMAGE CLEAR empties the cache)");
 		return FALSE;
 	}
 

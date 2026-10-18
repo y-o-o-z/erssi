@@ -413,17 +413,23 @@ void image_cache_cleanup(void)
 }
 
 /* image_preview_cache_size is a soft limit (see cache_cleanup()): this is
- * the hard one. No new download starts while the cache, counted again
- * now, holds more than IMAGE_CACHE_HARD_FACTOR times the setting - files
- * that are too new to be removed. With at most MAX_CONCURRENT_FETCHES
- * downloads at a time (image-preview-fetch.c), each at most
- * image_preview_max_file_size, the cache never holds more than that
- * factor times the setting plus those downloads. */
+ * the hard one. No new download, a retry included (image_fetch_start()),
+ * starts while the cache, counted again now, holds more than
+ * IMAGE_CACHE_HARD_FACTOR times the setting - files that are too new to be
+ * removed. A download that started below that adds at most
+ * image_preview_max_file_size, and at most MAX_CONCURRENT_FETCHES run at a
+ * time (image-preview-fetch.c), so the cache never holds more than that
+ * factor times the setting plus those downloads. 0 keeps its meaning of
+ * no lasting cache - every file goes once it is old enough - and has no
+ * hard limit. */
 gboolean image_cache_full(void)
 {
+	gint64 limit = settings_get_size(IMAGE_PREVIEW_CACHE_SIZE);
+
+	if (limit <= 0)
+		return FALSE;
 	cache_cleanup(NULL);
-	return cache_stats.total_size >
-	       (gint64) IMAGE_CACHE_HARD_FACTOR * settings_get_size(IMAGE_PREVIEW_CACHE_SIZE);
+	return cache_stats.total_size > (gint64) IMAGE_CACHE_HARD_FACTOR * limit;
 }
 
 /* Keeps the cache within its size limit after path was written to it;

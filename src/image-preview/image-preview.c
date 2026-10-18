@@ -509,19 +509,6 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 		g_checksum_free(checksum);
 	}
 
-	if (image_cache_full()) {
-		/* files too new to be removed fill it: no more until they age */
-		debug_print("queue_fetch: cache over twice its size limit");
-		rec->fetch_pending = FALSE;
-		rec->fetch_failed = TRUE;
-		rec->error_message = g_strdup("Image cache full");
-		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-		          "Image preview: the cache holds more than twice "
-		          "image_preview_cache_size of files from the last minutes - no new "
-		          "download until they can be removed (/IMAGE CLEAR empties the cache)");
-		return FALSE;
-	}
-
 	rec->fetch_pending = TRUE;
 	rec->fetch_failed = FALSE;
 

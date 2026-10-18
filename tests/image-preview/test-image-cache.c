@@ -394,6 +394,22 @@ static void test_full(void)
 	teardown();
 }
 
+/* 0: no lasting cache, as before the hard limit - every file goes once it
+ * is old enough, and downloads are never refused */
+static void test_full_size_zero(void)
+{
+	setup();
+	size_limit = 0;
+	make_file(HASH("1") ".png", 1500, 10);
+	g_assert_false(image_cache_full());
+	make_file(HASH("2") ".png", 1500, 1000);
+	image_cache_cleanup();
+	g_assert_true(exists(HASH("1") ".png"));
+	g_assert_false(exists(HASH("2") ".png"));
+	g_assert_false(image_cache_full());
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -405,6 +421,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-cache/foreign_entries", test_foreign_entries);
 	g_test_add_func("/image-cache/get_symlink", test_get_symlink);
 	g_test_add_func("/image-cache/full", test_full);
+	g_test_add_func("/image-cache/full_size_zero", test_full_size_zero);
 	g_test_add_func("/image-cache/get_fifo_dev_null", test_get_fifo_dev_null);
 
 	return g_test_run();
