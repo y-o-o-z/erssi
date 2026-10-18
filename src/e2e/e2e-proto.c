@@ -3995,7 +3995,10 @@ static void replay_expire(E2E_REPLAY *r, gint64 now)
 }
 
 /* a partition with the most entries (of those, the one that got there
-   first): where the global cap takes from */
+   first): where the global cap takes from. A linear scan used to pick the
+   oldest entry among the largest partitions; keeping that order would
+   need a sorted insert, so a tie now goes to the partition that reached
+   the size first - the cap still only ever takes from a largest one */
 static REPLAY_PART *replay_largest(E2E_REPLAY *r)
 {
 	return r->top > 0 ? g_queue_peek_head(&r->by_size[r->top]) : NULL;

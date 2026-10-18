@@ -341,8 +341,8 @@
     Keyrings: a keyring that cannot be read is never overwritten, and
     messages are not sent until it can be read again - so is one that is
     not a regular file of yours (keyring.json as a symlink, which is not
-    followed - replace the link with the file, or link the whole rpe2e
-    directory instead - a FIFO, a device). The subcommands (but HELP and
+    followed, a FIFO, a device; for a link, replace it with the file or
+    link the whole rpe2e directory instead). The subcommands (but HELP and
     IMPORT) refuse then, so that EXPORT never writes an empty export and
     nothing claims a change that was not saved. One that is not valid JSON
     is moved aside to keyring.json.corrupt-<time>; the E2E state is then
