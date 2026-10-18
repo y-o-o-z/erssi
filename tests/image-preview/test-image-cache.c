@@ -4,7 +4,8 @@
  * removed until the cache fits, the image just downloaded and the files
  * written within the download time limit (downloads in progress, images
  * not shown yet) stay, and only the cache's own regular files directly in
- * its directory are touched;
+ * its directory are touched; while more than twice the limit of new
+ * files is held, the cache is full (no new download);
  * other files, directories and symlinks (and what they point to) are left
  * alone.
  */
@@ -365,6 +366,34 @@ static void test_get_fifo_dev_null(void)
 	teardown();
 }
 
+/* the hard limit: no new download while the cache holds more than twice
+ * image_preview_cache_size of files too new to be removed; files that can
+ * be removed are removed first, and do not count */
+static void test_full(void)
+{
+	setup();
+	size_limit = 1000;
+	g_assert_false(image_cache_full());
+
+	/* over the limit, but not twice: downloads go on */
+	make_file(HASH("1") ".png", 1500, 10);
+	g_assert_false(image_cache_full());
+	g_assert_true(exists(HASH("1") ".png"));
+
+	/* new files over twice the limit: full */
+	make_file(HASH("2") ".png", 600, 10);
+	g_assert_true(image_cache_full());
+	g_assert_true(exists(HASH("1") ".png"));
+	g_assert_true(exists(HASH("2") ".png"));
+
+	/* once they are old enough to go, they make room: no longer full */
+	make_file(HASH("1") ".png", 1500, 1000);
+	g_assert_false(image_cache_full());
+	g_assert_false(exists(HASH("1") ".png"));
+	g_assert_true(exists(HASH("2") ".png"));
+	teardown();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -375,6 +404,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-cache/age", test_age);
 	g_test_add_func("/image-cache/foreign_entries", test_foreign_entries);
 	g_test_add_func("/image-cache/get_symlink", test_get_symlink);
+	g_test_add_func("/image-cache/full", test_full);
 	g_test_add_func("/image-cache/get_fifo_dev_null", test_get_fifo_dev_null);
 
 	return g_test_run();

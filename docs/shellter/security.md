@@ -40,7 +40,10 @@ Setting it up: [configuration.md](configuration.md#web-client).
 
 http and https only, public addresses only (also after redirects), a hard
 size limit, and no decoding of images too large to handle safely. The debug
-log of clicked URLs is off by default.
+log of clicked URLs is off by default. `image_preview_cache_size` is a soft
+limit: files of the last minutes stay even when the cache is over it, and
+above twice the limit no new download starts, so the cache never holds more
+than twice the limit plus three downloads in progress (`/help image`).
 
 ## Configuration
 

@@ -42,11 +42,21 @@
     while the cache is larger than image_preview_cache_size. A file
     written less than image_preview_timeout plus one minute ago is not
     removed for the size limit, as it may still be downloading or not yet
-    shown. Only the cache's own files are deleted: other files,
-    directories and symbolic links in image_cache are left alone, and
-    links are not followed. A cached image is shown only from a regular
-    file of the cache, never through a link, and a download is never
-    written through one.
+    shown. So image_preview_cache_size is a soft limit: the cache can be
+    larger for a while, and a later cleanup brings it back under the limit
+    once those files are old enough to go.
+
+    The hard limit is twice image_preview_cache_size: while the cache
+    holds more than that, no new download starts (a notice says so) until
+    older files can be removed. As at most three downloads run at a time,
+    the cache never holds more than twice image_preview_cache_size plus
+    three times image_preview_max_file_size - 230 MB with the defaults.
+
+    Only the cache's own files are deleted: other files, directories and
+    symbolic links in image_cache are left alone, and links are not
+    followed. A cached image is shown only from a regular file of the
+    cache, never through a link, and a download is never written through
+    one.
 
     Settings:
 
@@ -66,11 +76,12 @@
         image_preview_timeout (default: 60s)
             The time limit of a download.
         image_preview_cache_size (default: 100M)
-            The largest size of the cache. When it is bigger, the oldest
-            files are removed until it fits. Files written within
-            image_preview_timeout and one minute more (downloads in
-            progress, images not shown yet) stay, so the cache can be
-            over the limit for a while.
+            The size the cache is kept to - a soft limit. When it is
+            bigger, the oldest files are removed until it fits. Files
+            written within image_preview_timeout and one minute more
+            (downloads in progress, images not shown yet) stay, so the
+            cache can be over the limit for a while; above twice the
+            limit no new download starts.
         image_preview_debug (default: OFF)
             Writes a debug log, including every clicked URL, to
             image-preview-debug.log in the configuration directory.
