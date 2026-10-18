@@ -332,12 +332,9 @@ dep += gmodule_dep
 dep += gobject_dep
 dep += gio_dep
 
-if glib_internal and want_static_dependency and want_fuzzer
-  openssl_proj = subproject('openssl', default_options : ['default_library=static', 'asm=disabled'])
-  openssl_dep = openssl_proj.get_variable('openssl_dep')
-else
-  openssl_dep = dependency('openssl', static : want_static_dependency, include_type : 'system')
-endif
+# always the system's OpenSSL, also for the static fuzz build: the only
+# OpenSSL in Meson's WrapDB (3.0.x) is out of support
+openssl_dep = dependency('openssl', static : want_static_dependency, include_type : 'system')
 dep += openssl_dep
 
 ############
@@ -546,13 +543,7 @@ endif
 # OpenSSL 1.1.1 or newer, hence the function checks.
 have_e2e = false
 if want_e2e
-  if openssl_dep.type_name() == 'internal'
-    # the OpenSSL subproject of the static fuzz build (subprojects/openssl.wrap,
-    # 3.x) has them; cc.has_function() cannot look into an internal dependency
-    e2e_openssl_ok = true
-  else
-    e2e_openssl_ok = cc.has_function('EVP_PKEY_new_raw_private_key', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>') and cc.has_function('EVP_chacha20_poly1305', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>')
-  endif
+  e2e_openssl_ok = cc.has_function('EVP_PKEY_new_raw_private_key', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>') and cc.has_function('EVP_chacha20_poly1305', dependencies : openssl_dep, prefix : '#include <openssl/evp.h>')
   if e2e_openssl_ok
     have_e2e = true
   elif require_e2e
