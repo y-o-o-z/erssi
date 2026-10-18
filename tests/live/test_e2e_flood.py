@@ -9,6 +9,8 @@ alice types a long line (several encrypted chunks) and short ones: all
 of them must leave within the bound (the strangers' NOTICEs never wait
 in irssi's queue ahead of them), and bob reads them. Then /e2e rotate
 under the flood: the REKEY reaches bob and he reads the next line.
+Last, a stranger's KEYRSP that waits behind alice's lines when she
+rotates gets the REKEY behind it.
 Usage: test_e2e_flood.py <build dir> [<source dir>]"""
 import base64
 import json
@@ -160,6 +162,50 @@ def main():
         rekeys = [ln for _, ln in lines_since(t0, "alice", "NOTICE") if " bob :" in ln and "REKEY" in ln]
         assert rekeys, "no REKEY to bob"
 
+    def t_rekey_behind_keyrsp():
+        """a stranger's KEYRSP waits while alice's own lines go out; a
+        rotation then: its REKEY goes behind that KEYRSP, and the
+        stranger reads the next line"""
+        a = st["alice"]
+        st["stop"].set()
+        for c in st["clones"]:
+            c.close()
+        st["clones"] = []
+
+        def drained():
+            sent = [t for t, ln in lines_since(0, "alice", "NOTICE") if " clone" in ln]
+            return not sent or max(sent) < time.time() - 10
+        assert harness.wait_until(drained, 120), "the strangers' queue never drained"
+        e = st["erin"] = up("erin", "erin")
+        assert e.wait_file(e.all_log(), "Join to #test was synced", WAIT), "erin's #test never synced"
+        a.type_and_wait("/window goto #test", "/e2e mode auto")
+        t0 = time.time()
+        busy = " ".join(f"busy{i:03d}" for i in range(100))  # about 800 bytes, 3 parts
+        a.type_and_wait(f"/msg #test {busy}")
+        e.type_and_wait("/window goto #test", "/e2e handshake alice")
+
+        def accepted():
+            try:
+                kr = json.loads((a.home / "rpe2e" / "keyring.json").read_text())
+            except (OSError, ValueError):
+                return False
+            return any(k.startswith("erin@") for k in kr.get("accepted", {}))
+        assert harness.wait_until(accepted, WAIT), "alice never accepted erin"
+        # her KEYRSP to erin must still be waiting behind alice's lines
+        assert not [ln for _, ln in lines_since(t0, "alice", "NOTICE") if " erin :" in ln and "KEYRSP" in ln], \
+            "the KEYRSP left before the rotation (alice's queue was not busy)"
+        a.type_and_wait("/e2e rotate", "/msg #test under the new key")
+
+        def to_erin(kind):
+            return [t for t, ln in lines_since(t0, "alice", "NOTICE") if " erin :" in ln and kind in ln]
+        assert harness.wait_until(lambda: to_erin("REKEY"), 150), "no REKEY to erin"
+        assert to_erin("KEYRSP") and min(to_erin("KEYRSP")) < min(to_erin("REKEY")), \
+            (to_erin("KEYRSP"), to_erin("REKEY"))
+        # erin holds the key of the rotation: she reads the next line
+        a.type_and_wait("/msg #test erin reads the new key")
+        assert harness.wait_until(lambda: "erin reads the new key" in chan_log(e), WAIT), \
+            chan_log(e)[-2000:]
+
     def t_stop():
         st["stop"].set()
         for c in st["clones"]:
@@ -178,7 +224,7 @@ def main():
             st["ircd"].stop()
 
     try:
-        harness.main([t_install, t_pair, t_flood_lines, t_rotate_under_flood, t_stop])
+        harness.main([t_install, t_pair, t_flood_lines, t_rotate_under_flood, t_rekey_behind_keyrsp, t_stop])
     finally:
         cleanup()
         if not harness.keep_work():
