@@ -227,6 +227,47 @@ static void create_right_panel(SP_MAINWIN_CTX *ctx, int width)
 	sp_right_caches_clear(ctx);
 }
 
+static void clear_cells(int x, int y, int width, int height)
+{
+	TERM_WINDOW *tw;
+
+	if (width <= 0 || height <= 0)
+		return;
+	tw = term_window_create(x, y, width, height);
+	term_window_clear(tw);
+	term_window_destroy(tw);
+}
+
+/* The panel's columns on the rows of the main windows it does not cover:
+ * the statusbars of the highest main windows above it and of the lowest
+ * ones below it. Those statusbars start after the panel's columns (they
+ * belong to their main window, and the panels' columns are no main
+ * window's), and nothing else draws there - so what the screen had in
+ * those cells before the panel came or moved (the statusbar itself, when
+ * it still spanned them; a line printed at the start, before there was a
+ * panel; an entry of the panel from before it moved) stayed until a full
+ * /REDRAW. Cleared to the panel's background whenever the panel is put
+ * somewhere else. The rows of root statusbars (topic, prompt) are not the
+ * main windows' and span the whole screen: those draw their own cells. */
+static void clear_rows_outside(int x, int width, int y, int h)
+{
+	GSList *tmp;
+	int top = -1, bottom = -1;
+
+	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
+		MAIN_WINDOW_REC *mw = tmp->data;
+
+		if (top < 0 || mw->first_line < top)
+			top = mw->first_line;
+		if (mw->last_line > bottom)
+			bottom = mw->last_line;
+	}
+	if (top < 0)
+		return;
+	clear_cells(x, top, width, y - top);
+	clear_cells(x, y + h, width, bottom - (y + h) + 1);
+}
+
 /* Put the existing panels over the rows of the main windows. Creates,
  * destroys and reserves nothing: safe from "mainwindow resized". A moved
  * panel has none of its cached lines at the new rows - forget them, or
@@ -241,8 +282,10 @@ void sp_move_panels(void)
 
 	if (ctx->left_tw != NULL) {
 		x = 0;
-		if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h)
+		if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h) {
 			sp_cache_clear(ctx->left_cache);
+			clear_rows_outside(x, ctx->left_reserved, y, h);
+		}
 		term_window_move(ctx->left_tw, x, y, ctx->left_reserved, h);
 		ctx->left_x = x;
 		ctx->left_y = y;
@@ -250,8 +293,10 @@ void sp_move_panels(void)
 	}
 	if (ctx->right_tw != NULL) {
 		x = MAX(0, term_width - ctx->right_reserved);
-		if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h)
+		if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h) {
 			sp_right_caches_clear(ctx);
+			clear_rows_outside(x, ctx->right_reserved, y, h);
+		}
 		term_window_move(ctx->right_tw, x, y, ctx->right_reserved, h);
 		ctx->right_x = x;
 		ctx->right_y = y;

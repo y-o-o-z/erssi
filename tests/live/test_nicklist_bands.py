@@ -83,14 +83,20 @@ def main():
 
     def wait_bands(want, what):
         """the panel shows WANT: {(first_line, lines): [nicks]}, every
-        row of those main windows with the border"""
+        row of those main windows with the border - but for the rows of
+        the statusbars under the lowest one (st["bars_below"]): the panel
+        does not cover them, and its columns there are empty"""
+        bottom = max(first + lines for first, lines in want)
+        last = bottom - st.get("bars_below", 0)
+
         def ok(rows):
+            p = panel(rows)
             for (first, lines), names in want.items():
                 if nicks(rows, first, lines) != listing(names, lines):
                     return False
-                if any(b not in BORDER for b, _, _ in panel(rows)[first:first + lines]):
+                if any(b not in BORDER for b, _, _ in p[first:min(first + lines, last)]):
                     return False
-            return True
+            return all(not rows[y].strip() for y in range(last, bottom))
         rows, good = st["alice"].wait_screen(ok, WAIT, PANEL)
         assert good, f"{what}: want {want}, the panel shows:\n" + \
             "\n".join(f"{i:2} {r!r}" for i, r in enumerate(rows))
@@ -193,6 +199,7 @@ def main():
         bands("the upper row 3 lines high")
         a.type_and_wait("/statusbar add -type window -placement bottom -visible always gap",
                         "/statusbar additem window gap")
+        st["bars_below"] = 1
         low_first, low_lines = rows_of(st["lower"])
 
         def ok(rows):
