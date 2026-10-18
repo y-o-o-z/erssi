@@ -34,6 +34,11 @@ find_tool git >/dev/null || { echo "skip: no git"; exit 77; }
 SCRIPT=$(find_tool script) || SCRIPT=""
 UNSHARE=$(find_tool unshare) || UNSHARE=""
 KEYGEN=$(find_tool ssh-keygen) || KEYGEN=""
+# what the binary cases need, as found before setup narrows PATH
+BIN_TOOLS=""
+for t in tar xz sha256sum find cmp perl; do
+    p=$(find_tool "$t") && BIN_TOOLS="$BIN_TOOLS $t=$p"
+done
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
 stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
@@ -355,7 +360,7 @@ release_key() {
 # the real one.
 patch_installer() {
     old_key=$(sed -n "s/^RELEASE_SIGNER='[^ ]* namespaces=\"git\" \([^ ]* [^ ']*\).*/\1/p" "$SRC/shellter-install.sh")
-    old_fp=$(sed -n 's/.* with ED25519 key \(SHA256:[A-Za-z0-9+/]*\)\$.*/\1/p' "$SRC/shellter-install.sh")
+    old_fp=$(sed -n "s/^RELEASE_FINGERPRINT='\(SHA256:[A-Za-z0-9+/]*\)'\$/\1/p" "$SRC/shellter-install.sh")
     new_key=$(cut -d' ' -f1,2 "$W/key.pub")
     new_fp=$(ssh-keygen -lf "$W/key.pub" | awk '{print $2}')
     if ! { [ -n "$old_key" ] && [ -n "$old_fp" ] &&
@@ -452,6 +457,108 @@ ptag() {
     o=$(printf 'object %s\ntype commit\ntag %s\ntagger test <test@example.invalid> 1790000000 +0000\n\n%s\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n=AAAA\n-----END PGP SIGNATURE-----\n' \
         "$2" "$1" "$1" | git -C "$W/repo" hash-object -t tag -w --stdin) &&
         git -C "$W/repo" update-ref "refs/tags/$1" "$o"
+}
+
+# ── binary packages ──────────────────────────────────────────────────
+# The release key of release_key, the real tar, xz, sha256sum, find and
+# cmp, and stand-ins: uname says Linux x86_64 ($FAKE_UNAME, $FAKE_UNAME_M),
+# freebsd-version $FAKE_FREEBSD_VERSION, os-release Debian 13, perl tells
+# the version $FAKE_PERL_V (5.40.1) and runs everything else for real,
+# and ldd reports the libraries in $FAKE_LDD_MISSING as not found.
+binary_tools() {
+    release_key
+    for t in tar xz sha256sum find cmp perl; do
+        p=$(printf '%s\n' "$BIN_TOOLS" | tr ' ' '\n' | sed -n "s|^$t=||p")
+        [ -n "$p" ] || { echo "skip: no $t"; exit 77; }
+        [ "$t" = perl ] || ln -s "$p" "$W/bin/$t"
+    done
+    REAL_PERL=$(printf '%s\n' "$BIN_TOOLS" | tr ' ' '\n' | sed -n 's|^perl=||p')
+    # shellcheck disable=SC2016 # stand-in scripts
+    {
+        printf '#!/bin/sh\n'
+        printf 'if [ "$1" = -e ] && [ "$2" = %s ]; then printf "v%%s" "${FAKE_PERL_V:-5.40.1}"; exit 0; fi\n' "'print \$^V'"
+        printf 'exec %s "$@"\n' "$REAL_PERL"
+    } | stand perl
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nfor l in ${FAKE_LDD_MISSING:-}; do printf "\\t%%s => not found\\n" "$l"; done\nprintf "\\tlibc.so.6 => /lib/libc.so.6\\n"\n' | stand ldd
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\ncase "${1:-}" in\n    -m) echo "${FAKE_UNAME_M:-x86_64}" ;;\n    *) echo "${FAKE_UNAME:-Linux}" ;;\nesac\n' | stand uname
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\necho "${FAKE_FREEBSD_VERSION:-14.3-RELEASE-p2}"\n' | stand freebsd-version
+    use_tool perl ldd uname freebsd-version
+    printf 'ID=debian\nVERSION_ID="13"\n' > "$W/os-release"
+    SHELLTER_OS_RELEASE=$W/os-release; export SHELLTER_OS_RELEASE
+    P=$HOME/.local/opt/erssi
+    CONF=$P/share/irssi/shellter-install.conf
+}
+# make_pkg VERSION COMMIT [PLATFORM]: the package erssi-VERSION-PLATFORM.tar.xz
+# of shellter-vVERSION in $W/rel (the --binary-base), its erssi a script
+# that prints VERSION ($MF_RUNS_AS) and finds its prefix where it is (the
+# command $MF_PREFIX), its MANIFEST with the fields given
+# (MF_VERSION, MF_TAG, MF_COMMIT, MF_PLATFORM, MF_PERL override them);
+# SHA256SUMS lists every package of that release, unsigned (sign_sums)
+make_pkg() {
+    pv=$1 pc=$2 pp=${3:-debian13-amd64}
+    top="erssi-$pv-$pp" pd="$W/pkg/$pv-$pp" pr="$W/rel/shellter-v$pv"
+    rm -rf "$pd" && mkdir -p "$pd/$top/bin" "$pd/$top/lib/irssi/modules" "$pd/$top/share/irssi" "$pr" || exit 1
+    # shellcheck disable=SC2016 # the stand-in erssi
+    pfx=${MF_PREFIX:-'cd "$(dirname "$0")/.." && pwd -P'}
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nif [ "$1" = --print-prefix ]; then %s; exit; fi\necho "erssi %s (20261018 1200)"\n' \
+        "$pfx" "${MF_RUNS_AS:-$pv}" > "$pd/$top/bin/erssi"
+    chmod 755 "$pd/$top/bin/erssi"
+    : > "$pd/$top/lib/irssi/modules/libfe_web.so"
+    cp "$INSTALLER" "$pd/$top/share/irssi/shellter-install.sh"
+    {
+        echo "built=2026-10-18T12:00:00Z"
+        echo "commit=${MF_COMMIT-$pc}"
+        echo "libc=glibc 2.41"
+        echo "needed=libc.so.6 libglib-2.0.so.0 libperl.so.5.40"
+        echo "perl_version=${MF_PERL-5.40.1}"
+        echo "platform=${MF_PLATFORM-$pp}"
+        echo "tag=${MF_TAG-shellter-v$pv}"
+        echo "version=${MF_VERSION-$pv}"
+    } > "$pd/$top/MANIFEST"
+    tar -C "$pd" -cJf "$pr/$top.tar.xz" "$top" || exit 1
+    ( cd "$pr" && sha256sum erssi-*.tar.xz ) > "$pr/SHA256SUMS" || exit 1
+}
+# sign_sums VERSION [KEY [NAMESPACE]]: SHA256SUMS.sig of shellter-vVERSION
+sign_sums() {
+    rm -f "$W/rel/shellter-v$1/SHA256SUMS.sig"
+    ssh-keygen -q -Y sign -n "${3:-erssi-release}" -f "${2:-$W/key}" "$W/rel/shellter-v$1/SHA256SUMS" 2>/dev/null ||
+        { echo "FAIL $CASE: ssh-keygen -Y sign"; exit 1; }
+}
+# repack VERSION [TAR ARGS...]: the package of make_pkg VERSION (Debian 13)
+# tarred again from $W/pkg, with TAR ARGS, listed and signed again
+repack() {
+    rv=$1; shift
+    rr="$W/rel/shellter-v$rv"
+    tar -C "$W/pkg/$rv-debian13-amd64" -cJf "$rr/erssi-$rv-debian13-amd64.tar.xz" "$@" "erssi-$rv-debian13-amd64" 2>/dev/null &&
+        ( cd "$rr" && sha256sum erssi-*.tar.xz ) > "$rr/SHA256SUMS" && sign_sums "$rv"
+}
+# good_pkg VERSION COMMIT [PLATFORM]: make_pkg, signed as a release is
+good_pkg() { make_pkg "$@" && sign_sums "$1"; }
+# record VERSION COMMIT...: the releases this copy of the installer records
+record() {
+    : > "$W/releases"
+    while [ $# -ge 2 ]; do printf 'shellter-v%s %s signed\n' "$1" "$2" >> "$W/releases"; shift 2; done
+    patch_installer
+}
+# the installer under test with ARGS, packages from $W/rel
+run_bin() {
+    sh "$INSTALLER" --repo "$W/repo" --binary-base "$W/rel" --no-test "$@" > "$W/out" 2>&1 < /dev/null
+    RC=$?
+}
+# a fake commit SHA for the release VERSION (binary installs need no source)
+fsha() { printf '%040d' "$(echo "$1" | tr -d .)"; }
+# shellcheck disable=SC2317 # called through check
+current_is() { [ "$(readlink "$P/current")" = "releases/$1" ] && [ "$("$P/bin/erssi" --version)" = "erssi $1 (20261018 1200)" ]; }
+# shellcheck disable=SC2317,SC2012 # the releases kept in $P/releases, sorted
+releases_are() { [ "$(cd "$P/releases" && ls -A | sort | tr '\n' ' ')" = "$* " ]; }
+# shellcheck disable=SC2317 # nothing changed: 2026.10.3 in use, alone
+unchanged() {
+    current_is 2026.10.3 && releases_are 2026.10.3 && none_exist "$P/.install.lock" &&
+        grep -qx VERSION=2026.10.3 "$CONF"
 }
 
 # the ten spinner frames as the installer draws them (sourced only when it
@@ -1644,6 +1751,528 @@ saved-settings)
     check "--help names --no-clean" grep -q -- '^  --no-clean ' "$W/out"
     check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
     check "... and what is verified" grep -q '^What is verified: ' "$W/out"
+    ;;
+binary-platform)
+    # the platform of the packages, from uname, os-release and freebsd-version
+    binary_tools
+    pid() { fn 'platform_id'; }
+    pid
+    check "Debian 13 on x86_64: debian13-amd64" [ "$(cat "$W/fn.out")" = debian13-amd64 ]
+    printf 'ID="debian"\nVERSION_ID="13.1"\n' > "$W/os-release"
+    FAKE_UNAME_M=aarch64 pid
+    check "quoted, a minor version, aarch64: debian13-arm64" [ "$(cat "$W/fn.out")" = debian13-arm64 ]
+    printf 'ID=ubuntu\nVERSION_ID="24.04"\n' > "$W/os-release"
+    pid
+    check "Ubuntu 24.04: ubuntu24-amd64" [ "$(cat "$W/fn.out")" = ubuntu24-amd64 ]
+    FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 pid
+    check "FreeBSD 14.3: freebsd14-amd64" [ "$(cat "$W/fn.out")" = freebsd14-amd64 ]
+    FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 FAKE_FREEBSD_VERSION=15.0-CURRENT pid
+    check "FreeBSD 15.0-CURRENT: freebsd15-amd64" [ "$(cat "$W/fn.out")" = freebsd15-amd64 ]
+    FAKE_UNAME_M=riscv64 pid
+    check "another architecture: none" [ "$RC" = 1 ] && [ ! -s "$W/fn.out" ]
+    printf 'ID=debian\n' > "$W/os-release"
+    pid
+    check "no VERSION_ID (testing): none" [ "$RC" = 1 ]
+    printf 'ID=x/../y\nVERSION_ID=13\n' > "$W/os-release"
+    pid
+    check "an ID that is not a name: none" [ "$RC" = 1 ]
+    rm -f "$W/os-release"
+    pid
+    check "no os-release: none" [ "$RC" = 1 ]
+    FAKE_UNAME=Darwin pid
+    check "another system: none" [ "$RC" = 1 ]
+    fn 'perl_version'
+    check "perl v5.40.1: 5.40.1" [ "$(cat "$W/fn.out")" = 5.40.1 ]
+    # the link switch renames a new link over the old one: never into the
+    # directory the old one points to (as mv would)
+    mkdir -p "$W/sw/a" "$W/sw/b" && ln -s a "$W/sw/cur"
+    # shellcheck disable=SC2016 # run by fn
+    fn 'switch_link "$1" b' "$W/sw/cur"
+    check "switch_link: switched" [ "$RC" = 0 ] && [ "$(readlink "$W/sw/cur")" = b ]
+    check "... nothing left in the old target" [ -z "$(ls -A "$W/sw/a")" ]
+    # shellcheck disable=SC2012 # plain names
+    check "... nor beside the link" [ "$(ls -A "$W/sw" | tr '\n' ' ')" = "a b cur " ]
+    ;;
+binary-install)
+    # a release with a package for the platform: installed from it, without
+    # a build, after checking the signature, the checksum and the MANIFEST
+    binary_tools
+    c=$(fsha 2026.10.4)
+    record 2026.10.4 "$c"
+    good_pkg 2026.10.4 "$c"
+    mkdir -p "$HOME/.erssi"
+    run_bin
+    check "installed" [ "$RC" = 0 ]
+    check "... the platform" grep -q 'Checking the system.*debian13-amd64 - perl 5.40.1' "$W/out"
+    check "... signed and checked" grep -q 'Downloading.*erssi-2026.10.4-debian13-amd64.tar.xz - signed - sha256 verified' "$W/out"
+    check "... the MANIFEST checked" grep -q 'Checking the package.*00000000 - commit recorded - libraries present' "$W/out"
+    check "... said so" grep -q 'erssi Shellter Edition 2026.10.4 is installed' "$W/out"
+    check "... current is releases/2026.10.4" current_is 2026.10.4
+    check "... bin/erssi a link into current" [ "$(readlink "$P/bin/erssi")" = ../current/bin/erssi ]
+    check "... linked from ~/.local/bin" [ "$(readlink "$HOME/.local/bin/erssi")" = "$P/bin/erssi" ]
+    check "... nothing built" no_grep 'Building' "$W/out"
+    check "... no source directory" none_exist "$HOME/.local/src/erssi" "$HOME/.local/src/erssi.lock"
+    check "... no stage or lock left" releases_are 2026.10.4
+    check "... and no lock" none_exist "$P/.install.lock"
+    check "... METHOD=binary" grep -qx METHOD=binary "$CONF"
+    check "... VERSION" grep -qx VERSION=2026.10.4 "$CONF"
+    check "... COMMIT" grep -qx "COMMIT=$c" "$CONF"
+    check "... PLATFORM" grep -qx PLATFORM=debian13-amd64 "$CONF"
+    check "... the release" grep -qx REF=shellter-v2026.10.4 "$CONF"
+    check "... --binary-base kept for --update" grep -qx "BINARY_BASE=$W/rel" "$CONF"
+    check "... the installer of the release copied" cmp -s "$P/share/irssi/shellter-install.sh" "$INSTALLER"
+    check "... the MANIFEST kept" [ -f "$P/releases/2026.10.4/MANIFEST" ]
+    check "... output ASCII only" ascii_only "$W/out"
+    # the same release again: the tree in use is kept, nothing else changes
+    run_bin
+    check "again: done" [ "$RC" = 0 ]
+    check "... the tree in use kept" grep -q 'releases/2026.10.4 was already there' "$W/out"
+    check "... still current" current_is 2026.10.4
+    check "... no previous" none_exist "$P/previous"
+    # the release in use, but another package of it: refused
+    MF_RUNS_AS=2026.10.4 MF_COMMIT=$c make_pkg 2026.10.4 "$c"
+    printf 'extra=1\n' >> "$W/pkg/2026.10.4-debian13-amd64/erssi-2026.10.4-debian13-amd64/MANIFEST"
+    tar -C "$W/pkg/2026.10.4-debian13-amd64" -cJf "$W/rel/shellter-v2026.10.4/erssi-2026.10.4-debian13-amd64.tar.xz" erssi-2026.10.4-debian13-amd64
+    ( cd "$W/rel/shellter-v2026.10.4" && sha256sum erssi-*.tar.xz ) > "$W/rel/shellter-v2026.10.4/SHA256SUMS"
+    sign_sums 2026.10.4
+    run_bin
+    check "another package of the release in use: refused" [ "$RC" = 1 ]
+    check "... named" grep -q 'is in use but holds another package - nothing was changed' "$W/out"
+    check "... still current" current_is 2026.10.4
+    check "... no stage left" releases_are 2026.10.4
+    # --ref of a release the installer does not record: the signature is
+    # checked, the commit only for its form
+    good_pkg 2026.10.5 "$(fsha 2026.10.5)"
+    run_bin --ref shellter-v2026.10.5
+    check "unrecorded release: installed" [ "$RC" = 0 ]
+    check "... said so" grep -q 'Checking the package.*release not recorded here' "$W/out"
+    check "... current" current_is 2026.10.5
+    check "... previous is 2026.10.4" [ "$(readlink "$P/previous")" = releases/2026.10.4 ]
+    # links within the package are fine; tar unpacks with the user's own
+    # owner and modes
+    make_pkg 2026.10.7 "$(fsha 2026.10.7)"
+    PT="$W/pkg/2026.10.7-debian13-amd64/erssi-2026.10.7-debian13-amd64"
+    ln -s libfe_web.so "$PT/lib/irssi/modules/libfe_web.so.0"
+    ln -s modules "$PT/lib/irssi/mods"
+    ln "$PT/MANIFEST" "$PT/share/irssi/MANIFEST.copy"
+    repack 2026.10.7
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\necho "$*" >> "$TEST_W/tar.log"\nexec "$TEST_W/bin/tar" "$@"\n' > "$W/shim/tar" && chmod 755 "$W/shim/tar"
+    run_bin --ref shellter-v2026.10.7
+    rm -f "$W/shim/tar"
+    check "links within the package: installed" [ "$RC" = 0 ] && current_is 2026.10.7
+    check "... the links kept" [ "$(readlink "$P/releases/2026.10.7/lib/irssi/mods")" = modules ]
+    check "... unpacked without the archive's owners and modes" grep -q -- '--no-same-owner --no-same-permissions -xJf' "$W/tar.log"
+    # names as tar -C DIR . writes them, with a leading ./
+    make_pkg 2026.10.6 "$(fsha 2026.10.6)"
+    ( cd "$W/pkg/2026.10.6-debian13-amd64" && tar -cJf "$W/rel/shellter-v2026.10.6/erssi-2026.10.6-debian13-amd64.tar.xz" ./erssi-2026.10.6-debian13-amd64 )
+    ( cd "$W/rel/shellter-v2026.10.6" && sha256sum erssi-*.tar.xz ) > "$W/rel/shellter-v2026.10.6/SHA256SUMS"
+    sign_sums 2026.10.6
+    run_bin --ref shellter-v2026.10.6
+    check "names with a leading ./: installed" [ "$RC" = 0 ] && current_is 2026.10.6
+    ;;
+binary-refused)
+    # a package that does not verify is never installed, and nothing changes:
+    # 2026.10.3 stays in use, alone
+    binary_tools
+    c3=$(fsha 2026.10.3) c4=$(fsha 2026.10.4)
+    record 2026.10.3 "$c3"
+    good_pkg 2026.10.3 "$c3"
+    run_bin
+    check "2026.10.3 installed" current_is 2026.10.3
+    record 2026.10.3 "$c3" 2026.10.4 "$c4"
+    R4=$W/rel/shellter-v2026.10.4
+    refused() {   # description, the message expected
+        run_bin --binary
+        check "$1: refused" [ "$RC" = 1 ]
+        check "... $2" grep -qF "$2" "$W/out"
+        check "... nothing changed" unchanged
+        check "... nothing built" no_grep 'Building' "$W/out"
+    }
+    sigfail="the SHA256SUMS of shellter-v2026.10.4 does not carry a valid signature by the erssi Shellter release key - refusing to install, nothing was changed"
+    make_pkg 2026.10.4 "$c4"
+    printf 'something else\n' > "$W/else"
+    ssh-keygen -q -Y sign -n erssi-release -f "$W/key" "$W/else" 2>/dev/null && cp "$W/else.sig" "$R4/SHA256SUMS.sig"
+    refused "signature of another file" "$sigfail"
+    sign_sums 2026.10.4 "$W/other"
+    refused "signed by another key" "$sigfail"
+    sign_sums 2026.10.4 "$W/key" git
+    refused "signed for git, not for releases" "$sigfail"
+    sign_sums 2026.10.4 "$W/key" file
+    refused "signed for another namespace" "$sigfail"
+    rm -f "$R4/SHA256SUMS.sig"
+    : > "$R4/SHA256SUMS.sig"
+    refused "an empty signature" "$sigfail"
+    # SHA256SUMS changed after signing: another tarball with its sum
+    good_pkg 2026.10.4 "$c4"
+    cp "$R4/SHA256SUMS.sig" "$W/good.sig"
+    MF_COMMIT=$c3 make_pkg 2026.10.4 "$c4"
+    cp "$W/good.sig" "$R4/SHA256SUMS.sig"
+    refused "SHA256SUMS changed after signing" "$sigfail"
+    # the tarball replaced, SHA256SUMS signed: the sum differs
+    good_pkg 2026.10.4 "$c4"
+    cp "$R4/SHA256SUMS" "$W/good.sums" && cp "$R4/SHA256SUMS.sig" "$W/good.sig"
+    MF_COMMIT=$c3 make_pkg 2026.10.4 "$c4"
+    cp "$W/good.sums" "$R4/SHA256SUMS" && cp "$W/good.sig" "$R4/SHA256SUMS.sig"
+    refused "tarball replaced" "erssi-2026.10.4-debian13-amd64.tar.xz does not match the signed SHA256SUMS - refusing to install, nothing was changed"
+    # signed packages whose MANIFEST does not say what is installed
+    MF_VERSION=2026.10.5 good_pkg 2026.10.4 "$c4"
+    refused "MANIFEST of another version" "says version=2026.10.5, not 2026.10.4 - refusing to install"
+    MF_TAG=shellter-v2026.10.5 good_pkg 2026.10.4 "$c4"
+    refused "MANIFEST of another tag" "says tag=shellter-v2026.10.5, not shellter-v2026.10.4"
+    MF_PLATFORM=freebsd14-amd64 good_pkg 2026.10.4 "$c4"
+    refused "MANIFEST of another platform" "says platform=freebsd14-amd64, not debian13-amd64"
+    MF_COMMIT=$c3 good_pkg 2026.10.4 "$c4"
+    refused "MANIFEST with another commit than recorded" "says commit=$c3, not $c4"
+    MF_COMMIT='' good_pkg 2026.10.4 "$c4"
+    refused "MANIFEST without a commit" "says commit=(none), not $c4"
+    MF_RUNS_AS=2026.10.9 good_pkg 2026.10.4 "$c4"
+    refused "an erssi of another version inside" 'the packaged erssi says "erssi 2026.10.9 (20261018 1200)", not 2026.10.4'
+    MF_PREFIX='echo /usr/local' good_pkg 2026.10.4 "$c4"
+    refused "an erssi that is not relocatable" 'the packaged erssi does not find its own files (--print-prefix: /usr/local)'
+    MF_PREFIX='exit 1' good_pkg 2026.10.4 "$c4"
+    refused "an erssi without --print-prefix" 'the packaged erssi does not find its own files (--print-prefix: nothing)'
+    # a name outside the top directory
+    make_pkg 2026.10.4 "$c4"
+    mkdir -p "$W/pkg/evil" && : > "$W/pkg/evil/x"
+    tar -C "$W/pkg" -cJf "$R4/erssi-2026.10.4-debian13-amd64.tar.xz" 2026.10.4-debian13-amd64 evil
+    ( cd "$R4" && sha256sum erssi-*.tar.xz ) > "$R4/SHA256SUMS" && sign_sums 2026.10.4
+    refused "files outside the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    # a name that goes up from the top directory
+    make_pkg 2026.10.4 "$c4"
+    : > "$W/pkg/2026.10.4-debian13-amd64/evil"
+    ( cd "$W/pkg/2026.10.4-debian13-amd64" &&
+        tar -cJf "$R4/erssi-2026.10.4-debian13-amd64.tar.xz" --transform 's|^evil$|erssi-2026.10.4-debian13-amd64/../../evil|' \
+            erssi-2026.10.4-debian13-amd64 evil 2>/dev/null )
+    ( cd "$R4" && sha256sum erssi-*.tar.xz ) > "$R4/SHA256SUMS" && sign_sums 2026.10.4
+    # shellcheck disable=SC2016 # run by sh
+    check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+    refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    # links that lead out of the package
+    PT="$W/pkg/2026.10.4-debian13-amd64/erssi-2026.10.4-debian13-amd64"
+    make_pkg 2026.10.4 "$c4"
+    ln -s /etc/passwd "$PT/share/irssi/abs"
+    repack 2026.10.4
+    refused "a symbolic link to an absolute path" "holds a symbolic link whose target is absolute or has a .. in it - refusing to install"
+    make_pkg 2026.10.4 "$c4"
+    ln -s ../../../outside "$PT/share/irssi/up"
+    repack 2026.10.4
+    refused "a symbolic link above the top directory" "holds a symbolic link whose target is absolute or has a .. in it"
+    # a chain whose every link stays inside when read alone: d leads out
+    make_pkg 2026.10.4 "$c4"
+    ln -s . "$PT/share/irssi/a" && ln -s a/.. "$PT/share/irssi/b" &&
+        ln -s b/.. "$PT/share/irssi/c" && ln -s c/.. "$PT/share/irssi/d"
+    repack 2026.10.4
+    refused "a chain of symbolic links that leads out" "holds a symbolic link whose target is absolute or has a .. in it"
+    make_pkg 2026.10.4 "$c4"
+    ln -s x/../y "$PT/share/irssi/xy"
+    repack 2026.10.4
+    refused "a symbolic link with .. inside its target" "holds a symbolic link whose target is absolute or has a .. in it"
+    make_pkg 2026.10.4 "$c4"
+    : > "$PT/share/irssi/h1" && ln "$PT/share/irssi/h1" "$PT/share/irssi/h2"
+    repack 2026.10.4 --transform 'flags=RSh;s|^erssi-2026.10.4-debian13-amd64/share/irssi/h[12]$|etc/passwd|'
+    # shellcheck disable=SC2016 # run by sh
+    check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+    refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    # a missing library: named, with the package to install
+    good_pkg 2026.10.4 "$c4"
+    FAKE_LDD_MISSING="libchafa.so.0 libperl.so.5.40 libunknown.so.7"; export FAKE_LDD_MISSING
+    refused "missing libraries" "no binary install (--binary): the package needs libraries this system lacks"
+    check "... the libraries named" grep -qF 'libraries missing: libchafa.so.0 libperl.so.5.40 libunknown.so.7' "$W/out"
+    check "... the apt command" grep -qF 'install: sudo apt install libchafa0t64 libperl5.40' "$W/out"
+    check "... the one without a known package" grep -qF 'the package that has libunknown.so.7 (no package known here)' "$W/out"
+    unset FAKE_LDD_MISSING
+    # the good package after all that: installed
+    run_bin --binary
+    check "the good package: installed" [ "$RC" = 0 ] && current_is 2026.10.4
+    ;;
+binary-switch)
+    # releases side by side: current switched, previous kept for --rollback,
+    # --keep N old ones
+    binary_tools
+    for v in 1 2 3 4 5 6; do good_pkg "2026.10.$v" "$(fsha "2026.10.$v")"; done
+    record 2026.10.1 "$(fsha 2026.10.1)"
+    run_bin
+    check "2026.10.1 installed" current_is 2026.10.1
+    record 2026.10.2 "$(fsha 2026.10.2)"
+    run_bin
+    check "2026.10.2: current" current_is 2026.10.2
+    check "... previous is 2026.10.1" [ "$(readlink "$P/previous")" = releases/2026.10.1 ]
+    # shellcheck disable=SC2012 # plain names
+    check "... the old release untouched by the switch" [ "$(ls -A "$P/releases/2026.10.1" | tr '\n' ' ')" = "MANIFEST bin lib share " ]
+    check "... said Updated" grep -q 'Updated: 2026.10.1 -> 2026.10.2' "$W/out"
+    check "... and /upgrade" grep -qF 'in a running erssi, /upgrade loads 2026.10.2 (TLS connections reconnect once)' "$W/out"
+    record 2026.10.3 "$(fsha 2026.10.3)"; run_bin
+    record 2026.10.4 "$(fsha 2026.10.4)"; run_bin
+    check "2026.10.4: current" current_is 2026.10.4
+    check "... two old releases kept (the default)" releases_are 2026.10.2 2026.10.3 2026.10.4
+    check "... previous is 2026.10.3" [ "$(readlink "$P/previous")" = releases/2026.10.3 ]
+    record 2026.10.5 "$(fsha 2026.10.5)"
+    run_bin --keep 1
+    check "--keep 1: one old release" releases_are 2026.10.4 2026.10.5
+    check "... KEEP kept" grep -qx KEEP=1 "$CONF"
+    # an install interrupted after its stage was made (an older installer
+    # killed): the next one removes it
+    mkdir -p "$P/releases/.stage.left"
+    record 2026.10.6 "$(fsha 2026.10.6)"
+    run_bin
+    check "next install: the stage of an interrupted one removed" releases_are 2026.10.5 2026.10.6
+    run_bin --keep 0 --ref shellter-v2026.10.5
+    check "--keep 0: only the one in use" releases_are 2026.10.5
+    check "... no previous" none_exist "$P/previous"
+    # an installer that records only older releases (the copy an install
+    # leaves in the prefix): no switch back without --ref
+    record 2026.10.4 "$(fsha 2026.10.4)"
+    run_bin --dry-run
+    check "older recorded release, --dry-run: nothing to do" [ "$RC" = 0 ]
+    check "... said so" grep -qF 'The installed 2026.10.5 is newer than shellter-v2026.10.4, the newest release this installer records - nothing was changed (erssi --update finds newer ones; --ref shellter-v2026.10.4 installs that one on purpose).' "$W/out"
+    check "... no plan to switch" no_grep 'would' "$W/out"
+    run_bin
+    check "... without --dry-run: nothing changed" current_is 2026.10.5
+    check "... nothing downloaded" no_grep 'Downloading' "$W/out"
+    run_bin --ref shellter-v2026.10.4
+    check "--ref names it: switched back on purpose" current_is 2026.10.4
+    # the source build: the same
+    rm -rf "$P"
+    release_prefix 2026.10.9 "$(fsha 2026.10.9)" shellter-v2026.10.9
+    sh "$INSTALLER" --repo "$W/repo" --prefix "$W/p" --no-test > "$W/out" 2>&1 < /dev/null
+    check "source build of an older release: nothing changed" [ $? = 0 ] && no_grep 'Building' "$W/out"
+    check "... said so" grep -qF 'The installed 2026.10.9 is newer than shellter-v2026.10.4' "$W/out"
+    check "... the installed erssi kept" [ "$("$W/p/bin/erssi" --version)" = "erssi 2026.10.9 (20250101 1200)" ]
+    ;;
+binary-rollback-uninstall)
+    binary_tools
+    for v in 4 5; do good_pkg "2026.10.$v" "$(fsha "2026.10.$v")"; done
+    record 2026.10.4 "$(fsha 2026.10.4)" 2026.10.5 "$(fsha 2026.10.5)"
+    run_bin --ref shellter-v2026.10.4
+    run_bin
+    check "2026.10.5 over 2026.10.4" current_is 2026.10.5
+    R="$P/share/irssi/shellter-install.sh"
+    sh "$R" --rollback --dry-run > "$W/out" 2>&1
+    check "--rollback --dry-run: done" [ $? = 0 ]
+    check "... said what it would do" grep -qF 'would switch ~/.local/opt/erssi/current from releases/2026.10.5 to releases/2026.10.4' "$W/out"
+    check "... nothing changed" current_is 2026.10.5
+    sh "$R" --rollback > "$W/out" 2>&1
+    check "--rollback: done" [ $? = 0 ]
+    check "... 2026.10.4 in use" current_is 2026.10.4
+    check "... said so" grep -q 'Rolled back: 2026.10.5 -> 2026.10.4' "$W/out"
+    check "... /upgrade" grep -qF '/upgrade loads 2026.10.4' "$W/out"
+    check "... previous is 2026.10.5" [ "$(readlink "$P/previous")" = releases/2026.10.5 ]
+    check "... VERSION recorded" grep -qx VERSION=2026.10.4 "$CONF"
+    check "... COMMIT recorded" grep -qx "COMMIT=$(fsha 2026.10.4)" "$CONF"
+    check "... no lock left" none_exist "$P/.install.lock"
+    sh "$R" --rollback > "$W/out" 2>&1
+    check "--rollback again: back to 2026.10.5" current_is 2026.10.5
+    rm -rf "$P/releases/2026.10.4"
+    sh "$R" --rollback > "$W/out" 2>&1
+    check "previous release gone: refused" [ $? = 1 ]
+    check "... named, after error:" grep -q '^  error: no previous release to roll back to' "$W/out"
+    check "... nothing changed" current_is 2026.10.5
+    sh "$R" --rollback --update > "$W/out" 2>&1
+    check "--rollback with --update: usage error" [ $? = 2 ]
+    # --uninstall: the prefix and the link go, ~/.erssi stays
+    mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config"
+    : > "$P/notes"
+    sh "$R" --uninstall > "$W/out" 2>&1
+    check "a file of the user's in the prefix: refused" [ $? = 1 ]
+    check "... named" grep -qF 'holds notes, which erssi did not install - nothing was removed' "$W/out"
+    check "... nothing removed" current_is 2026.10.5
+    rm -f "$P/notes"
+    sh "$R" --uninstall --dry-run > "$W/out" 2>&1
+    check "--uninstall --dry-run: done" [ $? = 0 ]
+    check "... said what it would do" grep -qF 'would remove ~/.local/opt/erssi and the link ~/.local/bin/erssi; ~/.erssi would stay' "$W/out"
+    check "... nothing removed" current_is 2026.10.5
+    sh "$R" --uninstall > "$W/out" 2>&1
+    check "--uninstall: done" [ $? = 0 ]
+    check "... the prefix removed" none_exist "$P"
+    check "... the link removed" no_link
+    check "... ~/.erssi kept" [ -f "$HOME/.erssi/config" ]
+    # shellcheck disable=SC2088 # the text shown
+    check "... said so" grep -qF '~/.erssi (your configuration, logs and keys)' "$W/out"
+    sh "$INSTALLER" --uninstall > "$W/out" 2>&1
+    check "nothing installed: refused" [ $? = 1 ]
+    # a prefix that holds the home, or is shared: never removed
+    mkdir -p "$HOME/share/irssi" && : > "$HOME/share/irssi/shellter-install.conf"
+    sh "$INSTALLER" --uninstall --prefix "$HOME" > "$W/out" 2>&1
+    check "--prefix ~: refused" [ $? = 1 ]
+    check "... named" grep -q 'holds your home - nothing was removed' "$W/out"
+    check "... nothing removed" [ -f "$HOME/.erssi/config" ]
+    mkdir -p "$HOME/.local/share/irssi" && : > "$HOME/.local/share/irssi/shellter-install.conf"
+    sh "$INSTALLER" --uninstall --prefix "$HOME/.local" > "$W/out" 2>&1
+    check "--prefix ~/.local: refused" [ $? = 1 ]
+    check "... named" grep -q 'is shared with other software - nothing was removed' "$W/out"
+    ;;
+binary-dry-run)
+    # --dry-run downloads and checks, and changes nothing
+    binary_tools
+    c=$(fsha 2026.10.4)
+    record 2026.10.4 "$c"
+    good_pkg 2026.10.4 "$c"
+    run_bin --dry-run
+    check "--dry-run: done" [ "$RC" = 0 ]
+    check "... checked the package" grep -q 'Downloading.*signed - sha256 verified' "$W/out"
+    check "... said what it would do" grep -qF 'unpack erssi-2026.10.4-debian13-amd64.tar.xz into ~/.local/opt/erssi/releases/2026.10.4' "$W/out"
+    check "... nothing changed" none_exist "$P" "$HOME/.local/state" "$HOME/.local/src" "$HOME/.local/bin"
+    MF_VERSION=2026.10.5 good_pkg 2026.10.4 "$c"
+    run_bin --dry-run
+    check "--dry-run of a bad package: refused" [ "$RC" = 1 ]
+    check "... nothing changed" none_exist "$P" "$HOME/.local/state"
+    run_bin --dry-run --source
+    check "--dry-run --source: done" [ "$RC" = 0 ]
+    check "... the source plan" grep -qF 'download shellter-v2026.10.4 from' "$W/out"
+    check "... no package checked" no_grep 'Downloading' "$W/out"
+    check "... nothing changed" none_exist "$P" "$HOME/.local/state" "$HOME/.local/src"
+    ;;
+binary-update)
+    # erssi --update of a binary install: the newer signed release, from its
+    # package, through the installer of the installed release
+    binary_tools
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    record 2026.10.4 "$c4"
+    good_pkg 2026.10.4 "$c4"
+    run_bin
+    check "2026.10.4 installed" current_is 2026.10.4
+    c5=$(release_commit 2026.10.5); rtag shellter-v2026.10.5 "$c5"
+    good_pkg 2026.10.5 "$c5"
+    # as erssi --update runs it: the installer of the release in use, with
+    # the prefix erssi finds for itself (its release directory)
+    up() { uv=$1; shift; sh "$P/current/share/irssi/shellter-install.sh" --update --prefix "$P/releases/$uv" "$@" > "$W/out" 2>&1 < /dev/null; RC=$?; }
+    up 2026.10.4 --check
+    check "--check: update available" grep -q 'Update available: 2026.10.4 -> 2026.10.5' "$W/out"
+    check "... nothing changed" current_is 2026.10.4
+    up 2026.10.4
+    check "--update: done" [ "$RC" = 0 ]
+    check "... signed tag found" grep -q 'Finding the release.*shellter-v2026.10.5 - signed by the erssi Shellter release key' "$W/out"
+    check "... from the package" grep -q 'Downloading.*erssi-2026.10.5-debian13-amd64.tar.xz - signed - sha256 verified' "$W/out"
+    check "... its commit is the tag's" grep -q 'Checking the package.*commit of the signed tag' "$W/out"
+    check "... updated" grep -q 'Updated: 2026.10.4 -> 2026.10.5' "$W/out"
+    check "... /upgrade" grep -qF '/upgrade loads 2026.10.5 (TLS connections reconnect once)' "$W/out"
+    check "... 2026.10.5 in use" current_is 2026.10.5
+    check "... 2026.10.4 kept for --rollback" [ "$(readlink "$P/previous")" = releases/2026.10.4 ]
+    check "... COMMIT" grep -qx "COMMIT=$c5" "$CONF"
+    check "... no source directory" none_exist "$HOME/.local/src/erssi"
+    up 2026.10.5
+    check "again: up to date" grep -q 'erssi Shellter Edition 2026.10.5 is up to date' "$W/out"
+    check "... nothing downloaded" no_grep 'Downloading' "$W/out"
+    # a signed package of a newer release that names another commit than
+    # its signed tag: refused
+    c6=$(release_commit 2026.10.6); rtag shellter-v2026.10.6 "$c6"
+    MF_COMMIT=$c5 good_pkg 2026.10.6 "$c6"
+    up 2026.10.5
+    check "MANIFEST commit not the tag's: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "says commit=$c5, not $c6 - refusing to install" "$W/out"
+    check "... nothing changed" current_is 2026.10.5
+    check "... and kept" releases_are 2026.10.4 2026.10.5
+    # no package of the newer release for this platform: the source build
+    # takes the release found already, and says what it skipped once
+    rm -rf "$W/rel/shellter-v2026.10.6"
+    good_pkg 2026.10.6 "$c6" freebsd14-amd64
+    c7=$(release_commit 2026.10.7); rtag shellter-v2026.10.7 "$c7" "$W/other"
+    up 2026.10.5
+    check "no package for the newer release: updated from source" [ "$RC" = 0 ] && grep -q 'Building' "$W/out"
+    check "... 2026.10.6 built" grep -q 'Updated: 2026.10.5 -> 2026.10.6' "$W/out"
+    check "... its commit" grep -qx "COMMIT=$c6" "$CONF"
+    check "... the unsigned 2026.10.7 named once" [ "$(grep -c 'shellter-v2026.10.7 is not signed' "$W/out")" = 1 ]
+    ;;
+binary-old-keygen)
+    # an ssh-keygen that cannot check SSH signatures (before OpenSSH 8.1, no
+    # -Y) and a git before 2.34: no binary here, the source build as before
+    # this installer had packages
+    binary_tools
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    record 2026.10.4 "$c4"
+    good_pkg 2026.10.4 "$c4"
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\nfor a in "$@"; do [ "$a" != -Y ] || { echo "unknown option -- Y" >&2; echo "usage: ssh-keygen [-q] [-b bits] ..." >&2; exit 1; }; done\nexec "$TEST_W/bin/ssh-keygen" "$@"\n' | stand ssh-keygen
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\n[ "$1" != --version ] || { echo "git version 2.30.2"; exit 0; }\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool ssh-keygen git
+    run_bin
+    check "old ssh-keygen: installed" [ "$RC" = 0 ]
+    check "... one line why" grep -qF 'this ssh-keygen cannot check SSH signatures (OpenSSH 8.1 or newer is needed) - no binary package' "$W/out"
+    check "... built from source" grep -q 'building from source instead' "$W/out" && grep -q 'Building' "$W/out"
+    check "... with the warning of the source build" grep -q 'signatures cannot be checked here' "$W/out"
+    check "... not called tampering" no_grep 'refusing' "$W/out"
+    check "... nothing downloaded" no_grep 'Downloading.*sha256' "$W/out"
+    check "... METHOD=source" grep -qx METHOD=source "$CONF"
+    run_bin --binary
+    check "old ssh-keygen, --binary: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'no binary install (--binary): this ssh-keygen cannot check SSH signatures' "$W/out"
+    # an ssh-keygen that can: a SHA256SUMS without a line for this platform
+    # is a source build before its signature counts - even a bad one
+    rm -f "$W/shim/ssh-keygen" "$W/shim/git"
+    rm -rf "$W/rel/shellter-v2026.10.4"
+    make_pkg 2026.10.4 "$c4" freebsd14-amd64
+    sign_sums 2026.10.4 "$W/other"
+    run_bin
+    check "no line for the platform, badly signed: built from source" [ "$RC" = 0 ]
+    check "... the reason" grep -q 'no package for debian13-amd64 in shellter-v2026.10.4' "$W/out"
+    check "... not refused" no_grep 'refusing' "$W/out"
+    # with a line for this platform, the bad signature is refused
+    make_pkg 2026.10.4 "$c4"
+    sign_sums 2026.10.4 "$W/other"
+    run_bin
+    check "a line for the platform, badly signed: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'does not carry a valid signature by the erssi Shellter release key - refusing to install' "$W/out"
+    ;;
+binary-fallback)
+    # no package for this system: the source build, as before
+    binary_tools
+    c4=$(release_commit 2026.10.4); rtag shellter-v2026.10.4 "$c4"
+    record 2026.10.4 "$c4"
+    good_pkg 2026.10.4 "$c4" freebsd14-amd64
+    run_bin --binary
+    check "--binary, no package for the platform: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'no binary install (--binary): no package for debian13-amd64 in shellter-v2026.10.4' "$W/out"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi" "$P/bin/erssi"
+    run_bin
+    check "without --binary: installed" [ "$RC" = 0 ]
+    check "... the reason" grep -q 'Downloading.*no package for debian13-amd64 in shellter-v2026.10.4' "$W/out"
+    check "... building from source" grep -q 'building from source instead' "$W/out"
+    check "... built" grep -q 'Building' "$W/out"
+    check "... signed and recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    check "... METHOD=source" grep -qx METHOD=source "$CONF"
+    check "... a file, no link" [ -f "$P/bin/erssi" ] && [ ! -L "$P/bin/erssi" ]
+    check "... no empty releases directory left" none_exist "$P/releases"
+    # no binary packages in the release at all
+    rm -rf "$W/rel/shellter-v2026.10.4"
+    run_bin
+    check "no packages at all: built from source" grep -q 'no binary packages found for shellter-v2026.10.4' "$W/out"
+    check "... installed" [ "$RC" = 0 ]
+    # a package for another perl, or that needs missing libraries
+    good_pkg 2026.10.4 "$c4"
+    FAKE_PERL_V=5.36.0 run_bin
+    check "another perl: built from source" grep -q 'the package is built for perl 5.40.1, this system has perl 5.36.0' "$W/out"
+    check "... installed" [ "$RC" = 0 ] && grep -qx METHOD=source "$CONF"
+    FAKE_LDD_MISSING=libotr.so.5 run_bin
+    check "missing library: the apt command" grep -qF 'install: sudo apt install libotr5t64' "$W/out"
+    check "... built from source" grep -q 'Building' "$W/out"
+    # binary, then --source: the build replaces the link, not the release
+    run_bin
+    check "binary over the source build" current_is 2026.10.4
+    run_bin --source
+    check "--source: built" grep -q 'Building' "$W/out"
+    check "... no package checked" no_grep 'sha256 verified' "$W/out"
+    check "... bin/erssi a file again" [ -f "$P/bin/erssi" ] && [ ! -L "$P/bin/erssi" ]
+    check "... the release tree untouched" [ "$("$P/releases/2026.10.4/bin/erssi" --version)" = "erssi 2026.10.4 (20261018 1200)" ]
+    check "... USE=source kept" grep -qx USE=source "$CONF"
+    run_bin
+    check "next install: still from source" grep -q 'Building' "$W/out"
+    run_bin --binary
+    check "--binary: from the package again" current_is 2026.10.4
+    check "... and USE=auto" grep -qx USE=auto "$CONF"
+    # a source build whose install fails: the binary install stays usable
+    # shellcheck disable=SC2016 # a stand-in script
+    printf '#!/bin/sh\n[ "${3:-}" != install ] || exit 1\nexec "$TEST_W/stand/ninja" "$@"\n' > "$W/shim/ninja"
+    run_bin --source
+    check "--source, the install fails: failed" [ "$RC" = 1 ] && grep -q 'installing failed' "$W/out"
+    check "... bin/erssi still the link into current" current_is 2026.10.4
+    use_tool ninja
+    # no ssh-keygen: no package can be checked, the source build runs
+    rm -f "$W/bin/ssh-keygen"
+    run_bin
+    check "no ssh-keygen: built from source" grep -q 'no ssh-keygen to check the signature of a binary package' "$W/out"
+    check "... installed" [ "$RC" = 0 ]
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
