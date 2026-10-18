@@ -19,6 +19,13 @@
 #       Everything happens in --work (default: a new temporary directory,
 #       removed at the end unless --keep-work); HOME and TMPDIR of the
 #       build and its tests are inside it, so ~/.erssi is never touched.
+#       The script runs again in an empty environment (env -i) with
+#       PATH=CLEAN_PATH below: no CC, CFLAGS, LDFLAGS, PKG_CONFIG_PATH,
+#       LD_LIBRARY_PATH, PERL5LIB or test settings of the caller reach
+#       the build or its tests. Only TMPDIR (where the work directory
+#       goes) and BUILD_BINARY_TESTS are kept. No ELF file of the package
+#       may have an RPATH or RUNPATH, except the system perl's CORE
+#       directory (FreeBSD's perl links libperl that way).
 #   build-binary.sh --sums DIR
 #       Writes DIR/SHA256SUMS over the tarballs in DIR (one release) and
 #       prints the command that signs it.
@@ -47,6 +54,8 @@ RELEASE_FINGERPRINT='SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw'
 # where the packages are configured: never used at run time unless the
 # executable cannot find itself (src/core/relocate.c)
 BUILD_PREFIX=/opt/erssi
+# the PATH of the build: the system's tools only
+CLEAN_PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 
 say() { printf 'build-binary: %s\n' "$*"; }
 die() { printf 'build-binary: %s\n' "$*" >&2; exit 1; }
@@ -194,6 +203,23 @@ check_tree() {
             readelf -d "$f" | sed -n 's/.*NEEDED.*Shared library: *\[\(.*\)\].*/\1/p'
         done | LC_ALL=C sort -u | grep -vxF "$own" | tr '\n' ' ' | sed 's/ $//')
     [ -n "$NEEDED" ] || die "readelf found no shared libraries"
+    # no RPATH or RUNPATH ("Library rpath: [...]", "Library runpath:
+    # [...]" in both formats): a directory of the build machine (from
+    # LDFLAGS, say) would be searched for libraries wherever the package
+    # runs. Only the system perl's own CORE directory may be there.
+    perl_core=$(perl -MConfig -e 'print "$Config{archlibexp}/CORE"' 2>/dev/null)
+    case $perl_core in
+        /usr/*) ;;
+        *) perl_core= ;;
+    esac
+    bad=$(printf '%s\n' "$ELFS" | while IFS= read -r f; do
+            readelf -d "$f" | sed -n -e 's/.*RPATH.*\[\(.*\)\].*/\1/p' -e 's/.*RUNPATH.*\[\(.*\)\].*/\1/p' |
+                tr ':' '\n' | while IFS= read -r p; do
+                    [ -n "$perl_core" ] && [ "$p" = "$perl_core" ] && continue
+                    printf '%s: %s\n' "${f#"$dir"/}" "$p"
+                done
+        done)
+    [ -z "$bad" ] || die "an RPATH or RUNPATH in the package - no package: $(printf '%s\n' "$bad" | head -n 1)"
 }
 
 # meson install --destdir STAGE put everything under BUILD_PREFIX: a
@@ -213,6 +239,15 @@ check_stage() {
 }
 
 # ── a package ────────────────────────────────────────────────────────
+# a build in an empty environment: run again under env -i (the checks
+# and --sums need none of it). BUILD_BINARY_CLEAN marks the second run.
+if [ -z "${BUILD_BINARY_CLEAN:-}" ]; then
+    case ${1:-} in
+        --sums|--check-stage|--check-tree|-h|--help) ;;
+        *) exec env -i BUILD_BINARY_CLEAN=1 PATH="$CLEAN_PATH" HOME=/nonexistent LC_ALL=C \
+                TMPDIR="${TMPDIR:-/tmp}" BUILD_BINARY_TESTS="${BUILD_BINARY_TESTS:-}" /bin/sh "$0" "$@" ;;
+    esac
+fi
 REPO=
 OUT=.
 WORK=

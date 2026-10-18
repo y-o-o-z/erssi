@@ -227,6 +227,32 @@ EOF
         check "--check-tree: a link to $l is refused" sh -c 'printf "%s\n" "$1" | grep -q "a link is absolute or has a .. in it: bin/bad -> "' sh "$out"
     done
     unlink "$TR/bin/bad"
+    # an RPATH or RUNPATH is refused, in both readelf formats, unless it is
+    # the system perl's CORE directory; also in a real ELF file
+    perl_core=$(perl -MConfig -e 'print "$Config{archlibexp}/CORE"')
+    for f in "gnu (RUNPATH)            Library runpath: [/home/someone/lib]" \
+             "etc RPATH                Library rpath: [/home/someone/lib:/usr/lib]" \
+             "gnu (RPATH)              Library rpath: [$perl_core]"; do
+        # shellcheck disable=SC2086 # the format, then the line
+        set -- $f
+        kind=$1; shift
+        mkdir -p "$tmp/stub-rpath" && sed '/INIT/d' "$tmp/stub-$kind/readelf" > "$tmp/stub-rpath/readelf" &&
+            printf "echo '  0x000000000000001d %s'\n" "$*" >> "$tmp/stub-rpath/readelf" &&
+            chmod 755 "$tmp/stub-rpath/readelf" || exit 1
+        out=$(PATH="$tmp/stub-rpath:$PATH" sh "$BB" --check-tree "$TR" 2>&1)
+        case $* in
+            *"$perl_core"*) check "--check-tree: the system perl's CORE directory passes" [ "$out" = "needed=$(case $kind in gnu) echo libc.so.6 ;; *) echo libc.so.7 ;; esac) libglib-2.0.so.0" ] ;;
+            *) check "--check-tree: refused: $*" sh -c 'printf "%s\n" "$1" | grep -q "an RPATH or RUNPATH in the package - no package: .*/home/someone/lib"' sh "$out" ;;
+        esac
+    done
+    if command -v cc >/dev/null 2>&1 && command -v readelf >/dev/null 2>&1; then
+        RT=$tmp/rtree
+        mkdir -p "$RT/bin" && printf 'int main(void) { return 0; }\n' > "$tmp/t.c" &&
+            cc -o "$RT/bin/erssi" "$tmp/t.c" -Wl,-rpath,/home/someone/lib 2> /dev/null &&
+            readelf -d "$RT/bin/erssi" | grep -q 'someone' || exit 1
+        out=$(sh "$BB" --check-tree "$RT" 2>&1)
+        check "--check-tree: an ELF file linked with -rpath is refused" sh -c 'printf "%s\n" "$1" | grep -q "an RPATH or RUNPATH in the package - no package: bin/erssi: /home/someone/lib"' sh "$out"
+    fi
 
     # a meson install that put a file outside the prefix is refused and
     # the file named; the prefix alone (and the directories to it) passes
@@ -305,7 +331,13 @@ case_package() {
     # the relocatable live test, and a test whose program ninja does not
     # build by default (meson test must build it, as for the full suite)
     export BUILD_BINARY_TESTS="live relocatable,fe-web fuzz corpus handshake"
+    # a caller's environment that would break the build or leak into it:
+    # the packager runs in an empty one
+    export CC=false LDFLAGS=-Wl,-rpath,/home/someone/lib CFLAGS=-DLEAKED_CFLAGS \
+        PKG_CONFIG_PATH=/home/someone/pkgconfig LD_LIBRARY_PATH=/home/someone/lib \
+        PERL5LIB=/home/someone/perl5 RPE2E_SCRIPT=/home/someone/rpe2e.pl REPARTEE_BIN=/home/someone/repartee
     run_bb "$TAG"
+    unset CC LDFLAGS CFLAGS PKG_CONFIG_PATH LD_LIBRARY_PATH PERL5LIB RPE2E_SCRIPT REPARTEE_BIN
     check "the package is built (exit $RC)" [ "$RC" = 0 ]
     [ "$RC" = 0 ] || { printf '%s\n' "$OUT" | tail -n 30; return; }
     T=$OUTDIR/$NAME.tar.xz
@@ -347,6 +379,7 @@ case_package() {
         case " $1 " in *" libglib-2.0.so.0 "*) ;; *) exit 1 ;; esac' sh "$needed"
     check "MANIFEST: needed names no library of the package" sh -c 'for l in $1; do [ -z "$(find "$2" -name "$l")" ] || exit 1; done' sh "$needed" "$P"
     check "MANIFEST: needed is sorted" [ "$(printf '%s\n' "$needed" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' ')" = "$needed " ]
+    check "no RPATH or RUNPATH of the caller's LDFLAGS" sh -c 'find "$1" -type f -name "*.so" -o -type f -name erssi | while read -r f; do readelf -d "$f"; done | grep -q someone && exit 1; exit 0' sh "$P"
     check "the binary is stripped" sh -c '! readelf -S "$1" | grep -q "\.symtab"' sh "$P/bin/erssi"
     check "the modules are in the package" [ -n "$(find "$P" -name libe2e_core.so)" -a -n "$(find "$P" -name libfe_web.so)" -a -n "$(find "$P" -name Irssi.so)" ]
     check "the Perl modules are in the package" [ -n "$(find "$P" -name Irssi.pm)" ]

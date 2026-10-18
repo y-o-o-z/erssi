@@ -106,7 +106,15 @@ The platforms are `debian13-amd64` and `freebsd14-amd64`.
 
 The work directory goes at the end (`--keep-work` keeps it, with the
 logs: `setup.log`, `build.log`, `test.log`). Nothing of `~/.erssi` or
-the user's git config is used. Each step prints one line.
+the user's git config is used. The script runs in an empty environment
+(`env -i`) with the system's PATH (`/usr/local/bin:/usr/bin:/bin` and
+the `sbin` directories). It keeps only `TMPDIR`, so `CC`, `CFLAGS`,
+`LDFLAGS`, `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`, `PERL5LIB` and the
+interop test settings of your shell do not reach the build or its tests.
+meson, ninja and the compilers must be the system's. No ELF file of the
+package may have an RPATH or RUNPATH, except the system perl's `CORE`
+directory, which FreeBSD's perl uses to find libperl. Each step prints
+one line.
 
 ### Debian 13
 
