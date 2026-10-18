@@ -2056,7 +2056,7 @@ binary-rollback-uninstall)
     rm -rf "$P/releases/2026.10.4"
     sh "$R" --rollback > "$W/out" 2>&1
     check "previous release gone: refused" [ $? = 1 ]
-    check "... named" grep -q 'no previous release to roll back to' "$W/out"
+    check "... named, after error:" grep -q '^  error: no previous release to roll back to' "$W/out"
     check "... nothing changed" current_is 2026.10.5
     sh "$R" --rollback --update > "$W/out" 2>&1
     check "--rollback with --update: usage error" [ $? = 2 ]
@@ -2153,6 +2153,16 @@ binary-update)
     check "... named" grep -qF "says commit=$c5, not $c6 - refusing to install" "$W/out"
     check "... nothing changed" current_is 2026.10.5
     check "... and kept" releases_are 2026.10.4 2026.10.5
+    # no package of the newer release for this platform: the source build
+    # takes the release found already, and says what it skipped once
+    rm -rf "$W/rel/shellter-v2026.10.6"
+    good_pkg 2026.10.6 "$c6" freebsd14-amd64
+    c7=$(release_commit 2026.10.7); rtag shellter-v2026.10.7 "$c7" "$W/other"
+    up 2026.10.5
+    check "no package for the newer release: updated from source" [ "$RC" = 0 ] && grep -q 'Building' "$W/out"
+    check "... 2026.10.6 built" grep -q 'Updated: 2026.10.5 -> 2026.10.6' "$W/out"
+    check "... its commit" grep -qx "COMMIT=$c6" "$CONF"
+    check "... the unsigned 2026.10.7 named once" [ "$(grep -c 'shellter-v2026.10.7 is not signed' "$W/out")" = 1 ]
     ;;
 binary-old-keygen)
     # an ssh-keygen that cannot check SSH signatures (before OpenSSH 8.1, no
@@ -2213,6 +2223,7 @@ binary-fallback)
     check "... signed and recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
     check "... METHOD=source" grep -qx METHOD=source "$CONF"
     check "... a file, no link" [ -f "$P/bin/erssi" ] && [ ! -L "$P/bin/erssi" ]
+    check "... no empty releases directory left" none_exist "$P/releases"
     # no binary packages in the release at all
     rm -rf "$W/rel/shellter-v2026.10.4"
     run_bin

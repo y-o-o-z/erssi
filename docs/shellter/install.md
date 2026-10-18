@@ -172,7 +172,7 @@ has the details.
 
 ```sh
 erssi --check-update     # is a newer release available?
-erssi --update           # build and install it
+erssi --update           # install it
 ```
 
 `erssi --update` runs the installer shipped with the installed release: it

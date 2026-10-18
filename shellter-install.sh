@@ -674,24 +674,24 @@ switch_link() {
 # releases beyond KEEP old ones go, newest kept first; the one in use
 # always stays, and the one --rollback returns to counts first
 prune_releases() {
-    R="$PREFIX/releases"
+    RELS="$PREFIX/releases"
     cur=$(link_release current) prev=$(link_release previous) kept=0
     if [ -n "$prev" ] && [ "$prev" != "$cur" ]; then
         if [ "$KEEP" -ge 1 ]; then
             kept=1
         else
-            rm -f "$PREFIX/previous"; rm -rf "${R:?}/$prev"
+            rm -f "$PREFIX/previous"; rm -rf "${RELS:?}/$prev"
         fi
     fi
-    for v in $(for d in "$R"/*; do
+    for v in $(for d in "$RELS"/*; do
             d=${d##*/}
             case "$d" in [0-9]*) case "$d" in *[!0-9.]*) ;; *) echo "$d" ;; esac ;; esac
         done | sort -t. -k1,1nr -k2,2nr -k3,3nr); do
         if [ "$v" = "$cur" ] || [ "$v" = "$prev" ]; then continue; fi
-        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); else rm -rf "${R:?}/$v"; fi
+        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); else rm -rf "${RELS:?}/$v"; fi
     done
     # what an interrupted install left behind (the lock keeps out another)
-    for s in "$R"/.stage.*; do
+    for s in "$RELS"/.stage.*; do
         [ "$s" = "${STAGE:-}" ] || rm -rf "$s"
     done
 }
@@ -778,6 +778,8 @@ bin_cleanup() {
 }
 binary_fallback() {   # why
     bin_cleanup
+    # the releases directory this run made, if it holds nothing
+    [ "$DRY_RUN" = 1 ] || rmdir "$PREFIX/releases" 2>/dev/null || true
     trap - EXIT
     [ "$USE" != binary ] || die "no binary install (--binary): $1"
     if [ "$IN_STEP" = 1 ]; then skip_ "$1"; else warn "$1"; fi
@@ -838,6 +840,8 @@ binary_install() {
         BWORK=$(mktemp -d) || die "cannot create a temporary directory"
         git init -q "$BWORK" || die "cannot create a temporary git repository"
         find_update "$BWORK"
+        # the source build takes this tag object if it comes to that
+        FOUND_UPDATE=1
         TAG_COMMIT=$(git -C "$BWORK" rev-parse "$TAG_OBJ^{commit}") || die "cannot read $REF"
     else
         step "Choosing the release"
@@ -966,13 +970,13 @@ binary_install() {
     if [ -n "$PIN" ]; then c="commit recorded"; elif [ -n "$TAG_COMMIT" ]; then c="commit of the signed tag"; else c="release not recorded here"; fi
     done_ "$(echo "$HEAD_SHA" | cut -c1-8) $S_SEP $c $S_SEP libraries present"
 
-    R="$PREFIX/releases"
+    RELS="$PREFIX/releases"
     cur=$(link_release current)
     if [ "$DRY_RUN" = 1 ]; then
         step "Installing"
         skip_ "dry run"
         printf '\n  Dry run - nothing was changed. The install would:\n'
-        printf '    unpack %s into %s\n' "$ASSET" "$(tilde "$R/$V")"
+        printf '    unpack %s into %s\n' "$ASSET" "$(tilde "$RELS/$V")"
         if [ -n "$cur" ] && [ "$cur" != "$V" ]; then
             printf '    switch %s from releases/%s to releases/%s (--rollback returns to %s)\n' "$(tilde "$PREFIX/current")" "$cur" "$V" "$cur"
         else
@@ -989,20 +993,20 @@ binary_install() {
     # untouched, and an interrupted install leaves only its .stage.
     step "Installing"
     REUSED=0
-    if [ -e "$R/$V" ] || [ -L "$R/$V" ]; then
+    if [ -e "$RELS/$V" ] || [ -L "$RELS/$V" ]; then
         if [ "$cur" = "$V" ]; then
             # the release in use: not replaced under a running erssi; the
             # same package stays as it is
-            cmp -s "$R/$V/MANIFEST" "$T/MANIFEST" ||
-                die "$(tilde "$R/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
+            cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST" ||
+                die "$(tilde "$RELS/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
             REUSED=1
         else
-            mv "$R/$V" "$STAGE/old" || die "cannot move $(tilde "$R/$V") aside - nothing was changed"
+            mv "$RELS/$V" "$STAGE/old" || die "cannot move $(tilde "$RELS/$V") aside - nothing was changed"
         fi
     fi
-    if [ "$REUSED" = 0 ] && ! mv "$T" "$R/$V"; then
-        [ ! -d "$STAGE/old" ] || mv "$STAGE/old" "$R/$V"
-        die "cannot move the package to $(tilde "$R/$V") - nothing was changed"
+    if [ "$REUSED" = 0 ] && ! mv "$T" "$RELS/$V"; then
+        [ ! -d "$STAGE/old" ] || mv "$STAGE/old" "$RELS/$V"
+        die "cannot move the package to $(tilde "$RELS/$V") - nothing was changed"
     fi
     if [ "$cur" != "$V" ]; then
         switch_link "$PREFIX/current" "releases/$V" || die "cannot switch $(tilde "$PREFIX/current") to releases/$V"
@@ -1016,8 +1020,8 @@ binary_install() {
     fi
     prune_releases
     # erssi --update and --rollback run the installer of the release
-    [ ! -f "$R/$V/share/irssi/shellter-install.sh" ] ||
-        cp "$R/$V/share/irssi/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
+    [ ! -f "$RELS/$V/share/irssi/shellter-install.sh" ] ||
+        cp "$RELS/$V/share/irssi/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
     VERSION=$V
     write_conf binary || die "cannot write $CONF"
     link_bin
@@ -1092,13 +1096,13 @@ do_rollback() {
     header "rollback"
     field "prefix" "$(tilde "$PREFIX")"
     printf '\n'
-    R="$PREFIX/releases"
+    RELS="$PREFIX/releases"
     cur=$(link_release current) prev=$(link_release previous)
     if [ -z "$cur" ] || [ "$(conf_get METHOD)" != binary ]; then
         die "no binary install in $PREFIX - --rollback switches between the releases of a binary install"
     fi
-    if [ -z "$prev" ] || [ "$prev" = "$cur" ] || [ ! -f "$R/$prev/bin/erssi" ] || [ ! -f "$R/$prev/MANIFEST" ]; then
-        die "no previous release to roll back to in $(tilde "$R") - nothing was changed"
+    if [ -z "$prev" ] || [ "$prev" = "$cur" ] || [ ! -f "$RELS/$prev/bin/erssi" ] || [ ! -f "$RELS/$prev/MANIFEST" ]; then
+        die "no previous release to roll back to in $(tilde "$RELS") - nothing was changed"
     fi
     if [ "$DRY_RUN" = 1 ]; then
         printf '  Dry run - nothing was changed. --rollback would switch %s from releases/%s to releases/%s.\n\n' \
@@ -1115,8 +1119,8 @@ do_rollback() {
         switch_link "$PREFIX/bin/erssi" ../current/bin/erssi || warn "cannot link $(tilde "$PREFIX/bin/erssi")"
     # what is installed now, from the MANIFEST it was installed with
     VERSION=$prev REF="shellter-v$prev"
-    HEAD_SHA=$(mf "$R/$prev/MANIFEST" commit) || HEAD_SHA=""
-    PLATFORM=$(mf "$R/$prev/MANIFEST" platform) || PLATFORM=""
+    HEAD_SHA=$(mf "$RELS/$prev/MANIFEST" commit) || HEAD_SHA=""
+    PLATFORM=$(mf "$RELS/$prev/MANIFEST" platform) || PLATFORM=""
     write_conf binary || warn "cannot write $CONF"
     printf '  %s%sRolled back: %s %s %s%s\n\n' "$B" "$G" "$cur" "$S_ARROW" "$prev" "$N"
     field "running" "in a running erssi, /upgrade loads $prev (TLS connections reconnect once)"
@@ -1633,7 +1637,15 @@ else
         NEW_SRC=1
     fi
 fi
-if [ "$UPDATE" = 1 ]; then
+if [ "$UPDATE" = 1 ] && [ -n "${FOUND_UPDATE:-}" ]; then
+    # found and checked by the binary path already: the same signed tag
+    # object, fetched into the source directory
+    step "Finding the release"
+    fetch_ref "$WORK" "$REF" || die "cannot download $REF from $REPO - nothing was changed; try again later"
+    [ "$(git -C "$WORK" rev-parse --verify -q FETCH_HEAD)" = "$TAG_OBJ" ] ||
+        die "$REF changed while it was downloaded - nothing was changed; try again (report it if it happens again)"
+    done_ "$REF $S_SEP signed by the erssi Shellter release key"
+elif [ "$UPDATE" = 1 ]; then
     find_update "$WORK"
 else
     step "Choosing the release"
