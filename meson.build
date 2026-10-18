@@ -728,6 +728,8 @@ foreach arg : get_option('c_args')
     kinds = arg.split('=')[1].split(',')
     if 'cfi' in kinds or 'cfi-icall' in kinds
       cfi_icall = arg.startswith('-fsanitize=')
+    elif 'all' in kinds and arg.startswith('-fno-sanitize=')
+      cfi_icall = false
     endif
   endif
 endforeach
