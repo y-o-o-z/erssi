@@ -1903,13 +1903,23 @@ static void cmd_rotate(WI_ITEM_REC *item)
 static void cmd_export(WI_ITEM_REC *item, const char *path)
 {
 	E2E_JSON *kr, *doc;
+	E2E_IDENTITY id;
 	char *data, *error = NULL;
+	gboolean created;
 
 	if (path == NULL) {
 		e2e_print_item(item, "usage: /e2e export <file>");
 		return;
 	}
 	kr = e2e_load();
+	/* an export without a whole identity could not be imported */
+	if (!e2e_identity_get(kr, &id, FALSE, &created, &error)) {
+		e2e_print_item(item, "export failed: %s - nothing written", error);
+		g_free(error);
+		e2e_json_free(kr);
+		return;
+	}
+	e2e_identity_wipe(&id);
 	doc = e2e_keyring_export(kr);
 	data = e2e_json_encode(doc, TRUE);
 	/* private keys: created 0600, never over a file or through a symlink */
@@ -1929,10 +1939,11 @@ static void cmd_export(WI_ITEM_REC *item, const char *path)
 static void cmd_import(WI_ITEM_REC *item, const char *path)
 {
 	E2E_JSON *doc, *kr;
+	E2E_IDENTITY id;
 	GError *gerror = NULL;
 	const char *perr = NULL;
 	char *data, *error = NULL, *bak;
-	gboolean lost, saved;
+	gboolean lost, saved, created;
 	gsize len;
 
 	if (path == NULL) {
@@ -1977,6 +1988,17 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 		g_free(error);
 		return;
 	}
+	/* the identity must be whole: an empty one would be replaced by a
+	   new one at the next use (every peer would see a new key), a
+	   damaged one would stop everything */
+	if (!e2e_identity_get(kr, &id, FALSE, &created, &error)) {
+		e2e_print_item(item, "import failed: %s: %s - nothing changed", path,
+		               strcmp(error, "no identity yet") == 0 ? "it holds no identity" : error);
+		g_free(error);
+		e2e_json_free(kr);
+		return;
+	}
+	e2e_identity_wipe(&id);
 	/* the whole keyring is replaced: a private copy first. A lost
 	   keyring (moved aside) is replaced too: that ends the lost state. */
 	lost = e2e_keyring_is_lost();

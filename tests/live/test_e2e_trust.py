@@ -298,6 +298,45 @@ def main():
         assert keyring(a)["identity"]["fp"] == before
         assert session(a, "bob2@127.0.0.1") == "trusted", keyring(a)
 
+    def t_import_identity():
+        """/e2e import refuses a keyring (a raw one or an export) whose
+        identity is empty or damaged, and /e2e export refuses to write
+        one: nothing is replaced"""
+        a = st["alice"]
+        ring = a.home / "rpe2e" / "keyring.json"
+        good = ring.read_text()
+        fp = json.loads(good)["identity"]["fp"]
+        exp = work / "good-export.json"
+        a.type_and_wait(f"/e2e export {exp}")
+        assert harness.wait_until(exp.exists, WAIT)
+        broken_pk = dict(json.loads(good)["identity"])
+        broken_pk["pk"] = "B" * 43 + "="
+        cases = [("raw-empty", json.loads(good), {}, "it holds no identity"),
+                 ("raw-damaged", json.loads(good), broken_pk, "damaged"),
+                 ("export-empty", json.loads(exp.read_text()), {}, "it holds no identity")]
+        for name, doc, ident, why in cases:
+            doc["identity"] = ident
+            f = work / f"{name}.json"
+            f.write_text(json.dumps(doc))
+            off = log_size(a)
+            a.type_and_wait(f"/e2e import {f}")
+            assert wait_log(a, off, "import failed: "), (name, log_since(a, off))
+            out = log_since(a, off)
+            assert why in out and "nothing changed" in out, (name, out)
+            assert "imported keyring" not in out, (name, out)
+            assert keyring(a)["identity"]["fp"] == fp, name
+        # an export of a damaged identity writes nothing
+        doc = json.loads(good)
+        doc["identity"] = broken_pk
+        ring.write_text(json.dumps(doc))
+        dest = work / "damaged-export.json"
+        off = log_size(a)
+        a.type_and_wait(f"/e2e export {dest}")
+        assert wait_log(a, off, "export failed: "), log_since(a, off)
+        ring.write_text(good)
+        os.chmod(ring, 0o600)
+        assert "damaged" in log_since(a, off) and not dest.exists(), log_since(a, off)
+
     def t_corrupt_keyring():
         """/load e2e on a corrupt keyring says so at once; a line typed
         then is shown marked [NOT SENT], the warning after it"""
@@ -353,7 +392,7 @@ def main():
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
                       t_accept_live_nick, t_bot_lines, t_plain_marked, t_unreadable_keyring,
-                      t_reset_force, t_corrupt_keyring, t_wire])
+                      t_reset_force, t_import_identity, t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():
