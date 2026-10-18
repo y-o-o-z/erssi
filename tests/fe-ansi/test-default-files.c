@@ -795,62 +795,60 @@ static void test_fifo_skipped(Fixture *f, gconstpointer data)
 	g_free(dst);
 }
 
-static void test_read_regular_reads_file(Fixture *f, gconstpointer data)
+/* the shipped file is a FIFO (in an installation of the user's own): it is
+ * not read - opening it would wait for a writer and hang the start */
+static void test_shipped_fifo_skipped(Fixture *f, gconstpointer data)
 {
-	char *path = path_in(f->dir, "plain");
-	char *content = NULL;
-	gsize len = 0;
+	char *dst = path_in(f->dir, "t.theme");
 
-	/* also a file with a NUL and larger than one read() */
-	GString *big = g_string_new(NULL);
-	int i;
-
-	for (i = 0; i < 3000; i++)
-		g_string_append(big, "0123456789");
-	g_string_append_c(big, '\0');
-	g_string_append(big, "tail");
-	g_assert_true(g_file_set_contents(path, big->str, big->len, NULL));
-
-	g_assert_true(default_files_read_regular(path, &content, &len));
-	g_assert_cmpuint(len, ==, big->len);
-	g_assert_cmpint(memcmp(content, big->str, len), ==, 0);
-	g_free(content);
-	g_string_free(big, TRUE);
-	g_free(path);
-}
-
-static void test_read_regular_refuses_link(Fixture *f, gconstpointer data)
-{
-	char *target = path_in(f->dir, "target");
-	char *link = path_in(f->dir, "link");
-	char *content = NULL;
-	gsize len = 0;
-
-	write_file(target, "through a link\n");
-	g_assert_cmpint(symlink(target, link), ==, 0);
-	g_assert_false(default_files_read_regular(link, &content, &len));
-	g_assert_null(content);
-	g_free(link);
-	g_free(target);
-}
-
-static void test_read_regular_fifo_does_not_block(Fixture *f, gconstpointer data)
-{
-	char *fifo = path_in(f->dir, "fifo");
-
+	g_assert_cmpint(g_unlink(f->shipped), ==, 0);
+	g_assert_cmpint(mkfifo(f->shipped, 0600), ==, 0);
 	if (g_test_subprocess()) {
-		char *content = NULL;
-		gsize len = 0;
+		DEFAULT_FILES_REC *rec = default_files_open(f->dir, KNOWN);
 
-		g_assert_cmpint(mkfifo(fifo, 0600), ==, 0);
-		g_assert_false(default_files_read_regular(fifo, &content, &len));
-		g_assert_null(content);
-		g_free(fifo);
+		g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+		                DEFAULT_FILE_SKIPPED);
+		default_files_close(rec);
+		g_assert_false(g_file_test(dst, G_FILE_TEST_EXISTS));
+		g_free(dst);
 		return;
 	}
 	g_test_trap_subprocess(NULL, 2 * G_USEC_PER_SEC, 0);
 	g_test_trap_assert_passed();
-	g_free(fifo);
+	g_free(dst);
+}
+
+/* themes installed as links (stow, a package of the user's own): the
+ * shipped file is read through the link */
+static void test_shipped_symlink_followed(Fixture *f, gconstpointer data)
+{
+	DEFAULT_FILES_REC *rec;
+	char *real = g_strconcat(f->shipped, ".real", NULL);
+
+	g_assert_cmpint(g_rename(f->shipped, real), ==, 0);
+	g_assert_cmpint(symlink(real, f->shipped), ==, 0);
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_COPIED);
+	default_files_close(rec);
+	assert_file(f->dir, "t.theme", SHIPPED);
+	g_free(real);
+}
+
+/* a link to /dev/null as the shipped file: nothing is installed */
+static void test_shipped_dev_null_skipped(Fixture *f, gconstpointer data)
+{
+	DEFAULT_FILES_REC *rec;
+	char *dst = path_in(f->dir, "t.theme");
+
+	g_assert_cmpint(g_unlink(f->shipped), ==, 0);
+	g_assert_cmpint(symlink("/dev/null", f->shipped), ==, 0);
+	rec = default_files_open(f->dir, KNOWN);
+	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
+	                DEFAULT_FILE_SKIPPED);
+	default_files_close(rec);
+	g_assert_false(g_file_test(dst, G_FILE_TEST_EXISTS));
+	g_free(dst);
 }
 
 #define ADD(name, func, subdir) \
@@ -878,10 +876,9 @@ int main(int argc, char **argv)
 	ADD("/default-files/directory-skipped", test_directory_skipped, NULL);
 	ADD("/default-files/unreadable-skipped", test_unreadable_skipped, NULL);
 	ADD("/default-files/fifo-skipped", test_fifo_skipped, NULL);
-	ADD("/default-files/read-regular-reads-file", test_read_regular_reads_file, NULL);
-	ADD("/default-files/read-regular-refuses-link", test_read_regular_refuses_link, NULL);
-	ADD("/default-files/read-regular-fifo-does-not-block",
-	    test_read_regular_fifo_does_not_block, NULL);
+	ADD("/default-files/shipped-fifo-skipped", test_shipped_fifo_skipped, NULL);
+	ADD("/default-files/shipped-symlink-followed", test_shipped_symlink_followed, NULL);
+	ADD("/default-files/shipped-dev-null-skipped", test_shipped_dev_null_skipped, NULL);
 
 	return g_test_run();
 }

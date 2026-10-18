@@ -13,6 +13,8 @@
 
 /* a larger <dir>/default-files.sha256 is not read (as if there were none) */
 #define DEFAULT_FILES_LIST_MAX (64 * 1024)
+/* a larger shipped file is not installed */
+#define DEFAULT_FILES_SHIPPED_MAX (4 * 1024 * 1024)
 
 typedef enum {
 	DEFAULT_FILE_COPIED,   /* was missing */
@@ -38,7 +40,5 @@ DEFAULT_FILE_RESULT default_files_update(DEFAULT_FILES_REC *rec, const char *shi
                                          const char *name, gboolean theme);
 /* writes <dir>/default-files.sha256 (mode 0600 from the start) when changed; frees rec and its notes */
 void default_files_close(DEFAULT_FILES_REC *rec);
-/* a regular file's contents, never through a link: O_NOFOLLOW | O_NONBLOCK, checked with fstat */
-gboolean default_files_read_regular(const char *path, char **data, gsize *len);
 
 #endif

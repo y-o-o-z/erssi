@@ -19,17 +19,15 @@
 */
 
 #include <irssi/src/common.h>
+#include <irssi/src/core/safe-file.h>
 #include <irssi/src/fe-ansi/default-files.h>
 
 #include <glib/gstdio.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #define DEFAULT_FILES_SHA256 "default-files.sha256"
-
-static gboolean read_regular(const char *path, gsize max, char **data, gsize *len);
 
 DEFAULT_FILES_REC *default_files_open(const char *dir, const char *const known[][2])
 {
@@ -45,7 +43,7 @@ DEFAULT_FILES_REC *default_files_open(const char *dir, const char *const known[]
 	/* like the files: not through a link, not a FIFO, and not a huge file;
 	 * a list that is not read is no record (files are then kept, and the
 	 * list written at the end replaces it) */
-	if (read_regular(path, DEFAULT_FILES_LIST_MAX, &contents, &len)) {
+	if (safe_file_read(path, 0, DEFAULT_FILES_LIST_MAX, &contents, &len)) {
 		/* "<sha256>  <name>", as sha256sum writes it */
 		lines = g_strsplit(contents, "\n", -1);
 		for (line = lines; *line != NULL; line++) {
@@ -82,119 +80,38 @@ static gboolean default_hash_known(DEFAULT_FILES_REC *rec, const char *name, con
 	return FALSE;
 }
 
-/* A regular file opened for reading, never through a symbolic link:
- * opened once with O_NOFOLLOW and checked on that descriptor, so a link
- * swapped in after the lstat() is not followed; O_NONBLOCK, so a FIFO
- * swapped in does not hang the start (it is refused by the fstat()) */
-static int open_regular(const char *path)
-{
-	struct stat st;
-	int fd;
-
-	fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-	if (fd < 0)
-		return -1;
-	if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
-
-/* reads fd to its end into buf and/or sum, then closes it; with max > 0
- * a file of more than max bytes is an error */
-static gboolean read_all(int fd, GString *buf, GChecksum *sum, gsize max)
+/* reads fd to its end into sum, then closes it */
+static gboolean hash_all(int fd, GChecksum *sum)
 {
 	char chunk[8192];
 	ssize_t n;
 
 	while ((n = read(fd, chunk, sizeof(chunk))) > 0 ||
 	       (n < 0 && errno == EINTR)) {
-		if (n > 0 && buf != NULL)
-			g_string_append_len(buf, chunk, n);
-		if (n > 0 && sum != NULL)
+		if (n > 0)
 			g_checksum_update(sum, (guchar *) chunk, n);
-		if (max > 0 && buf != NULL && buf->len > max) {
-			n = -1;
-			break;
-		}
 	}
 	close(fd);
 	return n == 0;
 }
 
-static gboolean read_regular(const char *path, gsize max, char **data, gsize *len)
-{
-	GString *buf;
-	int fd;
-
-	fd = open_regular(path);
-	if (fd < 0)
-		return FALSE;
-	buf = g_string_new(NULL);
-	if (!read_all(fd, buf, NULL, max)) {
-		g_string_free(buf, TRUE);
-		return FALSE;
-	}
-	*len = buf->len;
-	*data = g_string_free(buf, FALSE);
-	return TRUE;
-}
-
-gboolean default_files_read_regular(const char *path, char **data, gsize *len)
-{
-	return read_regular(path, 0, data, len);
-}
-
-/* the sha256 of a regular file (as default_files_read_regular() reads it),
- * streamed: a large file is not held in memory; NULL when it is not read */
+/* the sha256 of a regular file in ~/.erssi, never through a symbolic link
+ * (one the user made is the user's own version, left alone), streamed: a
+ * large file is not held in memory; NULL when it is not read */
 static char *hash_regular(const char *path)
 {
 	GChecksum *sum;
 	char *hash = NULL;
 	int fd;
 
-	fd = open_regular(path);
+	fd = safe_file_open_read(path, 0, NULL);
 	if (fd < 0)
 		return NULL;
 	sum = g_checksum_new(G_CHECKSUM_SHA256);
-	if (read_all(fd, NULL, sum, 0))
+	if (hash_all(fd, sum))
 		hash = g_strdup(g_checksum_get_string(sum));
 	g_checksum_free(sum);
 	return hash;
-}
-
-/* Replaces path with data: a new file in the same directory with the given
- * mode from the start (no window with the umask's mode), written out to the
- * disk, then renamed over the old one - never a half-written file under
- * path, and a link at path is replaced, not followed */
-static gboolean write_file_mode(const char *path, const char *data, gsize len, int mode)
-{
-	char *tmp = g_strconcat(path, ".XXXXXX", NULL);
-	gsize done = 0;
-	int fd, ok;
-
-	fd = g_mkstemp_full(tmp, O_WRONLY | O_CLOEXEC, mode);
-	if (fd < 0) {
-		g_free(tmp);
-		return FALSE;
-	}
-	ok = fchmod(fd, mode) == 0;
-	while (ok && done < len) {
-		ssize_t n = write(fd, data + done, len - done);
-		if (n < 0 && errno == EINTR)
-			continue;
-		ok = n > 0;
-		if (ok)
-			done += n;
-	}
-	ok = ok && fsync(fd) == 0;
-	ok = close(fd) == 0 && ok;
-	ok = ok && rename(tmp, path) == 0;
-	if (!ok)
-		unlink(tmp);
-	g_free(tmp);
-	return ok;
 }
 
 DEFAULT_FILE_RESULT default_files_update(DEFAULT_FILES_REC *rec, const char *shipped_path,
@@ -206,14 +123,18 @@ DEFAULT_FILE_RESULT default_files_update(DEFAULT_FILES_REC *rec, const char *shi
 	gsize shipped_len;
 	struct stat st;
 
-	if (!g_file_get_contents(shipped_path, &shipped, &shipped_len, NULL))
+	/* the installation's file: a link is followed (themes installed as
+	 * links, by stow or a package of the user's own), a FIFO or device is
+	 * not read */
+	if (!safe_file_read(shipped_path, SAFE_FILE_FOLLOW, DEFAULT_FILES_SHIPPED_MAX,
+	                    &shipped, &shipped_len))
 		return DEFAULT_FILE_SKIPPED;
 	shipped_hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (guchar *) shipped, shipped_len);
 	recorded = g_hash_table_lookup(rec->hashes, name);
 	dst_path = g_strdup_printf("%s/%s", rec->dir, name);
 
 	if (g_lstat(dst_path, &st) != 0) {
-		if (errno == ENOENT && write_file_mode(dst_path, shipped, shipped_len, 0600)) {
+		if (errno == ENOENT && safe_file_write(dst_path, shipped, shipped_len, 0600)) {
 			default_hash_record(rec, name, shipped_hash);
 			result = DEFAULT_FILE_COPIED;
 		}
@@ -225,7 +146,7 @@ DEFAULT_FILE_RESULT default_files_update(DEFAULT_FILES_REC *rec, const char *shi
 		} else if ((recorded != NULL && strcmp(current_hash, recorded) == 0) ||
 		           default_hash_known(rec, name, current_hash)) {
 			/* not changed since erssi installed it: the new version */
-			if (write_file_mode(dst_path, shipped, shipped_len, st.st_mode & 07777)) {
+			if (safe_file_write(dst_path, shipped, shipped_len, st.st_mode & 07777)) {
 				default_hash_record(rec, name, shipped_hash);
 				rec->themes_changed |= theme;
 				result = DEFAULT_FILE_UPDATED;
@@ -272,7 +193,7 @@ void default_files_close(DEFAULT_FILES_REC *rec)
 		g_list_free(names);
 		/* 0600 from the start: no moment with the umask's mode */
 		path = g_strdup_printf("%s/" DEFAULT_FILES_SHA256, rec->dir);
-		write_file_mode(path, out->str, out->len, 0600);
+		safe_file_write(path, out->str, out->len, 0600);
 		g_free(path);
 		g_string_free(out, TRUE);
 	}
