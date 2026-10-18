@@ -469,15 +469,9 @@ static gboolean print_legacy_warning(gpointer data)
 	lines = credential_legacy_warning();
 	if (lines == NULL)
 		return G_SOURCE_REMOVE;
-	for (line = lines; *line != NULL; line++) {
-		/* printed as text: a % in a path is not a colour code */
-		char **parts = g_strsplit(*line, "%", -1);
-		char *text = g_strjoinv("%%", parts);
-
-		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "%s", text);
-		g_free(text);
-		g_strfreev(parts);
-	}
+	/* an argument is printed as it is: a % in a path stays one */
+	for (line = lines; *line != NULL; line++)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE, "%s", *line);
 	g_strfreev(lines);
 	return G_SOURCE_REMOVE;
 }

@@ -29,7 +29,7 @@ typedef struct {
 	GHashTable *hashes;                 /* name -> recorded sha256 */
 	const char *const (*known)[2];      /* { name, sha256 } ..., { NULL, NULL } */
 	gboolean hashes_changed, themes_changed;
-	GSList *notes;                      /* char *, '%' doubled for printtext */
+	GSList *notes;                      /* char *, printed with printtext "%s" */
 } DEFAULT_FILES_REC;
 
 /* reads <dir>/default-files.sha256; known lists every shipped version */

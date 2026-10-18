@@ -27,7 +27,7 @@ def main():
         st["ircds"].append(srv)
         return srv.start()
 
-    def erssi(name, port, core_settings="", chatnet=""):
+    def erssi(name, port, core_settings="", chatnet="", before=None):
         cfg = harness.config(port, "alice")
         if core_settings:
             assert "core = { real_name" in cfg, cfg
@@ -37,6 +37,9 @@ def main():
             cfg = cfg.replace('E2E = { type = "IRC"; };', 'E2E = { type = "IRC"; %s };' % chatnet)
         e = harness.Erssi(st["inst"], work, name, cfg)
         st["erssis"].append(e)
+        if before is not None:
+            e.home.mkdir(parents=True, exist_ok=True)
+            before(e)
         e.start()
         assert e.wait_file(e.all_log(), "has joined #test", WAIT), f"{name} never joined #test"
         return e
@@ -81,6 +84,19 @@ def main():
         a.quit()
         assert a.sanitizer_reports() == [], a.sanitizer_reports()
 
+    def t_percent_in_path():
+        """a % in the file name is printed as one %"""
+        def directory(e):
+            (e.home / "cr%sx").mkdir()
+
+        a = erssi("percent", ircd("percent"),
+                  'credential_storage_mode = "external"; credential_external_file = "cr%sx";',
+                  before=directory)
+        assert a.wait_file(a.all_log(), "cr%sx: a directory", WAIT), log(a)
+        assert "%%" not in log(a), log(a)
+        a.quit()
+        assert a.sanitizer_reports() == [], a.sanitizer_reports()
+
     def cleanup():
         for e in st["erssis"]:
             e.kill()
@@ -88,7 +104,8 @@ def main():
             s.stop()
 
     try:
-        harness.main([t_install, t_once_per_start, t_encrypted_value, t_plain_no_warning])
+        harness.main([t_install, t_once_per_start, t_encrypted_value, t_plain_no_warning,
+                      t_percent_in_path])
     finally:
         cleanup()
         if not harness.keep_work():

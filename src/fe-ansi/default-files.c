@@ -158,12 +158,10 @@ DEFAULT_FILE_RESULT default_files_update(DEFAULT_FILES_REC *rec, const char *shi
 				char *note = g_strdup_printf(
 					"%s: kept as you changed it; the version shipped "
 					"with erssi is %s", dst_path, shipped_path);
-				char **parts = g_strsplit(note, "%", -1);
 
-				/* printed as text: a % in a path is not a colour code */
-				rec->notes = g_slist_append(rec->notes, g_strjoinv("%%", parts));
-				g_strfreev(parts);
-				g_free(note);
+				/* printed as the argument of "%s", which is not
+				 * expanded: a % in a path stays as it is */
+				rec->notes = g_slist_append(rec->notes, note);
 			}
 			default_hash_record(rec, name, shipped_hash);
 			result = DEFAULT_FILE_KEPT;

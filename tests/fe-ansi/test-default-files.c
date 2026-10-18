@@ -674,11 +674,10 @@ static void test_known_hash_updated(Fixture *f, gconstpointer data)
 	g_free(dst);
 }
 
-static void test_note_escapes_percent(Fixture *f, gconstpointer data)
+static void test_note_keeps_percent(Fixture *f, gconstpointer data)
 {
 	DEFAULT_FILES_REC *rec;
 	char *dst = path_in(f->dir, "t.theme");
-	char **parts, *unescaped;
 
 	g_assert_nonnull(strstr(f->dir, "/a%b"));
 	write_file(dst, "mine\n");
@@ -686,14 +685,10 @@ static void test_note_escapes_percent(Fixture *f, gconstpointer data)
 	g_assert_cmpint(default_files_update(rec, f->shipped, "t.theme", TRUE), ==,
 	                DEFAULT_FILE_KEPT);
 	g_assert_cmpuint(g_slist_length(rec->notes), ==, 1);
-	g_assert_nonnull(strstr(rec->notes->data, "/a%%b/t.theme: kept as you changed it"));
-
-	/* every % is doubled: none is left alone */
-	parts = g_strsplit(rec->notes->data, "%%", -1);
-	unescaped = g_strjoinv("", parts);
-	g_assert_null(strchr(unescaped, '%'));
-	g_free(unescaped);
-	g_strfreev(parts);
+	/* printed as the argument of "%s", which printtext() does not expand:
+	 * the % stays one, not doubled */
+	g_assert_nonnull(strstr(rec->notes->data, "/a%b/t.theme: kept as you changed it"));
+	g_assert_null(strstr(rec->notes->data, "%%"));
 
 	default_files_close(rec);
 	g_free(dst);
@@ -871,7 +866,7 @@ int main(int argc, char **argv)
 	ADD("/default-files/current-untouched", test_current_untouched, NULL);
 	ADD("/default-files/recorded-unchanged-updated", test_recorded_unchanged_updated, NULL);
 	ADD("/default-files/known-hash-updated", test_known_hash_updated, NULL);
-	ADD("/default-files/note-escapes-percent", test_note_escapes_percent, "a%b");
+	ADD("/default-files/note-keeps-percent", test_note_keeps_percent, "a%b");
 	ADD("/default-files/symlink-skipped", test_symlink_skipped, NULL);
 	ADD("/default-files/directory-skipped", test_directory_skipped, NULL);
 	ADD("/default-files/unreadable-skipped", test_unreadable_skipped, NULL);
