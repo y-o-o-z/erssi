@@ -74,6 +74,11 @@ char *e2e_keyring_backup(const char *path, char **error);
    at most max bytes - and, own, of this user; NULL with *error (the
    reason, such as "not a regular file (a FIFO)") and errno set */
 char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *len, char **error);
+/* data in place of path, as the keyring is written: a new 0600 file
+   next to it (O_EXCL, never through a symlink), fsync'ed, renamed over
+   path, the directory fsync'ed; what names the file in *error */
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error);
 /* a new file, 0600, never over an existing file or through a symlink */
 gboolean e2e_write_new_file(const char *path, const char *data, size_t len, char **error);
 

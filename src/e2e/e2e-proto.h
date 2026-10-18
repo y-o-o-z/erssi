@@ -357,6 +357,18 @@ E2E_REPLAY *e2e_replay_new(guint max, guint per_sender);
 void e2e_replay_free(E2E_REPLAY *r);
 /* TRUE: seen within the time (a repeat); FALSE: new, remembered now */
 gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, const E2E_WIRE *w);
+/* On disk, so that a restart does not open the window again: next to
+   the keyring, written as it is (a new 0600 file, fsync'ed, renamed
+   over; never through a symlink), only the chunks still inside the
+   window, as SHA-256 digests and times - no names, text or keys. A file
+   that is missing reads as empty; one that is damaged, too large or no
+   regular file of this user reads as empty too, with *error, and is
+   replaced at the next save. Nothing else depends on it. */
+#define E2E_REPLAY_FILE "replay.cache"
+gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error);
+gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error);
+/* a chunk was remembered since the last save */
+gboolean e2e_replay_changed(const E2E_REPLAY *r);
 guint e2e_replay_size(const E2E_REPLAY *r);
 
 typedef struct {

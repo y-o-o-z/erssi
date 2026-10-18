@@ -264,6 +264,45 @@ def main():
         assert wait_chan(k, "encrypted from alice"), chan_log(k)[-500:]
         assert "[plain]" not in chan_log(a)[start:].split("unmarked clear text")[1], chan_log(a)[start:]
 
+    def t_replay_after_restart():
+        """a line of alice's that the server delivers again is dropped,
+        not shown twice - also after /unload and /load of the module and
+        after bob restarts: the cache of lines read is kept on disk
+        (digests and times only)"""
+        a, k = st["alice"], st["bob"]
+        wire_off = (work / "wire.log").stat().st_size
+        start = len(chan_log(k))
+        say(a, "said only once")
+        assert wait_chan(k, "said only once", start), chan_log(k)[start:]
+        wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
+        sent = [ln for ln in wire.splitlines() if ln.startswith("alice PRIVMSG #test :+RPE2E01 ")]
+        assert len(sent) == 1, wire
+        raw = f":alice!alice@127.0.0.1 PRIVMSG #test :{sent[0].split(' :', 1)[1]}"
+
+        def replayed(when):
+            off = log_size(k)
+            with harness.Client(st["port"], "replayer", "replayer") as c:
+                c.send(f"TESTRAW bob :{raw}")
+                assert wait_log(k, off, "repeated message from alice dropped"), (when, log_since(k, off))
+            assert chan_log(k)[start:].count("said only once") == 1, (when, chan_log(k)[start:])
+
+        replayed("at once")
+        k.type_and_wait("/unload e2e")
+        k.type_and_wait("/load e2e")
+        replayed("after /load e2e")
+        k.quit()
+        cache = k.home / "rpe2e" / "replay.cache"
+        assert cache.is_file() and (cache.stat().st_mode & 0o777) == 0o600, cache
+        text = cache.read_text()
+        for word in ("said only once", "alice", "#test", "127.0.0.1"):
+            assert word not in text, (word, text)
+        up(k)
+        replayed("after a restart")
+        # and he reads and writes as before
+        start = len(chan_log(a))
+        say(k, "back after the restart")
+        assert wait_chan(a, "back after the restart", start), chan_log(a)[start:]
+
     def t_unreadable_keyring():
         """a keyring that cannot be read: /e2e export writes no empty
         export, /e2e rotate claims nothing - both say why; a message
@@ -460,9 +499,9 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_unreadable_keyring,
-                      t_reset_force, t_import_identity, t_special_files, t_corrupt_keyring,
-                      t_wire])
+                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_replay_after_restart,
+                      t_unreadable_keyring, t_reset_force, t_import_identity, t_special_files,
+                      t_corrupt_keyring, t_wire])
     finally:
         cleanup()
         if not harness.keep_work():

@@ -412,14 +412,57 @@ static gboolean write_new(const char *path, const char *data, size_t len, int *e
 	return TRUE;
 }
 
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error)
+{
+	char *tmp;
+	int fd, saved;
+
+	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
+	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+	if (fd < 0) {
+		*error = g_strdup_printf("cannot write %s: %s", what, g_strerror(errno));
+		g_free(tmp);
+		return FALSE;
+	}
+	/* every write is checked and the data is on disk before the rename:
+	   a full disk can no longer put a truncated file in place */
+	if (!write_all(fd, data, len) || fsync(fd) != 0) {
+		saved = errno;
+		close(fd);
+		goto fail;
+	}
+	if (close(fd) != 0) {
+		saved = errno;
+		goto fail;
+	}
+	/* rename replaces whatever is at path (a symlink too), never follows it */
+	if (rename(tmp, path) != 0) {
+		saved = errno;
+		unlink(tmp);
+		*error = g_strdup_printf("cannot replace %s: %s", what, g_strerror(saved));
+		g_free(tmp);
+		return FALSE;
+	}
+	fsync_dir(path);
+	g_free(tmp);
+	return TRUE;
+fail:
+	unlink(tmp);
+	*error = g_strdup_printf("cannot write %s (%s) — the previous %s is kept",
+	                         what, g_strerror(saved), what);
+	g_free(tmp);
+	return FALSE;
+}
+
 static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
                               char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
 	E2E_JSON *current;
-	char *data, *tmp, *err = NULL;
-	int fd, saved;
+	char *data, *err = NULL;
+	gboolean ok;
 	size_t len;
 
 	if (lstat(path, &st) == 0) {
@@ -445,45 +488,10 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 	data = e2e_json_encode(kr, FALSE);
 	len = strlen(data);
-	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
-	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-	if (fd < 0) {
-		*error = g_strdup_printf("cannot write keyring: %s", g_strerror(errno));
-		goto fail;
-	}
-	/* every write is checked and the data is on disk before the rename:
-	   a full disk can no longer put a truncated keyring in place */
-	if (!write_all(fd, data, len) || fsync(fd) != 0) {
-		saved = errno;
-		close(fd);
-		unlink(tmp);
-		*error = g_strdup_printf("cannot write keyring (%s) — the previous keyring is kept",
-		                         g_strerror(saved));
-		goto fail;
-	}
-	if (close(fd) != 0) {
-		saved = errno;
-		unlink(tmp);
-		*error = g_strdup_printf("cannot write keyring (%s) — the previous keyring is kept",
-		                         g_strerror(saved));
-		goto fail;
-	}
-	if (rename(tmp, path) != 0) {
-		saved = errno;
-		unlink(tmp);
-		*error = g_strdup_printf("cannot replace keyring: %s", g_strerror(saved));
-		goto fail;
-	}
-	fsync_dir(path);
+	ok = e2e_write_file_atomic(path, data, len, "keyring", error);
 	e2e_wipe(data, len);
 	g_free(data);
-	g_free(tmp);
-	return TRUE;
-fail:
-	e2e_wipe(data, len);
-	g_free(data);
-	g_free(tmp);
-	return FALSE;
+	return ok;
 }
 
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)

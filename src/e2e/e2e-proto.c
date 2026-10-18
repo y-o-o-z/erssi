@@ -143,6 +143,7 @@
 #include "e2e-keyring.h"
 #include "e2e-wire.h"
 
+#include <errno.h>
 #include <string.h>
 #include <time.h>
 
@@ -3879,6 +3880,7 @@ struct _E2E_REPLAY {
 	GQueue all;		/* every entry, oldest first */
 	guint max, per_sender;
 	guint64 seq;
+	gboolean changed;	/* since the last save */
 };
 
 /* SHA-256 digests: their first bytes are hash enough */
@@ -4038,6 +4040,132 @@ gboolean e2e_replay_check(E2E_REPLAY *r, const char *ctx, const char *sender, co
 	   E2E_TS_TOLERANCE, at either end), and never shorter than that from
 	   now: a clock step does not shorten it */
 	replay_add(r, key, digest, MAX(w->ts, now) + E2E_TS_TOLERANCE + 1);
+	r->changed = TRUE;
+	return FALSE;
+}
+
+/* The file: a header line, then one line per chunk, oldest first -
+   "<partition> <digest> <until>", two SHA-256 in hex and a time; no
+   name, no text, no key. */
+#define REPLAY_HEADER "erssi-e2e-replay 1\n"
+#define REPLAY_LINE_MAX (64 + 1 + 64 + 1 + 18 + 1)
+
+gboolean e2e_replay_changed(const E2E_REPLAY *r)
+{
+	return r->changed;
+}
+
+gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error)
+{
+	GString *out;
+	GList *tmp;
+	gboolean ok;
+	char *hex;
+
+	replay_expire(r, e2e_now());
+	out = g_string_sized_new(strlen(REPLAY_HEADER) + r->all.length * REPLAY_LINE_MAX);
+	g_string_append(out, REPLAY_HEADER);
+	for (tmp = r->all.head; tmp != NULL; tmp = tmp->next) {
+		REPLAY_ENTRY *e = tmp->data;
+
+		hex = e2e_hex_encode(e->part->key, sizeof(e->part->key));
+		g_string_append(out, hex);
+		g_free(hex);
+		g_string_append_c(out, ' ');
+		hex = e2e_hex_encode(e->digest, sizeof(e->digest));
+		g_string_append(out, hex);
+		g_free(hex);
+		g_string_append_printf(out, " %" G_GINT64_FORMAT "\n", e->until);
+	}
+	ok = e2e_write_file_atomic(path, out->str, out->len, "replay cache", error);
+	g_string_free(out, TRUE);
+	if (ok)
+		r->changed = FALSE;
+	return ok;
+}
+
+typedef struct {
+	unsigned char key[32], digest[32];
+	gint64 until;
+} REPLAY_ROW;
+
+/* "<64 hex> <64 hex> <1 to 18 digits>" exactly */
+static gboolean replay_parse_line(const char *line, size_t len, unsigned char key[32],
+                                  unsigned char digest[32], gint64 *until)
+{
+	char hex[65];
+	size_t i;
+	gint64 v = 0;
+
+	if (len < 64 + 1 + 64 + 1 + 1 || len > REPLAY_LINE_MAX - 1 ||
+	    line[64] != ' ' || line[129] != ' ')
+		return FALSE;
+	memcpy(hex, line, 64);
+	hex[64] = '\0';
+	if (!e2e_hex_decode(hex, key, 32))
+		return FALSE;
+	memcpy(hex, line + 65, 64);
+	if (!e2e_hex_decode(hex, digest, 32))
+		return FALSE;
+	for (i = 130; i < len; i++) {
+		if (!g_ascii_isdigit(line[i]))
+			return FALSE;
+		v = v * 10 + (line[i] - '0');
+	}
+	*until = v;
+	return TRUE;
+}
+
+gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error)
+{
+	GArray *rows;
+	char *data, *err = NULL;
+	const char *p, *end, *nl;
+	gint64 now = e2e_now();
+	gsize len;
+	guint i;
+	REPLAY_ROW row;
+
+	data = e2e_read_regular_file(path, strlen(REPLAY_HEADER) + (gsize) r->max * REPLAY_LINE_MAX,
+	                             TRUE, &len, &err);
+	if (data == NULL) {
+		/* none yet: nothing to say */
+		if (errno == ENOENT) {
+			g_free(err);
+			return TRUE;
+		}
+		*error = err;
+		return FALSE;
+	}
+	/* all of it or none: a damaged file is not half believed */
+	rows = g_array_new(FALSE, FALSE, sizeof(row));
+	p = data;
+	end = data + len;
+	if (len < strlen(REPLAY_HEADER) || memcmp(data, REPLAY_HEADER, strlen(REPLAY_HEADER)) != 0) {
+		*error = g_strdup("not a replay cache of this version");
+		goto fail;
+	}
+	for (p += strlen(REPLAY_HEADER); p < end; p = nl + 1) {
+		nl = memchr(p, '\n', end - p);
+		if (nl == NULL || !replay_parse_line(p, nl - p, row.key, row.digest, &row.until)) {
+			*error = g_strdup("damaged");
+			goto fail;
+		}
+		g_array_append_val(rows, row);
+	}
+	/* through the quota and the cap, as if read now; those whose time is
+	   over are not taken */
+	for (i = 0; i < rows->len; i++) {
+		row = g_array_index(rows, REPLAY_ROW, i);
+		if (row.until >= now)
+			replay_add(r, row.key, row.digest, row.until);
+	}
+	g_array_free(rows, TRUE);
+	g_free(data);
+	return TRUE;
+fail:
+	g_array_free(rows, TRUE);
+	g_free(data);
 	return FALSE;
 }
 

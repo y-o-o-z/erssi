@@ -408,9 +408,14 @@
     remembered, the last 512 of each sender in each channel or query: a
     sender's flood pushes out only that sender's own older parts, never
     anyone else's (16384 are kept in all; past that, the sender holding
-    the most loses its oldest). After a restart nothing is remembered - a
-    repeat within the 5 minutes of the timestamp check is then shown
-    again, as in repartee. A key request carries no ident@host:
+    the most loses its oldest). They are kept in rpe2e/replay.cache next
+    to the keyring - digests and times only, no text, names or keys -
+    saved every 10 s when something changed, at /UPGRADE and when erssi
+    exits, so a restart does not let a repeat through (after a crash the
+    last 10 s may be missing). A cache file that cannot be read (damaged,
+    too large, not a regular file of yours) is not used: the cache starts
+    empty, with a warning, and the file is replaced at the next save;
+    nothing else depends on it. A key request carries no ident@host:
     someone who forwards your peer's request before the peer's first
     contact with you ties that key to their own address, and the peer's
     own request is then held back as a changed address until /E2E REVERIFY

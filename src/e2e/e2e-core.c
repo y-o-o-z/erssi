@@ -99,6 +99,11 @@ static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 
 static GHashTable *trust_notice;
 /* chunks read lately: a repeat is dropped */
 static E2E_REPLAY *replay;
+/* the cache on disk (E2E_REPLAY_FILE): saved every 10 s when it changed,
+   at /upgrade and when the module goes (also at /quit) */
+static char *replay_file;
+static guint replay_tag;
+static gboolean replay_save_warned;
 #define E2E_TRUST_NOTICE_INTERVAL 60
 /* "tag|handle|ctx" -> last "Pending key exchange" notice (bounded) */
 static GHashTable *pending_notice;
@@ -210,6 +215,29 @@ void e2e_warn_session_only(void *item)
 	g_free(text);
 }
 
+static void replay_save(void)
+{
+	char *error = NULL;
+
+	if (replay == NULL || replay_file == NULL || !e2e_replay_changed(replay))
+		return;
+	if (e2e_replay_save(replay, replay_file, &error)) {
+		replay_save_warned = FALSE;
+	} else if (!replay_save_warned) {
+		/* once until a save works again: it is tried every 10 s */
+		replay_save_warned = TRUE;
+		e2e_print_warning(NULL, "%s - a message the server delivers again is still dropped while erssi runs, but not after a restart",
+		                  error);
+	}
+	g_free(error);
+}
+
+static gboolean replay_save_tick(gpointer data)
+{
+	replay_save();
+	return TRUE;
+}
+
 /* /upgrade starts a process that loads autoload_modules only */
 static void sig_command_upgrade(void)
 {
@@ -219,6 +247,8 @@ static void sig_command_upgrade(void)
 	guint n;
 	char *text;
 
+	/* the new process reads it at its start */
+	replay_save();
 	if (e2e_autoload_listed(list))
 		return;
 	n = enabled_contexts(&lost);
@@ -2566,6 +2596,17 @@ void e2e_core_init(void)
 	keyreq_in = e2e_stamps_new();
 	trust_notice = e2e_stamps_new();
 	replay = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	replay_file = g_build_filename(keyring_dir, E2E_REPLAY_FILE, NULL);
+	{
+		char *error = NULL;
+
+		/* never in the way: without it the cache starts empty */
+		if (!e2e_replay_load(replay, replay_file, &error))
+			e2e_print_warning(NULL, "replay cache %s not read (%s) - it starts empty: a message the server delivers again within 5 minutes of its time may be shown again",
+			                  replay_file, error);
+		g_free(error);
+	}
+	replay_tag = g_timeout_add_seconds(10, replay_save_tick, NULL);
 	pending_notice = e2e_stamps_new();
 	own_handles = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	gated_emissions = g_ptr_array_new_with_free_func(gated_line_free);
@@ -2638,6 +2679,11 @@ void e2e_core_deinit(void)
 	GSList *list, *tmp;
 
 	warn_unload();
+	/* while a failure can still be told (the formats go below) */
+	if (replay_tag != 0)
+		g_source_remove(replay_tag);
+	replay_tag = 0;
+	replay_save();
 	/* what still waits is not sent: told, and wiped - and the PRIVMSGs
 	   in irssi's flood queue that the gate would encrypt or refuse (the
 	   rest of a long line irssi split, typed while E2E was on): they
@@ -2709,6 +2755,9 @@ void e2e_core_deinit(void)
 	plain_valid = FALSE;
 	e2e_replay_free(replay);
 	replay = NULL;
+	g_free(replay_file);
+	replay_file = NULL;
+	replay_save_warned = FALSE;
 	g_hash_table_destroy(pending_notice);
 	if (state_idle_id != 0)
 		g_source_remove(state_idle_id);
