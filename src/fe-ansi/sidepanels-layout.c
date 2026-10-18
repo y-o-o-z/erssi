@@ -238,32 +238,39 @@ static void clear_cells(int x, int y, int width, int height)
 	term_window_destroy(tw);
 }
 
-/* The panel's columns on the rows of the main windows it does not cover:
- * the statusbars of the highest main windows above it and of the lowest
- * ones below it. Those statusbars start after the panel's columns (they
- * belong to their main window, and the panels' columns are no main
- * window's), and nothing else draws there - so what the screen had in
- * those cells before the panel came or moved (the statusbar itself, when
- * it still spanned them; a line printed at the start, before there was a
- * panel; an entry of the panel from before it moved) stayed until a full
- * /REDRAW. Cleared to the panel's background whenever the panel is put
- * somewhere else. The rows of root statusbars (topic, prompt) are not the
- * main windows' and span the whole screen: those draw their own cells. */
-static void clear_rows_outside(int x, int width, int y, int h)
+/* The main windows' outer rows: the highest first line and the lowest
+ * last line. FALSE when there is no main window. */
+static gboolean main_rows(int *top, int *bottom)
 {
 	GSList *tmp;
-	int top = -1, bottom = -1;
 
+	*top = *bottom = -1;
 	for (tmp = mainwindows; tmp != NULL; tmp = tmp->next) {
 		MAIN_WINDOW_REC *mw = tmp->data;
 
-		if (top < 0 || mw->first_line < top)
-			top = mw->first_line;
-		if (mw->last_line > bottom)
-			bottom = mw->last_line;
+		if (*top < 0 || mw->first_line < *top)
+			*top = mw->first_line;
+		if (mw->last_line > *bottom)
+			*bottom = mw->last_line;
 	}
-	if (top < 0)
-		return;
+	return *top >= 0;
+}
+
+/* The panel's columns on the rows of the main windows it does not cover
+ * (TOP to BOTTOM are the main windows' rows): the statusbars of the
+ * highest main windows above it and of the lowest ones below it. Those
+ * statusbars start after the panel's columns (they belong to their main
+ * window, and the panels' columns are no main window's), and nothing else
+ * draws there - so what the screen had in those cells before the panel
+ * came or moved (the statusbar itself, when it still spanned them; a line
+ * printed at the start, before there was a panel; an entry of the panel
+ * from before it moved; a root statusbar whose row the main windows took)
+ * stayed until a full /REDRAW. Cleared to the panel's background whenever
+ * the panel or the main windows' outer rows are somewhere else. The rows
+ * of root statusbars (topic, prompt) are not the main windows' and span
+ * the whole screen: those draw their own cells. */
+static void clear_rows_outside(int x, int width, int y, int h, int top, int bottom)
+{
 	clear_cells(x, top, width, y - top);
 	clear_cells(x, y + h, width, bottom - (y + h) + 1);
 }
@@ -275,17 +282,24 @@ static void clear_rows_outside(int x, int width, int y, int h)
 void sp_move_panels(void)
 {
 	SP_MAINWIN_CTX *ctx = sp_get_ctx(FALSE);
-	int x, y, h;
+	int x, y, h, top, bottom;
+	gboolean moved, outer_moved;
 
-	if (ctx == NULL || !panel_rows(&y, &h))
+	if (ctx == NULL || !panel_rows(&y, &h) || !main_rows(&top, &bottom))
 		return;
+	/* e.g. a root statusbar made a window one: its row is the main
+	   windows' now, and the panels did not move */
+	outer_moved = ctx->main_top != top || ctx->main_bottom != bottom;
+	ctx->main_top = top;
+	ctx->main_bottom = bottom;
 
 	if (ctx->left_tw != NULL) {
 		x = 0;
-		if (ctx->left_x != x || ctx->left_y != y || ctx->left_h != h) {
+		moved = ctx->left_x != x || ctx->left_y != y || ctx->left_h != h;
+		if (moved)
 			sp_cache_clear(ctx->left_cache);
-			clear_rows_outside(x, ctx->left_reserved, y, h);
-		}
+		if (moved || outer_moved)
+			clear_rows_outside(x, ctx->left_reserved, y, h, top, bottom);
 		term_window_move(ctx->left_tw, x, y, ctx->left_reserved, h);
 		ctx->left_x = x;
 		ctx->left_y = y;
@@ -293,10 +307,11 @@ void sp_move_panels(void)
 	}
 	if (ctx->right_tw != NULL) {
 		x = MAX(0, term_width - ctx->right_reserved);
-		if (ctx->right_x != x || ctx->right_y != y || ctx->right_h != h) {
+		moved = ctx->right_x != x || ctx->right_y != y || ctx->right_h != h;
+		if (moved)
 			sp_right_caches_clear(ctx);
-			clear_rows_outside(x, ctx->right_reserved, y, h);
-		}
+		if (moved || outer_moved)
+			clear_rows_outside(x, ctx->right_reserved, y, h, top, bottom);
 		term_window_move(ctx->right_tw, x, y, ctx->right_reserved, h);
 		ctx->right_x = x;
 		ctx->right_y = y;

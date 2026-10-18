@@ -6,8 +6,10 @@ left panel's columns (and ends before the right one's). Nothing drew those
 cells on such a row: what the screen had there before the panel came or
 moved stayed until a /REDRAW - the statusbar's own start (left panel
 shown again), its end (right panel back), a line printed at the start
-before there were panels (as after an /UPGRADE), or an entry of the panel
-from before it moved. They are cleared when a panel is put somewhere.
+before there were panels (as after an /UPGRADE), an entry of the panel
+from before it moved, or a root statusbar whose row became a main window's
+(the panels did not move). They are cleared when a panel is put somewhere
+else, or the main windows' outer rows are.
 Usage: test_panel_rows.py <build dir> [<source dir>]"""
 import shutil
 import sys
@@ -133,6 +135,26 @@ def main():
         assert harness.wait_until(lambda: "HEADMARK" in settled(e)[TOP], WAIT), settled(e)[TOP]
         assert_clean(e, "panels moved down")
 
+    def t_root_bar_made_window():
+        # the topic bar (root, over the whole width) is made a window
+        # statusbar: its row is the main window's now, and starts after
+        # the left panel; the panels stay where they are, and the start
+        # and the end of the root bar were left under them
+        e = st["e"]
+        e.type_and_wait("/topic TOPICSTART of the channel", "/statusbar additem -alignment right tail topic")
+        assert harness.wait_until(lambda: "TOPICSTART" in settled(e)[0], WAIT), settled(e)[0]
+        rows = settled(e)
+        assert rows[0].startswith(" TOPICSTART") and rows[0].rstrip().endswith("TAILMARK"), rows[0]
+        assert rows[0][:PANEL].strip() and rows[0][COLS - PANEL:].strip(), rows[0]
+        e.type_and_wait("/statusbar modify -type window topic")
+        assert harness.wait_until(lambda: not settled(e)[0].startswith(" TOPICSTART"), WAIT), settled(e)[0]
+        rows = settled(e)
+        for y in (0, 1):
+            left, right = panel_cells(rows, y)
+            assert not left.strip() and not right.strip(), \
+                f"row {y} under the panels is {left!r} ... {right!r}:\n{rows[y]}"
+        assert any("TOPICSTART" in rows[y] for y in (0, 1)), rows[:2]
+
     def t_quit():
         st["e"].quit()
 
@@ -144,7 +166,7 @@ def main():
 
     try:
         harness.main([t_install, t_left_panel_back, t_right_panel_back, t_line_before_panels,
-                      t_panel_moved, t_quit, t_sanitizers])
+                      t_panel_moved, t_root_bar_made_window, t_quit, t_sanitizers])
     finally:
         for e in st["all"]:
             e.kill()

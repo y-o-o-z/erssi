@@ -76,6 +76,11 @@ typedef struct {
 	int right_x;
 	int right_y;
 	int right_h;
+	/* the main windows' outer rows (the highest first line, the lowest
+	   last line) when the panels' columns outside the panels were last
+	   cleared (see sp_move_panels) */
+	int main_top;
+	int main_bottom;
 	/* differential rendering cache */
 	SP_PANEL_CACHE *left_cache;
 	/* the right panel's bands (SP_RIGHT_BAND), top down, as last drawn */
