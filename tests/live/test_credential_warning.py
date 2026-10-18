@@ -84,6 +84,32 @@ def main():
         a.quit()
         assert a.sanitizer_reports() == [], a.sanitizer_reports()
 
+    OLD = 'chatnets = { E2E = { sasl_username = "keep-user"; sasl_password = "keep-me"; }; };\n'
+
+    def t_dangling_link():
+        """external mode, the file a link to a volume not mounted at the
+        start: said at the start; once the volume is there, a /SERVER ADD
+        before /CREDENTIAL RELOAD does not write over the file (the SASL
+        credentials in it stay), and after the RELOAD everything is in it"""
+        volume = work / "volume"
+        target = volume / "credentials"
+
+        def link(e):
+            (e.home / ".credentials").symlink_to(target)
+
+        a = erssi("dangling", ircd("dangling"), 'credential_storage_mode = "external";', before=link)
+        assert a.wait_file(a.all_log(), "a symbolic link that leads to no file", WAIT), log(a)
+        volume.mkdir()
+        target.write_text(OLD)
+        a.type_and_wait("/server add -network E2E 127.0.0.1 7 srvpw")
+        assert target.read_text() == OLD, target.read_text()
+        a.type_and_wait("/credential reload")
+        a.type_and_wait("/server add -network E2E 127.0.0.1 7 srvpw")
+        text = target.read_text()
+        assert "keep-me" in text and "keep-user" in text and "srvpw" in text, text
+        a.quit()
+        assert a.sanitizer_reports() == [], a.sanitizer_reports()
+
     def t_percent_in_path():
         """a % in the file name is printed as one %"""
         def directory(e):
@@ -105,7 +131,7 @@ def main():
 
     try:
         harness.main([t_install, t_once_per_start, t_encrypted_value, t_plain_no_warning,
-                      t_percent_in_path])
+                      t_dangling_link, t_percent_in_path])
     finally:
         cleanup()
         if not harness.keep_work():

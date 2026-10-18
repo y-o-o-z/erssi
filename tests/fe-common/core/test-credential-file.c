@@ -18,6 +18,7 @@
 #include <irssi/src/core/chatnets.h>
 #include <irssi/src/core/credential.h>
 #include <irssi/src/core/misc.h>
+#include <irssi/src/core/servers-setup.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/lib-config/iconfig.h>
@@ -71,6 +72,9 @@ static void setup(void)
 	g_free(credential_external_file);
 	credential_external_file = g_strdup(FILE_NAME);
 	credential_storage_mode = CREDENTIAL_STORAGE_CONFIG;
+	/* a load of the (missing) file: one that failed in an earlier test
+	 * keeps the file from being written until a load succeeds */
+	g_assert_true(credential_external_load());
 	credential_remove("Net", CREDENTIAL_CONTEXT_SASL_PASSWORD);
 	g_free(last_error);
 	last_error = NULL;
@@ -353,6 +357,169 @@ static void test_migrate_failure_keeps_mode(void)
 	g_free(path);
 }
 
+#define OLD_CONTENT "chatnets = { E2E = { sasl_username = \"keep-user\"; " \
+	"sasl_password = \"keep-me\"; }; };\n"
+
+/* /SERVER ADD -password in external mode: the server password goes to the
+ * external file (or stays in the configuration) */
+static void server_saved(const char *address, const char *password, CONFIG_NODE **node_out)
+{
+	SERVER_SETUP_REC *rec = g_new0(SERVER_SETUP_REC, 1);
+	CONFIG_NODE *list, *node;
+
+	rec->address = g_strdup(address);
+	list = config_node_traverse(mainconfig, "(servers", TRUE);
+	node = config_node_section(mainconfig, list, NULL, NODE_TYPE_BLOCK);
+	config_node_set_str(mainconfig, node, "address", address);
+	config_node_set_str(mainconfig, node, "password", password);
+	signal_emit("server setup saved", 2, rec, node);
+	g_free(rec->address);
+	g_free(rec);
+	*node_out = node;
+}
+
+/* A load that failed (here a syntax error) leaves the file as it is: a
+ * save would write it from what was loaded - nothing - and replace the
+ * passwords it holds. The save is refused with the reason, the password
+ * stays in the configuration; once a RELOAD reads the file, it is written
+ * again, with what it held. */
+static void test_save_refused_after_failed_load(void)
+{
+	char *path = path_of(FILE_NAME), *content;
+	CONFIG_NODE *node;
+
+	setup();
+	credential_storage_mode = CREDENTIAL_STORAGE_EXTERNAL;
+	g_assert_true(g_file_set_contents(path, "chatnets = { E2E = { sasl_password = \"keep-me\"",
+	                                  -1, NULL));
+	g_assert_false(credential_external_load());
+	assert_error_said("cannot read");
+	/* the path is named once (the parser's message starts with it too) */
+	{
+		const char *first = strstr(last_error, path);
+
+		g_assert_nonnull(first);
+		g_assert_null(strstr(first + strlen(path), path));
+		g_assert_nonnull(strstr(last_error, ": line 1: "));
+	}
+
+	server_saved("irc.example.net", "srvpw", &node);
+	g_assert_cmpstr(config_node_get_str(node, "password", NULL), ==, "srvpw");
+	assert_error_said("is not written: it could not be read");
+	content = read_back(path);
+	g_assert_cmpstr(content, ==, "chatnets = { E2E = { sasl_password = \"keep-me\"");
+	g_free(content);
+
+	/* fixed by hand, read again: written, with what it held */
+	g_assert_true(g_file_set_contents(path, OLD_CONTENT, -1, NULL));
+	g_assert_true(credential_external_reload());
+	server_saved("irc.example.net", "srvpw", &node);
+	g_assert_null(config_node_get_str(node, "password", NULL));
+	content = read_back(path);
+	g_assert_nonnull(strstr(content, "srvpw"));
+	g_assert_nonnull(strstr(content, "keep-me"));
+	g_assert_nonnull(strstr(content, "keep-user"));
+	g_free(content);
+
+	config_node_set_str(mainconfig, mainconfig->mainnode, "servers", NULL);
+	credential_remove("irc.example.net", CREDENTIAL_CONTEXT_SERVER_PASSWORD);
+	credential_remove("E2E", CREDENTIAL_CONTEXT_SASL_USERNAME);
+	credential_remove("E2E", CREDENTIAL_CONTEXT_SASL_PASSWORD);
+	teardown();
+	g_free(path);
+}
+
+/* MIGRATE CONFIG with no external file: nothing to move - it succeeds, the
+ * mode is config, and it is said */
+static void test_migrate_missing_file(void)
+{
+	setup();
+	settings_set_str("credential_storage_mode", "external");
+	credential_storage_mode = CREDENTIAL_STORAGE_EXTERNAL;
+	settings_set_str("credential_storage_mode", "config");
+	signal_emit("setup changed", 0);
+	g_assert_cmpint(credential_storage_mode, ==, CREDENTIAL_STORAGE_CONFIG);
+	g_assert_null(last_error);
+	teardown();
+}
+
+/* MIGRATE CONFIG through a link: the passwords are in the configuration
+ * then, the file the link pointed to is emptied (not left with them) and
+ * the link removed */
+static void test_migrate_link_empties_target(void)
+{
+	char *path = path_of(FILE_NAME), *target, *content;
+
+	setup();
+	target = write_elsewhere(OLD_CONTENT);
+	g_assert_cmpint(symlink(target, path), ==, 0);
+	settings_set_str("credential_storage_mode", "external");
+	credential_storage_mode = CREDENTIAL_STORAGE_EXTERNAL;
+	g_assert_true(credential_external_load());
+	settings_set_str("credential_storage_mode", "config");
+	signal_emit("setup changed", 0);
+	g_assert_cmpint(credential_storage_mode, ==, CREDENTIAL_STORAGE_CONFIG);
+	g_assert_false(g_file_test(path, G_FILE_TEST_IS_SYMLINK));
+	content = read_back(target);
+	g_assert_null(strstr(content, "keep-me"));
+	g_assert_null(strstr(content, "keep-user"));
+	g_free(content);
+	{
+		CONFIG_NODE *node = config_node_traverse(mainconfig, "chatnets/E2E", FALSE);
+
+		g_assert_nonnull(node);
+		g_assert_cmpstr(config_node_get_str(node, "sasl_password", NULL), ==, "keep-me");
+	}
+	config_node_set_str(mainconfig, config_node_traverse(mainconfig, "chatnets", TRUE),
+	                    "E2E", NULL);
+	credential_remove("E2E", CREDENTIAL_CONTEXT_SASL_USERNAME);
+	credential_remove("E2E", CREDENTIAL_CONTEXT_SASL_PASSWORD);
+	teardown();
+	g_unlink(target);
+	g_free(target);
+	g_free(path);
+}
+
+/* what "chatnet read" puts in the configuration for the protocol to take
+ * (the credentials of the external file) is gone again afterwards: /SAVE
+ * does not write them into ~/.erssi/config. A value of the user's own in
+ * the configuration stays. */
+static char *seen_password;
+
+static void sig_chatnet_read_seen(CHATNET_REC *rec, CONFIG_NODE *node)
+{
+	g_free(seen_password);
+	seen_password = g_strdup(config_node_get_str(node, "sasl_password", NULL));
+}
+
+static void test_read_fill_not_saved(void)
+{
+	CHATNET_REC *net = g_new0(CHATNET_REC, 1);
+	CONFIG_NODE *node;
+
+	setup();
+	net->name = g_strdup("Net");
+	credential_storage_mode = CREDENTIAL_STORAGE_EXTERNAL;
+	g_assert_true(credential_set("Net", CREDENTIAL_CONTEXT_SASL_PASSWORD, "loaded-secret"));
+	node = net_node();
+	config_node_set_str(mainconfig, node, "sasl_username", "my-own-user");
+	signal_add("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_seen);
+	signal_emit("chatnet read", 2, net, node);
+	signal_remove("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_seen);
+	/* the protocol's handler saw it, the configuration does not keep it */
+	g_assert_cmpstr(seen_password, ==, "loaded-secret");
+	g_assert_null(config_node_get_str(node, "sasl_password", NULL));
+	g_assert_cmpstr(config_node_get_str(node, "sasl_username", NULL), ==, "my-own-user");
+
+	g_free(seen_password);
+	seen_password = NULL;
+	config_node_set_str(mainconfig, config_node_traverse(mainconfig, "chatnets", TRUE),
+	                    "Net", NULL);
+	g_free(net->name);
+	g_free(net);
+	teardown();
+}
+
 /* The start in external mode, in a process of its own: the configuration
  * and the external file are there before core_init(). */
 static void start_with(const char *external_link_target, gboolean fifo)
@@ -423,6 +590,52 @@ static void test_start_external_fifo(void)
 	g_test_trap_assert_passed();
 }
 
+/* The external file is a link to a volume that is not mounted at the
+ * start. That is said; then the volume is there and a server password is
+ * saved before a RELOAD: the file is not written over, the SASL
+ * credentials in it stay, the server password stays in the
+ * configuration. After RELOAD, all of it is in the file. */
+static void test_start_dangling_link(void)
+{
+	if (g_test_subprocess()) {
+		char *dir = g_dir_make_tmp("erssi-test-volume-XXXXXX", NULL);
+		char *target = g_build_filename(dir, "credentials", NULL);
+		char **lines, *content;
+		CONFIG_NODE *node;
+
+		start_with(target, FALSE);
+		signal_add_first("gui dialog", (SIGNAL_FUNC) sig_gui_dialog);
+		lines = credential_legacy_warning();
+		g_assert_nonnull(lines);
+		g_assert_nonnull(strstr(lines[0], "a symbolic link that leads to no file"));
+		g_strfreev(lines);
+
+		/* the volume is mounted */
+		g_assert_true(g_file_set_contents(target, OLD_CONTENT, -1, NULL));
+		server_saved("127.0.0.1", "srvpw", &node);
+		content = read_back(target);
+		g_assert_cmpstr(content, ==, OLD_CONTENT);
+		g_free(content);
+		g_assert_cmpstr(config_node_get_str(node, "password", NULL), ==, "srvpw");
+		assert_error_said("is not written");
+
+		g_assert_true(credential_external_reload());
+		server_saved("127.0.0.1", "srvpw", &node);
+		content = read_back(target);
+		g_assert_nonnull(strstr(content, "keep-me"));
+		g_assert_nonnull(strstr(content, "keep-user"));
+		g_assert_nonnull(strstr(content, "srvpw"));
+		g_free(content);
+		g_unlink(target);
+		g_rmdir(dir);
+		g_free(target);
+		g_free(dir);
+		return;
+	}
+	g_test_trap_subprocess(NULL, 20 * G_USEC_PER_SEC, 0);
+	g_test_trap_assert_passed();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -446,7 +659,14 @@ int main(int argc, char **argv)
 	g_test_add_func("/credential/file/save_keeps_password", test_save_keeps_password);
 	g_test_add_func("/credential/file/migrate_failure_keeps_mode",
 	                test_migrate_failure_keeps_mode);
+	g_test_add_func("/credential/file/save_refused_after_failed_load",
+	                test_save_refused_after_failed_load);
+	g_test_add_func("/credential/file/migrate_missing_file", test_migrate_missing_file);
+	g_test_add_func("/credential/file/migrate_link_empties_target",
+	                test_migrate_link_empties_target);
+	g_test_add_func("/credential/file/read_fill_not_saved", test_read_fill_not_saved);
 	g_test_add_func("/credential/file/start_external_link", test_start_external_link);
+	g_test_add_func("/credential/file/start_dangling_link", test_start_dangling_link);
 	g_test_add_func("/credential/file/start_external_fifo", test_start_external_fifo);
 
 	return g_test_run();

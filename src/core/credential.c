@@ -59,6 +59,7 @@ static CONFIG_REC *external_config = NULL;
 static gboolean external_save(gboolean report);
 static void credential_decrypt_config_nodes(CONFIG_REC *config);
 static void sig_chatnet_read_credential_fill(void *rec, void *node);
+static void sig_chatnet_read_credential_unfill(void *rec, void *node);
 static void sig_chatnet_saved_credential_capture(void *rec, void *node);
 static void sig_server_setup_saved_credential_capture(void *rec, void *node);
 
@@ -120,25 +121,48 @@ static CONFIG_REC *credential_file_new(const char *path)
 static gboolean credential_starting;
 static GSList *credential_start_errors;
 
-static void credential_file_error(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
-static void credential_file_error(const char *fmt, ...)
-{
-	va_list va;
-	char *msg;
+/* The external file could not be read (anything but a file that is not
+ * there): it is not written until it is read again, as a save writes the
+ * whole file from what was loaded - the passwords it holds would go. The
+ * reason, or NULL. */
+static char *credential_external_unread;
 
-	va_start(va, fmt);
-	msg = g_strdup_vprintf(fmt, va);
-	va_end(va);
+static void credential_say(const char *type, const char *fmt, va_list va)
+{
+	char *msg = g_strdup_vprintf(fmt, va);
+
 	if (credential_starting) {
 		credential_start_errors = g_slist_append(credential_start_errors, msg);
 	} else {
-		signal_emit("gui dialog", 2, "error", msg);
+		signal_emit("gui dialog", 2, type, msg);
 		g_free(msg);
 	}
 }
 
-/* The external credentials file and config.decrypted hold passwords, at a
- * path the user's own setting names in the user's own ~/.erssi. Read once
+static void credential_file_error(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
+static void credential_file_error(const char *fmt, ...)
+{
+	va_list va;
+
+	va_start(va, fmt);
+	credential_say("error", fmt, va);
+	va_end(va);
+}
+
+static void credential_file_note(const char *fmt, ...) G_GNUC_PRINTF(1, 2);
+static void credential_file_note(const char *fmt, ...)
+{
+	va_list va;
+
+	va_start(va, fmt);
+	credential_say("info", fmt, va);
+	va_end(va);
+}
+
+/* The external credentials file holds passwords, at a path the user's own
+ * setting names in the user's own ~/.erssi (config.decrypted, written the
+ * same way, is written by credential_decrypt_config(), which nothing
+ * calls). Read once
  * through safe_file_read(): a symbolic link is followed (a dotfile
  * manager's, or the secrets kept on an encrypted volume), but only to a
  * regular file of the user's own - a FIFO or a device there does not
@@ -152,17 +176,46 @@ CONFIG_REC *credential_file_open(const char *path, gboolean missing_ok, char **e
 
 	if (!safe_file_read(path, SAFE_FILE_FOLLOW | SAFE_FILE_OWN, CREDENTIAL_FILE_MAX,
 	                    &data, NULL)) {
-		if (errno != ENOENT || !missing_ok) {
+		struct stat st;
+		int err = errno;
+
+		/* a link whose file is not there (a volume not mounted yet) is
+		 * no missing file: what it points to holds the passwords */
+		if (err == ENOENT && lstat(path, &st) == 0 && S_ISLNK(st.st_mode)) {
 			if (error != NULL)
-				*error = g_strdup(safe_file_strerror(errno));
+				*error = g_strdup("a symbolic link that leads to no file");
+			return NULL;
+		}
+		if (err != ENOENT || !missing_ok) {
+			if (error != NULL)
+				*error = g_strdup(safe_file_strerror(err));
 			return NULL;
 		}
 		data = g_strdup("");
 	}
 	config = credential_file_new(path);
 	if (config_parse_data(config, data, path) != 0) {
+		/* one "path:line: message" line per problem: the path is named
+		 * by the caller, the lines are joined into one */
+		gsize len = strlen(path);
+		char **lines = g_strsplit(config_last_error(config), "\n", -1), **line;
+		GString *why = g_string_new(NULL);
+
+		for (line = lines; *line != NULL; line++) {
+			if (**line == '\0')
+				continue;
+			if (why->len > 0)
+				g_string_append(why, "; ");
+			if (strncmp(*line, path, len) == 0 && (*line)[len] == ':')
+				g_string_append_printf(why, "line %s", *line + len + 1);
+			else
+				g_string_append(why, *line);
+		}
+		g_strfreev(lines);
 		if (error != NULL)
-			*error = g_strdup(config_last_error(config));
+			*error = g_string_free(why, FALSE);
+		else
+			g_string_free(why, TRUE);
 		config_close(config);
 		config = NULL;
 	}
@@ -983,6 +1036,7 @@ gboolean credential_migrate_to_config(void)
 	GSList *tmp;
 	gboolean success = TRUE;
 	char *error = NULL;
+	struct stat st;
 
 	/* Open external file for reading */
 	if (credential_external_file == NULL) {
@@ -991,12 +1045,22 @@ gboolean credential_migrate_to_config(void)
 	}
 
 	external_path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
+	if (lstat(external_path, &st) != 0 && errno == ENOENT) {
+		/* no file (and no link): nothing to move */
+		credential_file_note("Credentials: there is no %s - nothing to move; the "
+		                      "credentials are kept in the configuration now",
+		                      external_path);
+		g_free(external_path);
+		return settings_save(NULL, FALSE);
+	}
 	external_config = credential_file_open(external_path, FALSE, &error);
 	if (external_config == NULL) {
 		credential_file_error("Credentials: cannot read %s: %s - the credentials stay "
 		                      "there, and credential_storage_mode stays external",
 		                      external_path, error);
-		g_free(error);
+		/* and it is not written over until it is read again */
+		g_free(credential_external_unread);
+		credential_external_unread = error;
 		g_free(external_path);
 		return FALSE;
 	}
@@ -1113,9 +1177,24 @@ gboolean credential_migrate_to_config(void)
 		success = FALSE;
 	}
 
-	/* Remove external file after successful migration */
+	/* Remove external file after successful migration. A link: the
+	 * file it points to is emptied first - removing the link alone
+	 * would leave the passwords there */
 	if (success) {
 		external_path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
+		if (lstat(external_path, &st) == 0 && S_ISLNK(st.st_mode)) {
+			CONFIG_REC *empty = credential_file_new(external_path);
+
+			if (credential_file_write(empty, NULL, &error) != 0) {
+				credential_file_error("Credentials: the credentials are in the "
+				                      "configuration now, but %s could not be emptied "
+				                      "(%s): the passwords stay in it", external_path,
+				                      error);
+				g_free(error);
+				error = NULL;
+			}
+			config_close(empty);
+		}
 		if (unlink(external_path) != 0) {
 			g_warning("Warning: Failed to remove external credentials file: %s", external_path);
 			/* Don't set success = FALSE - this is just a warning */
@@ -1245,10 +1324,13 @@ static CONFIG_REC *credential_config_open(void)
 	
 	path = g_strdup_printf("%s/%s", get_irssi_dir(), credential_external_file);
 	config = credential_file_open(path, TRUE, &error);
+	g_free(credential_external_unread);
+	credential_external_unread = NULL;
 	if (config == NULL) {
 		credential_file_error("Credentials: cannot read %s: %s - no credentials were "
-		                      "loaded from it", path, error);
-		g_free(error);
+		                      "loaded from it, and it is not written until it can be "
+		                      "read (/CREDENTIAL RELOAD)", path, error);
+		credential_external_unread = error;
 	}
 	g_free(path);
 	
@@ -1273,6 +1355,17 @@ static gboolean external_save(gboolean report)
 	int ret;
 
 	if (credential_external_file == NULL) {
+		return FALSE;
+	}
+
+	/* written from what was loaded: not after a load that failed */
+	if (credential_external_unread != NULL) {
+		if (report)
+			credential_file_error("Credentials: %s/%s is not written: it could not be "
+			                      "read (%s), and writing would replace what it holds - "
+			                      "the values stay in the configuration; make it "
+			                      "readable, then /CREDENTIAL RELOAD", get_irssi_dir(),
+			                      credential_external_file, credential_external_unread);
 		return FALSE;
 	}
 
@@ -1987,7 +2080,9 @@ char **credential_legacy_warning(void)
 		           "the old encryption was on." : ""));
 	if (credential_config_encrypt || external) {
 		g_ptr_array_add(lines, g_strdup_printf(
-			"To go back to plain storage: %s%s%s/SAVE.",
+			"To go back to plain storage: %s%s%s%s/SAVE.",
+			external && credential_external_unread != NULL ?
+			    "make the external file readable (see above), /CREDENTIAL RELOAD, " : "",
 			credential_config_encrypt ? "/CREDENTIAL PASSWD <master password>, " : "",
 			credential_config_encrypt ? "/CREDENTIAL DECRYPT, " : "",
 			external ? "/CREDENTIAL MIGRATE CONFIG, " : ""));
@@ -2039,6 +2134,7 @@ void credential_init(void)
 
 	/* Hook to fill credentials from credential storage */
 	signal_add("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_fill);
+	signal_add_last("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_unfill);
 
 	/* Hook to capture saves in external mode */
 	signal_add("chatnet saved", (SIGNAL_FUNC) sig_chatnet_saved_credential_capture);
@@ -2066,6 +2162,7 @@ void credential_deinit(void)
 	signal_remove("setup changed", (SIGNAL_FUNC) credential_external_file_changed);
 	signal_remove("setup changed", (SIGNAL_FUNC) credential_config_encrypt_changed);
 	signal_remove("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_fill);
+	signal_remove("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_unfill);
 	signal_remove("chatnet saved", (SIGNAL_FUNC) sig_chatnet_saved_credential_capture);
 	signal_remove("server setup saved", (SIGNAL_FUNC) sig_server_setup_saved_credential_capture);
 	signal_remove("setup saving", (SIGNAL_FUNC) sig_setup_saving);
@@ -2082,6 +2179,8 @@ void credential_deinit(void)
 
 	g_slist_free_full(credential_start_errors, g_free);
 	credential_start_errors = NULL;
+	g_free(credential_external_unread);
+	credential_external_unread = NULL;
 
 	/* Clear global variables */
 	g_free(credential_external_file);
@@ -2098,6 +2197,10 @@ void credential_deinit(void)
 }
 
 /* === Signal handlers === */
+
+/* the node the fill put credentials in, and which, for the unfill */
+static CONFIG_NODE *filled_node;
+static gboolean filled_username, filled_password;
 
 static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 {
@@ -2132,6 +2235,7 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 	}
 
 	/* Check current values in config node */
+	filled_username = filled_password = FALSE;
 	sasl_username = config_node_get_str(config_node, "sasl_username", NULL);
 	sasl_password = config_node_get_str(config_node, "sasl_password", NULL);
 
@@ -2141,7 +2245,7 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		if (credential_value != NULL) {
 			iconfig_node_set_str(config_node, "sasl_username", credential_value);
 			g_free(credential_value);
-			changed = TRUE;
+			changed = filled_username = TRUE;
 		}
 	}
 
@@ -2151,7 +2255,7 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		if (credential_value != NULL) {
 			iconfig_node_set_str(config_node, "sasl_password", credential_value);
 			g_free(credential_value);
-			changed = TRUE;
+			changed = filled_password = TRUE;
 		}
 	}
 
@@ -2161,5 +2265,20 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		in_reemit = TRUE;
 		signal_emit("chatnet read", 2, rec, config_node);
 		in_reemit = FALSE;
+		filled_node = config_node;
 	}
+}
+
+/* Last, after the protocol's own "chatnet read" has taken them: the values
+ * put in the node for it are taken out again - else /SAVE wrote the
+ * credentials of the external file into the configuration */
+static void sig_chatnet_read_credential_unfill(void *chatnet_rec, void *node)
+{
+	if (node == NULL || node != filled_node)
+		return;
+	filled_node = NULL;
+	if (filled_username)
+		iconfig_node_set_str(node, "sasl_username", NULL);
+	if (filled_password)
+		iconfig_node_set_str(node, "sasl_password", NULL);
 }

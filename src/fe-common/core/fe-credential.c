@@ -31,6 +31,8 @@
 #include <irssi/src/fe-common/core/fe-windows.h>
 
 #include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 /* === Helper functions === */
 
@@ -139,10 +141,16 @@ void cmd_credential_list(const char *data, SERVER_REC *server, WI_ITEM_REC *item
 		char *path = g_strdup_printf("%s/%s", get_irssi_dir(),
 		                             credential_external_file ? credential_external_file : ".credentials");
 		char *error = NULL;
+		struct stat st;
 
+		if (lstat(path, &st) != 0 && errno == ENOENT) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+			          "No credentials file yet (%s)", path);
+			g_free(path);
+			return;
+		}
 		config = credential_file_open(path, FALSE, &error);
 		if (config == NULL) {
-			/* printed as text: a % in the path is not a colour code */
 			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 			          "Cannot read the credentials file %s: %s", path, error);
 			g_free(error);

@@ -82,11 +82,14 @@ user on the box can influence go through one helper (`src/core/safe-file.c`):
   and does not start until it is removed.
 - **The external credentials file** is written where a link at its path
   points, as before, through a temporary file in that file's directory;
-  the file there must be a regular file of your own. A file that cannot be
-  read or written is said, with the reason, and nothing is lost: a
+  the file there must be a regular file of your own (a link that leads to
+  no file is an error, not a missing file). A file that cannot be read or
+  written is said, with the reason, and nothing is lost: after a failed
+  read the file is not written until `/credential reload` reads it, a
   password moves out of `~/.erssi/config` only once the external file
-  holds it, and `/credential migrate config` that fails leaves
-  `credential_storage_mode` as it was.
+  holds it, `/credential migrate config` that fails leaves
+  `credential_storage_mode` as it was, and `/save` does not write the
+  credentials loaded from the external file into the configuration.
 
 The upstream code that reads `~/.erssi/config`, the startup file, themes,
 the `/upgrade` session and `/cat` follows links as irssi always has.
