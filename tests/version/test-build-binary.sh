@@ -11,7 +11,8 @@
 #   package     a package of this tree: the tarball's name, its single top
 #               directory, sorted entries owned by 0 and dated to the commit,
 #               the MANIFEST of the release format, and erssi running from
-#               two places it is unpacked to; the build's own tests run are
+#               two places it is unpacked to, live in one of them
+#               (tests/live/test_relocatable.py --tree); the build's own tests run are
 #               the relocatable live test and a fuzz corpus test whose
 #               program is not built by default (BUILD_BINARY_TESTS)
 #   tests-fail  a tag whose tests fail: no package
@@ -397,6 +398,13 @@ case_package() {
         fi
     done
     check "erssi wrote nothing to its HOME" [ ! -e "$tmp/run-home" ]
+    # the stripped tree as unpacked, live: the themes, /help, a module and
+    # a Perl script from there, --print-prefix the unpacked directory
+    PYTHONDONTWRITEBYTECODE=1 python3 "$root/tests/live/test_relocatable.py" --tree "$Y/$NAME" > "$tmp/live.out" 2>&1
+    rc=$?
+    check "live in the unpacked tree (tests/live/test_relocatable.py --tree)" [ "$rc" = 0 ]
+    [ "$rc" = 0 ] || cat "$tmp/live.out"
+    check "the live test ran its case" grep -q '^  ok   t_unpacked_tree$' "$tmp/live.out"
 }
 
 case_tests_fail() {

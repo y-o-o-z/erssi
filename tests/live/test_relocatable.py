@@ -11,7 +11,10 @@ theme copy, no perl_use_lib in the config, unlike the other live tests).
 A build without the option keeps its compiled paths: --print-prefix and
 help_path are the compiled prefix also when the tree is installed
 somewhere else.
-Usage: test_relocatable.py <build dir> [<source dir>]"""
+With --tree DIR the same checks run on an installed tree that is already
+there, unpacked from a binary package (tests/version/test-build-binary.sh).
+Usage: test_relocatable.py <build dir> [<source dir>]
+       test_relocatable.py --tree DIR"""
 import json
 import os
 import shutil
@@ -67,8 +70,13 @@ def mapped_files(pid):
 
 
 def main():
-    build = Path(sys.argv[1]).resolve()
-    opts = build_options(build)
+    tree = None
+    if sys.argv[1] == "--tree":
+        tree = Path(sys.argv[2]).resolve()
+        opts = {"relocatable": True, "prefix": "/"}
+    else:
+        build = Path(sys.argv[1]).resolve()
+        opts = build_options(build)
     work = Path(tempfile.mkdtemp(prefix="live-relocatable.")).resolve()
     compiled = Path(opts["prefix"])
     st = {}
@@ -164,8 +172,15 @@ def main():
             e.quit()
             assert e.sanitizer_reports() == [], e.sanitizer_reports()
 
+    def t_unpacked_tree():
+        st["tree"] = (harness.Inst(tree), tree)
+        check_prefix("tree")
+
     try:
-        harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_not_relocatable])
+        if tree is not None:
+            harness.main([t_unpacked_tree])
+        else:
+            harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_not_relocatable])
     finally:
         if not harness.keep_work():
             shutil.rmtree(work, ignore_errors=True)
