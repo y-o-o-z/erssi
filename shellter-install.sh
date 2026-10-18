@@ -63,6 +63,7 @@ shellter-v1.3.10 ae24cb24479b553a4ce3a251d03866d8e3065671 signed
 shellter-v2026.10.0 644648272cecae4f6444155ad3e363970f8f982b signed
 shellter-v2026.10.1 c11bb0e745b1d35a4bc7c5a697f31baf3d629303 signed
 shellter-v2026.10.2 0de1442fdcb021c90882e0af3de26ccde52f2046 signed
+shellter-v2026.10.3 731ac54fce8ed1273067f5646c0d3a598fc3e6bd signed
 "
 # who signs the releases (git allowed_signers format; utils/allowed_signers).
 # A new key also changes the fingerprint checked in signed_tag().
