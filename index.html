@@ -358,7 +358,7 @@ footer a { color: var(--muted); }
           <p class="lead">Update from a running shell whenever a release comes out.</p>
           <pre class="block">erssi --check-update   <span class="c"># is a newer release available?</span>
 erssi --update         <span class="c"># build, test and install it</span></pre>
-          <p>In erssi, <code>/upgrade</code> then loads the new version without leaving IRC.</p>
+          <p>In erssi, <code>/upgrade</code> then loads the new version and keeps your windows and channels. Connections over TLS cannot be handed to the new process, so they reconnect once.</p>
         </li>
       </ol>
     </div>
