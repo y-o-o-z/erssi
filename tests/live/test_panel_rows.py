@@ -142,6 +142,10 @@ def main():
         # the left panel; the panels stay where they are, and the start
         # and the end of the root bar were left under them
         e = st["e"]
+        # the channel's sync draws the panels again (about 3 s after the
+        # join): over before the modify, or it could do the clear itself
+        assert harness.wait_until(lambda: "Join to #test was synced" in log_text(e), 15), \
+            "#test never synced"
         e.type_and_wait("/topic TOPICSTART of the channel", "/statusbar additem -alignment right tail topic")
         assert harness.wait_until(lambda: "TOPICSTART" in settled(e)[0], WAIT), settled(e)[0]
         # nothing of the topic change left to draw: the panels are laid
