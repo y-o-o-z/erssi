@@ -876,7 +876,11 @@ binary_install() {
     verify_sums "$STAGE" ||
         die "the SHA256SUMS of $REF does not carry a valid signature by the erssi Shellter release key - refusing to install, nothing was changed (report it)"
     want=$(sum_of "$STAGE/SHA256SUMS" "$ASSET")
-    download "$ASSET" "$REF" "$STAGE/$ASSET" || die "cannot download $ASSET - nothing was changed; try again later"
+    # listed but not there (not uploaded yet, a network error): no
+    # package, as for a missing line; one that arrives must match
+    if ! download "$ASSET" "$REF" "$STAGE/$ASSET"; then
+        binary_fallback "$ASSET is listed in the signed SHA256SUMS but cannot be downloaded"; return 0
+    fi
     got=$(sha256_of "$STAGE/$ASSET")
     [ "$got" = "$want" ] ||
         die "$ASSET does not match the signed SHA256SUMS - refusing to install, nothing was changed (report it)"

@@ -2238,6 +2238,18 @@ binary-fallback)
     check "... METHOD=source" grep -qx METHOD=source "$CONF"
     check "... a file, no link" [ -f "$P/bin/erssi" ] && [ ! -L "$P/bin/erssi" ]
     check "... no empty releases directory left" none_exist "$P/releases"
+    # a package that the signed SHA256SUMS lists but that is not there (not
+    # uploaded yet, a network error): no package, not tampering
+    good_pkg 2026.10.4 "$c4"
+    rm -f "$W/rel/shellter-v2026.10.4/erssi-2026.10.4-debian13-amd64.tar.xz"
+    run_bin --binary
+    check "listed package missing, --binary: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF 'no binary install (--binary): erssi-2026.10.4-debian13-amd64.tar.xz is listed in the signed SHA256SUMS but cannot be downloaded' "$W/out"
+    check "... not called tampering" no_grep 'refusing' "$W/out"
+    run_bin
+    check "listed package missing: built from source" [ "$RC" = 0 ] && grep -q 'Building' "$W/out"
+    check "... one line why" [ "$(grep -c 'is listed in the signed SHA256SUMS but cannot be downloaded' "$W/out")" = 1 ]
+    check "... METHOD=source" grep -qx METHOD=source "$CONF"
     # no binary packages in the release at all
     rm -rf "$W/rel/shellter-v2026.10.4"
     run_bin
