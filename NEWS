@@ -9,6 +9,9 @@ shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	+ Binary packages
 	  - on Debian 13 and FreeBSD 14 (amd64) the install command and
 	    erssi --update install the release's ready-made binary in seconds.
+	    An erssi 2026.10.3 or older builds 2026.10.4 from source this
+	    once (its installer has no binary path); from 2026.10.4 on,
+	    updates use the packages.
 	    It is installed only if its SHA256SUMS is signed by the release
 	    key, its checksum matches, and its MANIFEST names the release, its
 	    commit, the platform and the system's Perl. Anywhere else, or when
