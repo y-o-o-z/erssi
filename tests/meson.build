@@ -14,7 +14,7 @@ if python3_prog.found()
   test('help see also', python3_prog, args : [files('help/check-help-see-also.py'), meson.source_root()],
        protocol : 'tap')
   # contrib/rpe2e/rpe2e-from-repartee rewrites long-term E2E identity keys;
-  # its tests skip (77) without libsodium
+  # its tests skip (77) without libsodium or Python's sqlite3 module
   test('rpe2e-from-repartee', python3_prog,
        args : [files('../contrib/rpe2e/test_rpe2e_from_repartee.py')],
        env : ['PYTHONDONTWRITEBYTECODE=1'], timeout : 60)

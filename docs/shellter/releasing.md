@@ -146,7 +146,8 @@ from the Debian 13 archive only:
 ```sh
 sudo apt install git ca-certificates gcc meson ninja-build pkgconf libglib2.0-dev \
   libssl-dev libperl-dev libutf8proc-dev libgcrypt20-dev libotr5-dev \
-  libcurl4-openssl-dev libchafa-dev python3 perl binutils xz-utils openssh-client
+  libcurl4-openssl-dev libchafa-dev python3 perl binutils xz-utils openssh-client \
+  libsodium23
 ```
 
 A chroot without root, made by mmdebstrap (`sudo apt install mmdebstrap`
@@ -155,7 +156,7 @@ once). `--mode=unshare` needs the user's ranges in `/etc/subuid` and
 
 ```sh
 mmdebstrap --mode=unshare --variant=apt \
-  --include=git,ca-certificates,gcc,meson,ninja-build,pkgconf,libglib2.0-dev,libssl-dev,libperl-dev,libutf8proc-dev,libgcrypt20-dev,libotr5-dev,libcurl4-openssl-dev,libchafa-dev,python3,perl,binutils,xz-utils,openssh-client \
+  --include=git,ca-certificates,gcc,meson,ninja-build,pkgconf,libglib2.0-dev,libssl-dev,libperl-dev,libutf8proc-dev,libgcrypt20-dev,libotr5-dev,libcurl4-openssl-dev,libchafa-dev,python3,perl,binutils,xz-utils,openssh-client,libsodium23 \
   --customize-hook='chroot "$1" useradd -m builder' \
   --customize-hook='chroot "$1" su builder -c "git clone https://github.com/y-o-o-z/erssi.git ~/erssi && sh ~/erssi/utils/build-binary.sh --repo ~/erssi --out ~/out shellter-vX"' \
   --customize-hook='copy-out /home/builder/out .' \
@@ -171,10 +172,17 @@ Build on a FreeBSD 14 host or VM, with packages from `pkg` (OpenSSL
 from the base system):
 
 ```sh
-pkg install git meson ninja pkgconf glib perl5 utf8proc libgcrypt libotr curl chafa python3
+pkg install git meson ninja pkgconf glib perl5 utf8proc libgcrypt libotr curl chafa python3 \
+  py312-sqlite3 libsodium
 git clone https://github.com/y-o-o-z/erssi.git ~/erssi
 sh ~/erssi/utils/build-binary.sh --out ~/out shellter-vX
 ```
+
+`py312-sqlite3` is Python's sqlite3 module, which FreeBSD packages
+apart from Python: take the one of the `python3` installed (`python3 -V`;
+3.12 in the 2026 quarterly packages). The rpe2e-from-repartee test needs
+it and libsodium (`libsodium23` on Debian); without them that test is
+skipped, with the reason in the test log.
 
 `MANIFEST` records the perl version (from `perl5` of the quarterly
 branch) and the FreeBSD version the package was built on.
