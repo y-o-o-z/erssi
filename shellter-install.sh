@@ -780,6 +780,7 @@ binary_fallback() {   # why
     [ "$USE" != binary ] || die "no binary install (--binary): $1"
     if [ "$IN_STEP" = 1 ]; then skip_ "$1"; else warn "$1"; fi
     warn "building from source instead, in $(tilde "$SRC")"
+    SRC_NAMED=1
     printf '\n'
     STEP=0 STEPS=6
 }
@@ -1393,7 +1394,7 @@ if [ "$UPDATE" = 1 ]; then header "update"; else header "install"; fi
 field "prefix" "$(tilde "$PREFIX")"
 # the source checkout only where it is used for sure; a fallback from
 # a package names it then
-[ "$USE" != source ] || field "source" "$(tilde "$SRC")"
+if [ "$USE" = source ]; then field "source" "$(tilde "$SRC")"; SRC_NAMED=1; fi
 [ -n "$INSTALLED" ] && field "installed" "$INSTALLED"
 printf '\n'
 
@@ -1412,6 +1413,8 @@ fi
 # a release with a package for this system: installed from it (and done),
 # otherwise built from source below
 if [ "$CHECK" = 0 ] && [ "$USE" != source ]; then binary_install; fi
+# no package here and nothing said so: the source checkout, once
+if [ "$CHECK" = 0 ] && [ "${SRC_NAMED:-}" != 1 ]; then field "source" "$(tilde "$SRC")"; printf '\n'; fi
 if [ "$DRY_RUN" = 1 ] && [ "$CHECK" = 0 ]; then
     printf '  Dry run - nothing was changed. The source build would:\n'
     if [ "$UPDATE" = 1 ]; then
