@@ -348,7 +348,7 @@ footer a { color: var(--muted); }
       <ol class="steps">
         <li>
           <p class="lead">Run the installer on your shell account.</p>
-          <p>It checks the system first and names any missing package, with the command to give your administrator. A missing meson or ninja it installs for you, into its own directory. Then it builds the newest release, runs the test suite and links <code>~/.local/bin/erssi</code>.</p>
+          <p>On Debian 13 and FreeBSD 14 (amd64) it installs the release's ready-made binary in seconds, once its signature and checksum check out. Elsewhere it checks the system, names any missing package with the command to give your administrator, installs a missing meson or ninja into its own directory, then builds the newest release and runs the test suite. Either way it links <code>~/.local/bin/erssi</code>.</p>
         </li>
         <li>
           <p class="lead">Start erssi inside tmux, so the session survives logging out.</p>
@@ -357,7 +357,7 @@ footer a { color: var(--muted); }
         <li>
           <p class="lead">Update from a running shell whenever a release comes out.</p>
           <pre class="block">erssi --check-update   <span class="c"># is a newer release available?</span>
-erssi --update         <span class="c"># build, test and install it</span></pre>
+erssi --update         <span class="c"># install it (binary or source)</span></pre>
           <p>In erssi, <code>/upgrade</code> then loads the new version and keeps your windows and channels. Connections over TLS cannot be handed to the new process, so they reconnect once.</p>
         </li>
       </ol>
@@ -369,7 +369,7 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
       <h2 id="trust">Releases you can check</h2>
-      <p>Every release tag is signed with one SSH key. The one-line install trusts the script it downloads from GitHub; that script carries the key and the commit of every release, and builds a release only when its tag is signed by that key and points to the recorded commit. Without ssh-keygen it checks the commit only, and any other <code style="white-space:nowrap">--ref</code> is built unverified, with a warning. <code>erssi --update</code> installs only a newer release signed by the same key. You can <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#what-the-installer-verifies">check the installer yourself</a> before running it.</p>
+      <p>Every release tag is signed with one SSH key. The one-line install trusts the script it downloads from GitHub; that script carries the key and the commit of every release. It builds a release only when its tag is signed by that key and points to the recorded commit, and installs a binary package only when the release's checksum list is signed by that key and the package matches it. Without ssh-keygen it checks the commit only, and any other <code style="white-space:nowrap">--ref</code> is built unverified, with a warning. <code>erssi --update</code> installs only a newer release signed by the same key. You can <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#what-the-installer-verifies">check the installer yourself</a> before running it.</p>
       <p class="fp">ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</p>
       <pre class="block">git -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
     verify-tag shellter-v2026.10.4</pre>
@@ -382,7 +382,7 @@ erssi --update         <span class="c"># build, test and install it</span></pre>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
       <h2 id="latest">In 2026.10.4</h2>
-      <p>The answer to another full review of the code. Replay protection of end-to-end encryption survives restarts and floods, a plain message from someone who took a peer's nick is marked, and the limits of the encryption are written down. Files are opened safely everywhere, so a FIFO or a planted link cannot hang or redirect erssi, and a save that fails on a full disk keeps the old configuration. The web frontend keeps stored passwords when a client edits a network.</p>
+      <p>Ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before. And the answer to another full review of the code: replay protection of end-to-end encryption survives restarts and floods, a plain message from someone who took a peer's nick is marked, and the limits of the encryption are written down. Files are opened safely everywhere, so a FIFO or a planted link cannot hang or redirect erssi, and a save that fails on a full disk keeps the old configuration. The web frontend keeps stored passwords when a client edits a network.</p>
       <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.4">Release notes</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">All changes since 2026.10.0</a></p>
     </div>
   </section>
