@@ -561,6 +561,34 @@ repack() {
     tar -C "$W/pkg/$rv-debian13-amd64" -cJf "$rr/erssi-$rv-debian13-amd64.tar.xz" "$@" "erssi-$rv-debian13-amd64" 2>/dev/null &&
         ( cd "$rr" && sha256sum erssi-*.tar.xz ) > "$rr/SHA256SUMS" && sign_sums "$rv"
 }
+# hostile VERSION NAME [LINK]: the package of make_pkg VERSION (Debian 13)
+# with one more member NAME, an empty file or a hard link to LINK, listed
+# and signed again. Perl's Archive::Tar (core perl) writes it, storing NAME
+# and LINK as given, the same on every system: GNU tar and bsdtar each need
+# options of their own for that, and bsdtar rewrites a hard link's target
+# only when it copies another archive
+hostile() {
+    hv=$1 hn=$2 hl=${3:-}
+    hr="$W/rel/shellter-v$hv"
+    ha="$hr/erssi-$hv-debian13-amd64.tar"
+    rm -f "$ha" "$ha.xz"
+    # shellcheck disable=SC2016 # perl
+    if ! { ( cd "$W/pkg/$hv-debian13-amd64" && find "erssi-$hv-debian13-amd64" -print ) |
+        "$REAL_PERL" -MArchive::Tar -e '
+            my ($dir, $out, $name, $link) = @ARGV;
+            chomp(my @f = <STDIN>);
+            chdir $dir or die "$dir: $!\n";
+            my $t = Archive::Tar->new;
+            $t->add_files(@f) == @f or die "add_files\n";
+            $t->add_data($name, "", length $link ?
+                { type => Archive::Tar::Constant::HARDLINK(), linkname => $link } : {}) or die "add_data\n";
+            $t->write($out) or die "write $out\n";' \
+            "$W/pkg/$hv-debian13-amd64" "$ha" "$hn" "$hl" &&
+            xz "$ha" && ( cd "$hr" && sha256sum erssi-*.tar.xz ) > "$hr/SHA256SUMS"; }; then
+        echo "FAIL $CASE: hostile $hn: no package"; exit 1
+    fi
+    sign_sums "$hv"
+}
 # good_pkg VERSION COMMIT [PLATFORM]: make_pkg, signed as a release is
 good_pkg() { make_pkg "$@" && sign_sums "$1"; }
 # record VERSION COMMIT...: the releases this copy of the installer records
@@ -1965,11 +1993,7 @@ binary-refused)
     refused "files outside the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
     # a name that goes up from the top directory
     make_pkg 2026.10.4 "$c4"
-    : > "$W/pkg/2026.10.4-debian13-amd64/evil"
-    ( cd "$W/pkg/2026.10.4-debian13-amd64" &&
-        tar -cJf "$R4/erssi-2026.10.4-debian13-amd64.tar.xz" --transform 's|^evil$|erssi-2026.10.4-debian13-amd64/../../evil|' \
-            erssi-2026.10.4-debian13-amd64 evil 2>/dev/null )
-    ( cd "$R4" && sha256sum erssi-*.tar.xz ) > "$R4/SHA256SUMS" && sign_sums 2026.10.4
+    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/../../evil
     # shellcheck disable=SC2016 # run by sh
     check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
     refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
@@ -1994,8 +2018,7 @@ binary-refused)
     repack 2026.10.4
     refused "a symbolic link with .. inside its target" "holds a symbolic link whose target is absolute or has a .. in it"
     make_pkg 2026.10.4 "$c4"
-    : > "$PT/share/irssi/h1" && ln "$PT/share/irssi/h1" "$PT/share/irssi/h2"
-    repack 2026.10.4 --transform 'flags=RSh;s|^erssi-2026.10.4-debian13-amd64/share/irssi/h[12]$|etc/passwd|'
+    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/share/irssi/h1 etc/passwd
     # shellcheck disable=SC2016 # run by sh
     check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
     refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
