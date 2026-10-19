@@ -125,6 +125,9 @@ shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    start) instead of being replaced
 
 	+ Other
+	  - utf8proc is found through pkg-config first: on FreeBSD, where the
+	    package puts it in /usr/local/lib, a source build used to leave it
+	    out without a word
 	  - image downloads in progress are no longer inherited by /EXEC
 	    children, script children or /UPGRADE
 	  - docs/shellter/security.md "Known limitations" explains irssi's

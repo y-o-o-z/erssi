@@ -354,7 +354,12 @@ dep += openssl_dep
 have_libutf8proc = false
 libutf8proc = []
 if want_libutf8proc
-  libutf8proc = cc.find_library('utf8proc', required : require_libutf8proc)
+  # pkg-config first: FreeBSD's package puts it in /usr/local/lib, which
+  # its compiler does not search by itself
+  libutf8proc = dependency('libutf8proc', required : false)
+  if not libutf8proc.found()
+    libutf8proc = cc.find_library('utf8proc', required : require_libutf8proc)
+  endif
   have_libutf8proc = cc.has_function('utf8proc_version', dependencies : libutf8proc)
   if have_libutf8proc
     dep += libutf8proc
