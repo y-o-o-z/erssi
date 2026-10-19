@@ -22,10 +22,12 @@ test('resign-history test', find_program('sh'),
 # throwaway signing key: the tags it refuses and SHA256SUMS (verify), a
 # package of this tree and how it runs (package), no package when a test
 # fails (tests-fail). The last two build the tree from scratch with every
-# core, a few minutes each: run alone, so that the tests beside them are
-# not starved of CPU into a timeout.
-foreach c : ['verify', 'package', 'tests-fail']
+# feature, a few minutes each: only with ERSSI_TEST_PACKAGER=1 (pre-push,
+# CI, the release host; never in an install's or an update's source
+# build), and alone, so that the tests beside them are not starved of CPU
+# into a timeout. skips: how they skip without it, and without the tools.
+foreach c : ['verify', 'package', 'tests-fail', 'skips']
   test('build-binary ' + c, find_program('sh'),
     args : [files('test-build-binary.sh'), meson.current_source_dir() / '..' / '..', c],
-    is_parallel : c == 'verify', timeout : c == 'verify' ? 120 : 1800)
+    is_parallel : c in ['verify', 'skips'], timeout : c in ['verify', 'skips'] ? 120 : 1800)
 endforeach

@@ -221,10 +221,28 @@ throwaway repository holding this tree, tagged with a throwaway key:
 - `build-binary package`: a whole package of the tree. It checks the
   name, the top directory, the order, owner and dates of the entries,
   the `MANIFEST` and erssi running from two places;
-- `build-binary tests-fail`: no package when a test fails.
+- `build-binary tests-fail`: no package when a test fails;
+- `build-binary skips`: how the others skip.
 
-The last two build the tree from scratch, a few minutes each. In them
-the build's own tests are limited to one (`BUILD_BINARY_TESTS`, which a
+`package` and `tests-fail` build the tree from scratch with every
+feature, a few minutes each. They run only with
+`ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's hardened job set
+it, and so must the release host before it builds packages:
+
+```sh
+ERSSI_TEST_PACKAGER=1 meson test -C Build
+```
+
+Without it they skip. So does the source build of an install or of
+`erssi --update`, which must not depend on the packager's tools, on
+every feature being there, or take minutes more. Every case also skips
+when a tool of the packager (`git meson ninja perl tar xz strip readelf
+od sort ssh-keygen`) is missing from its own PATH. That is the case,
+for example, with a meson in the installer's venv. Inside a package
+build, `package` and `tests-fail` skip as well. The copy of the tree
+gets NEWS dated to the 1st of the month when the release is still
+`YYYY-MM-xx`, so a push before the release commit can run them. In them
+the build's own tests are limited to one or two (`BUILD_BINARY_TESTS`, which a
 release never sets). `live relocatable` (tests/live/test_relocatable.py)
 installs a relocatable build to two different places, and runs erssi
 from both. In a build without the option it checks that the compiled

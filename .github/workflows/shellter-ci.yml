@@ -70,6 +70,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          # the packager's tests that build a whole package from scratch
+          # (tests/version/test-build-binary.sh), once, in the hardened job
+          ERSSI_TEST_PACKAGER: ${{ matrix.name == 'hardened' && '1' || '' }}
         run: meson test -C Build --print-errorlogs
 
       - name: Install and start

@@ -363,10 +363,13 @@ if [ -f "$ROOT/Build/build.ninja" ]; then
     mkdir "$test_home" || { echo "pre-push: cannot create $test_home" >&2; exit 1; }
     # git gives a hook GIT_DIR and the like (GIT_DIR always in a linked
     # worktree); a test that runs git in a scratch directory would then
-    # commit to this repository, so the tests get none of them
+    # commit to this repository, so the tests get none of them.
+    # ERSSI_TEST_PACKAGER=1: also the packager's tests that build a whole
+    # package (tests/version/test-build-binary.sh), which an install's own
+    # source build skips
     (
         for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-        HOME="$test_home" meson test -C "$ROOT/Build" >/dev/null 2>&1
+        HOME="$test_home" ERSSI_TEST_PACKAGER=1 meson test -C "$ROOT/Build" >/dev/null 2>&1
     ); rc=$?
     rm -rf "$test_home"
     [ "$rc" = 0 ] || { echo "pre-push: tests failed (meson test -C Build)" >&2; exit 1; }

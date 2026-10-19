@@ -50,13 +50,15 @@ cat > "$HOME/.gitconfig" <<EOF
 	defaultBranch = main
 EOF
 
-# stand-ins for the build and test step: meson notes the HOME and the GIT_*
-# variables it was given and, with STUB_MESON_INT=1, interrupts the hook (Ctrl-C during the tests)
+# stand-ins for the build and test step: meson notes the HOME, the GIT_*
+# variables and ERSSI_TEST_PACKAGER it was given and, with STUB_MESON_INT=1,
+# interrupts the hook (Ctrl-C during the tests)
 printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ninja"
 cat > "$tmp/bin/meson" <<EOF
 #!/bin/sh
 printf '%s\n' "\$HOME" >> "$tmp/meson-homes"
 env | grep '^GIT_' >> "$tmp/meson-gitenv"
+printf '%s\n' "\${ERSSI_TEST_PACKAGER:-unset}" >> "$tmp/meson-packager"
 [ "\${STUB_MESON_INT:-}" = 1 ] && kill -INT "\$PPID"
 exit 0
 EOF
@@ -506,6 +508,13 @@ if [ ! -s "$tmp/meson-gitenv" ]; then
     pass "meson ran without GIT_* variables"
 else
     fail "meson ran without GIT_* variables" "$(sort -u "$tmp/meson-gitenv" | tr '\n' ' ')"
+fi
+
+# the tests ran with the packager's package builds (ERSSI_TEST_PACKAGER=1)
+if [ -s "$tmp/meson-packager" ] && [ "$(sort -u "$tmp/meson-packager")" = 1 ]; then
+    pass "meson ran with ERSSI_TEST_PACKAGER=1"
+else
+    fail "meson ran with ERSSI_TEST_PACKAGER=1" "$(sort -u "$tmp/meson-packager" 2>/dev/null | tr '\n' ' ')"
 fi
 
 exit "$failed"
