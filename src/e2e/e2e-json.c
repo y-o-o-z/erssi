@@ -180,6 +180,8 @@ static char *parse_string(PARSER *ps)
 		return NULL;
 	}
 	chars = g_array_sized_new(FALSE, FALSE, sizeof(gunichar), q - ps->p);
+	/* the string closes at q, so the end-of-input checks below are only
+	   a second guard */
 	for (;;) {
 		if (ps->p >= ps->end) {
 			ps->error = "unterminated string";

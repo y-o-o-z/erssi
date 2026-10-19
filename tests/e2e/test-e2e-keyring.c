@@ -183,18 +183,26 @@ static void test_json_string_reserve(void)
 	g_assert_cmpint(pid, >=, 0);
 	if (pid == 0) {
 		rlim_t cap = (rlim_t) pages * (rlim_t) sysconf(_SC_PAGESIZE) + pad * 2 + 96 * 1024 * 1024;
-		struct rlimit rl = { cap, cap };
+		struct rlimit rl = { cap, cap }, none = { 0, 0 };
 		const char *error = NULL;
 		E2E_JSON *j;
 
-		setrlimit(RLIMIT_AS, &rl);
+		/* no core file of a failure; a cap that cannot be set (a lower
+		   hard limit already) would measure the wrong thing: skip */
+		setrlimit(RLIMIT_CORE, &none);
+		if (setrlimit(RLIMIT_AS, &rl) != 0)
+			_exit(77);
 		j = e2e_json_parse(doc->str, doc->len, &error);
 		_exit(j != NULL && g_strcmp0(e2e_json_get_string(j, "c"), "zzz") == 0 ? 0 : 1);
 	}
 	g_assert_cmpint(waitpid(pid, &wstatus, 0), ==, pid);
+	g_string_free(doc, TRUE);
+	if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 77) {
+		g_test_skip("the address space cannot be capped here");
+		return;
+	}
 	g_assert_true(WIFEXITED(wstatus));
 	g_assert_cmpint(WEXITSTATUS(wstatus), ==, 0);
-	g_string_free(doc, TRUE);
 #endif
 }
 
