@@ -14,6 +14,7 @@
 #define IMAGE_FETCH_RETRY_DELAY_MS 200
 #include <irssi/src/image-preview/image-preview-fetch.c>
 
+#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -60,6 +61,15 @@ void printtext(void *server, const char *target, int level, const char *text, ..
 	if (strstr(text, "no new download") != NULL)
 		full_notices++;
 }
+
+#ifdef HAVE_CAPSICUM
+/* safe-file.c opens through capsicum.c on FreeBSD; the test never
+   enters capability mode, so a plain open() is what it would do */
+int capsicum_open_wrapper(const char *path, int flags, int mode)
+{
+	return open(path, flags, mode);
+}
+#endif
 
 int settings_get_int(const char *key)
 {

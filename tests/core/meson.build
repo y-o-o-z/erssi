@@ -2,7 +2,10 @@ test_test_safe_file = executable('test-safe-file',
   files(
     'test-safe-file.c',
   ),
+  # libconfig too: on FreeBSD safe-file opens through capsicum.c, which
+  # needs it
   link_with : [
+    libconfig_a,
     libcore_a,
   ],
   include_directories : rootinc,

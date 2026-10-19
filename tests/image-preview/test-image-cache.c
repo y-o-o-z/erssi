@@ -12,6 +12,7 @@
 #include <irssi/src/common.h>
 #include <irssi/src/image-preview/image-preview-cache.c>
 
+#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <utime.h>
 
@@ -44,6 +45,15 @@ void image_preview_debug_print(const char *fmt, ...)
 void printtext(void *server, const char *target, int level, const char *text, ...)
 {
 }
+
+#ifdef HAVE_CAPSICUM
+/* safe-file.c opens through capsicum.c on FreeBSD; the test never
+   enters capability mode, so a plain open() is what it would do */
+int capsicum_open_wrapper(const char *path, int flags, int mode)
+{
+	return open(path, flags, mode);
+}
+#endif
 
 /* 64 hex digits */
 #define HASH(c) c c c c c c c c c c c c c c c c c c c c c c c c c c c c c c c c \
