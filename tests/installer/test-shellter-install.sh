@@ -334,6 +334,31 @@ none_exist() { for f in "$@"; do [ ! -e "$f" ] && [ ! -L "$f" ] || return 1; don
 # shellcheck disable=SC2317
 no_link() { [ ! -e "$HOME/.local/bin/erssi" ] && [ ! -L "$HOME/.local/bin/erssi" ]; }
 
+# exported NAME=VALUE... FUNCTION ARGS...: FUNCTION with each NAME exported
+# to the commands it runs, unset again after. "NAME=VALUE function" is not
+# enough: POSIX leaves open whether the commands a function runs see NAME,
+# and where dash exports it, FreeBSD's sh does not. A NAME already set
+# would be lost, so it must not be.
+exported() {
+    ex_names=""
+    while :; do
+        case "$1" in
+            [A-Za-z_]*=*)
+                ex_n=${1%%=*}
+                if eval "[ -n \"\${$ex_n+set}\" ]"; then
+                    echo "FAIL $CASE: exported $ex_n: already set"; exit 1
+                fi
+                ex_names="$ex_names $ex_n"
+                # shellcheck disable=SC2163 # NAME=VALUE as one word
+                export "$1"; shift ;;
+            *) break ;;
+        esac
+    done
+    "$@"; ex_rc=$?
+    for ex_n in $ex_names; do unset "$ex_n"; done
+    return "$ex_rc"
+}
+
 # ── release signatures ───────────────────────────────────────────────
 # A throwaway release key ($W/key; $W/other is somebody else's): $INSTALLER
 # is a copy of the installer under test whose RELEASE_SIGNER and the
@@ -1334,14 +1359,14 @@ userns-kernel)
     check "... the overflow uid named" grep -qF "belongs to another user (uid ${ns_root% *})" "$W/out"
     check "... the option named" grep -qF "SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1" "$W/out"
     check "... nothing made" none_exist "$W/mine/erssi" "$W/mine/erssi.lock"
-    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
+    exported SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
         --src "$W/mine/erssi" > "$W/out" 2>&1 < /dev/null
     RC=$?
     check "user namespace, option: installed" [ "$RC" = 0 ]
     check "... checked out" [ -d "$W/mine/erssi/.git" ]
     # the parent is never trusted: --src right under /, which shows as the
     # overflow uid (refused before anything is made there)
-    SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
+    exported SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 in_ns sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test \
         --src /erssi-userns-test > "$W/out" 2>&1 < /dev/null
     RC=$?
     check "user namespace, option, / as the parent: refused" [ "$RC" = 1 ]
@@ -1534,7 +1559,7 @@ release-newest)
         grep -q 'shellter-v2026.10.3 is not signed by the erssi Shellter release key - skipped' "$W/fn.err"
     # a download that fails is not an unsigned release
     fetch_fails
-    FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
+    exported FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
     check "download fails: code 3" [ "$RC" = 3 ]
     check "... the release named" [ "$(cat "$W/fn.out")" = shellter-v2026.10.3 ]
     check "... not called unsigned" no_grep 'not signed' "$W/fn.err"
@@ -1686,7 +1711,7 @@ update-same-version)
     check "... nothing reported" no_grep 'different commit' "$W/out"
     # the installed release cannot be downloaded: said so
     fetch_fails
-    FAKE_FETCH_FAIL=1 run_update --check
+    exported FAKE_FETCH_FAIL=1 run_update --check
     check "download of the installed release fails: failed" [ "$RC" = 1 ]
     check "... named" grep -qF "cannot download shellter-v2026.10.2 from $W/repo" "$W/out"
     ;;
@@ -1759,16 +1784,16 @@ binary-platform)
     pid
     check "Debian 13 on x86_64: debian13-amd64" [ "$(cat "$W/fn.out")" = debian13-amd64 ]
     printf 'ID="debian"\nVERSION_ID="13.1"\n' > "$W/os-release"
-    FAKE_UNAME_M=aarch64 pid
+    exported FAKE_UNAME_M=aarch64 pid
     check "quoted, a minor version, aarch64: debian13-arm64" [ "$(cat "$W/fn.out")" = debian13-arm64 ]
     printf 'ID=ubuntu\nVERSION_ID="24.04"\n' > "$W/os-release"
     pid
     check "Ubuntu 24.04: ubuntu24-amd64" [ "$(cat "$W/fn.out")" = ubuntu24-amd64 ]
-    FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 pid
+    exported FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 pid
     check "FreeBSD 14.3: freebsd14-amd64" [ "$(cat "$W/fn.out")" = freebsd14-amd64 ]
-    FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 FAKE_FREEBSD_VERSION=15.0-CURRENT pid
+    exported FAKE_UNAME=FreeBSD FAKE_UNAME_M=amd64 FAKE_FREEBSD_VERSION=15.0-CURRENT pid
     check "FreeBSD 15.0-CURRENT: freebsd15-amd64" [ "$(cat "$W/fn.out")" = freebsd15-amd64 ]
-    FAKE_UNAME_M=riscv64 pid
+    exported FAKE_UNAME_M=riscv64 pid
     check "another architecture: none" [ "$RC" = 1 ] && [ ! -s "$W/fn.out" ]
     printf 'ID=debian\n' > "$W/os-release"
     pid
@@ -1779,7 +1804,7 @@ binary-platform)
     rm -f "$W/os-release"
     pid
     check "no os-release: none" [ "$RC" = 1 ]
-    FAKE_UNAME=Darwin pid
+    exported FAKE_UNAME=Darwin pid
     check "another system: none" [ "$RC" = 1 ]
     fn 'perl_version'
     check "perl v5.40.1: 5.40.1" [ "$(cat "$W/fn.out")" = 5.40.1 ]
@@ -2257,10 +2282,10 @@ binary-fallback)
     check "... installed" [ "$RC" = 0 ]
     # a package for another perl, or that needs missing libraries
     good_pkg 2026.10.4 "$c4"
-    FAKE_PERL_V=5.36.0 run_bin
+    exported FAKE_PERL_V=5.36.0 run_bin
     check "another perl: built from source" grep -q 'the package is built for perl 5.40.1, this system has perl 5.36.0' "$W/out"
     check "... installed" [ "$RC" = 0 ] && grep -qx METHOD=source "$CONF"
-    FAKE_LDD_MISSING=libotr.so.5 run_bin
+    exported FAKE_LDD_MISSING=libotr.so.5 run_bin
     check "missing library: the apt command" grep -qF 'install: sudo apt install libotr5t64' "$W/out"
     check "... built from source" grep -q 'Building' "$W/out"
     # binary, then --source: the build replaces the link, not the release
