@@ -142,7 +142,11 @@ def main():
         off = log_size(a)
         a.type_and_wait("/e2e status", "/window goto #test", "/e2e list")
         out = log_since(a, off)
-        assert out.count("blocked: bob (bob2@127.0.0.1) on E2E:#test") >= 2, out
+        # the nick, the address and the command each where they belong
+        # (five texts from one ring of four once came out in any order)
+        assert out.count("blocked: bob (bob2@127.0.0.1) on E2E:#test - the known key ") >= 2, out
+        assert out.count("of bob (it was at bob@127.0.0.1) comes from this new address: "
+                         "/e2e reverify bob2@127.0.0.1 if it is the same person") >= 2, out
 
     def t_shellter_column():
         """in the shellter theme the module's lines are in the column,

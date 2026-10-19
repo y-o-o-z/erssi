@@ -554,24 +554,29 @@ static guint print_trust_changes(WI_ITEM_REC *item, const E2E_JSON *kr, const ch
 		const char *fp = str_or(e2e_json_get_string(row, "new_fp"), "");
 		E2E_JSON *peer = e2e_json_get(e2e_json_get(kr, "peers"), fp);
 		const char *nick = e2e_json_get_string(row, "nick");
+		const char *sn, *sh;
 
 		if (ctx != NULL && strcmp(c, ctx) != 0 && !(*wire == '@' && strcmp(h, wire + 1) == 0))
 			continue;
 		if (nick == NULL)
 			nick = str_or(e2e_json_get_string(peer, "last_nick"), "?");
+		/* once each: shown_text keeps four, and the arguments of one
+		   call are made in any order - a fifth would free one of them */
+		sn = shown_text(nick);
+		sh = shown_text(h);
 		if (strcmp(change, "handle_changed") == 0)
 			e2e_print_warning(item, "  blocked: %s (%s) on %s - the known key %.16s of %s (it was at %s) comes from this new address: /e2e reverify %s if it is the same person",
-			                  shown_text(nick), shown_text(h), shown(c), fp,
+			                  sn, sh, shown(c), fp,
 			                  shown_text(str_or(e2e_json_get_string(peer, "last_nick"), "?")),
 			                  shown_text(str_or(e2e_json_get_string(peer, "last_handle"), "?")),
-			                  shown_text(h));
+			                  sh);
 		else if (strcmp(change, "fingerprint_changed") == 0)
 			e2e_print_warning(item, "  blocked: %s (%s) on %s - the key has CHANGED (old %.16s, new %.16s): compare it with them, then /e2e reverify %s",
-			                  shown_text(nick), shown_text(h), shown(c),
-			                  str_or(e2e_json_get_string(row, "old_fp"), "?"), fp, shown_text(h));
+			                  sn, sh, shown(c),
+			                  str_or(e2e_json_get_string(row, "old_fp"), "?"), fp, sh);
 		else
 			e2e_print_warning(item, "  blocked: %s (%s) on %s - revoked (key %.16s): /e2e unrevoke %s",
-			                  shown_text(nick), shown_text(h), shown(c), fp, shown_text(nick));
+			                  sn, sh, shown(c), fp, sn);
 		n++;
 	}
 	g_ptr_array_unref(changes);
