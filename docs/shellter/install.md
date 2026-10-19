@@ -72,8 +72,9 @@ on FreeBSD), and installs it only when every check passes:
 
 A signature, checksum or manifest that does not verify stops the
 installer ("refusing to install, nothing was changed"). A release without
-packages, no package for your platform, another Perl, missing libraries
-or an erssi that does not start here are not errors: the installer says
+packages, no package for your platform, a listed package that cannot be
+downloaded, another Perl, missing libraries or an erssi that does not
+start here are not errors: the installer says
 why (for missing libraries with the `apt` or `pkg` command that installs
 them) and builds from source instead; `--binary` stops there instead.
 Without a sha256 tool, xz (GNU tar), curl/fetch, or an ssh-keygen that
@@ -211,8 +212,10 @@ of `erssi --update`. After one update to 2026.10.3 or newer, every later
   installed one; `main` keeps the version of the last release until the
   next one.
 - Nothing is built when erssi is up to date.
-- A release that cannot be downloaded stops the update with "cannot
-  download"; nothing is changed.
+- A release whose tag cannot be fetched stops the update with "cannot
+  download"; nothing is changed. A binary package that the signed
+  `SHA256SUMS` lists but that cannot be downloaded means a source build
+  instead, with one warning (`--binary` refuses).
 - What `--update` checks: [What the installer verifies](#what-the-installer-verifies).
 - `--update` needs git 2.34+ and ssh-keygen to check the signature; without
   them it stops and names the install command above (with your `--prefix`):

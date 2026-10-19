@@ -208,9 +208,9 @@ rm release_signers
 
 Then upload them to the GitHub release of the tag: **the tarballs
 first, SHA256SUMS and SHA256SUMS.sig last.** The installer reads
-SHA256SUMS first, and a tarball it lists but cannot download is an
-error for that platform: the install stops instead of building from
-source.
+SHA256SUMS first. A tarball it lists but cannot download makes it build
+from source, with a warning (with `--binary` it refuses), so every
+install in between would take minutes instead of seconds.
 
 ```sh
 gh release upload shellter-vX erssi-X-*.tar.xz
@@ -249,7 +249,9 @@ Without it they skip. So does the source build of an install or of
 every feature being there, or take minutes more. Every case also skips
 when a tool of the packager (`git meson ninja perl tar xz strip readelf
 od sort ssh-keygen`) is missing from its own PATH. That is the case,
-for example, with a meson in the installer's venv. Inside a package
+for example, with a meson in the installer's venv. With
+`ERSSI_TEST_PACKAGER=1` a missing tool fails instead, so a pre-push, CI
+or release host cannot lose the package builds without a word. Inside a package
 build, `package` and `tests-fail` skip as well. The copy of the tree
 gets NEWS dated to the 1st of the month when the release is still
 `YYYY-MM-xx`, so a push before the release commit can run them. In them
