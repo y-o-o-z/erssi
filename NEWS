@@ -9,24 +9,27 @@ shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	+ Binary packages
 	  - on Debian 13 and FreeBSD 14 (amd64) the install command and
 	    erssi --update install the release's ready-made binary in seconds.
-	    An erssi 2026.10.3 or older builds 2026.10.4 from source this
-	    once (its installer has no binary path); from 2026.10.4 on,
-	    updates use the packages.
 	    It is installed only if its SHA256SUMS is signed by the release
 	    key, its checksum matches, and its MANIFEST names the release, its
 	    commit, the platform and the system's Perl. Anywhere else, or when
 	    a library is missing, erssi is built from source as before; the
-	    missing library is named with the apt or pkg command for it
+	    missing library is named with the apt or pkg command for it. An
+	    erssi 2026.10.3 or older builds 2026.10.4 from source this once
+	    (its installer has no binary path); from 2026.10.4 on, updates use
+	    the packages
 	  - binary installs keep releases side by side in
 	    <prefix>/releases/<version> and switch <prefix>/current in one
 	    step, keeping the previous release for --rollback. New installer
-	    options: --binary, --source, --binary-base, --keep N (default 2),
-	    --dry-run, --rollback and --uninstall (removes the prefix and its
-	    ~/.local/bin link, never ~/.erssi)
+	    options: --binary, --source, --binary-base, --keep N (old releases
+	    kept, default 2, at least 1), --dry-run, --rollback and --uninstall
+	    (removes the prefix and its ~/.local/bin link, never ~/.erssi)
 	  - a package whose signature, checksum or manifest does not verify,
 	    or that holds a link with an absolute target or a .. in it, stops
 	    the installer and nothing is changed. Packages unpack with your own
 	    owner and permissions
+	  - a package that the signed SHA256SUMS lists but that cannot be
+	    downloaded means a source build, with one warning (with --binary,
+	    a clear refusal)
 	  - where ssh-keygen cannot check SSH signatures (OpenSSH before 8.1)
 	    the installer says so in one line and builds from source
 	  - an install without --ref no longer replaces a newer installed

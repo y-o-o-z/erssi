@@ -108,8 +108,11 @@ before `current` is switched, so an interrupted install leaves the release
 in use as it was. After the switch, old releases beyond `--keep N` are
 removed: N counts the releases kept besides the one in use (two by
 default), and the one `--rollback` returns to counts first. N is at least
-1, because that one is also the release every running erssi was started
-from: its help, modules, scripts and themes are needed until `/upgrade`.
+1, because a running erssi needs the release it was started from (its
+help, modules, scripts and themes) until `/upgrade`; after one update that
+is the one `--rollback` returns to. If you update twice without
+`/upgrade`, only N of 2 or more still keeps it, which is why 2 is the
+default.
 
 With the installer of the installed release (or the `curl … | sh` command
 with `-s --` and the same options):
