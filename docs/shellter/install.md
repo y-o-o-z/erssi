@@ -105,8 +105,11 @@ What goes where:
 
 The new release is unpacked next to the one in use and moved into place
 before `current` is switched, so an interrupted install leaves the release
-in use as it was. After the switch, old releases beyond `--keep N` (two by
-default; the one `--rollback` returns to counts first) are removed.
+in use as it was. After the switch, old releases beyond `--keep N` are
+removed: N counts the releases kept besides the one in use (two by
+default), and the one `--rollback` returns to counts first. N is at least
+1, because that one is also the release every running erssi was started
+from: its help, modules, scripts and themes are needed until `/upgrade`.
 
 With the installer of the installed release (or the `curl … | sh` command
 with `-s --` and the same options):
@@ -138,7 +141,7 @@ or `/opt`).
 | `--binary` | Install from the release's package only, and stop if that is not possible (this run only). |
 | `--source` | Always build from source, also on `erssi --update` (until `--binary`). |
 | `--binary-base <url\|dir>` | Where the packages are: a directory or URL holding `shellter-vX.Y.Z/` (default: the GitHub releases of `y-o-o-z/erssi`; another `--repo` has none unless given). |
-| `--keep N` | Old releases of a binary install kept (default 2). |
+| `--keep N` | Old releases of a binary install kept besides the one in use (default 2, at least 1). |
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
 | `--uninstall` | Remove the prefix and `~/.local/bin/erssi`; `~/.erssi` stays. |

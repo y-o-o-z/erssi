@@ -129,7 +129,9 @@ erssi Shellter Edition - install and update
   --binary-base URL
                  where the packages are: a URL or a directory holding
                  shellter-vX.Y.Z/ (default: the GitHub releases)
-  --keep N       old releases of a binary install kept (default 2)
+  --keep N       old releases of a binary install kept besides the one in
+                 use (default 2, at least 1: a running erssi needs the one
+                 it was started from until /upgrade)
   --dry-run      check and show what would be done; change nothing
   --rollback     switch a binary install back to the previous release
   --uninstall    remove the prefix and ~/.local/bin/erssi; ~/.erssi stays
@@ -671,18 +673,12 @@ switch_link() {
     rm -f "$t"
     return 1
 }
-# releases beyond KEEP old ones go, newest kept first; the one in use
+# releases beyond KEEP (at least 1) old ones go, newest kept first; the one in use
 # always stays, and the one --rollback returns to counts first
 prune_releases() {
     RELS="$PREFIX/releases"
     cur=$(link_release current) prev=$(link_release previous) kept=0
-    if [ -n "$prev" ] && [ "$prev" != "$cur" ]; then
-        if [ "$KEEP" -ge 1 ]; then
-            kept=1
-        else
-            rm -f "$PREFIX/previous"; rm -rf "${RELS:?}/$prev"
-        fi
-    fi
+    [ -z "$prev" ] || [ "$prev" = "$cur" ] || kept=1
     for v in $(for d in "$RELS"/*; do
             d=${d##*/}
             case "$d" in [0-9]*) case "$d" in *[!0-9.]*) ;; *) echo "$d" ;; esac ;; esac
@@ -1211,6 +1207,12 @@ if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
     echo "shellter-install.sh: --$ACTION goes with --prefix and --dry-run only (--help)" >&2; exit 2
 fi
 case "$KEEP" in *[!0-9]*) echo "shellter-install.sh: --keep needs a number, e.g. --keep 2 (--help)" >&2; exit 2 ;; esac
+# the release just switched away from is the one every running erssi was
+# started from: its help, modules, scripts and themes are needed until
+# /upgrade, so it always stays
+if [ -n "$KEEP" ] && [ "$KEEP" -lt 1 ]; then
+    echo "shellter-install.sh: --keep must be at least 1 - a running erssi uses the release it was started from until /upgrade (--help)" >&2; exit 2
+fi
 case "$BINARY_BASE" in
     ''|https://*|http://*|file:///*|/*) ;;
     *) echo "shellter-install.sh: --binary-base needs a URL or an absolute directory (--help)" >&2; exit 2 ;;
@@ -1254,6 +1256,7 @@ case "$USE" in binary|source) ;; *) USE=auto ;; esac
 USE_SAVED=auto; [ "$USE" != source ] || USE_SAVED=source
 [ -n "$KEEP" ] || KEEP=$(conf_get KEEP)
 case "$KEEP" in ''|*[!0-9]*) KEEP=2 ;; esac
+[ "$KEEP" -ge 1 ] || KEEP=1
 [ -n "$BINARY_BASE" ] || BINARY_BASE=$(conf_get BINARY_BASE)
 case "$BINARY_BASE" in ''|https://*|http://*|file:///*|/*) ;; *) BINARY_BASE="" ;; esac
 BINARY_BASE_GIVEN=$BINARY_BASE

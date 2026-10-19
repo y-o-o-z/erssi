@@ -2018,8 +2018,12 @@ binary-switch)
     run_bin
     check "next install: the stage of an interrupted one removed" releases_are 2026.10.5 2026.10.6
     run_bin --keep 0 --ref shellter-v2026.10.5
-    check "--keep 0: only the one in use" releases_are 2026.10.5
-    check "... no previous" none_exist "$P/previous"
+    check "--keep 0: refused" [ "$RC" = 2 ]
+    check "... why" grep -qF -- '--keep must be at least 1 - a running erssi uses the release it was started from until /upgrade' "$W/out"
+    check "... nothing changed" current_is 2026.10.6 && releases_are 2026.10.5 2026.10.6
+    run_bin --ref shellter-v2026.10.5
+    check "--keep 1, back to 2026.10.5: the release it leaves kept" current_is 2026.10.5 && releases_are 2026.10.5 2026.10.6
+    check "... as previous" [ "$(readlink "$P/previous")" = releases/2026.10.6 ]
     # an installer that records only older releases (the copy an install
     # leaves in the prefix): no switch back without --ref
     record 2026.10.4 "$(fsha 2026.10.4)"
