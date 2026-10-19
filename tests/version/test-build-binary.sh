@@ -18,13 +18,15 @@
 #   tests-fail  a tag whose tests fail: no package
 #   skips       the two cases above skip without ERSSI_TEST_PACKAGER=1, and
 #               every case skips when a tool of the packager is not in its
-#               PATH (TEST_PACKAGER_PATH stands in for that PATH)
+#               PATH (TEST_PACKAGER_PATH stands in for that PATH), and
+#               fails then when ERSSI_TEST_PACKAGER=1 asks for it
 # package and tests-fail build the tree from scratch twice, with every
 # feature: they run only with ERSSI_TEST_PACKAGER=1 (utils/pre-push, CI,
 # the release host), not in the source build of an install or an update.
 # Every case needs the packager's tools in the packager's own PATH
 # (CLEAN_PATH of build-binary.sh): a box where meson or ninja is only in
-# the installer's venv, say, skips them.
+# the installer's venv, say, skips them; with ERSSI_TEST_PACKAGER=1 a
+# missing tool is a failure instead.
 # Exit: 0 pass, 1 fail, 77 skip.
 # shellcheck disable=SC2016 # the awk programs and sh -c scripts take $1 themselves
 
@@ -52,8 +54,13 @@ if [ -z "${BUILD_BINARY_TEST_CLEAN:-}" ]; then
     fi
     if [ "$CASE" != skips ]; then
         for t in $tools ssh-keygen; do
-            PATH=$packager_path command -v "$t" >/dev/null 2>&1 ||
-                { echo "skip: $t is not in the packager's PATH ($packager_path)"; exit 77; }
+            PATH=$packager_path command -v "$t" >/dev/null 2>&1 && continue
+            # asked for (pre-push, CI, the release host): a missing tool is
+            # a failure there, or the package builds would be lost unnoticed
+            if [ "${ERSSI_TEST_PACKAGER:-}" = 1 ]; then
+                echo "FAIL - $t is not in the packager's PATH ($packager_path), and ERSSI_TEST_PACKAGER=1 asks for these tests"; exit 1
+            fi
+            echo "skip: $t is not in the packager's PATH ($packager_path)"; exit 77
         done
     fi
 fi
@@ -483,9 +490,13 @@ case_skips() {
         out=$(env -i PATH="$PATH" TMPDIR="$TMPDIR" ERSSI_TEST_PACKAGER=1 TEST_PACKAGER_PATH="$tmp/emptybin" \
             sh "$0" "$root" "$c" 2>&1)
         rc=$?
-        check "$c skips without the packager's tools (exit $rc)" [ "$rc" = 77 ]
-        check "$c names the tool" sh -c 'case $1 in "skip: git is not in the packager'"'"'s PATH ($2)") ;; *) exit 1 ;; esac' sh "$out" "$tmp/emptybin"
+        check "$c fails without the packager's tools when asked for (exit $rc)" [ "$rc" = 1 ]
+        check "$c names the tool" sh -c 'case $1 in "FAIL - git is not in the packager'"'"'s PATH ($2), and ERSSI_TEST_PACKAGER=1 asks for these tests") ;; *) exit 1 ;; esac' sh "$out" "$tmp/emptybin"
     done
+    out=$(env -i PATH="$PATH" TMPDIR="$TMPDIR" TEST_PACKAGER_PATH="$tmp/emptybin" sh "$0" "$root" verify 2>&1)
+    rc=$?
+    check "verify skips without the packager's tools when not asked for (exit $rc)" [ "$rc" = 77 ]
+    check "verify says why" [ "$out" = "skip: git is not in the packager's PATH ($tmp/emptybin)" ]
     # only meson missing, as with a meson in the installer's venv
     mkdir -p "$tmp/nomeson" || exit 1
     for t in $tools ssh-keygen; do
