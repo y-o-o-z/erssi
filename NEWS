@@ -1,3 +1,15 @@
+shellter-v2026.10.5 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.5
+
+	A fix from another review of 2026.10.4.
+
+	+ End-to-end encryption
+	  - reading the keyring or a /e2e import file reserves room for each
+	    string as long as that string, not for the rest of the file: a
+	    keyring near its limit of 64 MB used to ask for about 256 MB at
+	    every string, so on a box with little memory erssi could be
+	    stopped while loading it
+
 shellter-v2026.10.4 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.4
 
