@@ -160,14 +160,26 @@ static void append_utf8(GString *out, gunichar c)
    those bytes, otherwise UTF-8 */
 static char *parse_string(PARSER *ps)
 {
-	/* never regrown (a grown buffer leaves secrets in freed memory): a
-	   string has at most as many characters as bytes are left */
-	GArray *chars = g_array_sized_new(FALSE, FALSE, sizeof(gunichar), ps->end - ps->p);
+	GArray *chars;
 	gunichar c, max = 0;
 	GString *out;
+	const char *q;
 	guint i;
 
 	ps->p++;	/* the opening quote */
+	/* never regrown (a grown buffer leaves secrets in freed memory): the
+	   string has at most as many characters as bytes up to its closing
+	   quote. Sized by the rest of the input instead, every string of a
+	   big keyring asked for four bytes per byte left. */
+	for (q = ps->p; q < ps->end && *q != '"'; q++) {
+		if (*q == '\\' && ++q == ps->end)
+			break;
+	}
+	if (q >= ps->end) {
+		ps->error = "unterminated string";
+		return NULL;
+	}
+	chars = g_array_sized_new(FALSE, FALSE, sizeof(gunichar), q - ps->p);
 	for (;;) {
 		if (ps->p >= ps->end) {
 			ps->error = "unterminated string";

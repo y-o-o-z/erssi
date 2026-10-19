@@ -17,6 +17,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <signal.h>
 #include <sys/resource.h>
@@ -135,6 +136,66 @@ static void test_json_roundtrip(void)
 		"}\n");
 	g_free(out);
 	e2e_json_free(j);
+}
+
+/* sanitizers map their shadow memory up front: no address space cap */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define RESERVES_ADDRESS_SPACE 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer) || __has_feature(thread_sanitizer)
+#define RESERVES_ADDRESS_SPACE 1
+#endif
+#endif
+#ifndef RESERVES_ADDRESS_SPACE
+#define RESERVES_ADDRESS_SPACE 0
+#endif
+
+/* a string reserves room for its own characters, not for the rest of the
+   input: a keyring near E2E_MAX_KEYRING_SIZE used to ask for four bytes
+   per byte left at every string, hundreds of MB that a box with little
+   memory (or a limited address space) does not give. A child with its
+   address space capped at what it uses now plus 96 MB parses 48 MB of
+   input whose strings are short. */
+static void test_json_string_reserve(void)
+{
+#if RESERVES_ADDRESS_SPACE
+	g_test_skip("the sanitizer reserves the address space itself");
+#else
+	const gsize pad = 48 * 1024 * 1024;
+	GString *doc;
+	char *statm;
+	unsigned long pages;
+	pid_t pid;
+	int wstatus;
+
+	if (!g_file_get_contents("/proc/self/statm", &statm, NULL, NULL)) {
+		g_test_skip("no /proc/self/statm to measure the address space");
+		return;
+	}
+	pages = strtoul(statm, NULL, 10);
+	g_free(statm);
+	doc = g_string_new("{\"a\":\"x\",\"b\":\"yy\"");
+	while (doc->len < pad)
+		g_string_append_c(doc, ' ');
+	g_string_append(doc, ",\"c\":\"zzz\"}");
+
+	pid = fork();
+	g_assert_cmpint(pid, >=, 0);
+	if (pid == 0) {
+		rlim_t cap = (rlim_t) pages * (rlim_t) sysconf(_SC_PAGESIZE) + pad * 2 + 96 * 1024 * 1024;
+		struct rlimit rl = { cap, cap };
+		const char *error = NULL;
+		E2E_JSON *j;
+
+		setrlimit(RLIMIT_AS, &rl);
+		j = e2e_json_parse(doc->str, doc->len, &error);
+		_exit(j != NULL && g_strcmp0(e2e_json_get_string(j, "c"), "zzz") == 0 ? 0 : 1);
+	}
+	g_assert_cmpint(waitpid(pid, &wstatus, 0), ==, pid);
+	g_assert_true(WIFEXITED(wstatus));
+	g_assert_cmpint(WEXITSTATUS(wstatus), ==, 0);
+	g_string_free(doc, TRUE);
+#endif
 }
 
 static void test_json_rejects(void)
@@ -928,6 +989,7 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/e2e/json/roundtrip", test_json_roundtrip);
 	g_test_add_func("/e2e/json/rejects", test_json_rejects);
+	g_test_add_func("/e2e/json/string-reserve", test_json_string_reserve);
 	g_test_add_func("/e2e/json/byte-strings", test_json_byte_strings);
 	g_test_add_func("/e2e/json/truthy", test_json_truthy);
 	g_test_add_func("/e2e/json/keys-while-changing", test_json_keys_while_changing);
