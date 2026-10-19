@@ -65,6 +65,10 @@ shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    address (someone took the nick, or the server forged it) is marked
 	    "[plain, from <ident@host>]"; plain lines under your own nick in an
 	    E2E channel or query are marked [plain] too
+	  - fixed: /e2e list and /e2e status, for a known key that now comes
+	    from a new address, could name the nick in the command to run
+	    ("/e2e reverify <nick>" instead of the new address), or show the
+	    address in place of the nick (FreeBSD)
 	  - the keyring, the replay memory and /e2e import read only regular
 	    files: a symlink is not followed, a FIFO, device or directory is
 	    refused at once with the reason (a FIFO used to hang erssi). A
