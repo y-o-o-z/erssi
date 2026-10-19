@@ -204,11 +204,20 @@ sha256sum -c SHA256SUMS
 rm release_signers
 ```
 
-Then upload them to the GitHub release of the tag:
+Then upload them to the GitHub release of the tag: **the tarballs
+first, SHA256SUMS and SHA256SUMS.sig last.** The installer reads
+SHA256SUMS first, and a tarball it lists but cannot download is an
+error for that platform: the install stops instead of building from
+source.
 
 ```sh
-gh release upload shellter-vX erssi-X-*.tar.xz SHA256SUMS SHA256SUMS.sig
+gh release upload shellter-vX erssi-X-*.tar.xz
+gh release upload shellter-vX SHA256SUMS SHA256SUMS.sig
 ```
+
+Between the tag's push (step 3 of [A release](#a-release)) and this
+upload, `erssi --update` and new installs build the release from source,
+as before.
 
 The assets are then at
 `https://github.com/y-o-o-z/erssi/releases/download/shellter-vX/<asset>`.
