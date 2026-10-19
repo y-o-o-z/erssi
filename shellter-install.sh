@@ -779,7 +779,7 @@ binary_fallback() {   # why
     trap - EXIT
     [ "$USE" != binary ] || die "no binary install (--binary): $1"
     if [ "$IN_STEP" = 1 ]; then skip_ "$1"; else warn "$1"; fi
-    warn "building from source instead"
+    warn "building from source instead, in $(tilde "$SRC")"
     printf '\n'
     STEP=0 STEPS=6
 }
@@ -1391,7 +1391,9 @@ if [ "$ROOT" = 1 ]; then STATE="$HOME/.local/state/erssi"; else STATE="${XDG_STA
 T_START=$(now)
 if [ "$UPDATE" = 1 ]; then header "update"; else header "install"; fi
 field "prefix" "$(tilde "$PREFIX")"
-field "source" "$(tilde "$SRC")"
+# the source checkout only where it is used for sure; a fallback from
+# a package names it then
+[ "$USE" != source ] || field "source" "$(tilde "$SRC")"
 [ -n "$INSTALLED" ] && field "installed" "$INSTALLED"
 printf '\n'
 
