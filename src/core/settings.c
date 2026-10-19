@@ -27,6 +27,7 @@
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/core/recode.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/relocate.h>
 #include "default-config.h"
 
 #include <signal.h>
@@ -416,6 +417,26 @@ gboolean settings_set_choice(const char *key, const char *value)
 	return TRUE;
 }
 
+void settings_reset(const char *key)
+{
+	SETTINGS_REC *rec;
+	CONFIG_NODE *node;
+
+	rec = g_hash_table_lookup(settings, key);
+	if (rec == NULL) {
+		g_warning("Changing unknown setting '%s'", key);
+		return;
+	}
+	/* no new section for a key that is not there */
+	node = iconfig_node_traverse("settings", FALSE);
+	node = node == NULL ? NULL : iconfig_node_section(node, rec->module, -1);
+	if (node == NULL)
+		return;
+	iconfig_node_set_str(node, key, NULL);
+	if (node->value == NULL)
+		iconfig_node_remove(iconfig_node_traverse("settings", FALSE), node);
+}
+
 void settings_set_str(const char *key, const char *value)
 {
         iconfig_node_set_str(settings_get_node(key), key, value);
@@ -728,7 +749,7 @@ static CONFIG_REC *parse_configfile(const char *fname)
 	CONFIG_REC *config;
 	struct stat statbuf;
         const char *path;
-	char *str;
+	char *str, *global = NULL;
 
 	if (fname == NULL)
 		fname = get_irssi_config();
@@ -738,7 +759,8 @@ static CONFIG_REC *parse_configfile(const char *fname)
 	else {
 		/* user configuration file not found, use the default one
 		   from sysconfdir */
-                path = SYSCONFDIR"/"IRSSI_GLOBAL_CONFIG;
+		global = g_strconcat(get_install_path(SYSCONFDIR), "/" IRSSI_GLOBAL_CONFIG, NULL);
+		path = global;
 		if (stat(path, &statbuf) != 0) {
 			/* no configuration file in sysconfdir ..
 			   use the build-in configuration */
@@ -755,6 +777,7 @@ static CONFIG_REC *parse_configfile(const char *fname)
 
 		config = config_open(NULL, -1);
 	}
+	g_free(global);
 
         if (config->fname != NULL)
 		config_parse(config);

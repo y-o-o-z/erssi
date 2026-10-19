@@ -24,6 +24,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/levels.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/completion.h>
@@ -211,7 +212,7 @@ static void sig_complete_load(GList **list, WINDOW_REC *window,
 	/* completing filename parameter for /SCRIPT LOAD */
 	user_dir = g_strdup_printf("%s/scripts", get_irssi_dir());
 	*list = filename_complete(word, user_dir);
-	*list = g_list_concat(*list, filename_complete(word, SCRIPTDIR));
+	*list = g_list_concat(*list, filename_complete(word, get_install_path(SCRIPTDIR)));
         g_free(user_dir);
 
 	if (*list != NULL) {

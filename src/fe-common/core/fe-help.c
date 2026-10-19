@@ -25,6 +25,7 @@
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/safe-file.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/formats.h>
@@ -132,7 +133,7 @@ static int show_help_file(const char *file)
 	GString *buf;
 	gsize tpos;
 
-        helppath = settings_get_str("help_path");
+        helppath = get_install_setting("help_path", ":");
 
 	/* ~/.erssi/help first: help for scripts and local overrides */
 	path = g_strdup_printf("%s/help:%s", get_irssi_dir(), helppath);
@@ -286,7 +287,7 @@ static void cmd_help(const char *data)
 
 void fe_help_init(void)
 {
-        settings_add_str("misc", "help_path", HELPDIR);
+        settings_add_str("misc", "help_path", get_install_path(HELPDIR));
 	command_bind("help", NULL, (SIGNAL_FUNC) cmd_help);
 }
 

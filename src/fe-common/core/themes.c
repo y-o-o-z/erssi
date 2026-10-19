@@ -27,6 +27,7 @@
 #include <irssi/src/core/special-vars.h>
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/core/relocate.h>
 
 #include <irssi/src/fe-common/core/themes.h>
 #include <irssi/src/fe-common/core/printtext.h>
@@ -960,7 +961,7 @@ THEME_REC *theme_load(const char *setname)
 	if (stat(fname, &statbuf) != 0) {
 		/* check global config dir */
 		g_free(fname);
-		fname = g_strdup_printf(THEMESDIR"/%s.theme", name);
+		fname = g_strdup_printf("%s/%s.theme", get_install_path(THEMESDIR), name);
 		if (stat(fname, &statbuf) != 0) {
 			/* theme not found */
 			g_free(fname);

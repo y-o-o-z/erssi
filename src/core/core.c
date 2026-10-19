@@ -35,6 +35,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/session.h>
+#include <irssi/src/core/relocate.h>
 #ifdef HAVE_CAPSICUM
 #include <irssi/src/core/capsicum.h>
 #endif
@@ -151,6 +152,9 @@ static void sig_gui_dialog(const char *type, const char *text)
 {
 	dialog_type_queue = g_slist_append(dialog_type_queue, g_strdup(type));
 	dialog_text_queue = g_slist_append(dialog_text_queue, g_strdup(text));
+	/* sent again at "irssi init finished": a front end that already
+	   listens would print it twice */
+	signal_stop();
 }
 
 static void sig_init_finished(void)
@@ -232,6 +236,9 @@ void core_preinit(const char *path)
 	}
 
 	session_set_binary(path);
+	/* found now, while the executable can still be looked up (not
+	   later in capability mode, for example) */
+	get_install_prefix();
 }
 
 static void sig_irssi_init_finished(void)

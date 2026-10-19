@@ -112,6 +112,11 @@ gboolean settings_set_time(const char *key, const char *value);
 gboolean settings_set_level(const char *key, const char *value);
 gboolean settings_set_size(const char *key, const char *value);
 gboolean settings_set_choice(const char *key, const char *value);
+/* Back to the default: `key' is removed from the config, so it takes the
+   default of the running erssi, also after an update changes it (a
+   default under the installation prefix of a relocatable build names one
+   release). */
+void settings_reset(const char *key);
 
 /* Get the type (SETTING_TYPE_xxx) of `key' */
 SettingType settings_get_type(const char *key);

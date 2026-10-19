@@ -41,6 +41,7 @@ libcore_a = static_library('core',
     'rawlog.c',
     'recode.c',
     'refstrings.c',
+    'relocate.c',
     'safe-file.c',
     'servers-reconnect.c',
     'servers-setup.c',
@@ -65,7 +66,8 @@ libcore_a = static_library('core',
   c_args : [
     def_moduledir,
     def_sysconfdir,
-  ],
+    def_prefix,
+  ] + def_relocatable,
   dependencies : dep)
 
 install_headers(
@@ -114,6 +116,7 @@ install_headers(
     'rawlog.h',
     'recode.h',
     'refstrings.h',
+    'relocate.h',
     'safe-file.h',
     'servers-reconnect.h',
     'servers-setup.h',
