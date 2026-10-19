@@ -61,7 +61,9 @@ The platforms are `debian13-amd64` and `freebsd14-amd64`.
   (`<prefix>/releases/<version>/`), an entry of a saved `help_path`
   (`:`-separated) or `perl_use_lib` (space-separated) that lies inside
   another release becomes the same path under this release, with one
-  warning line naming both. The other entries stay as they are, in their
+  warning line naming both. So does an entry under the path a source
+  install into the same prefix used before (`<prefix>/share/irssi/help`,
+  `<prefix>/lib/…/irssi/perl`). The other entries stay as they are, in their
   order, and a list that is then the default leaves the config. `/SET -default`
   writes no default into the config.
 - **The tarball** `erssi-<version>-<platform>.tar.xz` has one top

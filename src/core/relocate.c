@@ -153,14 +153,24 @@ static char *entry_moved(const char *entry, const char *releases, const char *pr
 	return g_strconcat(prefix, rest == NULL ? "" : rest, NULL);
 }
 
+/* ENTRY, the default's path of a source install into the top directory
+   of the layout (TOP_DEFAULT, <p>/share/irssi/help say) or under it, as
+   the same path of this release's default (DEFAULT); NULL otherwise */
+static char *entry_from_source(const char *entry, const char *top_default, const char *def)
+{
+	if (top_default == NULL || !path_in(entry, top_default))
+		return NULL;
+	return g_strconcat(def, entry + strlen(top_default), NULL);
+}
+
 const char *get_install_setting(const char *key, const char *seps)
 {
 	/* the entries warned about, "key old": the config can be read again
 	   from the file during the run, one line each is enough */
 	static GHashTable *warned;
-	const char *value, *prefix;
-	char *releases, *name, **entries, *moved, *msg, *id, *joined, sep[2];
-	gboolean changed = FALSE;
+	const char *value, *prefix, *def;
+	char *releases, *name, *top, *top_default, **entries, *moved, *msg, *id, *joined, sep[2];
+	gboolean changed = FALSE, from_source;
 	int i;
 
 	value = settings_get_str(key);
@@ -173,18 +183,30 @@ const char *get_install_setting(const char *key, const char *seps)
 		return value;
 	}
 
+	/* the default of this release, <p>/releases/<v>/share/irssi/help say,
+	   is <p>/share/irssi/help in a source install into <p>: what that
+	   install's /SET -default left behind names its old tree */
+	def = settings_get_record(key)->default_value.v_string;
+	top = g_path_get_dirname(releases);
+	top_default = path_in(def, prefix) ? g_strconcat(top, def + strlen(prefix), NULL) : NULL;
+
 	/* each entry of the list on its own; the others stay as they are,
 	   in their order */
 	entries = g_strsplit_set(value, seps, -1);
 	for (i = 0; entries[i] != NULL; i++) {
 		moved = entry_moved(entries[i], releases, prefix);
+		from_source = moved == NULL;
+		if (moved == NULL)
+			moved = entry_from_source(entries[i], top_default, def);
 		if (moved == NULL)
 			continue;
 		if (warned == NULL)
 			warned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 		id = g_strconcat(key, " ", entries[i], NULL);
 		if (!g_hash_table_contains(warned, id)) {
-			msg = g_strdup_printf("%s: %s is in another release - using %s of this one",
+			msg = g_strdup_printf(from_source ?
+			                      "%s: %s is of a source install before the releases - using %s of this release" :
+			                      "%s: %s is in another release - using %s of this one",
 			                      key, entries[i], moved);
 			signal_emit("gui dialog", 2, "warning", msg);
 			g_free(msg);
@@ -201,7 +223,7 @@ const char *get_install_setting(const char *key, const char *seps)
 		sep[1] = '\0';
 		joined = g_strjoinv(sep, entries);
 		/* the default itself is not written into the config */
-		if (strcmp(joined, settings_get_record(key)->default_value.v_string) == 0)
+		if (strcmp(joined, def) == 0)
 			settings_reset(key);
 		else
 			settings_set_str(key, joined);
@@ -209,6 +231,8 @@ const char *get_install_setting(const char *key, const char *seps)
 		value = settings_get_str(key);
 	}
 	g_strfreev(entries);
+	g_free(top);
+	g_free(top_default);
 	g_free(releases);
 	g_free(name);
 	return value;

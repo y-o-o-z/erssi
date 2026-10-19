@@ -25,7 +25,9 @@ const char *get_install_path(const char *compiled);
    installer's layout (<p>/releases/<version>/bin/erssi), an entry under
    <p>/releases/<another version> (one /SET -default wrote before
    2026.10.4, say) would name an old or removed tree: it becomes the same
-   path under this release, with one warning line naming both. The other
+   path under this release, with one warning line naming both. So does
+   an entry under the default's path of a source install into <p> before
+   (<p>/share/irssi/help, say). The other
    entries stay as they are, in their order. A list that is then the
    default is removed from the config. */
 const char *get_install_setting(const char *key, const char *seps);

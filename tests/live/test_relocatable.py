@@ -179,14 +179,18 @@ def main():
         if "b" not in st:
             raise harness.SkipCase("not a relocatable build")
         inst, prefix = st["b"]
-        old = prefix.parent / "0.9"
+        # another release, or (layout "source") a source install into the
+        # layout's top directory before it had releases
+        old = prefix.parent.parent if layout == "source" else prefix.parent / "0.9"
+        said = "is of a source install before the releases" if layout == "source" else "is in another release"
         w = Path(tempfile.mkdtemp(prefix=f"run-stale-{layout}.", dir=work))
         user = [str(w / "mine1"), str(w / "mine2")]
         perl_rel = Path(inst.perllib).relative_to(prefix)
         stale = {"help_path": (f"{old}/share/irssi/help", f"{prefix}/share/irssi/help", ":"),
                  "perl_use_lib": (str(old / perl_rel), str(prefix / perl_rel), " ")}
         place = {"alone": lambda x: [x], "first": lambda x: [x, user[0]],
-                 "middle": lambda x: [user[0], x, user[1]], "last": lambda x: [user[0], x]}[layout]
+                 "middle": lambda x: [user[0], x, user[1]], "last": lambda x: [user[0], x],
+                 "source": lambda x: [user[0], x, user[1]]}[layout]
         saved_list = {k: sep.join(place(v)) for k, (v, _, sep) in stale.items()}
         want = {k: sep.join(place(n)) for k, (_, n, sep) in stale.items()}
         cfg = harness.config(1, "alice").replace(
@@ -202,7 +206,7 @@ def main():
             e.type_and_wait("/help nosuchtopic_x")
             e.sync_output()
             for k, (v, n, _) in stale.items():
-                line = f"{k}: {v} is in another release"
+                line = f"{k}: {v} {said}"
                 # written (perl_use_lib's may have scrolled off the screen
                 # by now, so in the output), and never twice on the screen
                 assert harness.wait_until(lambda: line in e.text(), WAIT), \
@@ -213,7 +217,8 @@ def main():
             e.type_and_wait("/script load usercount")
             assert e.wait_file(log, "Loaded script usercount", WAIT), "no Perl script with a stale perl_use_lib"
             saved = e.save_config()
-            assert str(old) not in saved, f"the old release in the config:\n{saved}"
+            for v, _, _ in stale.values():
+                assert v not in saved, f"{v} still in the config:\n{saved}"
             for k in stale:
                 if layout == "alone":
                     assert f"{k} = " not in saved, f"{k} saved though it is the default:\n{saved}"
@@ -233,6 +238,9 @@ def main():
 
     def t_stale_release_path_last():
         stale_release_paths("last")
+
+    def t_stale_source_install_path():
+        stale_release_paths("source")
 
     def t_not_relocatable():
         if "plain" not in st:
@@ -263,6 +271,7 @@ def main():
         else:
             harness.main([t_install, t_prefix_a, t_prefix_b_moved_and_linked, t_stale_release_path_alone,
                           t_stale_release_path_first, t_stale_release_path_middle, t_stale_release_path_last,
+                          t_stale_source_install_path,
                           t_not_relocatable])
     finally:
         if not harness.keep_work():
