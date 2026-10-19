@@ -222,6 +222,41 @@ static void test_json_truthy(void)
 	e2e_json_free(j);
 }
 
+/* the keys e2e_json_keys() gives stay readable while the loop over them
+   replaces and removes members of the object: a loop that moves rows
+   (/e2e reverify) does both */
+static void test_json_keys_while_changing(void)
+{
+	static const char *const names[] = { "a|#x", "b|#x", "c|#x", "d|#x" };
+	E2E_JSON *j = parse("{\"d|#x\":4,\"b|#x\":2,\"a|#x\":1,\"c|#x\":3}");
+	GPtrArray *keys = e2e_json_keys(j);
+	guint i;
+
+	g_assert_cmpuint(keys->len, ==, G_N_ELEMENTS(names));
+	for (i = 0; i < keys->len; i++) {
+		const char *k = g_ptr_array_index(keys, i);
+
+		g_assert_cmpstr(k, ==, names[i]);
+		/* the next member replaced (its key too), this one removed */
+		if (i + 1 < keys->len)
+			e2e_json_set_int(j, g_ptr_array_index(keys, i + 1), 10 + i);
+		g_assert_true(e2e_json_remove(j, k));
+		g_assert_cmpstr(k, ==, names[i]);
+		g_assert_null(e2e_json_get(j, k));
+	}
+	g_ptr_array_unref(keys);
+	g_assert_cmpuint(e2e_json_size(j), ==, 0);
+	/* a key given out outlives its member, and the copy keeps its own */
+	e2e_json_set_int(j, "kept", 1);
+	keys = e2e_json_keys(j);
+	e2e_json_remove(j, "kept");
+	g_assert_cmpstr(g_ptr_array_index(keys, 0), ==, "kept");
+	e2e_json_set_int(j, g_ptr_array_index(keys, 0), 2);
+	g_ptr_array_unref(keys);
+	g_assert_cmpint(e2e_json_get_int(j, "kept", 0), ==, 2);
+	e2e_json_free(j);
+}
+
 /* ---- the keyring file ---- */
 
 static void test_absent(void)
@@ -895,6 +930,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/json/rejects", test_json_rejects);
 	g_test_add_func("/e2e/json/byte-strings", test_json_byte_strings);
 	g_test_add_func("/e2e/json/truthy", test_json_truthy);
+	g_test_add_func("/e2e/json/keys-while-changing", test_json_keys_while_changing);
 	g_test_add_func("/e2e/keyring/absent", test_absent);
 	g_test_add_func("/e2e/keyring/save-load", test_save_load);
 	g_test_add_func("/e2e/keyring/corrupt", test_corrupt);

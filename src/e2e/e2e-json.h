@@ -66,7 +66,12 @@ gboolean e2e_json_remove(E2E_JSON *obj, const char *key);
    is no object) when needed */
 E2E_JSON *e2e_json_object_member(E2E_JSON *obj, const char *key);
 
-/* the keys of an object, sorted; the strings belong to the object */
+/* the keys of an object, sorted. While the array lives each string stays
+   readable, whatever is set or removed in the object meanwhile (a loop
+   over them may change the object); after it, a string is the object's,
+   as long as the object keeps that key. The strings are the object's own,
+   counted: the array is freed with g_ptr_array_unref(), its strings
+   never by the caller, and nothing else goes into it. */
 GPtrArray *e2e_json_keys(const E2E_JSON *obj);
 guint e2e_json_size(const E2E_JSON *node);
 void e2e_json_array_add(E2E_JSON *array, E2E_JSON *value);

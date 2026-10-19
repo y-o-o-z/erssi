@@ -22,6 +22,34 @@
 
 #define MAX_DEPTH 512
 
+/* The keys of an object are counted strings: e2e_json_keys() holds one
+   reference to each, so a loop over them may set and remove members of
+   the object - a key the object replaces or drops stays readable until
+   the array goes. The count sits in front of the string. */
+static char *key_new(const char *str)
+{
+	size_t len = strlen(str);
+	gsize *block = g_malloc(sizeof(gsize) + len + 1);
+
+	*block = 1;
+	memcpy(block + 1, str, len + 1);
+	return (char *) (block + 1);
+}
+
+static gpointer key_ref(gpointer key)
+{
+	((gsize *) key)[-1]++;
+	return key;
+}
+
+static void key_unref(gpointer key)
+{
+	gsize *block = (gsize *) key - 1;
+
+	if (--*block == 0)
+		g_free(block);
+}
+
 typedef struct {
 	const char *p, *end;
 	const char *error;
@@ -36,7 +64,7 @@ E2E_JSON *e2e_json_new(E2E_JSON_TYPE type)
 	if (type == E2E_JSON_ARRAY)
 		node->array = g_ptr_array_new_with_free_func((GDestroyNotify) e2e_json_free);
 	else if (type == E2E_JSON_OBJECT)
-		node->object = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+		node->object = g_hash_table_new_full(g_str_hash, g_str_equal, key_unref,
 		                                      (GDestroyNotify) e2e_json_free);
 	return node;
 }
@@ -92,7 +120,7 @@ E2E_JSON *e2e_json_copy(const E2E_JSON *node)
 	} else if (node->type == E2E_JSON_OBJECT) {
 		g_hash_table_iter_init(&iter, node->object);
 		while (g_hash_table_iter_next(&iter, &key, &value))
-			g_hash_table_insert(copy->object, g_strdup(key), e2e_json_copy(value));
+			g_hash_table_insert(copy->object, key_new(key), e2e_json_copy(value));
 	}
 	return copy;
 }
@@ -324,10 +352,12 @@ static E2E_JSON *parse_container(PARSER *ps, gboolean object)
 			g_free(key);
 			goto fail;
 		}
-		if (object)
-			g_hash_table_replace(node->object, key, value);	/* last one wins */
-		else
+		if (object) {
+			g_hash_table_replace(node->object, key_new(key), value);	/* last one wins */
+			g_free(key);
+		} else {
 			g_ptr_array_add(node->array, value);
+		}
 		skip_ws(ps);
 		if (ps->p < ps->end && *ps->p == ',') {
 			ps->p++;
@@ -601,7 +631,7 @@ gboolean e2e_json_truthy(const E2E_JSON *node)
 void e2e_json_set(E2E_JSON *obj, const char *key, E2E_JSON *value)
 {
 	g_return_if_fail(obj != NULL && obj->type == E2E_JSON_OBJECT);
-	g_hash_table_replace(obj->object, g_strdup(key), value);
+	g_hash_table_replace(obj->object, key_new(key), value);
 }
 
 void e2e_json_set_string(E2E_JSON *obj, const char *key, const char *value)
@@ -634,14 +664,14 @@ E2E_JSON *e2e_json_object_member(E2E_JSON *obj, const char *key)
 
 GPtrArray *e2e_json_keys(const E2E_JSON *obj)
 {
-	GPtrArray *keys = g_ptr_array_new();
+	GPtrArray *keys = g_ptr_array_new_with_free_func(key_unref);
 	GHashTableIter iter;
 	gpointer key;
 
 	if (obj != NULL && obj->type == E2E_JSON_OBJECT) {
 		g_hash_table_iter_init(&iter, obj->object);
 		while (g_hash_table_iter_next(&iter, &key, NULL))
-			g_ptr_array_add(keys, key);
+			g_ptr_array_add(keys, key_ref(key));
 		g_ptr_array_sort(keys, compare_keys);
 	}
 	return keys;

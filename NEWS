@@ -69,6 +69,10 @@ shellter-v2026.10.4 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    from a new address, could name the nick in the command to run
 	    ("/e2e reverify <nick>" instead of the new address), or show the
 	    address in place of the nick (FreeBSD)
+	  - fixed: /e2e reverify that moves a known key to its new address
+	    read memory it had already freed when that address already had
+	    an acceptance or a recipient row in the same channel; erssi
+	    could crash there (since 2026.10.3)
 	  - the keyring, the replay memory and /e2e import read only regular
 	    files: a symlink is not followed, a FIFO, device or directory is
 	    refused at once with the reason (a FIFO used to hang erssi). A

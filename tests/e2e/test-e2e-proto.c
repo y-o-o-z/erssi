@@ -5956,7 +5956,9 @@ static void test_trust_change_notices(void)
 /* alice (auto-accept) and bob (normal) read each other on #test, then
    alice comes back as ALICE2 with the same key: bob's request for her
    key under the new address is answered, and the answer is blocked */
-static void handle_change_setup(PEER *a, PEER *b)
+/* alice's key, known at ALICE, comes from the address moved_to: the
+   change waits for /e2e reverify */
+static void handle_change_setup_at(PEER *a, PEER *b, const char *moved_to)
 {
 	E2E_IN_RESULT r;
 	char *wire, *rsp = NULL, *recip = NULL;
@@ -5968,17 +5970,22 @@ static void handle_change_setup(PEER *a, PEER *b)
 	give_key(a, b, "#test");
 	give_key(b, a, "#test");
 	enable(b, "#test", "normal");
-	a->handle = ALICE2;
+	a->handle = moved_to;
 	wire = wire_from(a, "#test", "still me");
 	decrypt_from(b, a, "#test", wire, &r);
 	g_assert_nonnull(r.keyreq);
 	g_hash_table_remove_all(a->stamps);
-	deliver_keyreq(a, b, r.keyreq, ALICE2, &rsp, &recip);
+	deliver_keyreq(a, b, r.keyreq, moved_to, &rsp, &recip);
 	g_assert_false(deliver_keyrsp(b, a, rsp));
 	e2e_in_result_clear(&r);
 	g_free(rsp);
 	g_free(recip);
 	g_free(wire);
+}
+
+static void handle_change_setup(PEER *a, PEER *b)
+{
+	handle_change_setup_at(a, b, ALICE2);
 }
 
 /* /e2e reverify accepts the change that waits: a known key at a new
@@ -6185,6 +6192,56 @@ static void test_reverify(void)
 	peer_free(&a);
 	peer_free(&b);
 	peer_free(&mallory);
+}
+
+/* the address a key moves to on /e2e reverify has rows of the channel
+   already (an acceptance, a recipient row) that sort after the moved
+   ones: the moved rows take their place, and the loop over the rows
+   reads no key the move freed (it read one: a heap use after free the
+   handlers fuzzer found) */
+#define ALICE_LATER "alice@203.0.113.7"
+
+static void test_reverify_move_onto_rows(void)
+{
+	E2E_JSON *accepted, *recipients, *row;
+	PEER a, b;
+	E2E_REVERIFY rv;
+
+	handle_change_setup_at(&a, &b, ALICE_LATER);
+	accepted = e2e_json_get(b.kr, "accepted");
+	recipients = e2e_json_get(b.kr, "outgoing_recipients");
+	g_assert_nonnull(e2e_json_get(accepted, ALICE "|#test"));
+	g_assert_nonnull(e2e_json_get(recipients, "#test|" ALICE));
+	/* the rows already at the new address, marked to tell them apart */
+	g_assert_cmpint(strcmp(ALICE "|#test", ALICE_LATER "|#test"), <, 0);
+	row = e2e_json_copy(e2e_json_get(accepted, ALICE "|#test"));
+	e2e_json_set_int(row, "stale", 1);
+	e2e_json_set(accepted, ALICE_LATER "|#test", row);
+	row = e2e_json_copy(e2e_json_get(recipients, "#test|" ALICE));
+	e2e_json_set_string(row, "handle", ALICE_LATER);
+	e2e_json_set_int(row, "stale", 1);
+	e2e_json_set(recipients, "#test|" ALICE_LATER, row);
+
+	e2e_reverify(b.kr, ALICE_LATER, NULL, NULL, &rv);
+	g_assert_cmpint(rv.result, ==, E2E_REVERIFY_REBOUND);
+	g_assert_cmpstr(rv.handle, ==, ALICE_LATER);
+	g_assert_cmpstr(rv.old_handle, ==, ALICE);
+	e2e_reverify_clear(&rv);
+	/* one acceptance and one recipient row, the moved ones */
+	g_assert_null(e2e_json_get(accepted, ALICE "|#test"));
+	row = e2e_json_get(accepted, ALICE_LATER "|#test");
+	g_assert_cmpstr(e2e_json_get_string(row, "fp"), ==, a.id.fp_hex);
+	g_assert_null(e2e_json_get(row, "stale"));
+	g_assert_cmpuint(e2e_json_size(accepted), ==, 1);
+	g_assert_null(e2e_json_get(recipients, "#test|" ALICE));
+	row = e2e_json_get(recipients, "#test|" ALICE_LATER);
+	g_assert_cmpstr(e2e_json_get_string(row, "handle"), ==, ALICE_LATER);
+	g_assert_cmpstr(e2e_json_get_string(row, "fingerprint"), ==, a.id.fp_hex);
+	g_assert_null(e2e_json_get(row, "stale"));
+	g_assert_cmpuint(e2e_json_size(recipients), ==, 1);
+	g_assert_cmpstr(path_str(b.kr, "peers", a.id.fp_hex, "last_handle"), ==, ALICE_LATER);
+	peer_free(&a);
+	peer_free(&b);
 }
 
 /* /e2e decline and /e2e forget of someone who has our key: they get no
@@ -7786,6 +7843,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/proto/hidden-messages", test_hidden_messages);
 	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
 	g_test_add_func("/e2e/proto/reverify", test_reverify);
+	g_test_add_func("/e2e/proto/reverify-move-onto-rows", test_reverify_move_onto_rows);
 	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
 	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
 	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
