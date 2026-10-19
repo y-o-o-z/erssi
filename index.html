@@ -264,13 +264,13 @@ footer a { color: var(--muted); }
     <a class="name" href="./">erssi <b>Shellter Edition</b></a>
     <nav aria-label="Project">
       <a href="#install">Install</a>
-      <a class="wide" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.4">Release notes</a>
+      <a class="wide" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.5">Release notes</a>
       <a href="https://github.com/y-o-o-z/erssi">GitHub</a>
     </nav>
   </header>
 
   <section class="row hero" aria-labelledby="title">
-    <div class="label">2026.10.4</div>
+    <div class="label">2026.10.5</div>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
       <h1 id="title">IRC in your shell, made for IRCnet.</h1>
@@ -372,7 +372,7 @@ erssi --update         <span class="c"># install it (binary or source)</span></p
       <p>Every release tag is signed with one SSH key. The one-line install trusts the script it downloads from GitHub; that script carries the key and the commit of every release. It builds a release only when its tag is signed by that key and points to the recorded commit, and installs a binary package only when the release's checksum list is signed by that key and the package matches it. Without ssh-keygen it checks the commit only, and any other <code style="white-space:nowrap">--ref</code> is built unverified, with a warning. <code>erssi --update</code> installs only a newer release signed by the same key. You can <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#what-the-installer-verifies">check the installer yourself</a> before running it.</p>
       <p class="fp">ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</p>
       <pre class="block">git -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.4</pre>
+    verify-tag shellter-v2026.10.5</pre>
       <p>The parts that face the network, the web frontend and end-to-end encryption among them, are fuzzed with libFuzzer, and the test suite runs under AddressSanitizer and UndefinedBehaviorSanitizer for every change. The build is hardened by default: PIE, stack protector, full RELRO, <code>FORTIFY_SOURCE=2</code>.</p>
     </div>
   </section>
@@ -381,9 +381,9 @@ erssi --update         <span class="c"># install it (binary or source)</span></p
     <div class="label">new</div>
     <div class="bar" aria-hidden="true"></div>
     <div class="body">
-      <h2 id="latest">In 2026.10.4</h2>
-      <p>Ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before. And the answer to another full review of the code: replay protection of end-to-end encryption survives restarts and floods, a plain message from someone who took a peer's nick is marked, and the limits of the encryption are written down. Files are opened safely everywhere, so a FIFO or a planted link cannot hang or redirect erssi, and a save that fails on a full disk keeps the old configuration. The web frontend keeps stored passwords when a client edits a network.</p>
-      <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.4">Release notes</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">All changes since 2026.10.0</a></p>
+      <h2 id="latest">In 2026.10.5</h2>
+      <p>Reading the keyring or a <code>/e2e import</code> file reserves room for each string as long as that string, not for the rest of the file, so a large keyring no longer asks for hundreds of megabytes on a box with little memory. 2026.10.4 brought ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before.</p>
+      <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.5">Release notes</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">All changes since 2026.10.0</a></p>
     </div>
   </section>
 
@@ -400,7 +400,7 @@ erssi --update         <span class="c"># install it (binary or source)</span></p
 
 <footer>
   <div class="wrap">
-    <span>erssi Shellter Edition 2026.10.4, by the Shellter team at <a href="https://shellter.me">shellter.me</a></span>
+    <span>erssi Shellter Edition 2026.10.5, by the Shellter team at <a href="https://shellter.me">shellter.me</a></span>
     <span><a href="https://github.com/y-o-o-z/erssi">Source</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">NEWS</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/issues">Issues</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/SECURITY.md">Security</a> &nbsp; <a href="https://github.com/y-o-o-z/erssi/blob/main/COPYING">GPL-2.0-or-later</a></span>
   </div>
 </footer>
