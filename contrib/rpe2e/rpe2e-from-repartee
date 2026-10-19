@@ -47,8 +47,13 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
 import sys
+
+try:
+    import sqlite3
+except ImportError:
+    sys.exit("rpe2e-from-repartee: this Python has no sqlite3 module, which reading "
+             "repartee's database needs (FreeBSD: pkg install py312-sqlite3)")
 import tempfile
 import time
 
