@@ -26,7 +26,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
 WAIT = 30
-BOUND = 30  # seconds: a typed line's chunks are all out by then
+BOUND = 60  # seconds to wait for a line to reach bob
+QUEUE_SPEED = 2.2  # irssi's default cmd_queue_speed, in seconds
+STRANGER_MAX = 7  # the longest wait of one stranger's NOTICE in flight
+SLACK = 1.0  # per line: irssi's queue timer and a loaded test box
+
+
+def irssi_gap(length):
+    """what irssi's flood rule waits after a line of length bytes
+    (with CR LF): 2 s + 1 s per 100 bytes for one of 100 bytes or more
+    (irc_server_send_data), never less than cmd_queue_speed"""
+    return max(QUEUE_SPEED, 2 + length // 100 if length >= 100 else 0)
 
 
 def main():
@@ -139,7 +149,14 @@ def main():
         sent = lines_since(t0, "alice", "PRIVMSG")
         assert sent, "alice sent nothing"
         last = max(t for t, _ in sent)
-        assert last - t0 <= BOUND, f"alice's lines took {last - t0:.1f} s"
+        # her own lines cost what irssi's flood rule makes them cost: the
+        # wait after each one but the last, after at most one stranger's
+        # NOTICE already in flight. Waiting behind the strangers would
+        # add their NOTICEs on top.
+        lens = [len(" ".join(ln.split(" ", 4)[2:])) + 2 for _, ln in sorted(sent)]
+        bound = STRANGER_MAX + SLACK + sum(irssi_gap(n) + SLACK for n in lens[:-1])
+        assert last - t0 <= bound, \
+            f"alice's {len(lens)} lines took {last - t0:.1f} s, irssi's rule allows {bound:.1f} s"
         # and no stranger's NOTICE went out while her lines waited
         firsts, lasts = min(t for t, _ in sent), last
         between = [t for t, ln in lines_since(firsts, "alice", "NOTICE") if t < lasts and " clone" in ln]
