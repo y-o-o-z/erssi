@@ -157,21 +157,23 @@ def main():
         shutil.copy(Path(sys.argv[2]) / "themes" / "shellter.theme", a.home / "shellter.theme")
         a.resize(120, 50)  # the line is longer than the window
         a.type_and_wait("/set theme shellter", "/window goto #test", "/e2e list")
-
-        def found(rows):
-            return any("e2e │   blocked: bob (bob2@127.0.0.1)" in r for r in rows)
-        rows, ok = a.wait_screen(found, WAIT)
-        assert ok, "\n".join(rows)
-        i = max(n for n, r in enumerate(rows) if "e2e │   blocked: bob" in r)
-        # one column: erssi's own label does not come first
-        assert "erssi │" not in rows[i], rows[i]
-        text_col = rows[i].index("e2e │ ") + len("e2e │ ")
-        # the line starts with its time; the next row continues it, from
-        # the window's first column to the text's blank (side panels aside)
-        start = re.search(r"\d\d:\d\d", rows[i]).start()
-        follow = rows[i + 1]
-        assert follow[start:text_col].strip() == "" and follow[text_col] != " ", (rows[i], follow)
-        a.type_and_wait("/set theme default")
+        try:
+            def found(rows):
+                return any("e2e │   blocked: bob (bob2@127.0.0.1)" in r for r in rows)
+            rows, ok = a.wait_screen(found, WAIT)
+            assert ok, "\n".join(rows)
+            i = max(n for n, r in enumerate(rows) if "e2e │   blocked: bob" in r)
+            # one column: erssi's own label does not come first
+            assert "erssi │" not in rows[i], rows[i]
+            text_col = rows[i].index("e2e │ ") + len("e2e │ ")
+            # the line starts with its time; the next row continues it, from
+            # the window's first column to the text's blank (side panels aside)
+            start = re.search(r"\d\d:\d\d", rows[i]).start()
+            follow = rows[i + 1]
+            assert follow[start:text_col].strip() == "" and follow[text_col] != " ", (rows[i], follow)
+        finally:
+            # the later cases read the default theme's lines
+            a.type_and_wait("/set theme default")
 
     def t_reverify():
         """/e2e reverify <new address> moves the key there and asks for it
