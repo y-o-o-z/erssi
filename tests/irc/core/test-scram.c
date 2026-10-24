@@ -164,8 +164,7 @@ static void test_login(gconstpointer data)
 	exchange_free(&ex);
 }
 
-/* the count Atheme uses by default, and the largest it can be set to,
- * are accepted too */
+/* the count Atheme uses by default logs in too */
 static void test_iterations_atheme(gconstpointer data)
 {
 	const char *count = data;
@@ -186,6 +185,24 @@ static void test_iterations_atheme(gconstpointer data)
 	g_free(client_final);
 	g_free(server_final);
 	exchange_free(&ex);
+}
+
+/* the largest count Atheme can be set to (5000000) and the upper bound
+ * itself are taken. Checked on the parser alone: a whole login at 5000000
+ * rounds computes PBKDF2 twice (client and test server), which took the
+ * test past its time limit on a loaded sanitizer build. */
+static void test_iterations_accepted(void)
+{
+	static const char *const counts[] = {
+		"4096", "64000", "5000000", "10000000",
+	};
+	int i;
+
+	for (i = 0; i < (int) G_N_ELEMENTS(counts); i++)
+		g_assert_cmpuint(scram_parse_iteration_count(counts[i]), ==,
+		                 (unsigned int) atoi(counts[i]));
+	g_assert_cmpuint(scram_parse_iteration_count("10000001"), ==, 0);
+	g_assert_cmpuint(scram_parse_iteration_count("4095"), ==, 0);
 }
 
 static void test_iterations_refused(void)
@@ -324,8 +341,7 @@ int main(int argc, char **argv)
 	g_test_add_data_func("/scram/login/sha512", "SHA512", test_login);
 	g_test_add_data_func("/scram/iterations/atheme_default", "64000",
 	                     test_iterations_atheme);
-	g_test_add_data_func("/scram/iterations/atheme_max", "5000000",
-	                     test_iterations_atheme);
+	g_test_add_func("/scram/iterations/accepted", test_iterations_accepted);
 	g_test_add_func("/scram/iterations/refused", test_iterations_refused);
 	g_test_add_func("/scram/server_first/refused", test_server_first_refused);
 	g_test_add_func("/scram/server_final", test_server_final);

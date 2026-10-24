@@ -23,5 +23,8 @@ SCRAM_SESSION_REC *scram_session_create(const char *digset, const char *username
 void scram_session_free(SCRAM_SESSION_REC *session);
 scram_status scram_process(SCRAM_SESSION_REC *session, const char *input, char **output,
                            size_t *output_len);
+/* the iteration count of a server-first-message's i= as scram_process()
+   takes it, 0 when it refuses it */
+unsigned int scram_parse_iteration_count(const char *str);
 
 #endif

@@ -146,7 +146,7 @@ static scram_status process_client_first(SCRAM_SESSION_REC *session, char **outp
 
 /* The value of i=: decimal digits only, nothing else, within the range
  * above; 0 when it is anything else. */
-static unsigned int parse_iteration_count(const char *str)
+unsigned int scram_parse_iteration_count(const char *str)
 {
 	unsigned long value = 0;
 	const char *p;
@@ -256,7 +256,7 @@ static scram_status process_server_first(SCRAM_SESSION_REC *session, const char 
 		return SCRAM_ERROR;
 	}
 
-	iteration_count = parse_iteration_count(iterations);
+	iteration_count = scram_parse_iteration_count(iterations);
 	if (iteration_count == 0) {
 		session->error = g_strdup_printf("Refusing SCRAM iteration count i=%s: it must be "
 		                                 "a number from %d to %d",
