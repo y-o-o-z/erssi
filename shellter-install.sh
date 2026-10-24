@@ -1561,8 +1561,9 @@ do_uninstall() {
     # the prefix itself when nothing is left in it, unless it is the home
     # or a directory above it
     h=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || h=""
+    home=0
     case "$h/" in
-        "${RP%/}"/*) ;;
+        "${RP%/}"/*) home=1 ;;
         *) rmdir "$PREFIX" 2>/dev/null || true ;;
     esac
     printf '  %s%serssi removed%s from %s.\n\n' "$B" "$G" "$N" "$(tilde "$PREFIX")"
@@ -1572,7 +1573,18 @@ do_uninstall() {
         # a few of them, not a walk of a whole tree (a prefix may be ~)
         left=$(cd "$PREFIX" && find . ! -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
             awk 'NR == 4 { printf ", ..."; exit } NR > 1 { printf ", " } { printf "%s", $0 }')
-        [ -z "$left" ] || field "left" "files that erssi did not install stay in $(tilde "$PREFIX"): $left"
+        if [ -n "$left" ]; then
+            field "left" "files that erssi did not install stay in $(tilde "$PREFIX"): $left"
+        elif [ "$home" = 1 ]; then
+            field "left" "$(tilde "$PREFIX") stays: it is your home or holds it"
+        else
+            # no file is left, only directories: those no install recorded
+            # making (an installer before 2026.10.6 recorded none), or a
+            # takeover lock left behind
+            dirs=$(cd "$PREFIX" && find . ! -name . -prune -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
+                awk 'NR == 4 { printf ", ..."; exit } NR > 1 { printf ", " } { printf "%s", $0 }')
+            field "left" "$(tilde "$PREFIX") stays, with directories erssi has no record of making: ${dirs:-(none)} - remove them by hand if they are empty and not yours"
+        fi
     fi
     field "kept" "$(tilde "$HOME/.erssi") (your configuration, logs and keys)"
     [ ! -d "$SRC" ] || field "source" "$(tilde "$SRC") is kept - remove it by hand if you no longer build erssi"

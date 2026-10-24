@@ -2476,6 +2476,8 @@ uninstall-foreign)
     RC=$?
     check "empty directories from before: kept" eval '[ "$RC" = 0 ] && [ -d "$L/bin" ] && [ -d "$L/share/man" ]'
     check "... those the install made removed" none_exist "$L/bin/erssi" "$L/lib" "$L/include" "$L/share/irssi" "$L/share/man/man1"
+    # shellcheck disable=SC2088 # the text shown
+    check "... the prefix kept, and why" grep -qF '~/local stays, with directories erssi has no record of making: ' "$W/out"
     rm -rf "$L"
     # an empty home as the prefix of a binary install: the home stays
     oh=$HOME
@@ -2486,6 +2488,7 @@ uninstall-foreign)
     RC=$?
     check "... --uninstall: done" eval '[ "$RC" = 0 ] && none_exist "$HOME/current" "$HOME/releases" "$HOME/bin" "$HOME/share"'
     check "... the home itself kept" [ -d "$HOME" ]
+    check "... and why" grep -qF "$HOME stays: it is your home or holds it" "$W/out"
     HOME=$oh
     # the home as the prefix: only erssi's files there go
     rm -rf "$L"
