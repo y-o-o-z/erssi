@@ -196,7 +196,7 @@ typedef enum {
  when channels[ctx] or outgoing[ctx] is there, an incoming key is
  "<handle>|<ctx>" or a pending key (a request of ours) is "<ctx>|<handle>"
  or "<ctx>"; the handle of a key is its row's "handle" member, else
- everything up to the first '|' (incoming) or after the last '|'
+ everything up to e2e_row_key_bar() (incoming) or after the last '|'
  (pending), so "#a" is never a row of "#a|b".
 
    the bare wire exists, net->legacy_ok     LEGACY,  *ctx = wire
@@ -295,5 +295,13 @@ gboolean e2e_keyring_has_scoped(const E2E_JSON *kr);
 
 /* what the module says when rpe2e.pl is loaded on such a keyring */
 #define E2E_SCRIPT_SCOPED_WARN "rpe2e.pl does not know the per-network entries of this keyring (written by the e2e module): the script does not encrypt the conversations set up there, so messages to them are NOT sent while it is loaded. Unload the script to use them (/e2e export keeps a copy)"
+
+/* the '|' that ends the handle in a row key "<handle>|<ctx>", NULL when
+   there is none. The handle is the sender's ident@host: some servers let
+   '|' into an ident, never '@', and the context after the '|' (a channel
+   or "@<handle>") may hold either. So it is the first '|' after the first
+   '@' when an earlier '|' comes before that '@', else the first '|' (a
+   key whose handle has no '@'). */
+const char *e2e_row_key_bar(const char *key);
 
 #endif

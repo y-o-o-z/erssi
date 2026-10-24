@@ -7831,6 +7831,33 @@ static void test_request_expiry(void)
 	peer_free(&b);
 }
 
+/* an ident may hold '|' (some servers let it through): a row key
+   "a|b@h|#c" is the handle a|b@h in #c, not the handle "a" in the query
+   "b@h|#c" - which made a real acceptance count for nothing and the row
+   look damaged (a key rotation and a misleading warning) */
+static void test_pipe_in_ident(void)
+{
+	E2E_JSON *kr = e2e_keyring_new(), *row = e2e_json_new(E2E_JSON_OBJECT);
+	GPtrArray *found;
+
+	g_assert_cmpstr(e2e_row_key_bar("a|b@h|#c"), ==, "|#c");
+	g_assert_cmpstr(e2e_row_key_bar("u@h|#c|d"), ==, "|#c|d");
+	g_assert_cmpstr(e2e_row_key_bar("u@h|#c@d"), ==, "|#c@d");
+	g_assert_cmpstr(e2e_row_key_bar("a|b@h|@a|b@h"), ==, "|@a|b@h");
+	g_assert_cmpstr(e2e_row_key_bar("host|@a@b"), ==, "|@a@b");
+	g_assert_null(e2e_row_key_bar("a@b"));
+
+	e2e_json_set_string(row, "fp", "00ff");
+	e2e_json_set(e2e_json_object_member(kr, "accepted"), "a|b@h|#c", row);
+	e2e_json_set(e2e_json_object_member(kr, "accepted"), "a|b@h|@a|b@h", e2e_json_copy(row));
+	g_assert_true(e2e_fingerprint_accepted(kr, "00ff"));
+	found = e2e_rotate_for_damaged(kr, NULL);
+	g_assert_cmpuint(found->len, ==, 0);
+	g_ptr_array_unref(found);
+	g_assert_null(e2e_json_get(row, E2E_DAMAGED_MEMBER));
+	e2e_json_free(kr);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -7950,6 +7977,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/casemap/script-dm-moved", test_casemap_script_dm_moved);
 	g_test_add_func("/e2e/proto/cache-tie-order", test_cache_tie_order);
 	g_test_add_func("/e2e/casemap/script-cache-tie", test_casemap_script_cache_tie);
+	g_test_add_func("/e2e/proto/pipe-in-ident", test_pipe_in_ident);
 
 	return g_test_run();
 }

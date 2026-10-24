@@ -660,14 +660,23 @@ char *e2e_ctx_display(const char *ctx)
 
 /* ---- legacy rows ---- */
 
+const char *e2e_row_key_bar(const char *key)
+{
+	const char *bar = strchr(key, '|'), *at = strchr(key, '@'), *after;
+
+	if (bar != NULL && at != NULL && bar < at && (after = strchr(at, '|')) != NULL)
+		return after;
+	return bar;
+}
+
 static gboolean is_object(const E2E_JSON *node)
 {
 	return node != NULL && node->type == E2E_JSON_OBJECT;
 }
 
 /* key is the "<handle>|<ctx>" key of row: the handle is the row's
-   "handle" member when it has one, else everything before the first '|'
-   (a handle holds no '|'; the convention of /e2e list and the export) */
+   "handle" member when it has one, else everything before
+   e2e_row_key_bar() (the convention of /e2e list and the export) */
 static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
 {
 	const char *handle = e2e_json_get_string(row, "handle");
@@ -678,7 +687,7 @@ static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const ch
 		hl = strlen(handle);
 		return strncmp(key, handle, hl) == 0 && key[hl] == '|' && strcmp(key + hl + 1, ctx) == 0;
 	}
-	bar = strchr(key, '|');
+	bar = e2e_row_key_bar(key);
 	return bar != NULL && strcmp(bar + 1, ctx) == 0;
 }
 

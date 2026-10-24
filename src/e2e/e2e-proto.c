@@ -315,10 +315,10 @@ guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gbo
 	return n;
 }
 
-/* a key "<handle>|<c>" of store: handle and c (a handle holds no '|') */
+/* a key "<handle>|<c>" of store: handle and c (e2e_row_key_bar) */
 static gboolean split_pipe(const char *key, char **handle, char **c)
 {
-	const char *bar = strchr(key, '|');
+	const char *bar = e2e_row_key_bar(key);
 
 	if (bar == NULL || bar == key || bar[1] == '\0')
 		return FALSE;
@@ -478,7 +478,7 @@ static char *oldest_member(const E2E_JSON *obj, const char *field)
 /* the waiting request key / row is on net (always without one). The
    handle is the sender's ident@host, which may hold '|' and 0x1F: the
    context is the row's "channel" member (we wrote it), else what follows
-   the row's "handle" member, else what follows the first '|' */
+   the row's "handle" member, else what follows e2e_row_key_bar() */
 static const char *pending_row_ctx(const char *key, const E2E_JSON *row)
 {
 	const char *channel = e2e_json_get_string(row, "channel");
@@ -490,7 +490,7 @@ static const char *pending_row_ctx(const char *key, const E2E_JSON *row)
 		return channel;
 	if (handle != NULL && strncmp(key, handle, hl = strlen(handle)) == 0 && key[hl] == '|')
 		return key + hl + 1;
-	bar = strchr(key, '|');
+	bar = e2e_row_key_bar(key);
 	return bar != NULL ? bar + 1 : key;
 }
 
@@ -3684,15 +3684,15 @@ static char *in_ctx(const E2E_JSON *kr, const E2E_IN_PARAMS *p, const char *wire
 }
 
 /* in the incoming row key "<handle>|<ctx>" of handle (the row's "handle"
-   member, else everything up to the first '|'), the ctx; NULL for a row
-   of another handle */
+   member, else everything up to e2e_row_key_bar()), the ctx; NULL for a
+   row of another handle */
 static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const char *handle)
 {
 	const char *h = e2e_json_get_string(row, "handle");
 	gsize len;
 
 	if (h == NULL) {
-		const char *bar = strchr(key, '|');
+		const char *bar = e2e_row_key_bar(key);
 
 		len = bar != NULL ? (gsize) (bar - key) : strlen(key);
 	} else {
@@ -4586,7 +4586,7 @@ E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 	keys = e2e_json_keys(src);
 	for (i = 0; i < keys->len; i++) {
 		const char *key = g_ptr_array_index(keys, i);
-		const char *bar = strchr(key, '|');
+		const char *bar = e2e_row_key_bar(key);
 		char *handle = bar != NULL ? g_strndup(key, bar - key) : g_strdup(key);
 
 		row = row_with(e2e_json_get(src, key), "handle", handle, "channel",

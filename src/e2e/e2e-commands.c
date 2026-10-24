@@ -625,9 +625,10 @@ static void cmd_status(WI_ITEM_REC *item)
 	e2e_json_free(kr);
 }
 
+/* a row key "<handle>|<ctx>" (e2e_row_key_bar) */
 static void split_key(const char *key, char **a, char **b)
 {
-	const char *bar = strchr(key, '|');
+	const char *bar = e2e_row_key_bar(key);
 
 	*a = bar != NULL ? g_strndup(key, bar - key) : g_strdup(key);
 	*b = bar != NULL ? g_strdup(bar + 1) : NULL;
