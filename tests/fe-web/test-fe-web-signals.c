@@ -245,6 +245,48 @@ static void test_json_follows_recode(void)
 	fe_web_fuzz_server_free(server);
 }
 
+/* what /IGNORE bob QUITS PARTS KICKS does: "message quit/part/kick" are
+ * stopped before fe-web sees them */
+static void sig_stop(void)
+{
+	signal_stop();
+}
+
+/* the display signals stopped (an ignore, netsplit hiding): the web
+ * client's nicklists still lose bob, or it keeps a ghost */
+static void test_removes_when_ignored(void)
+{
+	IRC_SERVER_REC *server = connected();
+	WEB_CLIENT_REC *c = client_new();
+	gsize mark;
+	char *heard;
+
+	join(server, "#a", "me bob carol dave");
+	join(server, "#b", "me bob");
+	signal_add_first("message quit", (SIGNAL_FUNC) sig_stop);
+	signal_add_first("message part", (SIGNAL_FUNC) sig_stop);
+	signal_add_first("message kick", (SIGNAL_FUNC) sig_stop);
+	mark = heard_len();
+	server_says(server, ":carol!c@example.net PART #a :later");
+	server_says(server, ":me!u@example.net KICK #a dave :out");
+	server_says(server, ":bob!b@example.net QUIT :bye");
+	heard = heard_since(mark);
+	signal_remove("message quit", (SIGNAL_FUNC) sig_stop);
+	signal_remove("message part", (SIGNAL_FUNC) sig_stop);
+	signal_remove("message kick", (SIGNAL_FUNC) sig_stop);
+	g_assert_cmpuint(count(heard, "\"type\":\"nicklist_update\""), ==, 4);
+	g_assert_nonnull(strstr(heard, "\"channel\":\"#a\",\"nick\":\"carol\""));
+	g_assert_nonnull(strstr(heard, "\"channel\":\"#a\",\"nick\":\"dave\""));
+	g_assert_nonnull(strstr(heard, "\"channel\":\"#a\",\"nick\":\"bob\""));
+	g_assert_nonnull(strstr(heard, "\"channel\":\"#b\",\"nick\":\"bob\""));
+	/* the display lines were stopped */
+	g_assert_null(strstr(heard, "\"type\":\"user_quit\""));
+	g_free(heard);
+
+	fe_web_fuzz_client_free(c);
+	fe_web_fuzz_server_free(server);
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -254,6 +296,7 @@ int main(int argc, char **argv)
 	signal_add("event 001", (SIGNAL_FUNC) event_connected);
 
 	g_test_add_func("/fe-web/signals/quit-removes-where-member", test_quit_removes_where_member);
+	g_test_add_func("/fe-web/signals/removes-when-ignored", test_removes_when_ignored);
 	g_test_add_func("/fe-web/signals/json-is-utf8", test_json_is_utf8);
 	g_test_add_func("/fe-web/signals/json-follows-recode", test_json_follows_recode);
 
