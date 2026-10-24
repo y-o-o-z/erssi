@@ -16,6 +16,7 @@
 
 #include <irssi/src/core/net-sendbuffer.h>
 #include <irssi/src/core/levels.h>
+#include <irssi/src/core/settings.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,14 +45,34 @@ char *fe_web_generate_message_id(void)
  * - Special JSON characters: " \
  * - Control characters (< 32): \b \f \n \r \t and others as \uXXXX
  * - UTF-8 multi-byte sequences (> 127) are passed through unchanged
+ * The result is always valid UTF-8 (see below).
  */
 char *fe_web_escape_json(const char *str)
 {
 	GString *result;
 	const unsigned char *p;
+	char *valid = NULL;
 
 	if (str == NULL) {
 		return g_strdup("");
+	}
+
+	/* JSON is UTF-8 (RFC 8259), and a strict decoder in a web client
+	 * refuses the whole message for one bad byte. Some fields come raw
+	 * from the server, past irssi's recode (a WHOIS realname, server
+	 * descriptions, nicks, user@host): text that is no UTF-8 is read in
+	 * recode_fallback (CP1252 by default), as irssi reads such a message,
+	 * and what still cannot be read becomes U+FFFD. */
+	if (!g_utf8_validate(str, -1, NULL)) {
+		const char *fallback = settings_get_str("recode_fallback");
+
+		if (fallback != NULL && *fallback != '\0')
+			valid = g_convert(str, -1, "UTF-8", fallback, NULL, NULL, NULL);
+		if (valid == NULL || !g_utf8_validate(valid, -1, NULL)) {
+			g_free(valid);
+			valid = g_utf8_make_valid(str, -1);
+		}
+		str = valid;
 	}
 
 	result = g_string_new("");
@@ -93,6 +114,7 @@ char *fe_web_escape_json(const char *str)
 		}
 	}
 
+	g_free(valid);
 	return g_string_free(result, FALSE);
 }
 
