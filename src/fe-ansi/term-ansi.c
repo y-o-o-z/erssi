@@ -1583,24 +1583,67 @@ void term_set_input_type(int type)
 	}
 }
 
+/* A lone ESC held as the start of a focus report (term_focus_held()) is
+ * the ESC key when nothing follows: after this long it is handed to the
+ * input handler, the delay gui-mouse also gives a lone ESC. */
+#define HELD_ESC_DELAY_MS 50
+
+static void (*held_input_func)(void);
+static guint held_esc_tag;
+static gboolean held_flush;
+
+void term_set_held_input_func(void (*func)(void))
+{
+	held_input_func = func;
+	if (func == NULL && held_esc_tag != 0) {
+		g_source_remove(held_esc_tag);
+		held_esc_tag = 0;
+	}
+}
+
+static gboolean held_esc_timeout(gpointer data)
+{
+	held_esc_tag = 0;
+	held_flush = TRUE;
+	/* calls term_gets(), which reads nothing this time and hands on what
+	 * is held */
+	if (held_input_func != NULL)
+		held_input_func();
+	held_flush = FALSE;
+	return G_SOURCE_REMOVE;
+}
+
 void term_gets(GArray *buffer, int *line_count)
 {
-	int ret, i, char_len, end;
+	int ret, i, char_len, end, held;
+	gboolean flush = held_flush;
 
-	ret = read(STDIN_FILENO, inbuf + inbuf_pos, sizeof(inbuf) - inbuf_pos);
-	if (ret == 0) {
-		ret = -1;
-	} else if (ret == -1 && (errno == EINTR || errno == EAGAIN)) {
+	held_flush = FALSE;
+	if (held_esc_tag != 0) {
+		g_source_remove(held_esc_tag);
+		held_esc_tag = 0;
+	}
+
+	if (flush) {
+		/* no read: stdin has nothing, it would block */
 		ret = 0;
+	} else {
+		ret = read(STDIN_FILENO, inbuf + inbuf_pos, sizeof(inbuf) - inbuf_pos);
+		if (ret == 0) {
+			ret = -1;
+		} else if (ret == -1 && (errno == EINTR || errno == EAGAIN)) {
+			ret = 0;
+		}
 	}
 
 	if (ret == -1)
 		signal_emit("command quit", 1, "Lost terminal");
 
-	if (ret > 0) {
+	if (ret > 0 || (flush && inbuf_pos > 0)) {
 		inbuf_pos += ret;
+		held = 0;
 		/* only while reporting is on: otherwise ESC [ I is a key (PgUp) */
-		if (ansi_term->focus_reporting) {
+		if (ansi_term->focus_reporting && !flush) {
 			int focus = ansi_term->focused;
 
 			inbuf_pos = term_focus_filter(inbuf, inbuf_pos, &focus);
@@ -1610,7 +1653,8 @@ void term_gets(GArray *buffer, int *line_count)
 			}
 			/* a report the read cut after ESC or ESC [ waits for
 			 * the rest, or it would become the keys ESC [ I */
-			end = inbuf_pos - term_focus_held(inbuf, inbuf_pos);
+			held = term_focus_held(inbuf, inbuf_pos);
+			end = inbuf_pos - held;
 		} else {
 			end = inbuf_pos;
 		}
@@ -1632,6 +1676,10 @@ void term_gets(GArray *buffer, int *line_count)
 			memmove(inbuf, inbuf + i, inbuf_pos - i);
 			inbuf_pos -= i;
 		}
+		/* a lone ESC is also the ESC key: it does not wait for the
+		 * next key (ESC [ alone only ever starts a sequence) */
+		if (held == 1 && held_input_func != NULL)
+			held_esc_tag = g_timeout_add(HELD_ESC_DELAY_MS, held_esc_timeout, NULL);
 	}
 }
 

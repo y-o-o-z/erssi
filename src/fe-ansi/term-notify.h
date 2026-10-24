@@ -49,8 +49,8 @@ int term_focus_filter(unsigned char *buf, int len, int *focus);
 
 /* How many bytes at the end of buf may be the start of a focus report
  * that the next read completes (ESC, or ESC [): 0, 1 or 2. They are kept
- * for the next read instead of being read as keys. A key never needs them
- * alone: ESC and ESC [ only start a key sequence. */
+ * for the next read instead of being read as keys; a lone ESC that nothing
+ * follows is handed on as the ESC key after a moment (term_gets()). */
 int term_focus_held(const unsigned char *buf, int len);
 
 /* TRUE, and *last_ms = now_ms, when *last_ms is 0 or at least min_ms have
