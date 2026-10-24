@@ -132,6 +132,45 @@ static int key_bits(void)
 	return bits;
 }
 
+/* the certificate in fe-web-cert.pem (to be freed) */
+static X509 *read_cert(void)
+{
+	FILE *f = fopen(cert_path, "r");
+	X509 *x509;
+
+	g_assert_nonnull(f);
+	x509 = PEM_read_X509(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(x509);
+	return x509;
+}
+
+/* a new certificate: a random serial of at least 64 bits, for a TLS
+ * server only (no CA, digitalSignature, serverAuth), the names, at most
+ * 825 days */
+static void assert_new_cert(X509 *x509)
+{
+	BIGNUM *serial = ASN1_INTEGER_to_BN(X509_get0_serialNumber(x509), NULL);
+	int days = 0, secs = 0;
+	GENERAL_NAMES *names;
+
+	g_assert_nonnull(serial);
+	g_assert_cmpint(BN_num_bits(serial), >=, 64);
+	BN_free(serial);
+	g_assert_true((X509_get_extension_flags(x509) & EXFLAG_BCONS) != 0);
+	g_assert_true((X509_get_extension_flags(x509) & EXFLAG_CA) == 0);
+	g_assert_cmpuint(X509_get_key_usage(x509), ==, KU_DIGITAL_SIGNATURE);
+	g_assert_true((X509_get_extended_key_usage(x509) & XKU_SSL_SERVER) != 0);
+	names = X509_get_ext_d2i(x509, NID_subject_alt_name, NULL, NULL);
+	g_assert_nonnull(names);
+	g_assert_cmpint(sk_GENERAL_NAME_num(names), ==, 3);
+	GENERAL_NAMES_free(names);
+	g_assert_true(ASN1_TIME_diff(&days, &secs, X509_get0_notBefore(x509),
+	                             X509_get0_notAfter(x509)));
+	g_assert_cmpint(days, <=, 825);
+	g_assert_cmpint(days, >, 800);
+}
+
 static void test_made_at_first_start(void)
 {
 	char *out;
@@ -154,6 +193,21 @@ static void test_made_at_first_start(void)
 	/* ECDSA P-256: every handshake signs with it before any password */
 	g_assert_cmpint(key_type(), ==, EVP_PKEY_EC);
 	g_assert_cmpint(key_bits(), ==, 256);
+	{
+		X509 *first = read_cert(), *second;
+
+		assert_new_cert(first);
+		/* a pair made again gets another serial */
+		reset();
+		g_assert_true(fe_web_ssl_prepare());
+		second = read_cert();
+		assert_new_cert(second);
+		g_assert_cmpint(ASN1_INTEGER_cmp(X509_get0_serialNumber(first),
+		                                 X509_get0_serialNumber(second)), !=, 0);
+		X509_free(first);
+		X509_free(second);
+		g_free(fe_web_fuzz_take_printed());
+	}
 	/* prepared once: a second call changes nothing */
 	g_assert_true(fe_web_ssl_prepare());
 }

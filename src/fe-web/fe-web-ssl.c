@@ -21,6 +21,7 @@
 #include <openssl/evp.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/crypto.h>
 #include <sys/socket.h>
 #include <fcntl.h>
@@ -89,15 +90,37 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	/* Set version to X509v3 */
 	X509_set_version(x509, 2);
 
-	/* Set serial number */
-	serial = ASN1_INTEGER_new();
-	ASN1_INTEGER_set(serial, 1);
-	X509_set_serialNumber(x509, serial);
-	ASN1_INTEGER_free(serial);
+	/* A random 127-bit serial: with the same issuer and subject every
+	 * time, serial 1 for each new pair made Firefox refuse the next one
+	 * (SEC_ERROR_REUSED_ISSUER_AND_SERIAL, no override) once the user
+	 * had an exception for an earlier one */
+	{
+		unsigned char bytes[16];
+		BIGNUM *bn;
 
-	/* Valid for 10 years */
+		if (RAND_bytes(bytes, sizeof(bytes)) != 1) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web-ssl: No random bytes for the certificate serial");
+			X509_free(x509);
+			return NULL;
+		}
+		bytes[0] &= 0x7f;	/* positive */
+		bytes[0] |= 0x40;	/* and never short */
+		bn = BN_bin2bn(bytes, sizeof(bytes), NULL);
+		serial = bn != NULL ? BN_to_ASN1_INTEGER(bn, NULL) : NULL;
+		BN_free(bn);
+		if (serial == NULL || !X509_set_serialNumber(x509, serial)) {
+			ASN1_INTEGER_free(serial);
+			X509_free(x509);
+			return NULL;
+		}
+		ASN1_INTEGER_free(serial);
+	}
+
+	/* 825 days: Apple's limit for TLS server certificates (iOS 13,
+	 * macOS 10.15), trusted or not; renewed a day before it ends */
 	X509_gmtime_adj(X509_get_notBefore(x509), 0);
-	X509_gmtime_adj(X509_get_notAfter(x509), 315360000L); /* 10 years */
+	X509_gmtime_adj(X509_get_notAfter(x509), 825L * 86400);
 
 	/* Set public key */
 	X509_set_pubkey(x509, pkey);
@@ -113,17 +136,35 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	X509_set_issuer_name(x509, name);
 
 	/* Names a client checks when it pins this certificate (the web
-	 * client connects to 127.0.0.1) */
+	 * client connects to 127.0.0.1), and what the certificate is for: a
+	 * TLS server, no CA - Safari and iOS refuse a server certificate
+	 * without serverAuth */
 	{
+		static const struct {
+			int nid;
+			const char *value;
+		} exts[] = {
+			{ NID_basic_constraints, "critical,CA:FALSE" },
+			{ NID_key_usage, "critical,digitalSignature" },
+			{ NID_ext_key_usage, "serverAuth" },
+			{ NID_subject_alt_name, "IP:127.0.0.1,IP:::1,DNS:localhost" },
+		};
 		X509V3_CTX v3ctx;
 		X509_EXTENSION *ext;
+		gsize i;
 
 		X509V3_set_ctx_nodb(&v3ctx);
 		X509V3_set_ctx(&v3ctx, x509, x509, NULL, NULL, 0);
-		ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-		                          "IP:127.0.0.1,IP:::1,DNS:localhost");
-		if (ext != NULL) {
-			X509_add_ext(x509, ext, -1);
+		for (i = 0; i < G_N_ELEMENTS(exts); i++) {
+			ext = X509V3_EXT_conf_nid(NULL, &v3ctx, exts[i].nid,
+			                          (char *) exts[i].value);
+			if (ext == NULL || !X509_add_ext(x509, ext, -1)) {
+				X509_EXTENSION_free(ext);
+				printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+				          "fe-web-ssl: Failed to add a certificate extension");
+				X509_free(x509);
+				return NULL;
+			}
 			X509_EXTENSION_free(ext);
 		}
 	}
