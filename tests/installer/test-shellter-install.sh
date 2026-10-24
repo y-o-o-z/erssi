@@ -646,6 +646,9 @@ spinner() {
 }
 
 setup
+# check DESCRIPTION eval 'A && B': several conditions in one check, in
+# single quotes for eval
+# shellcheck disable=SC2016
 case "$CASE" in
 ascii)
     FAKE_CHARMAP=ANSI_X3.4-1968; export FAKE_CHARMAP
@@ -842,7 +845,7 @@ prefix-lock)
     check "the prefix locked (an installer before 2026.10.6): refused" [ "$RC" = 1 ]
     check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
     check "... nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi" "$HOME/.local/src/erssi/Build"
-    check "... its lock kept, the source lock gone" [ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"
+    check "... its lock kept, the source lock gone" eval '[ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"'
     # the names of its own locks and of the bin/erssi link, set in the
     # environment: the other installer's lock stays, no link is made
     exported PREFIX_LOCKED=1 SRC_LOCKED=1 OLD_LINK=/nonexistent/erssi run_install
@@ -869,24 +872,25 @@ stale-lock)
     printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
     printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
     run_install
-    check "stale locks of a gone installer: installed" [ "$RC" = 0 ] && [ -x "$P/bin/erssi" ]
+    check "stale locks of a gone installer: installed" eval '[ "$RC" = 0 ] && [ -x "$P/bin/erssi" ]'
     check "... and released" none_exist "$P/.install.lock" "$S.lock"
     check "... nothing of them left" none_exist "$P/.install.lock.stale.$$" "$S.lock.stale.$$"
     mkdir "$S.lock" && printf '%s %s\n' "$alive" "$host" > "$S.lock/pid"
     run_install
-    check "a lock of a running installer: refused" [ "$RC" = 1 ] && grep -qF "another installer is using $S" "$W/out"
+    check "a lock of a running installer: refused" eval '[ "$RC" = 1 ] && grep -qF "another installer is using $S" "$W/out"'
     check "... kept" [ "$(cat "$S.lock/pid")" = "$alive $host" ]
     printf '%s %s\n' "$gone" "elsewhere.example" > "$S.lock/pid"
     run_install
-    check "a lock of another host: refused" [ "$RC" = 1 ] && [ -f "$S.lock/pid" ]
+    check "a lock of another host: refused" eval '[ "$RC" = 1 ] && [ -f "$S.lock/pid" ]'
     printf 'x %s\n' "$host" > "$S.lock/pid"
     run_install
-    check "a lock without a pid: refused" [ "$RC" = 1 ] && [ -f "$S.lock/pid" ]
+    check "a lock without a pid: refused" eval '[ "$RC" = 1 ] && [ -f "$S.lock/pid" ]'
     rm -rf "$S.lock"
     # --rollback and --uninstall take a stale prefix lock over as well
     mkdir "$P/.install.lock" && printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
     sh "$SRC/shellter-install.sh" --uninstall > "$W/out" 2>&1
-    check "--uninstall over a stale lock: done" [ $? = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"
+    RC=$?
+    check "--uninstall over a stale lock: done" eval '[ "$RC" = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"'
     kill "$alive" 2>/dev/null
     ;;
 lock-held-during-venv)
@@ -2149,7 +2153,7 @@ binary-switch)
     run_bin --keep 99999999999999999999 --ref shellter-v2026.10.5
     check "--keep beyond any number test: refused" [ "$RC" = 2 ]
     check "... why" grep -qF -- '--keep needs a number from 1 to 9999' "$W/out"
-    check "... nothing changed" current_is 2026.10.6 && releases_are 2026.10.5 2026.10.6 && grep -qx KEEP=2 "$CONF"
+    check "... nothing changed" eval 'current_is 2026.10.6 && releases_are 2026.10.5 2026.10.6 && grep -qx KEEP=1 "$CONF"'
     run_bin --keep 0 --ref shellter-v2026.10.5
     check "--keep 0: refused" [ "$RC" = 2 ]
     check "... why" grep -qF -- '--keep must be at least 1 - a running erssi uses the release it was started from until /upgrade' "$W/out"
@@ -2253,7 +2257,7 @@ uninstall-foreign)
     # shellcheck disable=SC2317 # called through check
     theirs_kept() { for f in $theirs; do [ "$(cat "$L/$f" 2>/dev/null)" = theirs ] || { echo "lost: $f"; return 1; }; done; }
     run_release --ref main --prefix "$L"
-    check "source install into a shared prefix" [ "$RC" = 0 ] && [ -x "$L/bin/erssi" ]
+    check "source install into a shared prefix" eval '[ "$RC" = 0 ] && [ -x "$L/bin/erssi" ]'
     check "... what it installed recorded" grep -qx 'lib/irssi/modules/libfe_web.so' "$L/share/irssi/shellter-install.files"
     check "... with the directories meson made" grep -qx 'include/irssi' "$L/share/irssi/shellter-install.files"
     sh "$INSTALLER" --uninstall --dry-run --prefix "$L" > "$W/out" 2>&1
@@ -2265,14 +2269,14 @@ uninstall-foreign)
         "$L/share/man/man1/erssi.1" "$L/share/irssi/help" "$L/share/irssi/shellter-install.conf" \
         "$L/share/irssi/shellter-install.files" "$L/share/irssi/shellter-install.sh" "$L/.install.lock"
     check "... every file of the other software kept" theirs_kept
-    check "... named" grep -qF 'files that erssi did not install stay in ~/local: ' "$W/out" && grep -q 'stay in ~/local: .*, \.\.\.$' "$W/out"
+    check "... named" eval 'grep -qF '\''files that erssi did not install stay in ~/local: '\'' "$W/out" && grep -q '\''stay in ~/local: .*, \.\.\.$'\'' "$W/out"'
     # a source install, then a binary one over it (the source install's
     # files stay in lib/ and share/): both go; another program in bin/ stays
     theirs="$theirs bin/chafa"
     mkdir -p "$L/bin" && echo theirs > "$L/bin/chafa"
     run_release --ref main --prefix "$L"
     run_bin --prefix "$L" --ref shellter-v2026.10.4
-    check "binary over a source install" [ "$RC" = 0 ] && [ "$(readlink "$L/current")" = releases/2026.10.4 ]
+    check "binary over a source install" eval '[ "$RC" = 0 ] && [ "$(readlink "$L/current")" = releases/2026.10.4 ]'
     sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
     check "--uninstall of both: done" [ $? = 0 ]
     check "... the source install's files and the release removed" none_exist "$L/releases" "$L/current" \
@@ -2285,8 +2289,9 @@ uninstall-foreign)
     # and a releases that is a link to release trees elsewhere
     mkdir -p "$HOME/rels/2026.10.9" && : > "$HOME/rels/2026.10.9/MANIFEST" && ln -s "$HOME/rels" "$L/releases"
     sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
-    check "a record naming paths outside: done" [ $? = 0 ] && none_exist "$L/bin/erssi"
-    check "... nothing outside removed" [ "$(cat "$HOME/outside")" = mine ] && [ -f "$HOME/rels/2026.10.9/MANIFEST" ]
+    RC=$?
+    check "a record naming paths outside: done" eval '[ "$RC" = 0 ] && none_exist "$L/bin/erssi"'
+    check "... nothing outside removed" eval '[ "$(cat "$HOME/outside")" = mine ] && [ -f "$HOME/rels/2026.10.9/MANIFEST" ]'
     rm -f "$L/releases"
     check "... nor what a . or .. leads to" theirs_kept
     # a source install by an installer that kept no record (before
@@ -2294,7 +2299,8 @@ uninstall-foreign)
     run_release --ref main --prefix "$L"
     rm -f "$L/share/irssi/shellter-install.files"
     sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
-    check "no record, the build's install log: done" [ $? = 0 ] && none_exist "$L/bin/erssi" "$L/lib/irssi"
+    RC=$?
+    check "no record, the build's install log: done" eval '[ "$RC" = 0 ] && none_exist "$L/bin/erssi" "$L/lib/irssi"'
     check "... every file of the other software kept" theirs_kept
     # and without it (--clean): refused, nothing removed
     run_release --ref main --prefix "$L" --clean
@@ -2302,14 +2308,15 @@ uninstall-foreign)
     sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
     check "no record at all: refused" [ $? = 1 ]
     check "... named" grep -qF 'there is no record of the files this erssi installed in' "$W/out"
-    check "... nothing removed" [ -x "$L/bin/erssi" ] && [ -f "$L/share/irssi/shellter-install.conf" ] && theirs_kept
+    check "... nothing removed" eval '[ -x "$L/bin/erssi" ] && [ -f "$L/share/irssi/shellter-install.conf" ] && theirs_kept'
     # the home as the prefix: only erssi's files there go
     rm -rf "$L"
     mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config" && echo theirs > "$HOME/notes"
     run_release --ref main --prefix "$HOME"
     sh "$INSTALLER" --uninstall --prefix "$HOME" > "$W/out" 2>&1
-    check "--prefix ~: done" [ $? = 0 ] && none_exist "$HOME/bin/erssi" "$HOME/lib/irssi" "$HOME/share/irssi"
-    check "... the home and its files kept" [ -f "$HOME/.erssi/config" ] && [ "$(cat "$HOME/notes")" = theirs ]
+    RC=$?
+    check "--prefix ~: done" eval '[ "$RC" = 0 ] && none_exist "$HOME/bin/erssi" "$HOME/lib/irssi" "$HOME/share/irssi"'
+    check "... the home and its files kept" eval '[ -f "$HOME/.erssi/config" ] && [ "$(cat "$HOME/notes")" = theirs ]'
     ;;
 binary-interrupted)
     # an install stopped half-way (Ctrl-C, a TERM) leaves a prefix that
@@ -2319,7 +2326,7 @@ binary-interrupted)
     for v in 1 2 3 4; do good_pkg "2026.10.$v" "$(fsha "2026.10.$v")"; done
     record 2026.10.1 "$(fsha 2026.10.1)" 2026.10.2 "$(fsha 2026.10.2)" 2026.10.3 "$(fsha 2026.10.3)" 2026.10.4 "$(fsha 2026.10.4)"
     for v in 1 2 3; do run_bin --ref "shellter-v2026.10.$v"; done
-    check "2026.10.3 over 2026.10.2 and .1" current_is 2026.10.3 && releases_are 2026.10.1 2026.10.2 2026.10.3
+    check "2026.10.3 over 2026.10.2 and .1" eval 'current_is 2026.10.3 && releases_are 2026.10.1 2026.10.2 2026.10.3'
     # while old releases are removed: the conf already names the release
     # current points to
     # shellcheck disable=SC2016 # stand-in scripts
@@ -2329,7 +2336,7 @@ binary-interrupted)
     rm -f "$W/shim/rm"
     check "TERM while pruning: interrupted" [ "$RC" = 130 ]
     check "... 2026.10.4 in use" current_is 2026.10.4
-    check "... and recorded" grep -qx VERSION=2026.10.4 "$CONF" && grep -qx "COMMIT=$(fsha 2026.10.4)" "$CONF" && grep -qx METHOD=binary "$CONF"
+    check "... and recorded" eval 'grep -qx VERSION=2026.10.4 "$CONF" && grep -qx "COMMIT=$(fsha 2026.10.4)" "$CONF" && grep -qx METHOD=binary "$CONF"'
     check "... no lock left" none_exist "$P/.install.lock"
     # a release of the same version but another package moved aside, the
     # new one not yet moved in: the old one goes back, previous keeps it
@@ -2371,7 +2378,8 @@ prefix-foreign)
     check "... named" grep -qF "$W/theirs belongs to another user (uid 4242) - use a directory of your own: --prefix DIR" "$W/out"
     check "... its erssi not run" none_exist "$W/ran"
     sh "$SRC/shellter-install.sh" --update --prefix "$W/theirs" > "$W/out" 2>&1
-    check "... erssi --update there: refused before running it" [ $? = 1 ] && none_exist "$W/ran"
+    RC=$?
+    check "... erssi --update there: refused before running it" eval '[ "$RC" = 1 ] && none_exist "$W/ran"'
     mk_theirs "$W/open"
     fake_mode "$W/open" drwxrwxrwx
     run_install --prefix "$W/open"
@@ -2386,11 +2394,12 @@ prefix-foreign)
     check "... nothing made" none_exist "$W/shared/erssi"
     mk_theirs "$W/shared/erssi"
     run_install --prefix "$W/shared/erssi"
-    check "an existing one there: refused" [ "$RC" = 1 ] && none_exist "$W/ran"
+    check "an existing one there: refused" eval '[ "$RC" = 1 ] && none_exist "$W/ran"'
     rm -rf "$W/shared/erssi"
     mkdir -p "$W/mine/erssi" "$W/up"
     sh "$SRC/shellter-install.sh" --uninstall --prefix "$W/open" > "$W/out" 2>&1
-    check "--uninstall of a prefix others can write to: refused" [ $? = 1 ] && [ -x "$W/open/bin/erssi" ]
+    RC=$?
+    check "--uninstall of a prefix others can write to: refused" eval '[ "$RC" = 1 ] && [ -x "$W/open/bin/erssi" ]'
     no_fakes
     run_install --prefix "$W/mine/erssi"
     check "a prefix of the user's own: installed" [ "$RC" = 0 ]
@@ -2455,10 +2464,10 @@ binary-update)
     mkdir -p "$W/victim/stage" "$W/victim/work" && : > "$W/victim/stage/keep" && : > "$W/victim/work/keep" && : > "$W/victim/log"
     exported STAGE="$W/victim/stage" BWORK="$W/victim/work" BLOG="$W/victim/log" up 2026.10.5
     check "up to date, STAGE BWORK BLOG in the environment: done" [ "$RC" = 0 ]
-    check "... none of them removed" [ -f "$W/victim/stage/keep" ] && [ -f "$W/victim/work/keep" ] && [ -f "$W/victim/log" ]
+    check "... none of them removed" eval '[ -f "$W/victim/stage/keep" ] && [ -f "$W/victim/work/keep" ] && [ -f "$W/victim/log" ]'
     mkdir "$P/.install.lock"
     exported STAGE="$W/victim/stage" BLOCK="$P/.install.lock" run_bin --binary --ref shellter-v2026.10.5
-    check "the prefix locked, STAGE BLOCK in the environment: refused" [ "$RC" = 1 ] && grep -q 'another installer is using' "$W/out"
+    check "the prefix locked, STAGE BLOCK in the environment: refused" eval '[ "$RC" = 1 ] && grep -q '\''another installer is using'\'' "$W/out"'
     check "... STAGE not removed" [ -f "$W/victim/stage/keep" ]
     check "... the other installer's lock kept" [ -d "$P/.install.lock" ]
     rmdir "$P/.install.lock"
