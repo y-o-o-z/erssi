@@ -4,10 +4,11 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	Fixes from another full review of the code.
 
 	+ Build and documentation
-	  - man erssi works: the manual page is installed as erssi.1 (it was
-	    irssi's page, installed as irssi.1), names ~/.erssi and documents
-	    --update, --check-update and --print-prefix; erssi --help names
-	    ~/.erssi too. A test checks that the page lists every option
+	  - erssi has a manual page of its own, erssi(1), installed into the
+	    prefix's share/man/man1 (it was irssi's page, installed as
+	    irssi.1); it names ~/.erssi and documents --update, --check-update
+	    and --print-prefix, and erssi --help names ~/.erssi too. A test
+	    checks that the page has an entry for every option
 	  - the build asks for GLib 2.70 or newer, the oldest that has every
 	    GLib function erssi uses (it said 2.32, and with GLib 2.32 to 2.69
 	    the build failed late with undeclared functions); Debian 12 and 13
@@ -21,9 +22,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    as the fe-web and e2e targets already did. theme-load-fuzz uses a
 	    temporary home instead of a fixed directory under the prefix
 	  - the log search speed tests (1 GiB each) run with
-	    ERSSI_TEST_PERF=1 meson test --suite perf; the leak test of the
-	    text buffer reports itself as skipped outside an AddressSanitizer
-	    build instead of passing without checking anything
+	    ERSSI_TEST_PERF=1 meson test --suite perf, and a plain meson test
+	    leaves them out; the leak test of the text buffer reports itself
+	    as skipped outside an AddressSanitizer build instead of passing
+	    without checking anything
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
