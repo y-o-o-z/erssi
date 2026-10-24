@@ -10,6 +10,9 @@ if python3_prog.found()
   # the defaults that /HELP pages name agree with settings_add_*() in src/
   test('help defaults', python3_prog, args : [files('help/check-help-defaults.py'), meson.source_root()],
        protocol : 'tap')
+  # docs/erssi.1 documents every command-line option of erssi
+  test('man page options', python3_prog, args : [files('help/check-man-options.py'), meson.source_root()],
+       protocol : 'tap')
   # every topic under "See also" has a page of its own
   test('help see also', python3_prog, args : [files('help/check-help-see-also.py'), meson.source_root()],
        protocol : 'tap')

@@ -591,7 +591,7 @@ int main(int argc, char **argv)
 {
 	static int version = 0, update = 0, check_update = 0, setup = 0, print_prefix = 0;
 	static GOptionEntry options[] = {
-		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display Irssi version", NULL },
+		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display erssi version", NULL },
 		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
 		  "Update erssi to the newest signed release", NULL },
 		{ "check-update", 0, 0, G_OPTION_ARG_NONE, &check_update,

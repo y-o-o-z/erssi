@@ -796,10 +796,12 @@ pc.generate(filebase : 'irssi-1',
   ])
 
 ###########
-# irssi.1 #
+# erssi.1 #
 ###########
 
-install_man('docs/irssi.1')
+# the page of the erssi binary; nothing here installs an irssi binary, and
+# an irssi.1 would clash with the one of an installed irssi
+install_man('docs/erssi.1')
 
 ###########
 # subdirs #
