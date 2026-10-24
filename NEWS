@@ -46,6 +46,53 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    came in) inside erssi's main loop; it is now only called when
 	    one of its sockets is ready or its timer is due
 
+	+ Install and update
+	  - --uninstall removes only what the installer put into the prefix:
+	    the files its source installs recorded, the release trees of a
+	    binary install, its links and its settings. Libraries, headers,
+	    configuration and man pages that other software built into the
+	    same prefix (~/local) stay, and the installer names what it left;
+	    it used to remove the whole prefix with them. A source install by
+	    an older installer is uninstalled from its build directory's
+	    install log, or after one more install
+	  - a source install takes the lock of the prefix as well, so it
+	    cannot run at the same time as --rollback, --uninstall or another
+	    install into the same prefix
+	  - a lock left behind by an installer that was killed (kill -9, the
+	    OOM killer) or by a reboot is taken over once that process is
+	    gone; it used to stop every later erssi --update until removed by
+	    hand. A lock of another host or PID namespace (a container) is
+	    left alone, and the message says why, as is one made in or seen
+	    from a FreeBSD jail, or one with no pid in it (installers before
+	    2026.10.6 write none)
+	  - the prefix is checked like the source directory: it must be yours
+	    and only you may write to it and to the directory that holds it,
+	    before its erssi is run or anything in it is changed
+	  - a binary install stopped half-way leaves a working prefix that
+	    says what is in it: the settings name the new release right
+	    after the switch, a release of the same version moved aside goes
+	    back, and old releases are renamed before they are removed, so a
+	    half-removed one is never used again. A source install over a
+	    binary one puts the bin/erssi link back when it is stopped; a
+	    source install stopped inside its install step can still leave
+	    old and new files mixed (install again to repair it)
+	  - --keep with a number too large for the shell is refused (it used
+	    to become --keep 1 and remove old releases)
+	  - erssi --update on a box without git says that git is missing
+	    instead of blaming the signature check
+	  - a variable in the environment named like one of the installer's
+	    own (STAGE, say, common in CI and deploy scripts) no longer makes
+	    it remove that directory, or drop another installer's lock, when
+	    it exits early, as an erssi --update with nothing new does
+	  - the source build asks for GLib 2.70 or newer, what the build now
+	    needs, and names the version it found: an older GLib used to
+	    pass the check and fail later in meson setup
+	  - man erssi works for an install in the home: beside
+	    ~/.local/bin/erssi the installer links
+	    ~/.local/share/man/man1/erssi.1 to the manual of the release in
+	    use (a file of yours there is kept), --uninstall removes the link,
+	    and the irssi.1 an older install left is removed
+
 	+ Build and documentation
 	  - erssi has a manual page of its own, erssi(1), installed into the
 	    prefix's share/man/man1 (it was irssi's page, installed as

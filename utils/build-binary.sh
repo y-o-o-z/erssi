@@ -38,6 +38,10 @@
 #       Only the checks of an installed tree (as unpacked: bin/erssi,
 #       lib/...) that a package build makes, and the needed= line of its
 #       MANIFEST; for the packager's test.
+#   build-binary.sh --pack DIR TARBALL WORK
+#       Only the packing of the tree DIR into TARBALL (WORK for its
+#       temporary files), as a package build packs; for the packager's
+#       test.
 #
 # BUILD_BINARY_TESTS: the names of the tests to run (separated by commas)
 # in place of the full suite, for the packager's own test
@@ -242,12 +246,44 @@ check_stage() {
     [ -z "$outside" ] || die "meson installed files outside $BUILD_PREFIX - no package: $(printf '%s\n' "$outside" | head -n 3 | tr '\n' ' ')"
 }
 
+# The tree DIR packed into TARBALL, in sorted order, owned by 0:0, with
+# WORK for the file list and the tar; dies when anything fails. The tar is
+# written to a file and its status checked before xz runs: in a pipe into
+# xz (no pipefail in sh) a tar that stopped half-way (an unreadable file, a
+# full disk) left only xz's status, and the cut-off package would have
+# been listed in SHA256SUMS and signed.
+pack_tree() {   # dir tarball work
+    # tar runs in the tree's parent: the work directory and the tarball
+    # made absolute first, or relative ones would be taken from there
+    ptop=$(cd -- "$(dirname -- "$1")" && pwd) || die "cannot open $(dirname -- "$1")"
+    pname=$(basename -- "$1")
+    pwork=$(cd -- "$3" && pwd) || die "cannot open $3"
+    ptar=$(cd -- "$(dirname -- "$2")" && pwd) || die "cannot open $(dirname -- "$2")"
+    ptar=$ptar/$(basename -- "$2")
+    (cd "$ptop" && find "$pname" -print | LC_ALL=C sort) > "$pwork/files" || die "cannot list the package"
+    if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+        set -- --format=gnu --no-recursion --numeric-owner --owner=0 --group=0 -T "$pwork/files"
+    else  # bsdtar (FreeBSD)
+        set -- --format=ustar -n --numeric-owner --uid 0 --gid 0 -T "$pwork/files"
+    fi
+    if ! (cd "$ptop" && tar -cf "$pwork/package.tar" "$@"); then
+        rm -f "$pwork/package.tar"
+        die "packing failed (tar)"
+    fi
+    if ! xz -T1 -6 -c "$pwork/package.tar" > "$ptar.tmp"; then
+        rm -f "$pwork/package.tar" "$ptar.tmp"
+        die "packing failed (xz)"
+    fi
+    rm -f "$pwork/package.tar"
+    mv -f "$ptar.tmp" "$ptar" || die "cannot write $ptar"
+}
+
 # ── a package ────────────────────────────────────────────────────────
 # a build in an empty environment: run again under env -i (the checks
 # and --sums need none of it). BUILD_BINARY_CLEAN marks the second run.
 if [ -z "${BUILD_BINARY_CLEAN:-}" ]; then
     case ${1:-} in
-        --sums|--check-stage|--check-tree|-h|--help) ;;
+        --sums|--check-stage|--check-tree|--pack|-h|--help) ;;
         *) exec env -i BUILD_BINARY_CLEAN=1 PATH="$CLEAN_PATH" HOME=/nonexistent LC_ALL=C \
                 TMPDIR="${TMPDIR:-/tmp}" BUILD_BINARY_TESTS="${BUILD_BINARY_TESTS:-}" /bin/sh "$0" "$@" ;;
     esac
@@ -273,6 +309,10 @@ while [ $# -gt 0 ]; do
             [ $# -eq 2 ] || usage "--check-tree takes one directory"
             check_tree "$2"
             printf 'needed=%s\n' "$NEEDED"
+            exit 0 ;;
+        --pack)
+            [ $# -eq 4 ] || usage "--pack takes a directory, a tarball and a work directory"
+            pack_tree "$2" "$3" "$4"
             exit 0 ;;
         -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
         -*) usage "unknown option $1" ;;
@@ -421,14 +461,6 @@ done || die "strip failed"
 # in sorted order, owned by 0:0
 chmod -R u+rwX,go+rX,go-w "$PKG" || die "chmod failed"
 TZ=UTC find "$PKG" -exec touch -h -t "$STAMP" {} + || die "cannot date the files"
-(cd "$WORK/pkg" && find "$NAME" -print | LC_ALL=C sort) > "$WORK/files" || die "cannot list the package"
-if tar --version 2>/dev/null | grep -q 'GNU tar'; then
-    set -- --format=gnu --no-recursion --numeric-owner --owner=0 --group=0 -T "$WORK/files"
-else  # bsdtar (FreeBSD)
-    set -- --format=ustar -n --numeric-owner --uid 0 --gid 0 -T "$WORK/files"
-fi
-(cd "$WORK/pkg" && tar -cf - "$@") | xz -T1 -6 -c > "$TARBALL.tmp" ||
-    { rm -f "$TARBALL.tmp"; die "packing failed"; }
-mv -f "$TARBALL.tmp" "$TARBALL" || die "cannot write $TARBALL"
+pack_tree "$PKG" "$TARBALL" "$WORK"
 say "wrote $TARBALL"
 say "sha256 $(sha256_of "$TARBALL")"

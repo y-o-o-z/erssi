@@ -53,7 +53,7 @@
 # Inside a user namespace (rootless container, bwrap) root's directories,
 # like those of every user the namespace does not map, show as the overflow
 # uid; SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts it as root's above the
-# parent of --src (safe_path). SHELLTER_PROC, SHELLTER_OS_RELEASE and
+# parent of --src and of --prefix (safe_path). SHELLTER_PROC, SHELLTER_OS_RELEASE and
 # SHELLTER_BASE_OPENSSL are for the tests only (a stand-in /proc,
 # os-release and FreeBSD base OpenSSL).
 #
@@ -101,6 +101,10 @@ LWVkMjU1MTkAAABAl/SNOpZPDqDX4lqGV2GRdxwlMh9vgV0ameb+vFBuDrre1SigohZndm
 gEVGAHMwzYnHcHITvNK47wzKTJCfzdBw==
 -----END SSH SIGNATURE-----'
 MESON_PIP="meson==1.12.1"
+# the oldest GLib the build takes (dependency('glib-2.0') in meson.build):
+# checked before the build, so that an older one is named here and not
+# by meson setup after the download
+GLIB_MIN=2.70
 NINJA_PIP="ninja==1.13.2"
 
 usage() {
@@ -132,11 +136,12 @@ erssi Shellter Edition - install and update
                  where the packages are: a URL or a directory holding
                  shellter-vX.Y.Z/ (default: the GitHub releases)
   --keep N       old releases of a binary install kept besides the one in
-                 use (default 2, at least 1: a running erssi needs the one
-                 it was started from until /upgrade)
+                 use (default 2, from 1 to 9999: a running erssi needs the
+                 one it was started from until /upgrade)
   --dry-run      check and show what would be done; change nothing
   --rollback     switch a binary install back to the previous release
-  --uninstall    remove the prefix and ~/.local/bin/erssi; ~/.erssi stays
+  --uninstall    remove what this installer put into the prefix, and
+                 ~/.local/bin/erssi; anything else there and ~/.erssi stay
 
 What is verified: a recorded release (the default) is built only if its
 tag is signed by the release key this script carries and points to the
@@ -161,15 +166,17 @@ for the administrator. There a missing meson or ninja comes from pip, into
 a venv next to the source directory (DIR.venv), as a ready-made wheel only:
 where pip has none (ninja on FreeBSD), the package is asked for instead.
 
-The source directory and its venv must be yours; the directories above
-them yours or root's. In a user namespace (rootless container, bwrap,
+The prefix, the source directory and its venv must be yours, and only
+you may write to them and to their parents; the directories above them
+must be yours or root's. In a user namespace (rootless container, bwrap,
 unshare) root's directories, like those of every user it does not map,
 show as the overflow uid (65534), which may also be a user the namespace
 maps (rootless podman's nobody):
   SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
-                 count that uid as root's above the parent of --src (so
-                 every unmapped user's directories there are trusted, not
-                 only root's; never the parent, --src or its venv); does
+                 count that uid as root's above the parent of --src and
+                 of --prefix (so every unmapped user's directories there
+                 are trusted, not only root's; never the parents, --src,
+                 its venv or --prefix); does
                  nothing outside a user namespace or without /proc
 USAGE
 }
@@ -419,11 +426,11 @@ others_can_write() {
 safe_dir() {   # dir - when it exists: the user's, and only the user can write to it
     mapped_self
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    [ ! -L "$1" ] || die "$1 is a symbolic link - use a directory of your own: --src DIR"
+    [ ! -L "$1" ] || die "$1 is a symbolic link - use a directory of your own: ${CHK_OPT:---src} DIR"
     o=$(owner "$1")
-    [ "$o" = "$(id -u)" ] || die "$1 belongs to another user (uid ${o:-unknown}) - use a directory of your own: --src DIR"
+    [ "$o" = "$(id -u)" ] || die "$1 belongs to another user (uid ${o:-unknown}) - use a directory of your own: ${CHK_OPT:---src} DIR"
     if others_can_write "$1"; then
-        die "$1 can be changed by other users - use a directory of your own (--src DIR) or take their write access away"
+        die "$1 can be changed by other users - use a directory of your own (${CHK_OPT:---src} DIR) or take their write access away"
     fi
 }
 # In a user namespace (a rootless container, bwrap, unshare) the files of
@@ -460,7 +467,12 @@ mapped_self() {
 # with SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 (see in_userns).
 safe_path() {
     d=$1
-    hint="choose a --src under a directory only you can write"
+    hint="choose a ${CHK_OPT:---src} under a directory only you can write"
+    # as root: the directory is root's, but a group (Debian's staff on a
+    # 2775 /usr/local) or everyone may write to it, and could change what
+    # root runs
+    [ "${ROOT:-0}" != 1 ] ||
+        hint="choose a ${CHK_OPT:---src} under a directory only root can write, or take the others' write access away (Debian: /usr/local is group-writable for staff while /etc/staff-group-for-usr-local exists)"
     mapped_self
     ovf=$(overflow_uid)
     trust=""
@@ -473,9 +485,9 @@ safe_path() {
             if [ -n "$ovf" ] && [ "$o" = "$ovf" ]; then
                 # a user namespace: root's directories show as this uid
                 if [ "$d" = "$1" ]; then
-                    die "$d belongs to another user (uid $o) - $hint (in this user namespace uid $o is every user outside it, root included; SHELLTER_INSTALL_TRUST_OVERFLOW_UID does not cover the parent of --src)"
+                    die "$d belongs to another user (uid $o) - $hint (in this user namespace uid $o is every user outside it, root included; SHELLTER_INSTALL_TRUST_OVERFLOW_UID does not cover the parent of ${CHK_OPT:---src})"
                 fi
-                die "$d belongs to another user (uid $o) - $hint, or, as uid $o is every user outside this user namespace (root included), set SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 to count it as root's above the parent of --src"
+                die "$d belongs to another user (uid $o) - $hint, or, as uid $o is every user outside this user namespace (root included), set SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 to count it as root's above the parent of ${CHK_OPT:---src}"
             fi
             die "$d belongs to another user (uid ${o:-unknown}) - $hint"
         fi
@@ -498,6 +510,167 @@ safe_path() {
 }
 conf_get() {   # key -> value from shellter-install.conf (never run as shell)
     [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -n 1
+    return 0
+}
+# The prefix holds the erssi the user runs and the installer that erssi
+# --update runs, so whoever can change it runs code as this user, as with
+# the source directory: the prefix must be the user's and only the user's
+# to write (safe_dir), and its parent and every directory above it the
+# user's or root's (safe_path). A prefix that does not exist yet: the
+# nearest directory above it that does is checked as its parent.
+safe_prefix() {
+    CHK_OPT=--prefix
+    sp=$PREFIX
+    if [ -e "$sp" ] || [ -L "$sp" ]; then
+        sp=$(cd -P -- "$sp" 2>/dev/null && pwd -P) || die "$PREFIX is not a directory - use --prefix DIR"
+        safe_dir "$sp"
+        sp=$(dirname -- "$sp")
+    else
+        while [ ! -e "$sp" ] && [ ! -L "$sp" ]; do sp=$(dirname -- "$sp"); done
+        sp=$(cd -P -- "$sp" 2>/dev/null && pwd -P) || die "cannot open $sp"
+    fi
+    safe_path "$sp"
+    CHK_OPT=--src
+}
+
+# ── locks ────────────────────────────────────────────────────────────
+# One installer at a time on a prefix ($PREFIX/.install.lock) and on a
+# source directory ($SRC.lock): a directory, made in one step (mkdir),
+# holding "pid host boot pidns" of the installer that holds it: its pid,
+# uname -n, the kernel's boot id and its PID namespace (Linux /proc; "-"
+# where there is none, as on FreeBSD). A lock whose installer is gone
+# (kill -9, the OOM killer, a reboot) would otherwise stop every later
+# erssi --update until someone removes it by hand, so it is taken over
+# when it names this host and either an earlier boot (the boot id is the
+# kernel's, the same in every container of it, so no process of that boot
+# can still run) or this boot and this PID namespace with ps showing no
+# such process. A pid says nothing across PID namespaces (a sandbox with
+# its own, bwrap --unshare-pid, sees none of the host's processes), so a
+# lock made in another one, of another host, or where boot or namespace
+# cannot be told, is left alone and the message says why. So is a lock
+# with nothing in it, whatever its age: installers before 2026.10.6 write
+# no pid, and one of them may still be running a long source build. Only
+# a <lock>.takeover with nothing in it, which only 2026.10.6 and later
+# make (and fill at once), counts as left over once it is 10 minutes old.
+# FreeBSD has neither file. Its kern.boottime is no boot id: it moves
+# when the clock is stepped (ntpd after a boot with a wrong clock), and a
+# moved one would make a running installer look like one of an earlier
+# boot, so the boot stays "-". In place of the namespace it gives the jail
+# state (security.jail.jailed): on the host ps sees every process, in a
+# jail only that jail's, and two jails cannot be told apart, so a lock
+# made in a jail, or seen from one, or where the state cannot be read, is
+# never taken over.
+lock_id() {   # "host boot pidns" of this installer
+    if [ "$(uname -s 2>/dev/null)" = FreeBSD ]; then
+        lb=-
+        case "$(sysctl -n security.jail.jailed 2>/dev/null)" in
+            0) lns=host ;; 1) lns=jail ;; *) lns=unknown ;;
+        esac
+    else
+        lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
+        lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
+        case "$lb" in ''|*[!0-9a-f-]*) lb=- ;; esac
+        case "$lns" in pid:\[[0-9]*\]) ;; *) lns=- ;; esac
+    fi
+    printf '%s %s %s\n' "$(uname -n 2>/dev/null || echo unknown)" "$lb" "$lns"
+}
+# 0 when the installer that holds lock $1 is gone; LOCK_SEEN what the
+# lock held, LOCK_WHY why it is not taken over, when that is not plain
+lock_stale() {   # dir [takeover]
+    LOCK_WHY=""
+    LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || LOCK_SEEN=""
+    if [ -z "$LOCK_SEEN" ]; then
+        # a .takeover with nothing in it: its installer was stopped between
+        # its mkdir and its pid line, a moment later; one that old is left
+        # over. A lock with nothing in it may be an older installer's that
+        # still runs (they write no pid): never taken over
+        if [ "${2:-}" = takeover ] && lock_old "$1"; then return 0; fi
+        LOCK_WHY="made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it), so whether it still runs cannot be told"
+        return 1
+    fi
+    # shellcheck disable=SC2086 # the fields of the lock
+    set -- $LOCK_SEEN
+    lp=${1:-} lh=${2:-} lb=${3:--} lns=${4:--}
+    case "$lp" in ''|*[!0-9]*) return 1 ;; esac
+    # shellcheck disable=SC2046 # the fields of this installer
+    set -- $(lock_id)
+    [ "$lh" = "$1" ] || { LOCK_WHY="made on $lh"; return 1; }
+    if [ "$lb" != "$2" ]; then
+        if [ "$lb" = - ] || [ "$2" = - ]; then
+            LOCK_WHY="made where this installer cannot tell whether its process still runs"
+            return 1
+        fi
+        # made before this system last started: its installer is gone
+        return 0
+    fi
+    case " $lns $3 " in
+        *" jail "*|*" unknown "*)
+            LOCK_WHY="made where this installer cannot tell whether its process still runs (a FreeBSD jail sees only its own processes)"
+            return 1 ;;
+    esac
+    if [ "$lns" != "$3" ]; then
+        if [ "$lns" = - ] || [ "$3" = - ]; then
+            LOCK_WHY="made where this installer cannot tell whether its process still runs"
+        else
+            LOCK_WHY="made in another PID namespace (a container or a sandbox), whose processes this installer cannot see"
+        fi
+        return 1
+    fi
+    # that pid is this installer (same boot and namespace): the holder is gone
+    [ "$lp" != "$$" ] || return 0
+    # a ps that cannot see this installer (no /proc) tells nothing
+    have ps && ps -p "$$" > /dev/null 2>&1 || return 1
+    ! ps -p "$lp" > /dev/null 2>&1
+}
+# 0 when the directory $1 was last changed more than 10 minutes ago
+# (find -mmin: GNU, BSD and busybox find; without it, never)
+lock_old() {
+    [ -n "$(find "$1" -prune -mmin +10 2>/dev/null)" ]
+}
+# The lock made, with its pid line, right after its mkdir; written to a
+# temporary name and renamed, so that it is never read half-written
+lock_mark() {
+    if ! { printf '%s %s\n' "$$" "$(lock_id)" > "$1/pid.$$" && mv -f "$1/pid.$$" "$1/pid"; } 2>/dev/null; then
+        rm -f "$1/pid.$$"
+    fi
+    return 0
+}
+lock_take() {   # dir -> 0 when this installer holds it now
+    LOCK_WHY=""
+    if mkdir "$1" 2>/dev/null; then lock_mark "$1"; return 0; fi
+    lock_stale "$1" || return 1
+    # One takeover at a time ($1.takeover, made in one step, with the pid
+    # line of the installer in it): checked again under it, the stale lock
+    # is removed and made anew, so no other installer can move or take the
+    # lock in between, and the new one always carries its pid. Between the
+    # removal and the mkdir another installer may make it first; then this
+    # one is the one that waits.
+    if ! mkdir "$1.takeover" 2>/dev/null; then
+        # left by an installer stopped inside its takeover: removed under
+        # the same rules as a lock, checked again right before
+        if lock_stale "$1.takeover" takeover && lock_stale "$1.takeover" takeover; then
+            rm -rf "$1.takeover"
+        fi
+        if ! mkdir "$1.takeover" 2>/dev/null; then
+            LOCK_WHY="being taken over by another installer (if that is stuck too, remove $1.takeover as well)"
+            return 1
+        fi
+    fi
+    lock_mark "$1.takeover"
+    if ! lock_stale "$1"; then lock_drop "$1.takeover"; return 1; fi
+    rm -rf "$1"
+    if ! mkdir "$1" 2>/dev/null; then lock_drop "$1.takeover"; return 1; fi
+    lock_mark "$1"
+    lock_drop "$1.takeover"
+    return 0
+}
+# what to say when lock $1 of $2 cannot be taken (LOCK_WHY from lock_take)
+lock_busy() {
+    printf 'another installer is using %s%s (if not, remove %s)' "$2" "${LOCK_WHY:+ - the lock was $LOCK_WHY}" "$1"
+}
+lock_drop() {   # dir: a lock this installer holds
+    rm -f "$1/pid" "$1/pid.$$"
+    rmdir "$1" 2>/dev/null
     return 0
 }
 
@@ -679,6 +852,10 @@ switch_link() {
 # always stays, and the one --rollback returns to counts first
 prune_releases() {
     RELS="$PREFIX/releases"
+    # what a prune stopped half-way left (renamed, so never reused)
+    for s in "$RELS"/.pruning-*; do
+        [ ! -e "$s" ] || rm -rf "$s"
+    done
     cur=$(link_release current) prev=$(link_release previous) kept=0
     [ -z "$prev" ] || [ "$prev" = "$cur" ] || kept=1
     for v in $(for d in "$RELS"/*; do
@@ -686,7 +863,11 @@ prune_releases() {
             case "$d" in [0-9]*) case "$d" in *[!0-9.]*) ;; *) echo "$d" ;; esac ;; esac
         done | sort -t. -k1,1nr -k2,2nr -k3,3nr); do
         if [ "$v" = "$cur" ] || [ "$v" = "$prev" ]; then continue; fi
-        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); else rm -rf "${RELS:?}/$v"; fi
+        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); continue; fi
+        # renamed out of the version names first: an rm -rf stopped
+        # half-way must not leave a tree that a later install of that
+        # version takes for the whole release (its MANIFEST still there)
+        mv "${RELS:?}/$v" "$RELS/.pruning-$v" 2>/dev/null && rm -rf "$RELS/.pruning-$v"
     done
     # what an interrupted install left behind (the lock keeps out another)
     for s in "$RELS"/.stage.*; do
@@ -708,6 +889,112 @@ link_bin() {
         LINKED=1
     else
         warn "$(tilde "$l") exists and is not a link - kept; this erssi is $(tilde "$PREFIX/bin/erssi")"
+    fi
+}
+# The source build's cleanup on exit: a binary install's bin/erssi link,
+# removed for the build's erssi, goes back when the install did not put an
+# erssi there (it failed, or Ctrl-C stopped it), so the prefix keeps a
+# working erssi and erssi --update; then the locks go.
+src_cleanup() {
+    if [ -n "${OLD_LINK:-}" ] && [ ! -e "$PREFIX/bin/erssi" ] && [ ! -L "$PREFIX/bin/erssi" ]; then
+        ln -s "$OLD_LINK" "$PREFIX/bin/erssi" 2>/dev/null || true
+    fi
+    [ -z "${PREFIX_LOCKED:-}" ] || lock_drop "$PREFIX/.install.lock"
+    [ -z "${SRC_LOCKED:-}" ] || lock_drop "$SRC.lock"
+}
+# The paths (relative to the prefix) on stdin added to FILES, the record
+# of what this installer's installs put into the prefix, which --uninstall
+# removes, and nothing else that shares the prefix
+files_add() {
+    if ! {
+        echo "# written by shellter-install.sh - what its installs put here (--uninstall)"
+        { [ ! -f "$FILES" ] || grep -v '^#' "$FILES"; cat; } | awk 'NF' | LC_ALL=C sort -u
+    } > "$FILES.tmp" || ! mv "$FILES.tmp" "$FILES"; then
+        rm -f "$FILES.tmp"
+        warn "cannot write $(tilde "$FILES") - --uninstall will not know what this install put there"
+    fi
+}
+# What a source install put into the prefix, from meson's install log: the
+# files, and the directories it made (only those it made), also kept
+# after a switch to a binary install
+record_files() {
+    ml="$SRC/Build/meson-logs/install-log.txt"
+    if [ ! -f "$ml" ]; then
+        warn "meson wrote no install log - --uninstall will not know what this install put into $(tilde "$PREFIX")"
+        return 0
+    fi
+    awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' "$ml" | files_add
+}
+# mkdir -p of the directories $@ (relative to the prefix, names without
+# spaces), noting in MADE every level of them that was not there yet:
+# --uninstall removes only directories an install made
+mkdir_made() {
+    for md in "$@"; do
+        mp=""
+        for c in $(printf '%s\n' "$md" | tr '/' ' '); do
+            mp=${mp:+$mp/}$c
+            [ -e "$PREFIX/$mp" ] || [ -L "$PREFIX/$mp" ] || MADE="$MADE
+$mp"
+        done
+        mkdir -p "$PREFIX/$md" || return 1
+    done
+}
+# ~/.local/share/man/man1/erssi.1 -> the installed man page, beside the
+# ~/.local/bin/erssi link (only when link_bin made that one): man finds
+# pages in ../share/man of the directories in PATH, and the prefix's own
+# share/man is in none of them. A binary install's page is reached through
+# current, so the link stays right across updates and --rollback. A file
+# of the user's there, or a link into somewhere else, is kept.
+man_page() {   # METHOD -> the installed erssi.1 to link to, if there is one
+    if [ "$1" = binary ]; then
+        [ ! -f "$PREFIX/current/share/man/man1/erssi.1" ] || printf '%s\n' "$PREFIX/current/share/man/man1/erssi.1"
+    else
+        [ ! -f "$PREFIX/share/man/man1/erssi.1" ] || printf '%s\n' "$PREFIX/share/man/man1/erssi.1"
+    fi
+}
+man_link_ours() {   # 0 when $1 is a link into this prefix
+    [ -L "$1" ] || return 1
+    case "$(readlink "$1")" in "$PREFIX"/*) return 0 ;; esac
+    return 1
+}
+link_man() {   # METHOD
+    [ "$LINKED" = 1 ] || return 0
+    ml="$HOME/.local/share/man/man1/erssi.1"
+    mt=$(man_page "$1")
+    if [ -z "$mt" ]; then
+        # this release has no page: a link of ours to an older one goes
+        if man_link_ours "$ml"; then rm -f "$ml"; fi
+        return 0
+    fi
+    if [ -L "$ml" ] && ! man_link_ours "$ml"; then
+        warn "$(tilde "$ml") links elsewhere - kept; this erssi's manual is $(tilde "$mt")"
+        return 0
+    fi
+    if [ -e "$ml" ] && [ ! -L "$ml" ]; then
+        warn "$(tilde "$ml") exists and is not a link - kept; this erssi's manual is $(tilde "$mt")"
+        return 0
+    fi
+    [ "$(readlink "$ml" 2>/dev/null)" = "$mt" ] && return 0
+    if ! { mkdir -p "${ml%/*}" && switch_link "$ml" "$mt"; }; then
+        warn "cannot link $(tilde "$ml") - man erssi will not find the manual"
+    fi
+}
+# The irssi.1 that installs before erssi.1 put into share/man/man1 (in the
+# record): gone once the release in use has erssi.1, so that man finds
+# one manual, and out of the record. Only the file erssi put there: a
+# regular file still inside the prefix - not a link, nor one reached
+# through share/man linked to a shared man tree, where it is another
+# program's irssi.1 - which stays, and only the record line goes.
+drop_old_man() {   # METHOD
+    [ -f "$FILES" ] && grep -qx 'share/man/man1/irssi.1' "$FILES" || return 0
+    [ -n "$(man_page "$1")" ] || return 0
+    om="$PREFIX/share/man/man1/irssi.1"
+    RP=$(cd -P -- "$PREFIX" 2>/dev/null && pwd -P) || RP=""
+    if [ -n "$RP" ] && [ -f "$om" ] && [ ! -L "$om" ] && in_prefix share/man/man1/irssi.1; then
+        rm -f "$om"
+    fi
+    if ! { grep -vx 'share/man/man1/irssi.1' "$FILES" > "$FILES.tmp" && mv "$FILES.tmp" "$FILES"; }; then
+        rm -f "$FILES.tmp"
     fi
 }
 write_conf() {   # METHOD (binary|source)
@@ -768,9 +1055,16 @@ summary() {
 # the installer stops there). A package whose signature, checksum or
 # MANIFEST does not verify stops the installer with nothing changed.
 bin_cleanup() {
+    # an install stopped between moving a release of the same version aside
+    # and moving the new one in (Ctrl-C, a failed rename): the old one goes
+    # back, or previous would point to nothing and --rollback lose it
+    if [ -n "${STAGE:-}" ] && [ -n "${ASIDE:-}" ] && [ -d "$STAGE/old" ] &&
+            [ ! -e "$ASIDE" ] && [ ! -L "$ASIDE" ]; then
+        mv "$STAGE/old" "$ASIDE" 2>/dev/null || true
+    fi
     [ -z "${STAGE:-}" ] || rm -rf "$STAGE"
     [ -z "${BWORK:-}" ] || rm -rf "$BWORK"
-    [ -z "${BLOCK:-}" ] || rmdir "$BLOCK" 2>/dev/null
+    [ -z "${BLOCK:-}" ] || lock_drop "$BLOCK"
     [ -z "${BLOG:-}" ] || rm -f "$BLOG"
     STAGE="" BWORK="" BLOCK="" BLOG=""
 }
@@ -820,8 +1114,8 @@ binary_install() {
     else
         mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
         # one installer at a time on this prefix
-        mkdir "$PREFIX/.install.lock" 2>/dev/null ||
-            die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+        lock_take "$PREFIX/.install.lock" ||
+            die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
         BLOCK="$PREFIX/.install.lock"
         mkdir -p "$STATE"
         LOG="$STATE/install.log"
@@ -864,7 +1158,7 @@ binary_install() {
     if [ "$DRY_RUN" = 1 ]; then
         STAGE=$(mktemp -d) || die "cannot create a temporary directory"
     else
-        mkdir -p "$PREFIX/releases" || die "cannot create $PREFIX/releases"
+        mkdir_made releases || die "cannot create $PREFIX/releases"
         STAGE=$(mktemp -d "$PREFIX/releases/.stage.XXXXXX") || die "cannot create a directory in $PREFIX/releases"
     fi
     if ! download SHA256SUMS "$REF" "$STAGE/SHA256SUMS" || ! download SHA256SUMS.sig "$REF" "$STAGE/SHA256SUMS.sig"; then
@@ -989,20 +1283,22 @@ binary_install() {
     # then current is switched in one step; until then the release in use is
     # untouched, and an interrupted install leaves only its .stage.
     step "Installing"
-    REUSED=0
+    REUSED=0 ASIDE=""
     if [ -e "$RELS/$V" ] || [ -L "$RELS/$V" ]; then
-        if [ "$cur" = "$V" ]; then
-            # the release in use: not replaced under a running erssi; the
-            # same package stays as it is
-            cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST" ||
-                die "$(tilde "$RELS/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
+        if cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
+            # the same package (a release tree only ever arrives whole, by
+            # one rename): kept as it is - never replaced under a running
+            # erssi, and previous keeps pointing to it
             REUSED=1
+        elif [ "$cur" = "$V" ]; then
+            die "$(tilde "$RELS/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
         else
+            # bin_cleanup moves it back if the new one does not get there
+            ASIDE="$RELS/$V"
             mv "$RELS/$V" "$STAGE/old" || die "cannot move $(tilde "$RELS/$V") aside - nothing was changed"
         fi
     fi
     if [ "$REUSED" = 0 ] && ! mv "$T" "$RELS/$V"; then
-        [ ! -d "$STAGE/old" ] || mv "$STAGE/old" "$RELS/$V"
         die "cannot move the package to $(tilde "$RELS/$V") - nothing was changed"
     fi
     if [ "$cur" != "$V" ]; then
@@ -1010,23 +1306,37 @@ binary_install() {
         [ -z "$cur" ] || switch_link "$PREFIX/previous" "releases/$cur" ||
             warn "cannot link $(tilde "$PREFIX/previous") - --rollback will not find releases/$cur"
     fi
-    mkdir -p "$PREFIX/bin" "$PREFIX/share/irssi"
+    # what is installed now, recorded right after the switch: an install
+    # stopped later (while old releases are removed, say) must not leave
+    # the conf naming the release before, or the next --update would take
+    # its commit for a moved tag and --rollback a source build for this
+    mkdir_made bin share/irssi || die "cannot create $PREFIX/bin or $PREFIX/share/irssi"
+    VERSION=$V
+    write_conf binary || die "cannot write $CONF"
+    [ -z "$MADE" ] || printf '%s\n' "$MADE" | files_add
     if [ "$(readlink "$PREFIX/bin/erssi" 2>/dev/null)" != ../current/bin/erssi ]; then
         [ ! -d "$PREFIX/bin/erssi" ] || [ -L "$PREFIX/bin/erssi" ] || die "$PREFIX/bin/erssi is a directory"
         switch_link "$PREFIX/bin/erssi" ../current/bin/erssi || die "cannot link $(tilde "$PREFIX/bin/erssi")"
     fi
-    prune_releases
     # erssi --update and --rollback run the installer of the release
     [ ! -f "$RELS/$V/share/irssi/shellter-install.sh" ] ||
         cp "$RELS/$V/share/irssi/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
-    VERSION=$V
-    write_conf binary || die "cannot write $CONF"
     link_bin
+    link_man binary
+    drop_old_man binary
+    prune_releases
     bin_cleanup
     trap - EXIT
     if [ "$REUSED" = 1 ]; then done_ "$(tilde "$PREFIX") $S_SEP releases/$V was already there"; else done_ "$(tilde "$PREFIX") $S_SEP releases/$V"; fi
     summary
     exit 0
+}
+
+# the command that installs the newest release into this prefix with the
+# current installer
+curl_install() {
+    p=""; [ "$PREFIX" = "$HOME/.local/opt/erssi" ] || p=" -s -- --prefix $PREFIX"
+    printf 'curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh%s\n' "$p"
 }
 
 # step "Finding the release" of an update, in the git repository $1: the
@@ -1040,8 +1350,7 @@ find_update() {
     # and checks that without a signature check (this copy cannot know a
     # release newer than its own)
     if ! can_verify; then
-        p=""; [ "$PREFIX" = "$HOME/.local/opt/erssi" ] || p=" -s -- --prefix $PREFIX"
-        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh$p"
+        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: $(curl_install)"
     fi
     case "$INSTALLED_REF" in
         ''|shellter-v*)
@@ -1106,9 +1415,9 @@ do_rollback() {
             "$(tilde "$PREFIX/current")" "$cur" "$prev"
         exit 0
     fi
-    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
-        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
-    trap 'rmdir "$PREFIX/.install.lock" 2>/dev/null' EXIT
+    lock_take "$PREFIX/.install.lock" ||
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
+    trap 'lock_drop "$PREFIX/.install.lock"' EXIT
     LOG=/dev/null
     switch_link "$PREFIX/current" "releases/$prev" || die "cannot switch $(tilde "$PREFIX/current") - nothing was changed"
     switch_link "$PREFIX/previous" "releases/$cur" || warn "cannot link $(tilde "$PREFIX/previous") to releases/$cur"
@@ -1125,55 +1434,189 @@ do_rollback() {
     printf '\n'
     exit 0
 }
-# every entry of the directory $1 is one of the names $2 (when it exists)
-only_erssi() {
-    for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        case " $2 " in
-            *" ${e##*/} "*) ;;
-            *) die "$1 holds ${e##*/}, which erssi did not install - nothing was removed; remove erssi from it by hand" ;;
-        esac
-    done
+# The paths, relative to the prefix, that the source installs put there:
+# FILES, or, for an install before FILES was kept, meson's install log in
+# the build directory it came from, if it is still there and is the log of
+# an install into this prefix. Every path is checked: inside the prefix,
+# with no "." or ".." in it. Nothing when there is no record.
+recorded_paths() {
+    if [ -f "$FILES" ]; then
+        grep -v '^#' "$FILES"
+    elif [ -f "$SRC/Build/meson-logs/install-log.txt" ] &&
+            grep -qxF "$PREFIX/bin/erssi" "$SRC/Build/meson-logs/install-log.txt"; then
+        awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' \
+            "$SRC/Build/meson-logs/install-log.txt"
+    fi | awk '$0 == "" || /^\// || /(^|\/)\.\.?(\/|$)/ { next } !seen[$0]++'
 }
-# --uninstall: the prefix and the ~/.local/bin/erssi link to it go; ~/.erssi
-# (configuration, logs, keys) and the source directory stay. Only a prefix
-# this installer installed, holding nothing else than erssi, is removed.
+# the recorded path $1 is still inside the prefix (resolved RP): its
+# directory, with every link in it followed, is RP or below it
+in_prefix() {
+    ip=$(cd -P -- "$PREFIX/$(dirname -- "$1")" 2>/dev/null && pwd -P) || return 1
+    case "$ip/" in "${RP%/}"/*) return 0 ;; esac
+    return 1
+}
+# --uninstall: what this installer put into the prefix goes, and nothing
+# else: the files and directories its source installs recorded (FILES),
+# the release trees of a binary install, current, previous, the bin/erssi
+# link into them, its conf, its own copy and the ~/.local/bin/erssi link.
+# A file another program installed in the same prefix (a library built
+# into ~/local, its headers, its configuration in etc/, a man page) stays,
+# and so does a directory that still holds one. ~/.erssi (configuration,
+# logs, keys) and the source directory stay as well.
 do_uninstall() {
     header "uninstall"
     field "prefix" "$(tilde "$PREFIX")"
     printf '\n'
     [ -f "$CONF" ] ||
         die "no erssi installed by shellter-install.sh in $PREFIX ($(tilde "$CONF") is missing) - nothing was removed"
-    p=$(cd "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
-    h=$(cd "$HOME" && pwd -P) || die "cannot open $HOME"
-    case "$h/" in "${p%/}"/*) die "$PREFIX holds your home - nothing was removed" ;; esac
-    case "$p" in /usr|/usr/local|/opt|"$h/.local") die "$PREFIX is shared with other software - nothing was removed; remove erssi from it by hand" ;; esac
-    # what erssi installs there, and nothing else
-    only_erssi "$PREFIX" "bin etc include lib lib64 libexec share releases current previous .install.lock"
-    only_erssi "$PREFIX/bin" "erssi"
-    only_erssi "$PREFIX/share" "irssi man doc"
+    [ -d "$PREFIX" ] || die "cannot open $PREFIX"
+    UD=$(mktemp -d) || die "cannot create a temporary directory"
+    trap 'rm -rf "$UD"' EXIT
+    UL=$UD/files
+    recorded_paths > "$UL"
+    if [ ! -s "$UL" ] && [ "$(conf_get METHOD)" != binary ]; then
+        die "there is no record of the files this erssi installed in $PREFIX (it was built from source by an installer before 2026.10.6, or installed by another tool) - nothing was removed; install it once more with this installer, which records them, and run --uninstall again, or remove erssi by hand"
+    fi
+    # the release trees of a binary install: a version with its MANIFEST,
+    # and the stage of an interrupted install
+    : > "$UD/rel"
+    if [ -d "$PREFIX/releases" ] && [ ! -L "$PREFIX/releases" ]; then
+        for d in "$PREFIX"/releases/* "$PREFIX"/releases/.stage.* "$PREFIX"/releases/.pruning-*; do
+            n=${d##*/}
+            case "$n" in
+                .stage.*|.pruning-*) [ -d "$d" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;;
+                [0-9]*) case "$n" in *[!0-9.]*) ;; *) [ -f "$d/MANIFEST" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;; esac ;;
+            esac
+        done > "$UD/rel"
+    fi
+    nfiles=0
+    while IFS= read -r r; do
+        if [ -L "$PREFIX/$r" ] || [ -f "$PREFIX/$r" ]; then nfiles=$((nfiles + 1)); fi
+    done < "$UL"
+    nrel=$(wc -l < "$UD/rel" | tr -d ' ')
     l="$HOME/.local/bin/erssi"
     unlink=0
     [ ! -L "$l" ] || [ "$(readlink "$l")" != "$PREFIX/bin/erssi" ] || unlink=1
+    # the man page link, when it leads into this prefix
+    mlk="$HOME/.local/share/man/man1/erssi.1"
+    unman=0
+    if man_link_ours "$mlk"; then unman=1; fi
     if [ "$DRY_RUN" = 1 ]; then
-        printf '  Dry run - nothing was changed. --uninstall would remove %s' "$(tilde "$PREFIX")"
-        [ "$unlink" = 0 ] || printf ' and the link %s' "$(tilde "$l")"
-        printf '; %s would stay.\n\n' "$(tilde "$HOME/.erssi")"
+        what=$({
+            [ "$nfiles" = 0 ] || echo "the $nfiles files its source installs put there"
+            [ "$nrel" = 0 ] || echo "$nrel release(s) of its binary install"
+            [ "$unlink" = 0 ] || echo "the link $(tilde "$l")"
+            [ "$unman" = 0 ] || echo "the link $(tilde "$mlk")"
+            echo "its settings"
+        } | awk '{ w[NR] = $0 } END { for (i = 1; i <= NR; i++) printf "%s%s", (i == 1 ? "" : i == NR ? " and " : ", "), w[i] }')
+        printf '  Dry run - nothing was changed. --uninstall would remove erssi from %s: %s; files that erssi did not install there and %s would stay.\n\n' \
+            "$(tilde "$PREFIX")" "$what" "$(tilde "$HOME/.erssi")"
         exit 0
     fi
-    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
-        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+    lock_take "$PREFIX/.install.lock" ||
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
+    trap 'rm -rf "$UD"; lock_drop "$PREFIX/.install.lock"' EXIT
     [ "$unlink" = 0 ] || rm -f "$l"
-    rm -rf "$PREFIX" || die "cannot remove all of $PREFIX"
+    [ "$unman" = 0 ] || rm -f "$mlk"
+    RP=$(cd -P -- "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
+    : > "$UD/skipped"
+    # the files and links first (never a directory with what is in it),
+    # each only where it still is inside the prefix: a directory of the
+    # prefix that has become a link since (lib -> /shared/lib) is not
+    # followed out of it
+    while IFS= read -r r; do
+        # a recorded directory that is a link now: not erssi's link
+        if [ -L "$PREFIX/$r" ] && [ -d "$PREFIX/$r" ]; then continue; fi
+        if [ -L "$PREFIX/$r" ] || [ -f "$PREFIX/$r" ]; then
+            if in_prefix "$r"; then
+                rm -f "$PREFIX/$r" || die "cannot remove $PREFIX/$r"
+            else
+                printf '%s\n' "$r" >> "$UD/skipped"
+            fi
+        fi
+    done < "$UL"
+    while IFS= read -r r; do
+        rm -rf "${PREFIX:?}/$r" || die "cannot remove $PREFIX/$r"
+    done < "$UD/rel"
+    for r in current previous; do
+        case "$(readlink "$PREFIX/$r" 2>/dev/null)" in releases/*) rm -f "$PREFIX/$r" ;; esac
+    done
+    [ "$(readlink "$PREFIX/bin/erssi" 2>/dev/null)" != ../current/bin/erssi ] || rm -f "$PREFIX/bin/erssi"
+    # its own: the conf goes last, so that a removal stopped half-way can
+    # be run again
+    rm -f "$PREFIX/share/irssi/shellter-install.sh" "$FILES" "$CONF"
+    # then the directories that are empty now, deepest first: only those
+    # an install made (the record lists them), releases and share/irssi,
+    # which are the installer's and erssi's own - a bin/ or share/ that
+    # was there before stays
+    { cat "$UL"; printf '%s\n' releases share/irssi; } |
+        awk '!seen[$0]++ { n = gsub(/\//, "/"); print n "\t" $0 }' | sort -rn | cut -f 2- |
+        while IFS= read -r r; do
+            if [ ! -L "$PREFIX/$r" ] && [ -d "$PREFIX/$r" ] && in_prefix "$r"; then
+                rmdir "$PREFIX/$r" 2>/dev/null || true
+            fi
+        done
+    skipped=$(head -n 3 "$UD/skipped" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
+    rm -rf "$UD"
+    lock_drop "$PREFIX/.install.lock"
+    trap - EXIT
+    # the prefix itself when nothing is left in it, unless it is the home
+    # or a directory above it
+    h=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || h=""
+    home=0
+    case "$h/" in
+        "${RP%/}"/*) home=1 ;;
+        *) rmdir "$PREFIX" 2>/dev/null || true ;;
+    esac
     printf '  %s%serssi removed%s from %s.\n\n' "$B" "$G" "$N" "$(tilde "$PREFIX")"
+    [ -z "$skipped" ] ||
+        field "skipped" "reached through a link out of $(tilde "$PREFIX") now, so not removed: $skipped"
+    if [ -d "$PREFIX" ]; then
+        # a few of them, not a walk of a whole tree (a prefix may be ~)
+        left=$(cd "$PREFIX" && find . ! -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
+            awk 'NR == 4 { printf ", ..."; exit } NR > 1 { printf ", " } { printf "%s", $0 }')
+        if [ -n "$left" ]; then
+            field "left" "files that erssi did not install stay in $(tilde "$PREFIX"): $left"
+        elif [ "$home" = 1 ]; then
+            field "left" "$(tilde "$PREFIX") stays: it is your home or holds it"
+        else
+            # no file is left, only directories: those no install recorded
+            # making (an installer before 2026.10.6 recorded none), or a
+            # takeover lock left behind
+            dirs=$(cd "$PREFIX" && find . ! -name . -prune -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
+                awk 'NR == 4 { printf ", ..."; exit } NR > 1 { printf ", " } { printf "%s", $0 }')
+            field "left" "$(tilde "$PREFIX") stays, with directories erssi has no record of making: ${dirs:-(none)} - remove them by hand if they are empty and not yours"
+        fi
+    fi
     field "kept" "$(tilde "$HOME/.erssi") (your configuration, logs and keys)"
     [ ! -d "$SRC" ] || field "source" "$(tilde "$SRC") is kept - remove it by hand if you no longer build erssi"
     printf '\n'
     exit 0
 }
 
+# a --keep (or KEEP=) number without leading zeros, at most 9999; nothing
+# when it is not one. Longer numbers would pass as digits but fail every
+# [ -lt ] / [ -ge ] test as out of range (dash, FreeBSD sh), and the checks
+# around them would quietly turn "keep them all" into --keep 1
+keep_value() {
+    case "$1" in ''|*[!0-9]*) return 0 ;; esac
+    kv=${1#"${1%%[!0]*}"}
+    case "$kv" in
+        '') echo 0 ;;
+        ?????*) ;;
+        *) echo "$kv" ;;
+    esac
+}
+
 main() {
 unset CDPATH        # cd in $(...) must print nothing
+# What the cleanup traps and the later steps test or remove, empty before
+# any trap is set: a variable of the same name in the environment (STAGE
+# is a common one in CI and deploy scripts) would otherwise be taken for
+# this installer's own, and rm -rf'ed, or have another installer's lock
+# dropped, on an early exit such as an up to date erssi --update
+STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
+UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
@@ -1208,12 +1651,22 @@ case "$PREFIX" in
     /*) ;;
     *) echo "shellter-install.sh: --prefix needs an absolute path, e.g. --prefix $HOME/opt/erssi (--help)" >&2; exit 2 ;;
 esac
+# / itself is no prefix: nothing would hold erssi's files apart from the
+# system's, and with its slash taken off below it would become empty
+case "$PREFIX" in
+    *[!/]*) ;;
+    *) echo "shellter-install.sh: --prefix / is the whole system - give a directory of its own, e.g. --prefix /opt/erssi (--help)" >&2; exit 2 ;;
+esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
 [ "$UPDATE" = 0 ] || [ -z "$REF" ] || { echo "shellter-install.sh: --update takes the newest signed release; for a given one use --ref without --update" >&2; exit 2; }
 if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
     echo "shellter-install.sh: --$ACTION goes with --prefix and --dry-run only (--help)" >&2; exit 2
 fi
-case "$KEEP" in *[!0-9]*) echo "shellter-install.sh: --keep needs a number, e.g. --keep 2 (--help)" >&2; exit 2 ;; esac
+if [ -n "$KEEP" ]; then
+    k=$(keep_value "$KEEP")
+    [ -n "$k" ] || { echo "shellter-install.sh: --keep needs a number from 1 to 9999, e.g. --keep 2 (--help)" >&2; exit 2; }
+    KEEP=$k
+fi
 # the release just switched away from is the one every running erssi was
 # started from: its help, modules, scripts and themes are needed until
 # /upgrade, so it always stays
@@ -1252,6 +1705,8 @@ if [ "$ROOT" = 1 ]; then
 fi
 # the settings of the previous install, unless given again
 CONF="$PREFIX/share/irssi/shellter-install.conf"
+# what the source installs put into the prefix, for --uninstall
+FILES="$PREFIX/share/irssi/shellter-install.files"
 [ -n "$SRC" ] || SRC=$(conf_get SRC)
 [ -n "$REPO" ] || REPO=$(conf_get REPO)
 [ -n "$RUN_TESTS" ] || RUN_TESTS=$(conf_get TESTS)
@@ -1261,8 +1716,8 @@ CONF="$PREFIX/share/irssi/shellter-install.conf"
 [ -n "$USE" ] || USE=$(conf_get USE)
 case "$USE" in binary|source) ;; *) USE=auto ;; esac
 USE_SAVED=auto; [ "$USE" != source ] || USE_SAVED=source
-[ -n "$KEEP" ] || KEEP=$(conf_get KEEP)
-case "$KEEP" in ''|*[!0-9]*) KEEP=2 ;; esac
+[ -n "$KEEP" ] || KEEP=$(keep_value "$(conf_get KEEP)")
+[ -n "$KEEP" ] || KEEP=2
 [ "$KEEP" -ge 1 ] || KEEP=1
 [ -n "$BINARY_BASE" ] || BINARY_BASE=$(conf_get BINARY_BASE)
 case "$BINARY_BASE" in ''|https://*|http://*|file:///*|/*) ;; *) BINARY_BASE="" ;; esac
@@ -1275,6 +1730,8 @@ for v in "$SRC" "$REPO" "$PREFIX" "$BINARY_BASE"; do
 "*) die "invalid directory or repository: $v" ;;
     esac
 done
+# before anything in the prefix is run, read or changed
+safe_prefix
 case "$ACTION" in
     rollback) do_rollback ;;
     uninstall) do_uninstall ;;
@@ -1412,6 +1869,11 @@ if [ "$UPDATE" = 0 ] && [ -z "$REF" ] && [ -n "$INSTALLED" ]; then
         exit 0
     fi
 fi
+# an update finds the newest release with git (ls-remote, the signed tag),
+# for a binary install too, which needs no git otherwise
+if [ "$UPDATE" = 1 ] && ! have git; then
+    die "erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it ($(pm_hint git)), or install the newest release with the current installer: $(curl_install)"
+fi
 # a release with a package for this system: installed from it (and done),
 # otherwise built from source below
 if [ "$CHECK" = 0 ] && [ "$USE" != source ]; then binary_install; fi
@@ -1447,10 +1909,18 @@ if [ "$CHECK" = 0 ]; then
 "*) die "invalid directory: $SRC" ;;
     esac
     safe_path "$(dirname -- "$SRC")"
-    mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
-    trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
+    lock_take "$SRC.lock" || die "$(lock_busy "$SRC.lock" "$SRC")"
+    SRC_LOCKED=1
+    trap 'src_cleanup' EXIT
     safe_dir "$SRC"
     safe_dir "$SRC.venv"
+    # and on the prefix, as the binary path, --rollback and --uninstall
+    # take it: none of them may switch, replace or remove what this build
+    # installs while it does
+    mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
+    lock_take "$PREFIX/.install.lock" ||
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
+    PREFIX_LOCKED=1
 fi
 mkdir -p "$STATE"
 if [ "$CHECK" = 1 ]; then
@@ -1460,7 +1930,6 @@ else
     LOG="$STATE/install.log"
     rm -f "$LOG"
     ( umask 077; : > "$LOG" )
-    mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
 fi
 
 # ── 1. the system ────────────────────────────────────────────────────
@@ -1481,7 +1950,7 @@ openssl_version() {
 }
 # missing features -> $REQ (needed) and $REC (recommended)
 check_system() {
-    REQ="" REC=""
+    REQ="" REC="" GLIB_OLD=""
     have git || REQ="$REQ git"
     have cc || have gcc || have clang || REQ="$REQ cc"
     PKGCONFIG=""
@@ -1490,7 +1959,12 @@ check_system() {
         REQ="$REQ pkgconf glib"
         base_openssl >/dev/null || REQ="$REQ openssl"
     else
-        $PKGCONFIG --exists 'glib-2.0 >= 2.32' && $PKGCONFIG --exists gmodule-2.0 && $PKGCONFIG --exists gio-2.0 || REQ="$REQ glib"
+        $PKGCONFIG --exists "glib-2.0 >= $GLIB_MIN" && $PKGCONFIG --exists gmodule-2.0 && $PKGCONFIG --exists gio-2.0 || REQ="$REQ glib"
+        # there, but too old: named with its version
+        if ! $PKGCONFIG --exists "glib-2.0 >= $GLIB_MIN" && $PKGCONFIG --exists glib-2.0; then
+            GLIB_OLD=$($PKGCONFIG --modversion glib-2.0 2>/dev/null) || GLIB_OLD=""
+            : "${GLIB_OLD:=unknown}"
+        fi
         $PKGCONFIG --exists openssl || base_openssl >/dev/null || REQ="$REQ openssl"
     fi
     have perl || REQ="$REQ perl"
@@ -1565,7 +2039,7 @@ else
         check_system
         # shellcheck disable=SC2086
         still=$(names $REQ)
-        [ -z "$still" ] || die "still missing after installing the packages: $still"
+        [ -z "$still" ] || die "still missing after installing the packages: $still${GLIB_OLD:+ (GLib $GLIB_MIN or newer is needed; this system has $GLIB_OLD)}"
         done_ "installed"
         STEP=$((STEP - 1)); step "Checking the system"
         else
@@ -1575,7 +2049,8 @@ else
         # shellcheck disable=SC2086
         die "erssi needs packages that only the administrator can install:
       ${NEED:-$REQ}
-    $(pm_hint ${NEED:-$REQ})${WANT:+
+    $(pm_hint ${NEED:-$REQ})${GLIB_OLD:+
+  GLib $GLIB_MIN or newer is needed; this system has $GLIB_OLD}${WANT:+
   recommended as well: $WANT}"
     fi
     if [ -n "$WANT" ] && [ "$ROOT" = 0 ]; then
@@ -1734,17 +2209,18 @@ fi
 # ── 6. install ───────────────────────────────────────────────────────
 step "Installing"
 # a binary install before: its bin/erssi is a link into current, which the
-# build's erssi must replace, not write through; put back if that fails
+# build's erssi must replace, not write through; src_cleanup puts it back
+# when the install fails or is interrupted before a new one is there
 OLD_LINK=$(readlink "$PREFIX/bin/erssi" 2>/dev/null) || OLD_LINK=""
 [ -z "$OLD_LINK" ] || rm -f "$PREFIX/bin/erssi"
-if ! run_logged "$NINJA" -C "$SRC/Build" install; then
-    [ -z "$OLD_LINK" ] || [ -e "$PREFIX/bin/erssi" ] || ln -s "$OLD_LINK" "$PREFIX/bin/erssi"
-    die_log "installing failed"
-fi
+run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
 # erssi before 2026.10.0 shipped it
 rm -f "$PREFIX/share/irssi/themes/nexus.theme"
 mkdir -p "$PREFIX/share/irssi"
+record_files
 link_bin
+link_man source
+drop_old_man source
 # erssi --update runs this installer (the copy of the installed release)
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
 VERSION=$("$PREFIX/bin/erssi" --version | awk '{print $2}')

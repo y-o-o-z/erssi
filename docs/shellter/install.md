@@ -102,11 +102,15 @@ What goes where:
 | `<prefix>/current` | Link to `releases/<version>`, the release in use, switched in one step (a new link renamed over the old one). |
 | `<prefix>/previous` | Link to the release in use before; `--rollback` returns to it. |
 | `<prefix>/bin/erssi` | Link to `../current/bin/erssi`; `~/.local/bin/erssi` links to it as before. |
+| `~/.local/share/man/man1/erssi.1` | Beside `~/.local/bin/erssi`: a link to the manual of the release in use (through `current`), so `man erssi` finds it; a file of yours or a link elsewhere there is kept. |
 | `<prefix>/share/irssi/shellter-install.conf` | `METHOD=binary`, `VERSION`, `COMMIT`, `PLATFORM` and the settings below. |
+| `<prefix>/share/irssi/shellter-install.files` | What the installs put into the prefix, for `--uninstall`: the files and directories of a source install (from meson's install log) and the directories a binary install made. |
 
 The new release is unpacked next to the one in use and moved into place
 before `current` is switched, so an interrupted install leaves the release
-in use as it was. After the switch, old releases beyond `--keep N` are
+in use as it was. The conf records the new release right after the
+switch, before anything else happens, so an install stopped later still
+says what is in use. After the switch, old releases beyond `--keep N` are
 removed: N counts the releases kept besides the one in use (two by
 default), and the one `--rollback` returns to counts first. N is at least
 1, because a running erssi needs the release it was started from (its
@@ -126,11 +130,24 @@ sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --uninstall   # remove ~/.
 ```
 
 After `--rollback`, `/upgrade` in a running erssi loads the release it
-switched to. `--uninstall` removes the prefix and the `~/.local/bin/erssi`
-link to it; `~/.erssi` (configuration, logs, keys) and the source
-directory stay. It removes only a prefix this installer installed that
-holds nothing but erssi (never the home, `~/.local`, `/usr`, `/usr/local`
-or `/opt`).
+switched to. `--uninstall` removes what this installer put into the
+prefix and nothing else: the files and directories its installs
+recorded in `shellter-install.files`, the release trees of a binary
+install, `current`, `previous`, the `bin/erssi` link, its conf and its own
+copy, and the `~/.local/bin/erssi` and `~/.local/share/man/man1/erssi.1`
+links into it. Anything else in the
+prefix stays, such as libraries, headers, configuration in `etc/` or man
+pages that other software built into the same `~/local`, and so does a
+directory that was there before the install or still holds such a file;
+the installer names what it left. Nothing is removed through a directory
+of the prefix that has become a link out of it. The prefix itself goes
+only when nothing is left in it, and never when it is your home or holds
+it. `~/.erssi`
+(configuration, logs, keys) and the source directory stay. A source
+install made by an installer before 2026.10.6 kept no such record: then
+`--uninstall` uses the install log of the build directory it came from
+while that is still there (not after `--clean`), and otherwise removes
+nothing and asks you to install once more, which records the files.
 
 ## Options
 
@@ -145,19 +162,42 @@ or `/opt`).
 | `--binary` | Install from the release's package only, and stop if that is not possible (this run only). |
 | `--source` | Always build from source, also on `erssi --update` (until `--binary`). |
 | `--binary-base <url\|dir>` | Where the packages are: a directory or URL holding `shellter-vX.Y.Z/` (default: the GitHub releases of `y-o-o-z/erssi`; another `--repo` has none unless given). |
-| `--keep N` | Old releases of a binary install kept besides the one in use (default 2, at least 1). |
+| `--keep N` | Old releases of a binary install kept besides the one in use (default 2, from 1 to 9999). |
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
-| `--uninstall` | Remove the prefix and `~/.local/bin/erssi`; `~/.erssi` stays. |
+| `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
 
 `--src`, `--repo`, `--no-test`/`--test`, `--clean`/`--no-clean`, `--source`,
 `--binary-base` and `--keep` are kept in
 `<prefix>/share/irssi/shellter-install.conf`: the next install into the
 same prefix and `erssi --update` use them again until you give them again.
 
-The source directory and its venv must be yours, and every directory above
-them yours or root's. In a rootless container or another user namespace see
+The prefix, the source directory and its venv must be yours, only you may
+write to them and to the directories that hold them, and every directory
+above those must be yours or root's: whoever can change them runs code as
+you (the installed erssi, the installer `erssi --update` runs, the build
+tools and the build files). The installer checks this before it runs or
+changes anything there. In a rootless container or another user namespace see
 `sh shellter-install.sh --help` (`SHELLTER_INSTALL_TRUST_OVERFLOW_UID`).
+
+One installer at a time works on a prefix and on a source directory: each
+has a lock (`<prefix>/.install.lock`, `<src>.lock`) that names the
+installer's process, host, boot and PID namespace (the last two where
+Linux shows them; FreeBSD has no boot id that survives a clock step, and
+gives whether the installer runs in a jail in place of the namespace: a
+lock made in a jail, or seen from one, is never taken over). A lock left behind by an installer that was killed
+(`kill -9`, the OOM killer) is taken over by the next one once that
+process is gone, when both run on the same host, in the same boot and
+in the same PID namespace; one left by a reboot (an earlier boot of the
+same host) is taken over as well. A lock of a running installer, of
+another host, of a container or sandbox with a PID namespace of its own,
+or of a system where the boot or the namespace cannot be told on one side
+is left alone: the message says why and names the directory to remove.
+So is a lock with no pid in it, however old: installers before 2026.10.6
+write none, and one of them may still be building. A takeover runs under
+`<lock>.takeover`, which holds the taking installer's pid; one left by an
+installer stopped in the middle is cleaned up by the same rules, and an
+empty one once it is 10 minutes old.
 
 ## FreeBSD
 
@@ -217,10 +257,11 @@ of `erssi --update`. After one update to 2026.10.3 or newer, every later
   `SHA256SUMS` lists but that cannot be downloaded means a source build
   instead, with one warning (`--binary` refuses).
 - What `--update` checks: [What the installer verifies](#what-the-installer-verifies).
-- `--update` needs git 2.34+ and ssh-keygen to check the signature; without
-  them it stops and names the install command above (with your `--prefix`):
-  the current installer checks the newest release against the commit it
-  records.
+- `--update` needs git 2.34+ and ssh-keygen to check the signature, for a
+  binary install too (which needs no git otherwise); without them it stops
+  and names the install command above (with your `--prefix`): the current
+  installer checks the newest release against the commit it records.
+  Without git at all it says so, with the command that installs git.
 - A binary update keeps the release it replaces for `--rollback`.
 - In a running erssi, `/upgrade` then loads the new version and keeps your
   windows and channels. Connections over plain text stay up; TLS
