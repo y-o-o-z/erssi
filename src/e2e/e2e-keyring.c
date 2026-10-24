@@ -406,18 +406,12 @@ E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
 	return kr;
 }
 
-void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const char *path, const E2E_JSON *kr)
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const E2E_JSON *kr,
+                             const struct stat *written)
 {
-	struct stat st;
-
 	e2e_keyring_cache_clear(cache);
-	/* the file as the rename left it (ours, whatever its times);
-	   another writer in between is the race every load-change-save of
-	   the keyring has */
-	if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
-		cache->kr = e2e_json_copy(kr);
-		cache->st = st;
-	}
+	cache->kr = e2e_json_copy(kr);
+	cache->st = *written;
 }
 
 static gboolean write_all(int fd, const char *data, size_t len)
@@ -475,11 +469,12 @@ static gboolean write_new(const char *path, const char *data, size_t len, int *e
 	return TRUE;
 }
 
-gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
-                               const char *what, char **error)
+gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t len,
+                                    const char *what, struct stat *written, char **error)
 {
 	char *tmp;
 	int fd, saved;
+	gboolean ok;
 
 	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
 	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -495,15 +490,21 @@ gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
 		close(fd);
 		goto fail;
 	}
-	if (close(fd) != 0) {
-		saved = errno;
-		goto fail;
-	}
 	/* rename replaces whatever is at path (a symlink too), never follows it */
 	if (rename(tmp, path) != 0) {
 		saved = errno;
+		close(fd);
 		unlink(tmp);
 		*error = g_strdup_printf("cannot replace %s: %s", what, g_strerror(saved));
+		g_free(tmp);
+		return FALSE;
+	}
+	/* the file we wrote as the rename left it, from its own descriptor:
+	   a later lstat() of path could already see another writer's file */
+	ok = written == NULL || fstat(fd, written) == 0;
+	if (close(fd) != 0 || !ok) {
+		saved = errno;
+		*error = g_strdup_printf("cannot write %s: %s", what, g_strerror(saved));
 		g_free(tmp);
 		return FALSE;
 	}
@@ -518,8 +519,14 @@ fail:
 	return FALSE;
 }
 
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error)
+{
+	return e2e_write_file_atomic_stat(path, data, len, what, NULL, error);
+}
+
 static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
-                              char **error)
+                              struct stat *written, char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
@@ -551,7 +558,7 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 	data = e2e_json_encode(kr, FALSE);
 	len = strlen(data);
-	ok = e2e_write_file_atomic(path, data, len, "keyring", error);
+	ok = e2e_write_file_atomic_stat(path, data, len, "keyring", written, error);
 	e2e_wipe(data, len);
 	g_free(data);
 	return ok;
@@ -559,12 +566,18 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
 {
-	return keyring_write(path, kr, FALSE, error);
+	return keyring_write(path, kr, FALSE, NULL, error);
+}
+
+gboolean e2e_keyring_save_stat(const char *path, const E2E_JSON *kr, struct stat *written,
+                               char **error)
+{
+	return keyring_write(path, kr, FALSE, written, error);
 }
 
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error)
 {
-	return keyring_write(path, kr, TRUE, error);
+	return keyring_write(path, kr, TRUE, NULL, error);
 }
 
 char *e2e_keyring_snapshot(const E2E_JSON *kr)

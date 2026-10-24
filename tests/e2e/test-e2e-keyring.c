@@ -1080,11 +1080,18 @@ static void test_cache(void)
 	e2e_json_free(kr);
 	g_assert_cmpuint(cache.reads, ==, 3);
 
-	/* our own save is kept as written */
+	/* our own save is kept as written, stamped with the file's own
+	   fstat (the same file lstat sees now) */
 	kr = e2e_keyring_new();
 	e2e_json_set_string(kr, "one", "3");
-	g_assert_true(e2e_keyring_save(path, kr, &error));
-	e2e_keyring_cache_saved(&cache, path, kr);
+	{
+		struct stat written, now;
+
+		g_assert_true(e2e_keyring_save_stat(path, kr, &written, &error));
+		g_assert_cmpint(lstat(path, &now), ==, 0);
+		g_assert_true(e2e_same_file(&written, &now));
+		e2e_keyring_cache_saved(&cache, kr, &written);
+	}
 	e2e_json_free(kr);
 	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
 	g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "3");

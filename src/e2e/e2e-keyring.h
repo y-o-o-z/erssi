@@ -78,14 +78,19 @@ typedef struct {
    keyring while the file is unchanged (E2E_LOAD_OK, no notice) */
 E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
                                  E2E_LOAD_STATUS *status, char **notice);
-/* kr was just written to path: kept as the file's content */
-void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const char *path, const E2E_JSON *kr);
+/* kr was just written: kept as the file's content, written being the
+   file as e2e_keyring_save_stat() wrote it */
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const E2E_JSON *kr,
+                             const struct stat *written);
 /* forgets (and wipes) what is kept */
 void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache);
 
 /* keyring.json is missing because a corrupt one was moved aside */
 gboolean e2e_keyring_lost(const char *path);
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error);
+/* the same; *written: the new file's fstat after the rename */
+gboolean e2e_keyring_save_stat(const char *path, const E2E_JSON *kr, struct stat *written,
+                               char **error);
 /* /e2e reset: kr becomes the keyring while there is none (E2E_LOAD_LOST) */
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error);
 /* canonical text, to compare before / after */
@@ -105,6 +110,10 @@ char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *le
    path, the directory fsync'ed; what names the file in *error */
 gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
                                const char *what, char **error);
+/* the same; *written (when not NULL): fstat of the new file after the
+   rename, from its still open descriptor */
+gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t len,
+                                    const char *what, struct stat *written, char **error);
 /* a new file, 0600, never over an existing file or through a symlink */
 gboolean e2e_write_new_file(const char *path, const char *data, size_t len, char **error);
 

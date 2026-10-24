@@ -658,9 +658,10 @@ E2E_JSON *e2e_load(void)
 gboolean e2e_save(const E2E_JSON *kr)
 {
 	char *error = NULL;
+	struct stat written;
 
-	if (e2e_keyring_save(keyring_file, kr, &error)) {
-		e2e_keyring_cache_saved(&keyring_cache, keyring_file, kr);
+	if (e2e_keyring_save_stat(keyring_file, kr, &written, &error)) {
+		e2e_keyring_cache_saved(&keyring_cache, kr, &written);
 		note_keyring_stat(TRUE);
 		e2e_state_changed();
 		return TRUE;
