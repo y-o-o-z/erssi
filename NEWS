@@ -7,6 +7,9 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - a source install takes the lock of the prefix as well, so it
 	    cannot run at the same time as --rollback, --uninstall or another
 	    install into the same prefix
+	  - a lock left behind by an installer that was killed (kill -9, the
+	    OOM killer, a reboot) is taken over once that process is gone; it
+	    used to stop every later erssi --update until removed by hand
 	  - the prefix is checked like the source directory: it must be yours
 	    and only you may write to it and to the directory that holds it,
 	    before its erssi is run or anything in it is changed

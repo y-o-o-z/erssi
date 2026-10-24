@@ -39,6 +39,7 @@ BIN_TOOLS=""
 for t in tar xz sha256sum find cmp perl; do
     p=$(find_tool "$t") && BIN_TOOLS="$BIN_TOOLS $t=$p"
 done
+PS=$(find_tool ps) || PS=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
 stand() { cat > "$W/stand/$1" && chmod 755 "$W/stand/$1"; }
@@ -821,6 +822,41 @@ prefix-lock)
     run_install
     check "unlocked: installed" [ "$RC" = 0 ]
     check "... both locks gone" none_exist "$HOME/.local/opt/erssi/.install.lock" "$HOME/.local/src/erssi.lock"
+    ;;
+stale-lock)
+    # a lock its installer left behind (kill -9, a reboot) is taken over
+    # when that installer is gone: the lock names its pid and host
+    [ -n "$PS" ] || { echo "skip: no ps"; exit 77; }
+    ln -s "$PS" "$W/bin/ps"
+    host=$(uname -n)
+    sh -c 'exit 0' & gone=$!
+    wait "$gone"
+    sleep 30 & alive=$!
+    trap 'kill "$alive" 2>/dev/null; rm -rf "$W"' EXIT
+    P=$HOME/.local/opt/erssi S=$HOME/.local/src/erssi
+    mkdir -p "$P/.install.lock" "$S.lock"
+    printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
+    printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
+    run_install
+    check "stale locks of a gone installer: installed" [ "$RC" = 0 ] && [ -x "$P/bin/erssi" ]
+    check "... and released" none_exist "$P/.install.lock" "$S.lock"
+    check "... nothing of them left" none_exist "$P/.install.lock.stale.$$" "$S.lock.stale.$$"
+    mkdir "$S.lock" && printf '%s %s\n' "$alive" "$host" > "$S.lock/pid"
+    run_install
+    check "a lock of a running installer: refused" [ "$RC" = 1 ] && grep -qF "another installer is using $S" "$W/out"
+    check "... kept" [ "$(cat "$S.lock/pid")" = "$alive $host" ]
+    printf '%s %s\n' "$gone" "elsewhere.example" > "$S.lock/pid"
+    run_install
+    check "a lock of another host: refused" [ "$RC" = 1 ] && [ -f "$S.lock/pid" ]
+    printf 'x %s\n' "$host" > "$S.lock/pid"
+    run_install
+    check "a lock without a pid: refused" [ "$RC" = 1 ] && [ -f "$S.lock/pid" ]
+    rm -rf "$S.lock"
+    # --rollback and --uninstall take a stale prefix lock over as well
+    mkdir "$P/.install.lock" && printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
+    sh "$SRC/shellter-install.sh" --uninstall > "$W/out" 2>&1
+    check "--uninstall over a stale lock: done" [ $? = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"
+    kill "$alive" 2>/dev/null
     ;;
 lock-held-during-venv)
     # the venv is built while this installer holds the lock

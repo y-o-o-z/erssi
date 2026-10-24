@@ -523,6 +523,51 @@ safe_prefix() {
     CHK_OPT=--src
 }
 
+# ── locks ────────────────────────────────────────────────────────────
+# One installer at a time on a prefix ($PREFIX/.install.lock) and on a
+# source directory ($SRC.lock): a directory, made in one step (mkdir),
+# holding "pid host" of the installer that holds it. A lock whose
+# installer is gone (kill -9, the OOM killer, a reboot) would otherwise
+# stop every later erssi --update until someone removes it by hand, so it
+# is taken over when it names this host and ps shows no such process. A
+# lock without a pid (made by an installer before 2026.10.6, or by one
+# that has only just made it) is never taken over.
+lock_host() { uname -n 2>/dev/null || echo unknown; }
+lock_stale() {   # dir -> 0 when its installer is gone; LOCK_SEEN what it held
+    LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || return 1
+    lp=${LOCK_SEEN%% *} lh=${LOCK_SEEN#* }
+    case "$lp" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$lh" = "$(lock_host)" ] || return 1
+    # that pid is this installer: whatever held it is gone
+    [ "$lp" != "$$" ] || return 0
+    # a ps that cannot see this installer (no /proc) tells nothing
+    have ps && ps -p "$$" > /dev/null 2>&1 || return 1
+    ! ps -p "$lp" > /dev/null 2>&1
+}
+lock_take() {   # dir -> 0 when this installer holds it now
+    if ! mkdir "$1" 2>/dev/null; then
+        lock_stale "$1" || return 1
+        # moved aside in one rename: of two installers that both found it
+        # stale, only one moves it; one that moved a lock taken in between
+        # (not the one it read) gives it back
+        rm -rf "$1.stale.$$"
+        mv "$1" "$1.stale.$$" 2>/dev/null || return 1
+        if [ "$(cat "$1.stale.$$/pid" 2>/dev/null)" != "$LOCK_SEEN" ]; then
+            [ -e "$1" ] || mv "$1.stale.$$" "$1" 2>/dev/null
+            return 1
+        fi
+        rm -rf "$1.stale.$$"
+        mkdir "$1" 2>/dev/null || return 1
+    fi
+    printf '%s %s\n' "$$" "$(lock_host)" > "$1/pid" 2>/dev/null || true
+    return 0
+}
+lock_drop() {   # dir: a lock this installer holds
+    rm -f "$1/pid"
+    rmdir "$1" 2>/dev/null
+    return 0
+}
+
 # ── binary packages ──────────────────────────────────────────────────
 # A release can carry ready-made packages, one per platform:
 # erssi-<version>-<platform>.tar.xz with one top directory holding the
@@ -732,6 +777,11 @@ link_bin() {
         warn "$(tilde "$l") exists and is not a link - kept; this erssi is $(tilde "$PREFIX/bin/erssi")"
     fi
 }
+# The source build's cleanup on exit: the locks go.
+src_cleanup() {
+    [ -z "${PREFIX_LOCKED:-}" ] || lock_drop "$PREFIX/.install.lock"
+    [ -z "${SRC_LOCKED:-}" ] || lock_drop "$SRC.lock"
+}
 write_conf() {   # METHOD (binary|source)
     {
         echo "# written by shellter-install.sh - the settings erssi --update uses"
@@ -792,7 +842,7 @@ summary() {
 bin_cleanup() {
     [ -z "${STAGE:-}" ] || rm -rf "$STAGE"
     [ -z "${BWORK:-}" ] || rm -rf "$BWORK"
-    [ -z "${BLOCK:-}" ] || rmdir "$BLOCK" 2>/dev/null
+    [ -z "${BLOCK:-}" ] || lock_drop "$BLOCK"
     [ -z "${BLOG:-}" ] || rm -f "$BLOG"
     STAGE="" BWORK="" BLOCK="" BLOG=""
 }
@@ -842,7 +892,7 @@ binary_install() {
     else
         mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
         # one installer at a time on this prefix
-        mkdir "$PREFIX/.install.lock" 2>/dev/null ||
+        lock_take "$PREFIX/.install.lock" ||
             die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
         BLOCK="$PREFIX/.install.lock"
         mkdir -p "$STATE"
@@ -1134,9 +1184,9 @@ do_rollback() {
             "$(tilde "$PREFIX/current")" "$cur" "$prev"
         exit 0
     fi
-    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
+    lock_take "$PREFIX/.install.lock" ||
         die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
-    trap 'rmdir "$PREFIX/.install.lock" 2>/dev/null' EXIT
+    trap 'lock_drop "$PREFIX/.install.lock"' EXIT
     LOG=/dev/null
     switch_link "$PREFIX/current" "releases/$prev" || die "cannot switch $(tilde "$PREFIX/current") - nothing was changed"
     switch_link "$PREFIX/previous" "releases/$cur" || warn "cannot link $(tilde "$PREFIX/previous") to releases/$cur"
@@ -1189,7 +1239,7 @@ do_uninstall() {
         printf '; %s would stay.\n\n' "$(tilde "$HOME/.erssi")"
         exit 0
     fi
-    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
+    lock_take "$PREFIX/.install.lock" ||
         die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
     [ "$unlink" = 0 ] || rm -f "$l"
     rm -rf "$PREFIX" || die "cannot remove all of $PREFIX"
@@ -1500,17 +1550,18 @@ if [ "$CHECK" = 0 ]; then
 "*) die "invalid directory: $SRC" ;;
     esac
     safe_path "$(dirname -- "$SRC")"
-    mkdir "$SRC.lock" 2>/dev/null || die "another installer is using $SRC (if not, remove $SRC.lock)"
-    trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
+    lock_take "$SRC.lock" || die "another installer is using $SRC (if not, remove $SRC.lock)"
+    SRC_LOCKED=1
+    trap 'src_cleanup' EXIT
     safe_dir "$SRC"
     safe_dir "$SRC.venv"
     # and on the prefix, as the binary path, --rollback and --uninstall
     # take it: none of them may switch, replace or remove what this build
     # installs while it does
     mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
-    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
+    lock_take "$PREFIX/.install.lock" ||
         die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
-    trap 'rmdir "$SRC.lock" "$PREFIX/.install.lock" 2>/dev/null' EXIT
+    PREFIX_LOCKED=1
 fi
 mkdir -p "$STATE"
 if [ "$CHECK" = 1 ]; then

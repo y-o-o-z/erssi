@@ -164,8 +164,12 @@ changes anything there. In a rootless container or another user namespace see
 `sh shellter-install.sh --help` (`SHELLTER_INSTALL_TRUST_OVERFLOW_UID`).
 
 One installer at a time works on a prefix and on a source directory: each
-has a lock (`<prefix>/.install.lock`, `<src>.lock`), the source build
-taking both. If one is stuck, the message names the directory to remove.
+has a lock (`<prefix>/.install.lock`, `<src>.lock`) that names the
+installer's process and host. A lock left behind by an installer that was
+killed (`kill -9`, the OOM killer, a reboot) is taken over by the next one
+on the same host once that process is gone; a lock of a running installer,
+of another host, or of an installer before 2026.10.6 is not. If one is
+stuck anyway, the message names the directory to remove.
 
 ## FreeBSD
 
