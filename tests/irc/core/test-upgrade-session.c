@@ -145,6 +145,70 @@ static void test_refused_after_save(void)
 	finish(server);
 }
 
+/* every byte the server end can read now */
+static GString *peer_reads(GString *into)
+{
+	char buf[4096];
+	ssize_t n;
+
+	while ((n = read(peer, buf, sizeof(buf))) > 0)
+		g_string_append_len(into, buf, n);
+	return into;
+}
+
+static int count_lines(const char *text, const char *needle)
+{
+	int n = 0;
+
+	for (; (text = strstr(text, needle)) != NULL; text += strlen(needle))
+		n++;
+	return n;
+}
+
+/* The save sends the commands waiting in the flood queue at once; when
+ * the write then fails, the connection stays here, and those commands
+ * must not be sent a second time by the queue (no e2e module loaded,
+ * which takes them out of the queue on its own) */
+static void test_refused_after_save_sends_once(void)
+{
+	SERVER_REC *server = connected_server();
+	IRC_SERVER_REC *irc = IRC_SERVER(server);
+	GString *got = g_string_new(NULL);
+	gint64 end;
+	int i;
+
+	irc->max_cmds_at_once = 5;
+	irc->cmd_queue_speed = 60000;
+	for (i = 0; i < 10; i++) {
+		char *cmd = g_strdup_printf("PRIVMSG #x :m%d", i);
+
+		irc_send_cmd(irc, cmd);
+		g_free(cmd);
+	}
+	g_assert_nonnull(irc->cmdqueue);
+	block_while_saving = TRUE;
+	upgrade();
+	assert_kept(server);
+	/* the queue runs on, as fast as it can */
+	irc->cmd_queue_speed = 0;
+	irc->wait_cmd = 0;
+	end = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+	while (g_get_monotonic_time() < end) {
+		g_main_context_iteration(NULL, FALSE);
+		peer_reads(got);
+		g_usleep(10000);
+	}
+	g_assert_cmpint(count_lines(got->str, "PRIVMSG #x :m"), ==, 10);
+	for (i = 0; i < 10; i++) {
+		char *line = g_strdup_printf("PRIVMSG #x :m%d\r\n", i);
+
+		g_assert_cmpint(count_lines(got->str, line), ==, 1);
+		g_free(line);
+	}
+	g_string_free(got, TRUE);
+	finish(server);
+}
+
 /* a session file that can be written: the server is handed over */
 static void test_upgrade_written(void)
 {
@@ -171,6 +235,8 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/upgrade/refused-before-save", test_refused_before_save);
 	g_test_add_func("/upgrade/refused-after-save", test_refused_after_save);
+	g_test_add_func("/upgrade/refused-after-save-sends-once",
+	                test_refused_after_save_sends_once);
 	g_test_add_func("/upgrade/written", test_upgrade_written);
 
 	test_home_setup();
