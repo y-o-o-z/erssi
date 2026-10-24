@@ -98,10 +98,12 @@ gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
 /* New connections per peer, counted before TLS: each one costs a TLS
  * handshake, a private-key signature in the main loop, before any
  * password is read. A peer starts at most FE_WEB_ACCEPT_BURST of them in
- * FE_WEB_ACCEPT_WINDOW seconds; erssi's own uid is not counted
- * (fe-web-server.c). At most FE_WEB_ACCEPT_MAX_PEERS peers are counted
- * on their own; beyond that, new peers share one count. A clock that goes
- * back starts a new window. */
+ * FE_WEB_ACCEPT_WINDOW seconds. fe-web-server.c counts only peers that
+ * are one party (an address that is not loopback, a known uid that is not
+ * erssi's own); a shared or unknown key is left to the pending limit. At
+ * most FE_WEB_ACCEPT_MAX_PEERS peers are counted; for a new one beyond
+ * that, the peer counted longest ago is forgotten. A clock that goes back
+ * starts a new window. */
 #define FE_WEB_ACCEPT_BURST 8
 #define FE_WEB_ACCEPT_WINDOW 10
 #define FE_WEB_ACCEPT_MAX_PEERS 256

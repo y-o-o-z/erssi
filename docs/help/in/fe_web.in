@@ -67,7 +67,11 @@
     ON again (or restart). Nothing is written while fe_web_enabled is OFF.
 
     Keep fe_web_bind on 127.0.0.1 and put the web client behind a TLS proxy
-    or tunnel if it has to be reached from elsewhere.
+    or tunnel if it has to be reached from elsewhere. Every client behind
+    it then comes from the proxy's uid: a proxy running as you is never
+    limited or paced (it must sign its users in itself), one running as
+    another user makes all its clients one peer, with one count of new
+    connections and wrong passwords for all of them.
 
     On a shared shell box every local user can connect to a port on
     127.0.0.1. A Unix socket can be reached by you alone: the socket file

@@ -382,7 +382,6 @@ typedef struct {
 
 struct _FE_WEB_ACCEPT_LIMIT {
 	GHashTable *peers;	/* peer -> ACCEPT_COUNT */
-	ACCEPT_COUNT overflow;	/* the peers that found no room */
 };
 
 FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void)
@@ -418,23 +417,39 @@ static gboolean accept_count(ACCEPT_COUNT *c, time_t now)
 	return TRUE;
 }
 
+/* the table is full: what is over goes, else the peer counted longest
+ * ago. Evicting gives that peer a fresh count, which a new address would
+ * get anyway - while a shared count for every peer beyond the table let
+ * anyone with enough addresses keep the newcomers (the owner's phone
+ * among them) out. */
+static void accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
+{
+	GHashTableIter iter;
+	gpointer key, value, oldest = NULL;
+	time_t oldest_start = 0;
+
+	g_hash_table_iter_init(&iter, limit->peers);
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		const ACCEPT_COUNT *c = value;
+
+		if (accept_window_over(c, now))
+			g_hash_table_iter_remove(&iter);
+		else if (oldest == NULL || c->start < oldest_start) {
+			oldest = key;
+			oldest_start = c->start;
+		}
+	}
+	if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS && oldest != NULL)
+		g_hash_table_remove(limit->peers, oldest);
+}
+
 gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, time_t now)
 {
 	ACCEPT_COUNT *c = g_hash_table_lookup(limit->peers, peer);
 
-	if (c == NULL && g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS) {
-		GHashTableIter iter;
-		gpointer value;
-
-		/* only when full, so at most once per new peer */
-		g_hash_table_iter_init(&iter, limit->peers);
-		while (g_hash_table_iter_next(&iter, NULL, &value))
-			if (accept_window_over(value, now))
-				g_hash_table_iter_remove(&iter);
-	}
-	if (c == NULL && g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS)
-		return accept_count(&limit->overflow, now);
 	if (c == NULL) {
+		if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS)
+			accept_make_room(limit, now);
 		c = g_new0(ACCEPT_COUNT, 1);
 		c->start = now;
 		g_hash_table_insert(limit->peers, g_strdup(peer), c);

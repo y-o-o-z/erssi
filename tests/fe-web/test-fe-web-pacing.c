@@ -2621,8 +2621,9 @@ static void test_live_not_tcp(void)
 }
 
 /* new connections: FE_WEB_ACCEPT_BURST per peer and window, then the
- * next window; a full table makes new peers share one count, while the
- * peers already counted keep theirs; a clock that goes back starts anew */
+ * next window; a clock that goes back starts anew; a full table forgets
+ * what is over, else the peer counted longest ago - a new peer always
+ * gets a count of its own */
 static void test_accept_limit(void)
 {
 	FE_WEB_ACCEPT_LIMIT *limit = fe_web_accept_limit_new();
@@ -2636,23 +2637,31 @@ static void test_accept_limit(void)
 	g_assert_true(fe_web_accept_allow(limit, "ip:b", 100));
 	g_assert_true(fe_web_accept_allow(limit, "ip:a", 100 + FE_WEB_ACCEPT_WINDOW));
 	g_assert_true(fe_web_accept_allow(limit, "ip:a", 50));
-
 	fe_web_accept_limit_free(limit);
 
-	/* full: the others share one count */
+	/* full of peers still counting, the first counted at 200, the rest
+	 * at 201 */
 	limit = fe_web_accept_limit_new();
 	for (i = 0; i < FE_WEB_ACCEPT_MAX_PEERS; i++) {
+		int j;
+
 		g_snprintf(key, sizeof(key), "ip:%d", i);
-		g_assert_true(fe_web_accept_allow(limit, key, 200));
+		for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
+			g_assert_true(fe_web_accept_allow(limit, key, i == 0 ? 200 : 201));
 	}
-	for (i = 0; i < FE_WEB_ACCEPT_BURST; i++) {
+	/* every newcomer gets its own count */
+	for (i = 0; i < 4; i++) {
+		int j;
+
 		g_snprintf(key, sizeof(key), "ip:new%d", i);
-		g_assert_true(fe_web_accept_allow(limit, key, 200));
+		for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
+			g_assert_true(fe_web_accept_allow(limit, key, 202));
+		g_assert_false(fe_web_accept_allow(limit, key, 202));
 	}
-	g_assert_false(fe_web_accept_allow(limit, "ip:another", 200));
-	g_assert_true(fe_web_accept_allow(limit, "ip:5", 200));
-	/* once their windows are over, there is room again */
-	g_assert_true(fe_web_accept_allow(limit, "ip:another", 200 + FE_WEB_ACCEPT_WINDOW));
+	/* "ip:0" (the oldest) went first: it starts anew */
+	g_assert_true(fe_web_accept_allow(limit, "ip:0", 202));
+	/* the newest ones are still held (only peers of 201 or older went) */
+	g_assert_false(fe_web_accept_allow(limit, "ip:new3", 202));
 	fe_web_accept_limit_free(limit);
 }
 
