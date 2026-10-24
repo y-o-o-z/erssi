@@ -131,8 +131,11 @@ $made"; }
     # the version of the checkout (release_commit), 9.9.9 without one
     v=9.9.9; [ ! -f "$2/../VERSION" ] || v=$(cat "$2/../VERSION")
     printf '#!/bin/sh\necho "erssi %s (20261010 1200)"\n' "$v" > "$p/bin/erssi" && chmod 755 "$p/bin/erssi" || exit 1
-    files="include/irssi/irssi-version.h lib/irssi/modules/libfe_web.so share/irssi/help/connect share/man/man1/erssi.1"
+    # the manual: irssi.1 as before erssi 2026.10.6 with FAKE_OLD_MAN=1
+    man=erssi.1; [ "${FAKE_OLD_MAN:-}" != 1 ] || man=irssi.1
+    files="include/irssi/irssi-version.h lib/irssi/modules/libfe_web.so share/irssi/help/connect share/man/man1/$man"
     for f in $files; do : > "$p/$f" || exit 1; done
+    echo "erssi $v manual" > "$p/share/man/man1/$man"
     [ "${FAKE_INSTALL_NO_LOG:-}" = 1 ] && exit 0
     mkdir -p "$2/meson-logs" || exit 1
     {
@@ -558,7 +561,8 @@ binary_tools() {
 make_pkg() {
     pv=$1 pc=$2 pp=${3:-debian13-amd64}
     top="erssi-$pv-$pp" pd="$W/pkg/$pv-$pp" pr="$W/rel/shellter-v$pv"
-    rm -rf "$pd" && mkdir -p "$pd/$top/bin" "$pd/$top/lib/irssi/modules" "$pd/$top/share/irssi" "$pr" || exit 1
+    rm -rf "$pd" && mkdir -p "$pd/$top/bin" "$pd/$top/lib/irssi/modules" "$pd/$top/share/irssi" "$pd/$top/share/man/man1" "$pr" || exit 1
+    echo "erssi $pv manual" > "$pd/$top/share/man/man1/erssi.1"
     # shellcheck disable=SC2016 # the stand-in erssi
     pfx=${MF_PREFIX:-'cd "$(dirname "$0")/.." && pwd -P'}
     # shellcheck disable=SC2016
@@ -2282,7 +2286,7 @@ binary-rollback-uninstall)
     : > "$P/notes"
     sh "$R" --uninstall --dry-run > "$W/out" 2>&1
     check "--uninstall --dry-run: done" [ $? = 0 ]
-    check "... said what it would do" grep -qF 'would remove erssi from ~/.local/opt/erssi: 1 release(s) of its binary install, the link ~/.local/bin/erssi and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
+    check "... said what it would do" grep -qF 'would remove erssi from ~/.local/opt/erssi: 1 release(s) of its binary install, the link ~/.local/bin/erssi, the link ~/.local/share/man/man1/erssi.1 and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
     check "... nothing removed" current_is 2026.10.5
     sh "$R" --uninstall > "$W/out" 2>&1
     check "--uninstall: done" [ $? = 0 ]
@@ -2320,7 +2324,7 @@ uninstall-foreign)
     check "... with the directories meson made" grep -qx 'include/irssi' "$L/share/irssi/shellter-install.files"
     sh "$INSTALLER" --uninstall --dry-run --prefix "$L" > "$W/out" 2>&1
     check "--dry-run: done" [ $? = 0 ]
-    check "... said what it would do" grep -qF 'would remove erssi from ~/local: the 5 files its source installs put there, the link ~/.local/bin/erssi and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
+    check "... said what it would do" grep -qF 'would remove erssi from ~/local: the 5 files its source installs put there, the link ~/.local/bin/erssi, the link ~/.local/share/man/man1/erssi.1 and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
     sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
     check "--uninstall: done" [ $? = 0 ]
     check "... erssi's files removed" none_exist "$L/bin/erssi" "$L/include/irssi" "$L/lib/irssi" \
@@ -2503,6 +2507,59 @@ prefix-foreign)
     ln -s "$W/mine/erssi" "$W/up/link"
     run_install --prefix "$W/up/link"
     check "... and through a link to it: installed" [ "$RC" = 0 ]
+    ;;
+man-link)
+    # ~/.local/share/man/man1/erssi.1 links to the installed manual beside
+    # ~/.local/bin/erssi (man looks in ../share/man of PATH), through
+    # current for a binary install
+    binary_tools
+    for v in 4 5; do good_pkg "2026.10.$v" "$(fsha "2026.10.$v")"; done
+    record 2026.10.4 "$(fsha 2026.10.4)" 2026.10.5 "$(fsha 2026.10.5)"
+    ML=$HOME/.local/share/man/man1/erssi.1
+    run_release --ref main
+    check "source install: the manual linked" [ "$(readlink "$ML")" = "$P/share/man/man1/erssi.1" ]
+    check "... and readable" grep -qx 'erssi 9.9.9 manual' "$ML"
+    run_bin --ref shellter-v2026.10.4
+    check "binary install: linked through current" [ "$(readlink "$ML")" = "$P/current/share/man/man1/erssi.1" ]
+    check "... that release's" grep -qx 'erssi 2026.10.4 manual' "$ML"
+    run_bin --ref shellter-v2026.10.5
+    check "updated: the same link" [ "$(readlink "$ML")" = "$P/current/share/man/man1/erssi.1" ]
+    check "... now the new release's" grep -qx 'erssi 2026.10.5 manual' "$ML"
+    sh "$INSTALLER" --uninstall --dry-run > "$W/out" 2>&1
+    check "--uninstall --dry-run names it" grep -qF 'the link ~/.local/share/man/man1/erssi.1' "$W/out"
+    sh "$INSTALLER" --uninstall > "$W/out" 2>&1
+    RC=$?
+    check "--uninstall: the link removed" eval '[ "$RC" = 0 ] && none_exist "$ML"'
+    # a file of the user's there, or a link into somewhere else: kept
+    mkdir -p "${ML%/*}" && echo mine > "$ML"
+    run_release --ref main
+    check "a file there: kept" eval '[ "$RC" = 0 ] && [ ! -L "$ML" ] && grep -qx mine "$ML"'
+    # shellcheck disable=SC2088 # the text shown
+    check "... said so" grep -qF '~/.local/share/man/man1/erssi.1 exists and is not a link - kept' "$W/out"
+    sh "$INSTALLER" --uninstall > "$W/out" 2>&1
+    check "... and kept by --uninstall" grep -qx mine "$ML"
+    rm -f "$ML"; echo theirs > "$W/theirs.1"; ln -s "$W/theirs.1" "$ML"
+    run_release --ref main
+    check "a link elsewhere: kept" eval '[ "$RC" = 0 ] && [ "$(readlink "$ML")" = "$W/theirs.1" ]'
+    # shellcheck disable=SC2088 # the text shown
+    check "... said so" grep -qF '~/.local/share/man/man1/erssi.1 links elsewhere - kept' "$W/out"
+    sh "$INSTALLER" --uninstall > "$W/out" 2>&1
+    check "... and kept by --uninstall" [ "$(readlink "$ML")" = "$W/theirs.1" ]
+    rm -f "$ML"
+    # no ~/.local/bin link (a prefix outside the home): no manual link
+    run_release --ref main --prefix "$W/sys/erssi"
+    check "a prefix outside the home: no manual link" eval '[ "$RC" = 0 ] && none_exist "$ML"'
+    # the irssi.1 of an older install, in the record: gone once the
+    # installed release has erssi.1
+    exported FAKE_OLD_MAN=1 run_release --ref main
+    check "an older install's irssi.1: recorded" grep -qx 'share/man/man1/irssi.1' "$P/share/irssi/shellter-install.files"
+    run_release --ref main
+    check "... removed on the next install" none_exist "$P/share/man/man1/irssi.1"
+    check "... and out of the record" no_grep 'share/man/man1/irssi.1' "$P/share/irssi/shellter-install.files"
+    check "... erssi.1 linked" [ "$(readlink "$ML")" = "$P/share/man/man1/erssi.1" ]
+    exported FAKE_OLD_MAN=1 run_release --ref main
+    run_bin --ref shellter-v2026.10.5
+    check "... removed by a binary install too" none_exist "$P/share/man/man1/irssi.1"
     ;;
 binary-dry-run)
     # --dry-run downloads and checks, and changes nothing

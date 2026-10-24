@@ -102,6 +102,7 @@ What goes where:
 | `<prefix>/current` | Link to `releases/<version>`, the release in use, switched in one step (a new link renamed over the old one). |
 | `<prefix>/previous` | Link to the release in use before; `--rollback` returns to it. |
 | `<prefix>/bin/erssi` | Link to `../current/bin/erssi`; `~/.local/bin/erssi` links to it as before. |
+| `~/.local/share/man/man1/erssi.1` | Beside `~/.local/bin/erssi`: a link to the manual of the release in use (through `current`), so `man erssi` finds it; a file of yours or a link elsewhere there is kept. |
 | `<prefix>/share/irssi/shellter-install.conf` | `METHOD=binary`, `VERSION`, `COMMIT`, `PLATFORM` and the settings below. |
 | `<prefix>/share/irssi/shellter-install.files` | What the installs put into the prefix, for `--uninstall`: the files and directories of a source install (from meson's install log) and the directories a binary install made. |
 
@@ -133,7 +134,8 @@ switched to. `--uninstall` removes what this installer put into the
 prefix and nothing else: the files and directories its installs
 recorded in `shellter-install.files`, the release trees of a binary
 install, `current`, `previous`, the `bin/erssi` link, its conf and its own
-copy, and the `~/.local/bin/erssi` link to it. Anything else in the
+copy, and the `~/.local/bin/erssi` and `~/.local/share/man/man1/erssi.1`
+links into it. Anything else in the
 prefix stays, such as libraries, headers, configuration in `etc/` or man
 pages that other software built into the same `~/local`, and so does a
 directory that was there before the install or still holds such a file;

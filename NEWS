@@ -42,6 +42,11 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - the source build asks for GLib 2.70 or newer, what the build now
 	    needs, and names the version it found: an older GLib used to
 	    pass the check and fail later in meson setup
+	  - man erssi works for an install in the home: beside
+	    ~/.local/bin/erssi the installer links
+	    ~/.local/share/man/man1/erssi.1 to the manual of the release in
+	    use (a file of yours there is kept), --uninstall removes the link,
+	    and the irssi.1 an older install left is removed
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5

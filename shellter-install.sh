@@ -891,6 +891,57 @@ $mp"
         mkdir -p "$PREFIX/$md" || return 1
     done
 }
+# ~/.local/share/man/man1/erssi.1 -> the installed man page, beside the
+# ~/.local/bin/erssi link (only when link_bin made that one): man finds
+# pages in ../share/man of the directories in PATH, and the prefix's own
+# share/man is in none of them. A binary install's page is reached through
+# current, so the link stays right across updates and --rollback. A file
+# of the user's there, or a link into somewhere else, is kept.
+man_page() {   # METHOD -> the installed erssi.1 to link to, if there is one
+    if [ "$1" = binary ]; then
+        [ ! -f "$PREFIX/current/share/man/man1/erssi.1" ] || printf '%s\n' "$PREFIX/current/share/man/man1/erssi.1"
+    else
+        [ ! -f "$PREFIX/share/man/man1/erssi.1" ] || printf '%s\n' "$PREFIX/share/man/man1/erssi.1"
+    fi
+}
+man_link_ours() {   # 0 when $1 is a link into this prefix
+    [ -L "$1" ] || return 1
+    case "$(readlink "$1")" in "$PREFIX"/*) return 0 ;; esac
+    return 1
+}
+link_man() {   # METHOD
+    [ "$LINKED" = 1 ] || return 0
+    ml="$HOME/.local/share/man/man1/erssi.1"
+    mt=$(man_page "$1")
+    if [ -z "$mt" ]; then
+        # this release has no page: a link of ours to an older one goes
+        if man_link_ours "$ml"; then rm -f "$ml"; fi
+        return 0
+    fi
+    if [ -L "$ml" ] && ! man_link_ours "$ml"; then
+        warn "$(tilde "$ml") links elsewhere - kept; this erssi's manual is $(tilde "$mt")"
+        return 0
+    fi
+    if [ -e "$ml" ] && [ ! -L "$ml" ]; then
+        warn "$(tilde "$ml") exists and is not a link - kept; this erssi's manual is $(tilde "$mt")"
+        return 0
+    fi
+    [ "$(readlink "$ml" 2>/dev/null)" = "$mt" ] && return 0
+    if ! { mkdir -p "${ml%/*}" && switch_link "$ml" "$mt"; }; then
+        warn "cannot link $(tilde "$ml") - man erssi will not find the manual"
+    fi
+}
+# The irssi.1 that installs before erssi.1 put into share/man/man1 (in the
+# record): gone once the release in use has erssi.1, so that man finds
+# one manual, and out of the record
+drop_old_man() {   # METHOD
+    [ -f "$FILES" ] && grep -qx 'share/man/man1/irssi.1' "$FILES" || return 0
+    [ -n "$(man_page "$1")" ] || return 0
+    rm -f "$PREFIX/share/man/man1/irssi.1"
+    if ! { grep -vx 'share/man/man1/irssi.1' "$FILES" > "$FILES.tmp" && mv "$FILES.tmp" "$FILES"; }; then
+        rm -f "$FILES.tmp"
+    fi
+}
 write_conf() {   # METHOD (binary|source)
     {
         echo "# written by shellter-install.sh - the settings erssi --update uses"
@@ -1216,6 +1267,8 @@ binary_install() {
     [ ! -f "$RELS/$V/share/irssi/shellter-install.sh" ] ||
         cp "$RELS/$V/share/irssi/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
     link_bin
+    link_man binary
+    drop_old_man binary
     prune_releases
     bin_cleanup
     trap - EXIT
@@ -1389,11 +1442,16 @@ do_uninstall() {
     l="$HOME/.local/bin/erssi"
     unlink=0
     [ ! -L "$l" ] || [ "$(readlink "$l")" != "$PREFIX/bin/erssi" ] || unlink=1
+    # the man page link, when it leads into this prefix
+    mlk="$HOME/.local/share/man/man1/erssi.1"
+    unman=0
+    if man_link_ours "$mlk"; then unman=1; fi
     if [ "$DRY_RUN" = 1 ]; then
         what=$({
             [ "$nfiles" = 0 ] || echo "the $nfiles files its source installs put there"
             [ "$nrel" = 0 ] || echo "$nrel release(s) of its binary install"
             [ "$unlink" = 0 ] || echo "the link $(tilde "$l")"
+            [ "$unman" = 0 ] || echo "the link $(tilde "$mlk")"
             echo "its settings"
         } | awk '{ w[NR] = $0 } END { for (i = 1; i <= NR; i++) printf "%s%s", (i == 1 ? "" : i == NR ? " and " : ", "), w[i] }')
         printf '  Dry run - nothing was changed. --uninstall would remove erssi from %s: %s; files that erssi did not install there and %s would stay.\n\n' \
@@ -1404,6 +1462,7 @@ do_uninstall() {
         die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
     trap 'rm -rf "$UD"; lock_drop "$PREFIX/.install.lock"' EXIT
     [ "$unlink" = 0 ] || rm -f "$l"
+    [ "$unman" = 0 ] || rm -f "$mlk"
     RP=$(cd -P -- "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
     : > "$UD/skipped"
     # the files and links first (never a directory with what is in it),
@@ -2093,6 +2152,8 @@ rm -f "$PREFIX/share/irssi/themes/nexus.theme"
 mkdir -p "$PREFIX/share/irssi"
 record_files
 link_bin
+link_man source
+drop_old_man source
 # erssi --update runs this installer (the copy of the installed release)
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
 VERSION=$("$PREFIX/bin/erssi" --version | awk '{print $2}')
