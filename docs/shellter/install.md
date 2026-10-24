@@ -103,6 +103,7 @@ What goes where:
 | `<prefix>/previous` | Link to the release in use before; `--rollback` returns to it. |
 | `<prefix>/bin/erssi` | Link to `../current/bin/erssi`; `~/.local/bin/erssi` links to it as before. |
 | `<prefix>/share/irssi/shellter-install.conf` | `METHOD=binary`, `VERSION`, `COMMIT`, `PLATFORM` and the settings below. |
+| `<prefix>/share/irssi/shellter-install.files` | After a source install: the files and directories it put into the prefix (from meson's install log), for `--uninstall`. |
 
 The new release is unpacked next to the one in use and moved into place
 before `current` is switched, so an interrupted install leaves the release
@@ -128,11 +129,20 @@ sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --uninstall   # remove ~/.
 ```
 
 After `--rollback`, `/upgrade` in a running erssi loads the release it
-switched to. `--uninstall` removes the prefix and the `~/.local/bin/erssi`
-link to it; `~/.erssi` (configuration, logs, keys) and the source
-directory stay. It removes only a prefix this installer installed that
-holds nothing but erssi (never the home, `~/.local`, `/usr`, `/usr/local`
-or `/opt`).
+switched to. `--uninstall` removes what this installer put into the
+prefix and nothing else: the files and directories its source installs
+recorded in `shellter-install.files`, the release trees of a binary
+install, `current`, `previous`, the `bin/erssi` link, its conf and its own
+copy, and the `~/.local/bin/erssi` link to it. Anything else in the
+prefix stays, such as libraries, headers, configuration in `etc/` or man
+pages that other software built into the same `~/local`, and so does a
+directory that still holds such a file; the installer names what it left.
+The prefix itself goes only when nothing is left in it. `~/.erssi`
+(configuration, logs, keys) and the source directory stay. A source
+install made by an installer before 2026.10.6 kept no such record: then
+`--uninstall` uses the install log of the build directory it came from
+while that is still there (not after `--clean`), and otherwise removes
+nothing and asks you to install once more, which records the files.
 
 ## Options
 
@@ -150,7 +160,7 @@ or `/opt`).
 | `--keep N` | Old releases of a binary install kept besides the one in use (default 2, from 1 to 9999). |
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
-| `--uninstall` | Remove the prefix and `~/.local/bin/erssi`; `~/.erssi` stays. |
+| `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
 
 `--src`, `--repo`, `--no-test`/`--test`, `--clean`/`--no-clean`, `--source`,
 `--binary-base` and `--keep` are kept in

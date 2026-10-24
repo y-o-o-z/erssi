@@ -4,6 +4,14 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	Fixes from another full review of the code.
 
 	+ Install and update
+	  - --uninstall removes only what the installer put into the prefix:
+	    the files its source installs recorded, the release trees of a
+	    binary install, its links and its settings. Libraries, headers,
+	    configuration and man pages that other software built into the
+	    same prefix (~/local) stay, and the installer names what it left;
+	    it used to remove the whole prefix with them. A source install by
+	    an older installer is uninstalled from its build directory's
+	    install log, or after one more install
 	  - a source install takes the lock of the prefix as well, so it
 	    cannot run at the same time as --rollback, --uninstall or another
 	    install into the same prefix

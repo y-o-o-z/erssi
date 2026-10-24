@@ -136,7 +136,8 @@ erssi Shellter Edition - install and update
                  one it was started from until /upgrade)
   --dry-run      check and show what would be done; change nothing
   --rollback     switch a binary install back to the previous release
-  --uninstall    remove the prefix and ~/.local/bin/erssi; ~/.erssi stays
+  --uninstall    remove what this installer put into the prefix, and
+                 ~/.local/bin/erssi; anything else there and ~/.erssi stay
 
 What is verified: a recorded release (the default) is built only if its
 tag is signed by the release key this script carries and points to the
@@ -788,6 +789,28 @@ src_cleanup() {
     [ -z "${PREFIX_LOCKED:-}" ] || lock_drop "$PREFIX/.install.lock"
     [ -z "${SRC_LOCKED:-}" ] || lock_drop "$SRC.lock"
 }
+# What a source install put into the prefix, from meson's install log (the
+# files, and the directories it made), relative to the prefix and added to
+# what earlier source installs recorded: --uninstall removes exactly these,
+# also after a switch to a binary install, and nothing else that shares
+# the prefix.
+record_files() {
+    ml="$SRC/Build/meson-logs/install-log.txt"
+    if [ ! -f "$ml" ]; then
+        warn "meson wrote no install log - --uninstall will not know what this install put into $(tilde "$PREFIX")"
+        return 0
+    fi
+    if ! {
+        echo "# written by shellter-install.sh - what its source installs put here (--uninstall)"
+        {
+            [ ! -f "$FILES" ] || grep -v '^#' "$FILES"
+            awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' "$ml"
+        } | awk 'NF' | LC_ALL=C sort -u
+    } > "$FILES.tmp" || ! mv "$FILES.tmp" "$FILES"; then
+        rm -f "$FILES.tmp"
+        warn "cannot write $(tilde "$FILES") - --uninstall will not know what this install put there"
+    fi
+}
 write_conf() {   # METHOD (binary|source)
     {
         echo "# written by shellter-install.sh - the settings erssi --update uses"
@@ -1222,47 +1245,113 @@ do_rollback() {
     printf '\n'
     exit 0
 }
-# every entry of the directory $1 is one of the names $2 (when it exists)
-only_erssi() {
-    for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        case " $2 " in
-            *" ${e##*/} "*) ;;
-            *) die "$1 holds ${e##*/}, which erssi did not install - nothing was removed; remove erssi from it by hand" ;;
-        esac
-    done
+# The paths, relative to the prefix, that the source installs put there:
+# FILES, or, for an install before FILES was kept, meson's install log in
+# the build directory it came from, if it is still there and is the log of
+# an install into this prefix. Every path is checked: inside the prefix,
+# with no "." or ".." in it. Nothing when there is no record.
+recorded_paths() {
+    if [ -f "$FILES" ]; then
+        grep -v '^#' "$FILES"
+    elif [ -f "$SRC/Build/meson-logs/install-log.txt" ] &&
+            grep -qxF "$PREFIX/bin/erssi" "$SRC/Build/meson-logs/install-log.txt"; then
+        awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' \
+            "$SRC/Build/meson-logs/install-log.txt"
+    fi | awk '$0 == "" || /^\// || /(^|\/)\.\.?(\/|$)/ { next } !seen[$0]++'
 }
-# --uninstall: the prefix and the ~/.local/bin/erssi link to it go; ~/.erssi
-# (configuration, logs, keys) and the source directory stay. Only a prefix
-# this installer installed, holding nothing else than erssi, is removed.
+# --uninstall: what this installer put into the prefix goes, and nothing
+# else: the files and directories its source installs recorded (FILES),
+# the release trees of a binary install, current, previous, the bin/erssi
+# link into them, its conf, its own copy and the ~/.local/bin/erssi link.
+# A file another program installed in the same prefix (a library built
+# into ~/local, its headers, its configuration in etc/, a man page) stays,
+# and so does a directory that still holds one. ~/.erssi (configuration,
+# logs, keys) and the source directory stay as well.
 do_uninstall() {
     header "uninstall"
     field "prefix" "$(tilde "$PREFIX")"
     printf '\n'
     [ -f "$CONF" ] ||
         die "no erssi installed by shellter-install.sh in $PREFIX ($(tilde "$CONF") is missing) - nothing was removed"
-    p=$(cd "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
-    h=$(cd "$HOME" && pwd -P) || die "cannot open $HOME"
-    case "$h/" in "${p%/}"/*) die "$PREFIX holds your home - nothing was removed" ;; esac
-    case "$p" in /usr|/usr/local|/opt|"$h/.local") die "$PREFIX is shared with other software - nothing was removed; remove erssi from it by hand" ;; esac
-    # what erssi installs there, and nothing else
-    only_erssi "$PREFIX" "bin etc include lib lib64 libexec share releases current previous .install.lock"
-    only_erssi "$PREFIX/bin" "erssi"
-    only_erssi "$PREFIX/share" "irssi man doc"
+    [ -d "$PREFIX" ] || die "cannot open $PREFIX"
+    UD=$(mktemp -d) || die "cannot create a temporary directory"
+    trap 'rm -rf "$UD"' EXIT
+    UL=$UD/files
+    recorded_paths > "$UL"
+    if [ ! -s "$UL" ] && [ "$(conf_get METHOD)" != binary ]; then
+        die "there is no record of the files this erssi installed in $PREFIX (it was built from source by an installer before 2026.10.6, or installed by another tool) - nothing was removed; install it once more with this installer, which records them, and run --uninstall again, or remove erssi by hand"
+    fi
+    # the release trees of a binary install: a version with its MANIFEST,
+    # and the stage of an interrupted install
+    : > "$UD/rel"
+    if [ -d "$PREFIX/releases" ] && [ ! -L "$PREFIX/releases" ]; then
+        for d in "$PREFIX"/releases/* "$PREFIX"/releases/.stage.*; do
+            n=${d##*/}
+            case "$n" in
+                .stage.*) [ -d "$d" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;;
+                [0-9]*) case "$n" in *[!0-9.]*) ;; *) [ -f "$d/MANIFEST" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;; esac ;;
+            esac
+        done > "$UD/rel"
+    fi
+    nfiles=0
+    while IFS= read -r r; do
+        if [ -L "$PREFIX/$r" ] || [ -f "$PREFIX/$r" ]; then nfiles=$((nfiles + 1)); fi
+    done < "$UL"
+    nrel=$(wc -l < "$UD/rel" | tr -d ' ')
     l="$HOME/.local/bin/erssi"
     unlink=0
     [ ! -L "$l" ] || [ "$(readlink "$l")" != "$PREFIX/bin/erssi" ] || unlink=1
     if [ "$DRY_RUN" = 1 ]; then
-        printf '  Dry run - nothing was changed. --uninstall would remove %s' "$(tilde "$PREFIX")"
-        [ "$unlink" = 0 ] || printf ' and the link %s' "$(tilde "$l")"
-        printf '; %s would stay.\n\n' "$(tilde "$HOME/.erssi")"
+        what=$({
+            [ "$nfiles" = 0 ] || echo "the $nfiles files its source installs put there"
+            [ "$nrel" = 0 ] || echo "$nrel release(s) of its binary install"
+            [ "$unlink" = 0 ] || echo "the link $(tilde "$l")"
+            echo "its settings"
+        } | awk '{ w[NR] = $0 } END { for (i = 1; i <= NR; i++) printf "%s%s", (i == 1 ? "" : i == NR ? " and " : ", "), w[i] }')
+        printf '  Dry run - nothing was changed. --uninstall would remove erssi from %s: %s; files that erssi did not install there and %s would stay.\n\n' \
+            "$(tilde "$PREFIX")" "$what" "$(tilde "$HOME/.erssi")"
         exit 0
     fi
     lock_take "$PREFIX/.install.lock" ||
         die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+    trap 'rm -rf "$UD"; lock_drop "$PREFIX/.install.lock"' EXIT
     [ "$unlink" = 0 ] || rm -f "$l"
-    rm -rf "$PREFIX" || die "cannot remove all of $PREFIX"
+    # the files and links first (never a directory with what is in it)
+    while IFS= read -r r; do
+        if [ -L "$PREFIX/$r" ] || [ -f "$PREFIX/$r" ]; then
+            rm -f "$PREFIX/$r" || die "cannot remove $PREFIX/$r"
+        fi
+    done < "$UL"
+    while IFS= read -r r; do
+        rm -rf "${PREFIX:?}/$r" || die "cannot remove $PREFIX/$r"
+    done < "$UD/rel"
+    for r in current previous; do
+        case "$(readlink "$PREFIX/$r" 2>/dev/null)" in releases/*) rm -f "$PREFIX/$r" ;; esac
+    done
+    [ "$(readlink "$PREFIX/bin/erssi" 2>/dev/null)" != ../current/bin/erssi ] || rm -f "$PREFIX/bin/erssi"
+    # its own: the conf goes last, so that a removal stopped half-way can
+    # be run again
+    rm -f "$PREFIX/share/irssi/shellter-install.sh" "$FILES" "$CONF"
+    # then the directories that are empty now: those recorded, those that
+    # held what was removed, and those the binary install makes, deepest
+    # first, never the prefix's own parents
+    { cat "$UL"; printf '%s\n' releases bin share/irssi; } |
+        awk '{ print; while (sub(/\/[^\/]*$/, "")) print }' |
+        awk '!seen[$0]++ { n = gsub(/\//, "/"); print n "\t" $0 }' | sort -rn | cut -f 2- |
+        while IFS= read -r r; do
+            [ -L "$PREFIX/$r" ] || [ ! -d "$PREFIX/$r" ] || rmdir "$PREFIX/$r" 2>/dev/null || true
+        done
+    rm -rf "$UD"
+    lock_drop "$PREFIX/.install.lock"
+    trap - EXIT
+    rmdir "$PREFIX" 2>/dev/null || true
     printf '  %s%serssi removed%s from %s.\n\n' "$B" "$G" "$N" "$(tilde "$PREFIX")"
+    if [ -d "$PREFIX" ]; then
+        # a few of them, not a walk of a whole tree (a prefix may be ~)
+        left=$(cd "$PREFIX" && find . ! -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
+            awk 'NR == 4 { printf ", ..."; exit } NR > 1 { printf ", " } { printf "%s", $0 }')
+        [ -z "$left" ] || field "left" "files that erssi did not install stay in $(tilde "$PREFIX"): $left"
+    fi
     field "kept" "$(tilde "$HOME/.erssi") (your configuration, logs and keys)"
     [ ! -d "$SRC" ] || field "source" "$(tilde "$SRC") is kept - remove it by hand if you no longer build erssi"
     printf '\n'
@@ -1367,6 +1456,8 @@ if [ "$ROOT" = 1 ]; then
 fi
 # the settings of the previous install, unless given again
 CONF="$PREFIX/share/irssi/shellter-install.conf"
+# what the source installs put into the prefix, for --uninstall
+FILES="$PREFIX/share/irssi/shellter-install.files"
 [ -n "$SRC" ] || SRC=$(conf_get SRC)
 [ -n "$REPO" ] || REPO=$(conf_get REPO)
 [ -n "$RUN_TESTS" ] || RUN_TESTS=$(conf_get TESTS)
@@ -1871,6 +1962,7 @@ run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
 # erssi before 2026.10.0 shipped it
 rm -f "$PREFIX/share/irssi/themes/nexus.theme"
 mkdir -p "$PREFIX/share/irssi"
+record_files
 link_bin
 # erssi --update runs this installer (the copy of the installed release)
 cp "$SRC/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true

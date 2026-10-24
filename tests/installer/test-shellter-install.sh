@@ -106,10 +106,30 @@ EOF
 #!/bin/sh
 [ "$1" != --version ] || { echo 1.13.2; exit 0; }
 if [ "$1" = -C ] && [ "${3:-}" = install ]; then
-    p=$(cat "$2/prefix") && mkdir -p "$p/bin" || exit 1
+    p=$(cat "$2/prefix") || exit 1
+    # as meson install: the files of erssi in bin, include, lib and share,
+    # and meson-logs/install-log.txt naming them and the directories it
+    # made (only those that were not there)
+    made=""
+    for d in "$p" "$p/bin" "$p/include" "$p/include/irssi" "$p/lib" "$p/lib/irssi" "$p/lib/irssi/modules" \
+            "$p/share" "$p/share/irssi" "$p/share/irssi/help" "$p/share/man" "$p/share/man/man1"; do
+        [ -d "$d" ] || { mkdir "$d" || exit 1; made="$d
+$made"; }
+    done
     # the version of the checkout (release_commit), 9.9.9 without one
     v=9.9.9; [ ! -f "$2/../VERSION" ] || v=$(cat "$2/../VERSION")
-    printf '#!/bin/sh\necho "erssi %s (20261010 1200)"\n' "$v" > "$p/bin/erssi" && chmod 755 "$p/bin/erssi"
+    printf '#!/bin/sh\necho "erssi %s (20261010 1200)"\n' "$v" > "$p/bin/erssi" && chmod 755 "$p/bin/erssi" || exit 1
+    files="include/irssi/irssi-version.h lib/irssi/modules/libfe_web.so share/irssi/help/connect share/man/man1/erssi.1"
+    for f in $files; do : > "$p/$f" || exit 1; done
+    [ "${FAKE_INSTALL_NO_LOG:-}" = 1 ] && exit 0
+    mkdir -p "$2/meson-logs" || exit 1
+    {
+        echo "# List of files installed by Meson"
+        echo "# Does not contain files installed by custom scripts."
+        echo "$p/bin/erssi"
+        for f in $files; do echo "$p/$f"; done
+        printf '%s' "$made"
+    } > "$2/meson-logs/install-log.txt"
 fi
 exit 0
 EOF
@@ -2183,37 +2203,102 @@ binary-rollback-uninstall)
     check "... named" grep -qF 'erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it (sudo apt install git), or install the newest release with the current installer: curl -fsSL' "$W/out"
     check "... not called a signature problem" no_grep 'signatures cannot be checked' "$W/out"
     mv "$W/git.away" "$W/bin/git"
-    # --uninstall: the prefix and the link go, ~/.erssi stays
+    # --uninstall: what the installer put there and the link go; a file of
+    # the user's in the prefix and ~/.erssi stay
     mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config"
     : > "$P/notes"
-    sh "$R" --uninstall > "$W/out" 2>&1
-    check "a file of the user's in the prefix: refused" [ $? = 1 ]
-    check "... named" grep -qF 'holds notes, which erssi did not install - nothing was removed' "$W/out"
-    check "... nothing removed" current_is 2026.10.5
-    rm -f "$P/notes"
     sh "$R" --uninstall --dry-run > "$W/out" 2>&1
     check "--uninstall --dry-run: done" [ $? = 0 ]
-    check "... said what it would do" grep -qF 'would remove ~/.local/opt/erssi and the link ~/.local/bin/erssi; ~/.erssi would stay' "$W/out"
+    check "... said what it would do" grep -qF 'would remove erssi from ~/.local/opt/erssi: 1 release(s) of its binary install, the link ~/.local/bin/erssi and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
     check "... nothing removed" current_is 2026.10.5
     sh "$R" --uninstall > "$W/out" 2>&1
     check "--uninstall: done" [ $? = 0 ]
-    check "... the prefix removed" none_exist "$P"
+    check "... the releases, current, previous and bin/erssi removed" none_exist "$P/releases" "$P/current" "$P/previous" "$P/bin"
+    check "... the conf and the installer's copy removed" none_exist "$P/share"
     check "... the link removed" no_link
+    check "... no lock left" none_exist "$P/.install.lock"
+    check "... the user's file kept" [ -f "$P/notes" ]
+    check "... and named" grep -qF 'files that erssi did not install stay in ~/.local/opt/erssi: notes' "$W/out"
     check "... ~/.erssi kept" [ -f "$HOME/.erssi/config" ]
     # shellcheck disable=SC2088 # the text shown
     check "... said so" grep -qF '~/.erssi (your configuration, logs and keys)' "$W/out"
+    rm -f "$P/notes"
     sh "$INSTALLER" --uninstall > "$W/out" 2>&1
     check "nothing installed: refused" [ $? = 1 ]
-    # a prefix that holds the home, or is shared: never removed
-    mkdir -p "$HOME/share/irssi" && : > "$HOME/share/irssi/shellter-install.conf"
+    ;;
+uninstall-foreign)
+    # a prefix that other software was built into as well (~/local on a
+    # shell box: libraries, headers, their configuration, man pages):
+    # --uninstall removes what erssi's installs put there and nothing else
+    binary_tools
+    c4=$(fsha 2026.10.4)
+    record 2026.10.4 "$c4"
+    good_pkg 2026.10.4 "$c4"
+    L=$HOME/local
+    theirs="lib/libutf8proc.so.3 lib/pkgconfig/libutf8proc.pc lib64/libotr.so.5 libexec/helper
+        include/utf8proc.h etc/chafa/chafa.conf share/man/man3/chafa.3 share/man/man1/chafa.1
+        share/doc/chafa/README share/irssi/scripts/mine.pl"
+    for f in $theirs; do mkdir -p "$L/${f%/*}" && echo theirs > "$L/$f" || exit 1; done
+    # shellcheck disable=SC2317 # called through check
+    theirs_kept() { for f in $theirs; do [ "$(cat "$L/$f" 2>/dev/null)" = theirs ] || { echo "lost: $f"; return 1; }; done; }
+    run_release --ref main --prefix "$L"
+    check "source install into a shared prefix" [ "$RC" = 0 ] && [ -x "$L/bin/erssi" ]
+    check "... what it installed recorded" grep -qx 'lib/irssi/modules/libfe_web.so' "$L/share/irssi/shellter-install.files"
+    check "... with the directories meson made" grep -qx 'include/irssi' "$L/share/irssi/shellter-install.files"
+    sh "$INSTALLER" --uninstall --dry-run --prefix "$L" > "$W/out" 2>&1
+    check "--dry-run: done" [ $? = 0 ]
+    check "... said what it would do" grep -qF 'would remove erssi from ~/local: the 5 files its source installs put there, the link ~/.local/bin/erssi and its settings; files that erssi did not install there and ~/.erssi would stay' "$W/out"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    check "--uninstall: done" [ $? = 0 ]
+    check "... erssi's files removed" none_exist "$L/bin/erssi" "$L/include/irssi" "$L/lib/irssi" \
+        "$L/share/man/man1/erssi.1" "$L/share/irssi/help" "$L/share/irssi/shellter-install.conf" \
+        "$L/share/irssi/shellter-install.files" "$L/share/irssi/shellter-install.sh" "$L/.install.lock"
+    check "... every file of the other software kept" theirs_kept
+    check "... named" grep -qF 'files that erssi did not install stay in ~/local: ' "$W/out" && grep -q 'stay in ~/local: .*, \.\.\.$' "$W/out"
+    # a source install, then a binary one over it (the source install's
+    # files stay in lib/ and share/): both go; another program in bin/ stays
+    theirs="$theirs bin/chafa"
+    mkdir -p "$L/bin" && echo theirs > "$L/bin/chafa"
+    run_release --ref main --prefix "$L"
+    run_bin --prefix "$L" --ref shellter-v2026.10.4
+    check "binary over a source install" [ "$RC" = 0 ] && [ "$(readlink "$L/current")" = releases/2026.10.4 ]
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    check "--uninstall of both: done" [ $? = 0 ]
+    check "... the source install's files and the release removed" none_exist "$L/releases" "$L/current" \
+        "$L/bin/erssi" "$L/lib/irssi" "$L/include/irssi" "$L/share/irssi/help" "$L/share/irssi/shellter-install.conf"
+    check "... every file of the other software kept" theirs_kept
+    # a record that names paths outside the prefix: never followed
+    run_release --ref main --prefix "$L"
+    echo mine > "$HOME/outside"
+    printf '../outside\n%s/outside\n./bin/chafa\nbin/../bin/chafa\n' "$HOME" >> "$L/share/irssi/shellter-install.files"
+    # and a releases that is a link to release trees elsewhere
+    mkdir -p "$HOME/rels/2026.10.9" && : > "$HOME/rels/2026.10.9/MANIFEST" && ln -s "$HOME/rels" "$L/releases"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    check "a record naming paths outside: done" [ $? = 0 ] && none_exist "$L/bin/erssi"
+    check "... nothing outside removed" [ "$(cat "$HOME/outside")" = mine ] && [ -f "$HOME/rels/2026.10.9/MANIFEST" ]
+    rm -f "$L/releases"
+    check "... nor what a . or .. leads to" theirs_kept
+    # a source install by an installer that kept no record (before
+    # 2026.10.6): its build directory's install log, while it is there
+    run_release --ref main --prefix "$L"
+    rm -f "$L/share/irssi/shellter-install.files"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    check "no record, the build's install log: done" [ $? = 0 ] && none_exist "$L/bin/erssi" "$L/lib/irssi"
+    check "... every file of the other software kept" theirs_kept
+    # and without it (--clean): refused, nothing removed
+    run_release --ref main --prefix "$L" --clean
+    rm -f "$L/share/irssi/shellter-install.files"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    check "no record at all: refused" [ $? = 1 ]
+    check "... named" grep -qF 'there is no record of the files this erssi installed in' "$W/out"
+    check "... nothing removed" [ -x "$L/bin/erssi" ] && [ -f "$L/share/irssi/shellter-install.conf" ] && theirs_kept
+    # the home as the prefix: only erssi's files there go
+    rm -rf "$L"
+    mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config" && echo theirs > "$HOME/notes"
+    run_release --ref main --prefix "$HOME"
     sh "$INSTALLER" --uninstall --prefix "$HOME" > "$W/out" 2>&1
-    check "--prefix ~: refused" [ $? = 1 ]
-    check "... named" grep -q 'holds your home - nothing was removed' "$W/out"
-    check "... nothing removed" [ -f "$HOME/.erssi/config" ]
-    mkdir -p "$HOME/.local/share/irssi" && : > "$HOME/.local/share/irssi/shellter-install.conf"
-    sh "$INSTALLER" --uninstall --prefix "$HOME/.local" > "$W/out" 2>&1
-    check "--prefix ~/.local: refused" [ $? = 1 ]
-    check "... named" grep -q 'is shared with other software - nothing was removed' "$W/out"
+    check "--prefix ~: done" [ $? = 0 ] && none_exist "$HOME/bin/erssi" "$HOME/lib/irssi" "$HOME/share/irssi"
+    check "... the home and its files kept" [ -f "$HOME/.erssi/config" ] && [ "$(cat "$HOME/notes")" = theirs ]
     ;;
 binary-interrupted)
     # an install stopped half-way (Ctrl-C, a TERM) leaves a prefix that
