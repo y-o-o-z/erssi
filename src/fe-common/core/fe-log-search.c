@@ -160,7 +160,15 @@ static void close_from(int lowfd)
    handles or ignores, no terminal, only the pipe (as fd 3) open. Closing the
    copies of the IRC sockets does not touch the connections. The parent forked
    with every signal blocked: the handlers are reset first, then the mask is
-   cleared, so a SIGTERM sent right after fork() ends the child. */
+   cleared, so a SIGTERM sent right after fork() ends the child.
+
+   The child goes on to use GLib and malloc() (GDir, the regex, GStrings),
+   which is only safe after fork() while no other thread holds one of their
+   locks. erssi has other threads only now and then (libcurl's resolver
+   while an image preview downloads): should a lock be held at fork() time,
+   the child hangs, and alarm(SEARCH_TIMEOUT) or /SEARCH -stop ends it - a
+   lost search, nothing worse. Running a separate program instead would
+   remove that, at the cost of installing one. */
 static int child_detach(int fd)
 {
 	static const int sigs[] = { SIGHUP,  SIGINT,  SIGQUIT,  SIGTERM, SIGALRM,
