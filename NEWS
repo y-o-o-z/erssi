@@ -1,3 +1,59 @@
+shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.6
+
+	Fixes from another full review of 2026.10.5.
+
+	+ Core
+	  - /UPGRADE goes ahead only when the session file can be written:
+	    with a full disk or quota, or a directory erssi cannot write to,
+	    it says why and keeps every connection (before, they were all
+	    lost and the new process started with no session)
+	  - a script that handles the MONITOR replies (730/731) no longer
+	    sees them printed a second time by erssi; the built-in keepnick
+	    hides only its own targets from erssi's own print of them
+	  - with credentials in the old external file, reading the
+	    networks (at start, /RELOAD) no longer leaks their settings
+	  - /HELP CAPSICUM says that in capability mode erssi waits while a
+	    server name is looked up (a slow DNS server holds it)
+
+	+ End-to-end encryption
+	  - docs/shellter/security.md says that the server can drop whole
+	    messages or parts of a long one, or reorder them, unnoticed
+	  - the keyring is read from disk again only when the file changed,
+	    and a handshake that changed nothing writes nothing: a stranger's
+	    handshake NOTICE costs a fraction of what it did with a large
+	    keyring. One sender's handshakes are limited to 16 in 10 seconds
+	    whatever context they name
+	  - a peer whose ident holds '|' is no longer taken for a damaged
+	    entry (which skipped its acceptance and rotated the key), and
+	    /e2e export and /e2e list show its address and channel right
+	  - the plaintext pieces of a long message are wiped before they are
+	    freed
+
+	+ Web frontend (fe-web)
+	  - a key fe-web makes for TLS is ECDSA P-256: a handshake, which
+	    anyone who reaches the port can start, costs about an 18th of
+	    one with the RSA key of older versions (still used until its
+	    certificate is renewed)
+	  - a peer may open at most 8 new connections in 10 seconds; more
+	    are closed before their TLS handshake (yours are not counted)
+	  - a QUIT removes the nick from the web client's nicklists of the
+	    channels it was in only, not of every channel: a netsplit no
+	    longer floods web clients off
+	  - text the server sends in another charset (a WHOIS realname in
+	    ISO-8859-2) reaches web clients as valid UTF-8, read in
+	    recode_fallback like other messages
+	  - the startup notices, /FE_WEB STATUS and /HELP FE_WEB no longer
+	    present the AES-256-GCM layer over the messages as protection:
+	    its key comes from the password, which travels inside the same
+	    TLS connection
+	  - /HELP FE_WEB explains the login pacing, and that on the BSDs and
+	    macOS every local user is one peer on a loopback port, so
+	    fe_web_socket is what keeps users apart there; fe-web says so
+	    when it listens on TCP on those systems
+	  - the copies of a login's password (the read buffer, a refused
+	    request, the digest of the configured password) are wiped
+
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
 
