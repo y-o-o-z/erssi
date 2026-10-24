@@ -1259,6 +1259,13 @@ recorded_paths() {
             "$SRC/Build/meson-logs/install-log.txt"
     fi | awk '$0 == "" || /^\// || /(^|\/)\.\.?(\/|$)/ { next } !seen[$0]++'
 }
+# the recorded path $1 is still inside the prefix (resolved RP): its
+# directory, with every link in it followed, is RP or below it
+in_prefix() {
+    ip=$(cd -P -- "$PREFIX/$(dirname -- "$1")" 2>/dev/null && pwd -P) || return 1
+    case "$ip/" in "${RP%/}"/*) return 0 ;; esac
+    return 1
+}
 # --uninstall: what this installer put into the prefix goes, and nothing
 # else: the files and directories its source installs recorded (FILES),
 # the release trees of a binary install, current, previous, the bin/erssi
@@ -1316,10 +1323,21 @@ do_uninstall() {
         die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
     trap 'rm -rf "$UD"; lock_drop "$PREFIX/.install.lock"' EXIT
     [ "$unlink" = 0 ] || rm -f "$l"
-    # the files and links first (never a directory with what is in it)
+    RP=$(cd -P -- "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
+    : > "$UD/skipped"
+    # the files and links first (never a directory with what is in it),
+    # each only where it still is inside the prefix: a directory of the
+    # prefix that has become a link since (lib -> /shared/lib) is not
+    # followed out of it
     while IFS= read -r r; do
+        # a recorded directory that is a link now: not erssi's link
+        if [ -L "$PREFIX/$r" ] && [ -d "$PREFIX/$r" ]; then continue; fi
         if [ -L "$PREFIX/$r" ] || [ -f "$PREFIX/$r" ]; then
-            rm -f "$PREFIX/$r" || die "cannot remove $PREFIX/$r"
+            if in_prefix "$r"; then
+                rm -f "$PREFIX/$r" || die "cannot remove $PREFIX/$r"
+            else
+                printf '%s\n' "$r" >> "$UD/skipped"
+            fi
         fi
     done < "$UL"
     while IFS= read -r r; do
@@ -1334,18 +1352,23 @@ do_uninstall() {
     rm -f "$PREFIX/share/irssi/shellter-install.sh" "$FILES" "$CONF"
     # then the directories that are empty now: those recorded, those that
     # held what was removed, and those the binary install makes, deepest
-    # first, never the prefix's own parents
+    # first, never the prefix's own parents, nor one reached through a link
     { cat "$UL"; printf '%s\n' releases bin share/irssi; } |
         awk '{ print; while (sub(/\/[^\/]*$/, "")) print }' |
         awk '!seen[$0]++ { n = gsub(/\//, "/"); print n "\t" $0 }' | sort -rn | cut -f 2- |
         while IFS= read -r r; do
-            [ -L "$PREFIX/$r" ] || [ ! -d "$PREFIX/$r" ] || rmdir "$PREFIX/$r" 2>/dev/null || true
+            if [ ! -L "$PREFIX/$r" ] && [ -d "$PREFIX/$r" ] && in_prefix "$r"; then
+                rmdir "$PREFIX/$r" 2>/dev/null || true
+            fi
         done
+    skipped=$(head -n 3 "$UD/skipped" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')
     rm -rf "$UD"
     lock_drop "$PREFIX/.install.lock"
     trap - EXIT
     rmdir "$PREFIX" 2>/dev/null || true
     printf '  %s%serssi removed%s from %s.\n\n' "$B" "$G" "$N" "$(tilde "$PREFIX")"
+    [ -z "$skipped" ] ||
+        field "skipped" "reached through a link out of $(tilde "$PREFIX") now, so not removed: $skipped"
     if [ -d "$PREFIX" ]; then
         # a few of them, not a walk of a whole tree (a prefix may be ~)
         left=$(cd "$PREFIX" && find . ! -type d 2>/dev/null | head -n 4 | sed 's|^\./||' |
@@ -1380,7 +1403,7 @@ unset CDPATH        # cd in $(...) must print nothing
 # this installer's own, and rm -rf'ed, or have another installer's lock
 # dropped, on an early exit such as an up to date erssi --update
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
-UD="" UL="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
+UD="" UL="" RP="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""

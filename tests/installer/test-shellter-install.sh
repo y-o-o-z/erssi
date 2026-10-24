@@ -2309,6 +2309,19 @@ uninstall-foreign)
     check "no record at all: refused" [ $? = 1 ]
     check "... named" grep -qF 'there is no record of the files this erssi installed in' "$W/out"
     check "... nothing removed" eval '[ -x "$L/bin/erssi" ] && [ -f "$L/share/irssi/shellter-install.conf" ] && theirs_kept'
+    # a recorded directory that has become a link out of the prefix: not
+    # followed, what is behind it stays and is named
+    # (lib/ there before the install, so not recorded as made by it)
+    rm -rf "$L"
+    mkdir -p "$L/lib"
+    run_release --ref main --prefix "$L"
+    mv "$L/lib" "$HOME/elsewhere-lib" && ln -s "$HOME/elsewhere-lib" "$L/lib"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    RC=$?
+    check "a recorded directory now a link out of the prefix: done" eval '[ "$RC" = 0 ] && none_exist "$L/bin/erssi"'
+    check "... nothing behind the link removed" [ -f "$HOME/elsewhere-lib/irssi/modules/libfe_web.so" ]
+    check "... named" grep -qF 'reached through a link out of ~/local now, so not removed: lib/irssi/modules/libfe_web.so' "$W/out"
+    rm -rf "$L" "$HOME/elsewhere-lib"
     # the home as the prefix: only erssi's files there go
     rm -rf "$L"
     mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config" && echo theirs > "$HOME/notes"
