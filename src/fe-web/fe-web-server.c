@@ -1845,11 +1845,13 @@ static void server_listen_unix(const char *value)
 	listen_tag = i_input_add(listen_channel, I_INPUT_READ,
 	                         (GInputFunction) sig_listen, NULL);
 
+	/* the AES-256-GCM layer is not named as protection: its key comes
+	   from fe_web_password, which the client sends inside the same TLS
+	   connection (/HELP FE_WEB) */
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server listening on unix:%s (SSL + AES-256-GCM)", path);
+	          "fe-web: WebSocket server listening on unix:%s (TLS)", path);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled, "
-	          "socket 0600, only your own processes");
+	          "fe-web: Security: TLS, socket 0600, only your own processes");
 }
 
 /* Start the server; TRUE when it listens (also when it already did) */
@@ -1936,10 +1938,11 @@ gboolean fe_web_server_init(void)
 	                         (GInputFunction) sig_listen, NULL);
 
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server listening on wss://%s:%d (SSL + AES-256-GCM)",
+	          "fe-web: WebSocket server listening on wss://%s:%d (TLS)",
 	          bind_addr, port);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled");
+	          "fe-web: Security: TLS with the certificate in ~/.erssi/fe-web-cert.pem: "
+	          "a web client that pins it cannot be fooled by another listener");
 	return TRUE;
 }
 

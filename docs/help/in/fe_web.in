@@ -46,9 +46,18 @@
             NexusIRC sends it. A URL can end up in the logs of proxies, so
             the header is the better way.
 
-    Connections always use TLS (wss://) with a self-signed certificate,
-    and the messages are additionally encrypted with AES-256-GCM using a
-    key derived from fe_web_password. The certificate and its key are made
+    Connections always use TLS (wss://) with a self-signed certificate.
+    TLS is what protects them: have the web client pin that certificate,
+    and do not let anything you do not trust end the TLS connection in
+    between. The messages are also encrypted with AES-256-GCM, with a key
+    derived from fe_web_password, but that layer protects nothing TLS
+    does not: the client sends the password inside the same TLS
+    connection, so whoever can read it (a man in the middle of a client
+    that does not check the certificate, a TLS proxy or tunnel) has the
+    key too; the key is the same for every session and both directions,
+    and messages from a client are accepted without it as well.
+
+    The certificate and its key are made
     the first time the server starts and kept in ~/.erssi/fe-web-cert.pem
     and ~/.erssi/fe-web-key.pem (mode 0600); a key that other users can
     read, or that is not yours, is replaced with a new one. A symbolic
