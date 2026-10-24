@@ -747,6 +747,10 @@ switch_link() {
 # always stays, and the one --rollback returns to counts first
 prune_releases() {
     RELS="$PREFIX/releases"
+    # what a prune stopped half-way left (renamed, so never reused)
+    for s in "$RELS"/.pruning-*; do
+        [ ! -e "$s" ] || rm -rf "$s"
+    done
     cur=$(link_release current) prev=$(link_release previous) kept=0
     [ -z "$prev" ] || [ "$prev" = "$cur" ] || kept=1
     for v in $(for d in "$RELS"/*; do
@@ -754,7 +758,11 @@ prune_releases() {
             case "$d" in [0-9]*) case "$d" in *[!0-9.]*) ;; *) echo "$d" ;; esac ;; esac
         done | sort -t. -k1,1nr -k2,2nr -k3,3nr); do
         if [ "$v" = "$cur" ] || [ "$v" = "$prev" ]; then continue; fi
-        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); else rm -rf "${RELS:?}/$v"; fi
+        if [ "$kept" -lt "$KEEP" ]; then kept=$((kept + 1)); continue; fi
+        # renamed out of the version names first: an rm -rf stopped
+        # half-way must not leave a tree that a later install of that
+        # version takes for the whole release (its MANIFEST still there)
+        mv "${RELS:?}/$v" "$RELS/.pruning-$v" 2>/dev/null && rm -rf "$RELS/.pruning-$v"
     done
     # what an interrupted install left behind (the lock keeps out another)
     for s in "$RELS"/.stage.*; do
@@ -1308,10 +1316,10 @@ do_uninstall() {
     # and the stage of an interrupted install
     : > "$UD/rel"
     if [ -d "$PREFIX/releases" ] && [ ! -L "$PREFIX/releases" ]; then
-        for d in "$PREFIX"/releases/* "$PREFIX"/releases/.stage.*; do
+        for d in "$PREFIX"/releases/* "$PREFIX"/releases/.stage.* "$PREFIX"/releases/.pruning-*; do
             n=${d##*/}
             case "$n" in
-                .stage.*) [ -d "$d" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;;
+                .stage.*|.pruning-*) [ -d "$d" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;;
                 [0-9]*) case "$n" in *[!0-9.]*) ;; *) [ -f "$d/MANIFEST" ] && [ ! -L "$d" ] && printf 'releases/%s\n' "$n" ;; esac ;;
             esac
         done > "$UD/rel"

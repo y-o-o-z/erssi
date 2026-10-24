@@ -2361,14 +2361,22 @@ binary-interrupted)
     # while old releases are removed: the conf already names the release
     # current points to
     # shellcheck disable=SC2016 # stand-in scripts
-    printf '#!/bin/sh\ncase "$*" in *"$FAKE_TERM_AT"*) kill -TERM "$PPID" ;; esac\nexec "$TEST_W/bin/rm" "$@"\n' | stand rm
+    # (the stand-in rm removes only bin/ of the release, as one stopped
+    # half-way does)
+    printf '#!/bin/sh\ncase "$*" in *"$FAKE_TERM_AT"*) for a in "$@"; do [ ! -d "$a" ] || "$TEST_W/bin/rm" -rf "$a/bin"; done; kill -TERM "$PPID"; exit 1 ;; esac\nexec "$TEST_W/bin/rm" "$@"\n' | stand rm
     use_tool rm
-    exported FAKE_TERM_AT=releases/2026.10.1 run_bin --ref shellter-v2026.10.4 --keep 1
+    exported FAKE_TERM_AT=2026.10.1 run_bin --ref shellter-v2026.10.4 --keep 1
     rm -f "$W/shim/rm"
     check "TERM while pruning: interrupted" [ "$RC" = 130 ]
     check "... 2026.10.4 in use" current_is 2026.10.4
     check "... and recorded" eval 'grep -qx VERSION=2026.10.4 "$CONF" && grep -qx "COMMIT=$(fsha 2026.10.4)" "$CONF" && grep -qx METHOD=binary "$CONF"'
     check "... no lock left" none_exist "$P/.install.lock"
+    check "... the half-removed release not under its version" none_exist "$P/releases/2026.10.1"
+    # that release installed again: unpacked whole, not the half tree
+    run_bin --ref shellter-v2026.10.1 --keep 2
+    check "the half-pruned release installed again: whole" current_is 2026.10.1
+    check "... what the prune left removed" eval 'none_exist "$P"/releases/.pruning-*'
+    run_bin --ref shellter-v2026.10.4
     # a release of the same version but another package moved aside, the
     # new one not yet moved in: the old one goes back, previous keeps it
     echo rebuilt=1 >> "$P/releases/2026.10.3/MANIFEST"
