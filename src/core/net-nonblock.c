@@ -107,8 +107,14 @@ static GInetAddress *ipaddr_to_inet(const IPADDR *ip)
 
 /* In capability mode GResolver cannot reach DNS (no sockets, no
    resolv.conf): the lookup goes to the helper process outside the
-   sandbox, as irssi 1.4 did. The helper answers at once; the result is
-   handed over from the main loop, like GResolver's. */
+   sandbox, as irssi 1.4 did. The result is handed over from the main
+   loop, like GResolver's, but the lookup itself is not asynchronous:
+   capsicum_net_gethostbyname() waits for the helper's answer, and the
+   helper for getaddrinfo(), so a slow or broken DNS server holds the
+   whole client (input, other connections, their pings) until the
+   resolver gives up. The helper serves one request at a time on one
+   socket, which the connect requests share; a lookup that does not wait
+   needs the replies matched to their requests there first. */
 static gboolean capsicum_lookup_done(CAPSICUM_LOOKUP_REC *rec)
 {
 	RESOLVED_IP_REC *iprec;
