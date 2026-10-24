@@ -27,6 +27,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    an extension other than jpg, jpeg, png, gif and webp) is found in
 	    the cache again: it was saved under another name than the one
 	    looked for, and downloaded again for every line with the link
+	  - a download is written as <name>.part and gets the cache's name
+	    only when complete: a download that failed or was cancelled
+	    after /CLEAR or closing its window left its partial file in the
+	    cache, shown as a broken picture on the next click
 	  - the picture of a page (og:image) is found when the page writes
 	    its address with &amp; or relative to the page ("/img.png",
 	    "//cdn.example.net/x.png"): it is decoded and resolved against

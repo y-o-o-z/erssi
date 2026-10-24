@@ -34,6 +34,7 @@
 struct _IMAGE_FETCH_REC {
 	char *url;               /* URL being fetched */
 	char *cache_path;        /* Target cache path */
+	char *part_path;         /* written here, renamed to cache_path when complete */
 	CURL *curl_handle;       /* curl easy handle */
 	FILE *fp;                /* Output file handle */
 	LINE_REC *line;          /* Associated line in textbuffer */
@@ -957,10 +958,19 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		                          fetch->content_length, fetch->received_bytes);
 		success = FALSE;
 		error = "Incomplete download";
-		/* Remove partial file */
-		if (fetch->cache_path != NULL) {
-			unlink(fetch->cache_path);
+	}
+
+	/* complete: under the cache's name; anything else: gone, whether or
+	 * not the line still has a record */
+	if (fetch->part_path != NULL) {
+		if (success && rename(fetch->part_path, fetch->cache_path) != 0) {
+			image_preview_debug_print("FETCH: rename to %s failed: %s",
+			                          fetch->cache_path, strerror(errno));
+			success = FALSE;
+			error = "Failed to save the download";
 		}
+		if (!success)
+			unlink(fetch->part_path);
 	}
 
 	/* Remove from curl multi */
@@ -981,11 +991,6 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 			/* the new file may take the cache over its size limit */
 			image_cache_enforce_limit(fetch->cache_path);
 		} else {
-			/* Remove failed download file */
-			if (fetch->cache_path != NULL) {
-				unlink(fetch->cache_path);
-			}
-
 			/* Check if we can retry (max 1 retry) */
 			if (preview->retry_count < 1) {
 				RetryData *retry;
@@ -1052,6 +1057,10 @@ static void fetch_rec_free(IMAGE_FETCH_REC *fetch)
 	if (fetch->fp != NULL) {
 		fclose(fetch->fp);
 	}
+	/* a download that did not complete (cancelled, deinit, failed): after
+	 * a completed one the .part file was renamed and this does nothing */
+	if (fetch->part_path != NULL)
+		unlink(fetch->part_path);
 
 	if (fetch->curl_handle != NULL) {
 		if (curl_multi != NULL) {
@@ -1066,15 +1075,17 @@ static void fetch_rec_free(IMAGE_FETCH_REC *fetch)
 
 	g_free(fetch->url);
 	g_free(fetch->cache_path);
+	g_free(fetch->part_path);
 	g_free(fetch->original_url);
 	g_free(fetch);
 }
 
-/* The download is written in place, under the cache's name (see
- * cache_cleanup() for why files being downloaded keep that name): not
- * through a symbolic link, never into a FIFO or another user's file. A
- * partial file is removed when the download fails, and a cached file is
- * checked for an image's magic bytes before it is shown. */
+/* The download is written to <cache name>.part: not through a symbolic
+ * link, never into a FIFO or another user's file. Only a complete download
+ * is renamed to the cache's name, so the cache never finds a partial file
+ * (its first bytes would pass the check for an image's magic bytes); the
+ * .part file is removed when the download fails, is cancelled or is still
+ * running when the module goes (fetch_rec_free()). */
 static FILE *open_cache_file(const char *path)
 {
 	FILE *fp;
@@ -1090,6 +1101,13 @@ static FILE *open_cache_file(const char *path)
 		errno = err;
 	}
 	return fp;
+}
+
+static FILE *open_part_file(IMAGE_FETCH_REC *fetch)
+{
+	if (fetch->part_path == NULL)
+		fetch->part_path = g_strconcat(fetch->cache_path, ".part", NULL);
+	return open_cache_file(fetch->part_path);
 }
 
 /* Start stage 2: fetch actual image from og:image URL */
@@ -1117,7 +1135,7 @@ static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_imag
 	fetch->received_bytes = 0;  /* Reset for stage 2 */
 
 	/* Open cache file for image */
-	fetch->fp = open_cache_file(fetch->cache_path);
+	fetch->fp = open_part_file(fetch);
 	if (fetch->fp == NULL) {
 		image_preview_debug_print("FETCH: stage2 failed to open cache file: %s", strerror(errno));
 		fetch_complete(fetch, FALSE, "Failed to open cache file");
@@ -1232,7 +1250,7 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 		fetch->html_buffer = NULL;
 
 		/* Open output file */
-		fetch->fp = open_cache_file(cache_path);
+		fetch->fp = open_part_file(fetch);
 		if (fetch->fp == NULL) {
 			g_warning("image-fetch: Failed to open %s for writing: %s",
 			          cache_path, strerror(errno));

@@ -250,10 +250,88 @@ static void test_download_completes(void)
 	g_free(dir);
 }
 
+/* runs the main loop for ms milliseconds */
+static void run_loop(int ms)
+{
+	GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+
+	g_timeout_add(ms, quit_loop, loop);
+	g_main_loop_run(loop);
+	g_main_loop_unref(loop);
+}
+
+/* nothing under the cache's name (nor its .part) in dir */
+static void assert_no_file(const char *dir, const char *path, const char *what)
+{
+	char *part = g_strconcat(path, ".part", NULL);
+	GDir *d;
+	const char *name;
+
+	if (g_file_test(path, G_FILE_TEST_EXISTS))
+		g_error("%s: a partial file is left under the cache's name", what);
+	if (g_file_test(part, G_FILE_TEST_EXISTS))
+		g_error("%s: the .part file is left", what);
+	d = g_dir_open(dir, 0, NULL);
+	g_assert_nonnull(d);
+	while ((name = g_dir_read_name(d)) != NULL)
+		g_error("%s: %s left in the cache", what, name);
+	g_dir_close(d);
+	g_free(part);
+}
+
+/* A download of a line whose record went (/CLEAR, window closed - here
+ * image_preview_get_url() always says so) that fails, is cancelled or is
+ * still running at deinit leaves no file the cache would take for the
+ * picture: it is written as .part and only renamed when complete */
+static void test_failed_download_leaves_nothing(void)
+{
+	static const char *const how[] = { "server cut it", "cancelled", "deinit" };
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS(how); i++) {
+		GThread *server;
+		char *dir, *path, *url;
+		int port, waited;
+
+		/* "server cut it": 500 of the 1000000 announced bytes */
+		server_chunks = i == 0 ? 5 : 150;
+		server_length = 1000000;
+		server = start_server(&port);
+		dir = g_dir_make_tmp("image-fetch-loop-XXXXXX", NULL);
+		g_assert_nonnull(dir);
+		path = g_build_filename(dir, "picture.png", NULL);
+		url = g_strdup_printf("http://127.0.0.1:%d/picture.png", port);
+
+		image_fetch_init();
+		g_assert_true(image_fetch_start(url, path, NULL, NULL, FALSE));
+		run_loop(300);
+		if (i == 1)
+			image_fetch_cancel(url);
+		if (i != 2) {
+			for (waited = 0; waited < 50 && g_hash_table_size(active_fetches) > 0;
+			     waited++)
+				run_loop(100);
+			g_assert_cmpuint(g_hash_table_size(active_fetches), ==, 0);
+		}
+		image_fetch_deinit();
+		assert_no_file(dir, path, how[i]);
+
+		server_stop = TRUE;
+		g_thread_join(server);
+		close(listen_fd);
+		g_rmdir(dir);
+		g_free(url);
+		g_free(path);
+		g_free(dir);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
 	g_test_add_func("/image-fetch/download_does_not_block", test_download_does_not_block);
 	g_test_add_func("/image-fetch/download_completes", test_download_completes);
+	g_test_add_func("/image-fetch/failed_download_leaves_nothing",
+	                test_failed_download_leaves_nothing);
 	return g_test_run();
 }

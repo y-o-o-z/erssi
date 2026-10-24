@@ -247,17 +247,24 @@ char *image_cache_get(const char *url)
 }
 
 /* TRUE for the name of a file the cache writes: the SHA-256 of the URL in
- * lower-case hex and a short extension (see generate_cache_path()). Nothing else in the directory is deleted,
- * even when the directory is not the one erssi made. */
+ * lower-case hex and a short extension (see generate_cache_path()), or that
+ * name with ".part" (a download in progress, or one left by a crash: it is
+ * never looked up, but it counts towards the size and is removed with the
+ * rest). Nothing else in the directory is deleted, even when the directory
+ * is not the one erssi made. */
 static gboolean is_cache_file_name(const char *name)
 {
+	size_t len;
 	int i;
 
 	for (i = 0; i < 64; i++) {
 		if (!g_ascii_isxdigit(name[i]) || g_ascii_isupper(name[i]))
 			return FALSE;
 	}
-	return name[64] == '.' && name[65] != '\0' && strlen(name + 64) <= 6;
+	len = strlen(name + 64);
+	if (len > 5 && strcmp(name + 64 + len - 5, ".part") == 0)
+		len -= 5;
+	return name[64] == '.' && len >= 2 && len <= 6;
 }
 
 /* Opens the cache directory for reading entries relative to it */
