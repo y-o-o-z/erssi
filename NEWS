@@ -10,8 +10,13 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    UTF-8, so a name with a Cyrillic letter could send ESC (and with it
 	    a clipboard write by OSC 52, a new window title, ...). C0, DEL and
 	    C1 are now drawn as '?' by the terminal output itself, also in
-	    UTF-8 mode, and a Latin-1 or other 8-bit name is shown as its bytes
-	    there, as the text view shows it
+	    UTF-8 mode, and an 8-bit name is shown as its bytes there, as the
+	    text view shows it. What now shows as '?': on an 8-bit terminal
+	    the bytes 0x80-0x9F (ISO-8859-x is not affected, but CP125x
+	    letters there are, such as CP1250 ś Ś ź Ź); on a Big5 terminal
+	    the lead bytes 0x81-0xA0 (HKSCS, user-defined area); on a UTF-8
+	    terminal bytes that are not valid UTF-8 in the text view and the
+	    status bar (the side panels show U+FFFD for them)
 	  - with term_notify on, a focus report the terminal sends in two
 	    pieces (over a slow ssh link) is still read as one: it used to
 	    become the keys ESC [ I or ESC [ O, and the focus change was
