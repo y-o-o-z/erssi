@@ -35,7 +35,7 @@ foreach name : e2e_fuzz_targets
       timeout : 120)
   else
     replay = executable('e2e-' + name + '-replay',
-      files(name + '.c', 'replay.c'),
+      files(name + '.c', '../replay.c'),
       link_with : libe2e_proto_a,
       include_directories : rootinc,
       implicit_include_directories : false,

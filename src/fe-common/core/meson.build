@@ -62,18 +62,19 @@ libfe_common_core_a = static_library('fe_common_core',
   ],
   dependencies : dep)
 
-if want_fuzzer
-  libfuzzer_fe_common_core_a = static_library('fuzzer_fe_common_core',
-    fe_common_core_sources,
-    include_directories : rootinc,
-    implicit_include_directories : false,
-    c_args : [
-      def_helpdir,
-      def_themesdir,
-      def_suppress_printf_fallback,
-    ],
-    dependencies : dep)
-endif
+# for the fuzz targets and their corpus replays (src/fe-fuzz): no
+# printf() fallback on stdout for text that no window prints
+libfuzzer_fe_common_core_a = static_library('fuzzer_fe_common_core',
+  fe_common_core_sources,
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  c_args : [
+    def_helpdir,
+    def_themesdir,
+    def_suppress_printf_fallback,
+  ],
+  build_by_default : false,
+  dependencies : dep)
 
 install_headers(
   files(

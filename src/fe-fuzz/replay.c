@@ -13,7 +13,9 @@
  `meson test`. Arguments are files or directories of files.
 */
 
-#include <irssi/src/fe-fuzz/fe-web/fe-web-fuzz.h>
+#include <irssi/src/fe-fuzz/fuzz-target.h>
+
+#include <glib.h>
 
 #include <stdio.h>
 #include <stdlib.h>

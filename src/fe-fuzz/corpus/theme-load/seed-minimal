@@ -1,0 +1,5 @@
+default_color = "-1";
+info_eol = "false";
+replaces = { "[]=" = "%K$*%n"; };
+abstracts = { line_start = "%B-%n!%B-%n "; timestamp = "$*"; };
+formats = { "fe-common/core" = { join = "{channick_hilight $0} has joined"; }; };

@@ -25,9 +25,8 @@ subdir('fe-ansi')
 if want_bot
   subdir('fe-none')
 endif
-if want_fuzzer
-  subdir('fe-fuzz')
-endif
+# replayed by `meson test` in every build, fuzzed with -Dwith-fuzzer=yes
+subdir('fe-fuzz')
 if have_fe_web
   # replayed by `meson test` in every build, fuzzed with -Dwith-fuzzer=yes
   subdir('fe-fuzz/fe-web')
