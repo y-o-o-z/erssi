@@ -8,13 +8,26 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope', 'outq', 'state']
     implicit_include_directories : false,
     dependencies : dep,
   )
-  # scope sweeps every code point and 100k random names: ~50 s in ASan;
-  # proto floods the request limits with ~1000 signed KEYREQs: ~16 s
-  test('test-e2e-' + name + ' test', exe,
-    env : test_env,
-    args : ['--tap'],
-    protocol : 'tap',
-    timeout : {'scope' : 300, 'proto' : 120}.get(name, 30))
+  # scope sweeps every code point and 100k random names (~50 s in ASan),
+  # proto floods the request limits with signed KEYREQs (~17 s): run in
+  # parts, each its own process (E2E_TEST_PART), so that no single test
+  # holds that much work - whole, they ran into the time limit on loaded
+  # runners. The parts are a few seconds each alone; the limit leaves room
+  # for a runner many times slower.
+  parts = {
+    'scope' : ['main', 'sweep-0', 'sweep-1', 'sweep-2', 'sweep-3'],
+    'proto' : ['proto', 'other'],
+  }.get(name, [''])
+  foreach part : parts
+    part_env = environment()
+    part_env.set('HOME', meson.build_root() / 'test-home')
+    part_env.set('E2E_TEST_PART', part)
+    test('test-e2e-' + name + (part == '' ? '' : ' ' + part) + ' test', exe,
+      env : part == '' ? test_env : part_env,
+      args : ['--tap'],
+      protocol : 'tap',
+      timeout : part == '' ? 30 : 120)
+  endforeach
 endforeach
 
 # native module <-> rpe2e.pl on a local fake IRC server, in a private tmux
