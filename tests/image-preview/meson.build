@@ -54,3 +54,22 @@ test('test-image-records test', test_test_image_records,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# a download does not hold up the main loop (a local server, allowed only
+# in this test)
+test_test_image_fetch_loop = executable('test-image-fetch-loop',
+  files(
+    'test-image-fetch-loop.c',
+    '../../src/core/safe-file.c',
+  ),
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'image-preview' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : [dep, curl_dep]
+)
+test('test-image-fetch-loop test', test_test_image_fetch_loop,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

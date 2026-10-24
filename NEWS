@@ -28,6 +28,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    "//cdn.example.net/x.png"): it is decoded and resolved against
 	    the page's address before it is downloaded; it must still be an
 	    http or https address
+	  - typing and drawing no longer lag while a picture downloads: curl
+	    waited up to 50 ms at a time (up to half a second while data
+	    came in) inside erssi's main loop; it is now only called when
+	    one of its sockets is ready or its timer is due
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5

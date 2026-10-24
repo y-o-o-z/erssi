@@ -55,8 +55,13 @@ static CURLM *curl_multi = NULL;
 /* Active fetches: url -> IMAGE_FETCH_REC */
 static GHashTable *active_fetches = NULL;
 
-/* GMainLoop timer for processing */
-static guint curl_timer_tag = 0;
+/* libcurl is driven from the main loop: it names the sockets to watch
+ * (CURLMOPT_SOCKETFUNCTION) and when to call it back (CURLMOPT_TIMERFUNCTION),
+ * and is only called when one of them is ready or the time has come. It
+ * never waits itself, so a download does not hold up input and drawing. */
+static GHashTable *curl_watches = NULL; /* socket -> GSource id */
+static guint curl_timeout_tag = 0;
+static int curl_running = 0;            /* transfers curl has going */
 
 /* Maximum concurrent fetches */
 #define MAX_CONCURRENT_FETCHES 3
@@ -151,15 +156,14 @@ gboolean image_fetch_is_active(const char *url)
 		return FALSE;
 	}
 
-	/* Check if curl actually has active transfers */
-	if (curl_multi != NULL) {
-		curl_multi_perform(curl_multi, &still_running);
-	}
-
-	/* Active means: in hash table AND (timer running OR curl has active transfers) */
-	active = (curl_timer_tag != 0 || still_running > 0);
+	/* Active means: in hash table, with its transfer in curl, and curl
+	 * waiting for a socket or its timer */
+	still_running = curl_running;
+	active = fetch->curl_handle != NULL &&
+		(still_running > 0 || curl_timeout_tag != 0 ||
+		 (curl_watches != NULL && g_hash_table_size(curl_watches) > 0));
 	image_preview_debug_print("FETCH_IS_ACTIVE: %s found, timer=%u still_running=%d -> %s",
-	                          url, curl_timer_tag, still_running, active ? "ACTIVE" : "STUCK");
+	                          url, curl_timeout_tag, still_running, active ? "ACTIVE" : "STUCK");
 	return active;
 }
 
@@ -170,8 +174,9 @@ void image_fetch_debug_dump(void)
 	gpointer key, value;
 	int count = 0;
 
-	image_preview_debug_print("FETCH_DUMP: curl_multi=%p timer_tag=%u",
-	                          (void*)curl_multi, curl_timer_tag);
+	image_preview_debug_print("FETCH_DUMP: curl_multi=%p timer_tag=%u running=%d sockets=%u",
+	                          (void*)curl_multi, curl_timeout_tag, curl_running,
+	                          curl_watches != NULL ? g_hash_table_size(curl_watches) : 0);
 
 	if (active_fetches == NULL) {
 		image_preview_debug_print("FETCH_DUMP: active_fetches is NULL!");
@@ -194,13 +199,6 @@ void image_fetch_debug_dump(void)
 		                          count++, fetch->url, stage_str, fetch->cancelled);
 	}
 
-	/* Check curl multi status */
-	if (curl_multi != NULL) {
-		int still_running;
-		CURLMcode mc = curl_multi_perform(curl_multi, &still_running);
-		image_preview_debug_print("FETCH_DUMP: curl_multi_perform: mc=%d still_running=%d",
-		                          mc, still_running);
-	}
 }
 
 /* A clicked link is someone else's URL: it may only lead to a public web
@@ -255,6 +253,11 @@ static gboolean address_is_public(const struct sockaddr *sa)
 	return FALSE;
 }
 
+/* the test of the main loop downloads from this host */
+#ifndef IMAGE_FETCH_ADDRESS_ALLOWED
+#define IMAGE_FETCH_ADDRESS_ALLOWED(sa) address_is_public(sa)
+#endif
+
 /* The socket of a download is close-on-exec: neither /EXEC children nor
  * the programs scripts start, nor the binary /UPGRADE runs, get it. curl
  * does not set that on its sockets, so it is done here. */
@@ -263,7 +266,7 @@ static curl_socket_t open_public_socket(void *clientp, curlsocktype purpose,
 {
 	curl_socket_t fd;
 
-	if (!address_is_public(&address->addr)) {
+	if (!IMAGE_FETCH_ADDRESS_ALLOWED(&address->addr)) {
 		image_preview_debug_print("FETCH: refusing to connect to a local address");
 		return CURL_SOCKET_BAD;
 	}
@@ -631,59 +634,12 @@ static char *og_image_url(const char *html, const char *page_url)
 	return url;
 }
 
-/* Process curl events - called from GMainLoop */
-static gboolean curl_process(gpointer data)
+/* Hands every finished transfer to fetch_complete() */
+static void check_multi_info(void)
 {
-	int still_running;
-	CURLMcode mc;
 	CURLMsg *msg;
 	int msgs_left;
-	static int call_count = 0;
-	int numfds;
-	int max_loops = 10;  /* Prevent infinite loops */
 
-	if (curl_multi == NULL)
-		return FALSE;
-
-	call_count++;
-
-	/* First perform to drive any pending work */
-	mc = curl_multi_perform(curl_multi, &still_running);
-	if (mc != CURLM_OK) {
-		image_preview_debug_print("FETCH: curl_multi_perform failed: %s",
-		                          curl_multi_strerror(mc));
-	}
-
-	/* Keep polling and performing while there's activity */
-	while (still_running > 0 && max_loops-- > 0) {
-		/* Wait for activity (up to 50ms) - gives curl time to receive data */
-		mc = curl_multi_poll(curl_multi, NULL, 0, 50, &numfds);
-		if (mc != CURLM_OK) {
-			image_preview_debug_print("FETCH: curl_multi_poll failed: %s",
-			                          curl_multi_strerror(mc));
-			break;
-		}
-
-		/* If no file descriptors had activity and no timeout, break */
-		if (numfds == 0) {
-			/* Still do one more perform in case data arrived */
-			mc = curl_multi_perform(curl_multi, &still_running);
-			break;
-		}
-
-		/* Perform transfers after poll detected activity */
-		mc = curl_multi_perform(curl_multi, &still_running);
-		if (mc != CURLM_OK) {
-			break;
-		}
-	}
-
-	/* Log periodically to confirm timer is running */
-	if (call_count % 100 == 0 && still_running > 0) {
-		image_preview_debug_print("FETCH: timer tick #%d, still_running=%d", call_count, still_running);
-	}
-
-	/* Check for completed transfers */
 	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
 		if (msg->msg == CURLMSG_DONE) {
 			CURL *easy = msg->easy_handle;
@@ -707,101 +663,92 @@ static gboolean curl_process(gpointer data)
 			}
 		}
 	}
-
-	/* Re-check still_running in case new transfers were added during
-	 * completion handling (e.g., stage 2 of a two-stage fetch).
-	 * The fetch_complete() -> image_fetch_start_stage2() path may have
-	 * added new handles that we need to continue processing. */
-	mc = curl_multi_perform(curl_multi, &still_running);
-
-	/* CRITICAL: Check for completed messages again!
-	 * If stage 2 started and completed quickly (e.g., network error),
-	 * the completion message will be waiting but we haven't checked it.
-	 * Without this, the fetch stays "pending" forever. */
-	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
-		if (msg->msg == CURLMSG_DONE) {
-			CURL *easy = msg->easy_handle;
-			CURLcode result = msg->data.result;
-			IMAGE_FETCH_REC *fetch = NULL;
-
-			curl_easy_getinfo(easy, CURLINFO_PRIVATE, &fetch);
-
-			image_preview_debug_print("FETCH: (post-recheck) transfer done, result=%d (%s)",
-			                          result, curl_easy_strerror(result));
-
-			if (fetch != NULL) {
-				if (result == CURLE_OK && !fetch->cancelled) {
-					fetch_complete(fetch, TRUE, NULL);
-				} else if (fetch->cancelled) {
-					fetch_complete(fetch, FALSE, "Cancelled or file too large");
-				} else {
-					fetch_complete(fetch, FALSE, curl_easy_strerror(result));
-				}
-			}
-		}
-	}
-
-	/* Final check after processing any remaining messages */
-	mc = curl_multi_perform(curl_multi, &still_running);
-
-	/* Third check for completion messages - covers edge case where
-	 * stage 2 data arrived between perform calls */
-	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
-		if (msg->msg == CURLMSG_DONE) {
-			CURL *easy = msg->easy_handle;
-			CURLcode result = msg->data.result;
-			IMAGE_FETCH_REC *fetch = NULL;
-
-			curl_easy_getinfo(easy, CURLINFO_PRIVATE, &fetch);
-
-			image_preview_debug_print("FETCH: (final-check) transfer done, result=%d (%s)",
-			                          result, curl_easy_strerror(result));
-
-			if (fetch != NULL) {
-				if (result == CURLE_OK && !fetch->cancelled) {
-					fetch_complete(fetch, TRUE, NULL);
-				} else if (fetch->cancelled) {
-					fetch_complete(fetch, FALSE, "Cancelled or file too large");
-				} else {
-					fetch_complete(fetch, FALSE, curl_easy_strerror(result));
-				}
-			}
-		}
-	}
-
-	/* Re-check still_running after processing any final messages */
-	curl_multi_perform(curl_multi, &still_running);
-
-	/* Continue if there are active transfers */
-	if (still_running > 0) {
-		return TRUE;
-	}
-
-	/* Also continue if we have active fetches in hash table that haven't
-	 * been cleaned up yet - this covers race conditions where curl says
-	 * 0 active but we haven't processed completion yet */
-	if (active_fetches != NULL && g_hash_table_size(active_fetches) > 0) {
-		image_preview_debug_print("FETCH: still_running=0 but %u active in hash table, continuing",
-		                          g_hash_table_size(active_fetches));
-		return TRUE;
-	}
-
-	/* No more transfers - stop timer */
-	image_preview_debug_print("FETCH: timer STOPPING - no active transfers");
-	curl_timer_tag = 0;
-	return FALSE;
 }
 
-/* Start processing timer if not already running */
-static void ensure_processing_timer(void)
+/* Lets curl work on a socket that is ready (or on its timers) */
+static void curl_socket_action(curl_socket_t fd, int flags)
 {
-	if (curl_timer_tag == 0) {
-		/* Poll every 50ms - each tick does multiple poll/perform cycles */
-		curl_timer_tag = g_timeout_add(50, curl_process, NULL);
-		image_preview_debug_print("FETCH: timer STARTED, tag=%u", curl_timer_tag);
-	} else {
-		image_preview_debug_print("FETCH: timer already running, tag=%u", curl_timer_tag);
+	CURLMcode mc;
+
+	if (curl_multi == NULL)
+		return;
+	mc = curl_multi_socket_action(curl_multi, fd, flags, &curl_running);
+	if (mc != CURLM_OK)
+		image_preview_debug_print("FETCH: curl_multi_socket_action failed: %s",
+		                          curl_multi_strerror(mc));
+	check_multi_info();
+}
+
+static gboolean curl_fd_ready(GIOChannel *source, GIOCondition condition, gpointer data)
+{
+	int fd = GPOINTER_TO_INT(data);
+	int flags = 0;
+
+	/* a hang-up is read as the end of the data */
+	if (condition & (G_IO_IN | G_IO_PRI | G_IO_HUP))
+		flags |= CURL_CSELECT_IN;
+	if (condition & G_IO_OUT)
+		flags |= CURL_CSELECT_OUT;
+	if (condition & (G_IO_ERR | G_IO_NVAL))
+		flags |= CURL_CSELECT_ERR;
+	/* curl removes or replaces this watch through curl_socket_cb()
+	 * when it is done with the socket */
+	curl_socket_action(fd, flags);
+	return G_SOURCE_CONTINUE;
+}
+
+static void curl_watch_remove(curl_socket_t fd)
+{
+	gpointer tag;
+
+	if (curl_watches != NULL &&
+	    g_hash_table_lookup_extended(curl_watches, GINT_TO_POINTER(fd), NULL, &tag)) {
+		g_source_remove(GPOINTER_TO_UINT(tag));
+		g_hash_table_remove(curl_watches, GINT_TO_POINTER(fd));
 	}
+}
+
+/* CURLMOPT_SOCKETFUNCTION: watch fd for what curl waits for */
+static int curl_socket_cb(CURL *easy, curl_socket_t fd, int what, void *userp, void *socketp)
+{
+	GIOCondition condition = 0;
+	GIOChannel *channel;
+	guint tag;
+
+	curl_watch_remove(fd);
+	if (what == CURL_POLL_REMOVE || curl_watches == NULL)
+		return 0;
+
+	if (what & CURL_POLL_IN)
+		condition |= G_IO_IN | G_IO_PRI | G_IO_HUP | G_IO_ERR;
+	if (what & CURL_POLL_OUT)
+		condition |= G_IO_OUT | G_IO_ERR;
+	/* the watch keeps the channel; it does not close the socket */
+	channel = g_io_channel_unix_new(fd);
+	tag = g_io_add_watch(channel, condition, curl_fd_ready, GINT_TO_POINTER(fd));
+	g_io_channel_unref(channel);
+	g_hash_table_insert(curl_watches, GINT_TO_POINTER(fd), GUINT_TO_POINTER(tag));
+	return 0;
+}
+
+static gboolean curl_timeout_fire(gpointer data)
+{
+	curl_timeout_tag = 0;
+	curl_socket_action(CURL_SOCKET_TIMEOUT, 0);
+	return G_SOURCE_REMOVE;
+}
+
+/* CURLMOPT_TIMERFUNCTION: call curl back in timeout_ms (-1: never). Not
+ * at once from here: curl must not be called from its own callback. */
+static int curl_timer_cb(CURLM *multi, long timeout_ms, void *userp)
+{
+	if (curl_timeout_tag != 0) {
+		g_source_remove(curl_timeout_tag);
+		curl_timeout_tag = 0;
+	}
+	if (timeout_ms >= 0)
+		curl_timeout_tag = g_timeout_add(timeout_ms, curl_timeout_fire, NULL);
+	return 0;
 }
 
 static void retry_data_free(RetryData *retry)
@@ -1216,21 +1163,8 @@ static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_imag
 		return;
 	}
 
-	/* CRITICAL: Kick curl immediately after adding stage 2!
-	 * We're likely being called from inside curl_process() callback where
-	 * still_running was already set to 0 (from stage 1 completion).
-	 * If we don't call curl_multi_perform() now, the callback will return
-	 * FALSE and stop the timer before stage 2 can be processed.
-	 * This call updates still_running so the timer continues. */
-	{
-		int still_running;
-		curl_multi_perform(curl_multi, &still_running);
-		image_preview_debug_print("FETCH: stage2 kicked curl, still_running=%d", still_running);
-	}
-
-	/* Also ensure timer is running (in case we weren't called from callback) */
-	ensure_processing_timer();
-
+	/* curl_multi_add_handle() set curl's timer: the main loop goes on
+	 * with stage 2 */
 	image_preview_debug_print("FETCH: stage2 started successfully");
 }
 
@@ -1360,10 +1294,9 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 	/* Track active fetch - use original_url for page URLs so we can find it later */
 	g_hash_table_insert(active_fetches, fetch->original_url ? fetch->original_url : fetch->url, fetch);
 
-	/* Start processing timer */
-	ensure_processing_timer();
-
-	image_preview_debug_print("FETCH: started successfully, stage=%d timer running", fetch->stage);
+	/* curl_multi_add_handle() set curl's timer: the main loop takes it
+	 * from here */
+	image_preview_debug_print("FETCH: started successfully, stage=%d", fetch->stage);
 	return TRUE;
 }
 
@@ -1420,6 +1353,10 @@ void image_fetch_init(void)
 	/* Enable HTTP/2 multiplexing */
 	curl_multi_setopt(curl_multi, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
 
+	curl_watches = g_hash_table_new(g_direct_hash, g_direct_equal);
+	curl_multi_setopt(curl_multi, CURLMOPT_SOCKETFUNCTION, curl_socket_cb);
+	curl_multi_setopt(curl_multi, CURLMOPT_TIMERFUNCTION, curl_timer_cb);
+
 	/* Create active fetches hash table */
 	active_fetches = g_hash_table_new_full(g_str_hash, g_str_equal,
 	                                       NULL, (GDestroyNotify)fetch_rec_free);
@@ -1430,20 +1367,36 @@ void image_fetch_init(void)
 /* Deinitialize fetch system */
 void image_fetch_deinit(void)
 {
-	/* Stop processing timer */
-	if (curl_timer_tag != 0) {
-		g_source_remove(curl_timer_tag);
-		curl_timer_tag = 0;
-	}
-
-	/* and the retries still waiting: their lines and windows go away */
+	/* the retries still waiting: their lines and windows go away */
 	cancel_retries(NULL);
 
-	/* Clear active fetches */
+	/* Clear active fetches (removing their handles tells curl_socket_cb()
+	 * which sockets are no longer watched) */
 	if (active_fetches != NULL) {
 		g_hash_table_destroy(active_fetches);
 		active_fetches = NULL;
 	}
+
+	/* no more callbacks, then the watches and the timer go */
+	if (curl_multi != NULL) {
+		curl_multi_setopt(curl_multi, CURLMOPT_SOCKETFUNCTION, NULL);
+		curl_multi_setopt(curl_multi, CURLMOPT_TIMERFUNCTION, NULL);
+	}
+	if (curl_watches != NULL) {
+		GHashTableIter iter;
+		gpointer key, tag;
+
+		g_hash_table_iter_init(&iter, curl_watches);
+		while (g_hash_table_iter_next(&iter, &key, &tag))
+			g_source_remove(GPOINTER_TO_UINT(tag));
+		g_hash_table_destroy(curl_watches);
+		curl_watches = NULL;
+	}
+	if (curl_timeout_tag != 0) {
+		g_source_remove(curl_timeout_tag);
+		curl_timeout_tag = 0;
+	}
+	curl_running = 0;
 
 	/* Cleanup curl multi */
 	if (curl_multi != NULL) {
