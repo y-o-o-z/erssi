@@ -132,8 +132,8 @@ erssi Shellter Edition - install and update
                  where the packages are: a URL or a directory holding
                  shellter-vX.Y.Z/ (default: the GitHub releases)
   --keep N       old releases of a binary install kept besides the one in
-                 use (default 2, at least 1: a running erssi needs the one
-                 it was started from until /upgrade)
+                 use (default 2, from 1 to 9999: a running erssi needs the
+                 one it was started from until /upgrade)
   --dry-run      check and show what would be done; change nothing
   --rollback     switch a binary install back to the previous release
   --uninstall    remove the prefix and ~/.local/bin/erssi; ~/.erssi stays
@@ -1172,6 +1172,20 @@ do_uninstall() {
     exit 0
 }
 
+# a --keep (or KEEP=) number without leading zeros, at most 9999; nothing
+# when it is not one. Longer numbers would pass as digits but fail every
+# [ -lt ] / [ -ge ] test as out of range (dash, FreeBSD sh), and the checks
+# around them would quietly turn "keep them all" into --keep 1
+keep_value() {
+    case "$1" in ''|*[!0-9]*) return 0 ;; esac
+    kv=${1#"${1%%[!0]*}"}
+    case "$kv" in
+        '') echo 0 ;;
+        ?????*) ;;
+        *) echo "$kv" ;;
+    esac
+}
+
 main() {
 unset CDPATH        # cd in $(...) must print nothing
 PREFIX="$HOME/.local/opt/erssi"
@@ -1213,7 +1227,11 @@ esac
 if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
     echo "shellter-install.sh: --$ACTION goes with --prefix and --dry-run only (--help)" >&2; exit 2
 fi
-case "$KEEP" in *[!0-9]*) echo "shellter-install.sh: --keep needs a number, e.g. --keep 2 (--help)" >&2; exit 2 ;; esac
+if [ -n "$KEEP" ]; then
+    k=$(keep_value "$KEEP")
+    [ -n "$k" ] || { echo "shellter-install.sh: --keep needs a number from 1 to 9999, e.g. --keep 2 (--help)" >&2; exit 2; }
+    KEEP=$k
+fi
 # the release just switched away from is the one every running erssi was
 # started from: its help, modules, scripts and themes are needed until
 # /upgrade, so it always stays
@@ -1261,8 +1279,8 @@ CONF="$PREFIX/share/irssi/shellter-install.conf"
 [ -n "$USE" ] || USE=$(conf_get USE)
 case "$USE" in binary|source) ;; *) USE=auto ;; esac
 USE_SAVED=auto; [ "$USE" != source ] || USE_SAVED=source
-[ -n "$KEEP" ] || KEEP=$(conf_get KEEP)
-case "$KEEP" in ''|*[!0-9]*) KEEP=2 ;; esac
+[ -n "$KEEP" ] || KEEP=$(keep_value "$(conf_get KEEP)")
+[ -n "$KEEP" ] || KEEP=2
 [ "$KEEP" -ge 1 ] || KEEP=1
 [ -n "$BINARY_BASE" ] || BINARY_BASE=$(conf_get BINARY_BASE)
 case "$BINARY_BASE" in ''|https://*|http://*|file:///*|/*) ;; *) BINARY_BASE="" ;; esac

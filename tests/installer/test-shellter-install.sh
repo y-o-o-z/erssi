@@ -2065,6 +2065,10 @@ binary-switch)
     record 2026.10.6 "$(fsha 2026.10.6)"
     run_bin
     check "next install: the stage of an interrupted one removed" releases_are 2026.10.5 2026.10.6
+    run_bin --keep 99999999999999999999 --ref shellter-v2026.10.5
+    check "--keep beyond any number test: refused" [ "$RC" = 2 ]
+    check "... why" grep -qF -- '--keep needs a number from 1 to 9999' "$W/out"
+    check "... nothing changed" current_is 2026.10.6 && releases_are 2026.10.5 2026.10.6 && grep -qx KEEP=2 "$CONF"
     run_bin --keep 0 --ref shellter-v2026.10.5
     check "--keep 0: refused" [ "$RC" = 2 ]
     check "... why" grep -qF -- '--keep must be at least 1 - a running erssi uses the release it was started from until /upgrade' "$W/out"
