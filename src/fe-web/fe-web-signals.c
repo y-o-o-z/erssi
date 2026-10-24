@@ -1021,7 +1021,7 @@ static void event_whois(IRC_SERVER_REC *server, const char *data)
 		g_free(rec->realname);
 		rec->user = g_strdup(user);
 		rec->host = g_strdup(host);
-		rec->realname = g_strdup(realname);
+		rec->realname = fe_web_utf8_in(SERVER(server), nick, realname);
 	}
 
 	g_free(params);
@@ -1043,7 +1043,7 @@ static void event_whois_server(IRC_SERVER_REC *server, const char *data)
 		g_free(rec->server);
 		g_free(rec->server_info);
 		rec->server = g_strdup(whoserver);
-		rec->server_info = g_strdup(desc);
+		rec->server_info = fe_web_utf8_in(SERVER(server), nick, desc);
 	}
 
 	g_free(params);
@@ -1090,7 +1090,7 @@ static void event_whois_channels(IRC_SERVER_REC *server, const char *data)
 	rec = whois_get_or_create(server, nick);
 	if (rec != NULL) {
 		g_free(rec->channels);
-		rec->channels = g_strdup(chans);
+		rec->channels = fe_web_utf8_in(SERVER(server), nick, chans);
 	}
 
 	g_free(params);
@@ -1171,10 +1171,11 @@ static void event_whois_away(IRC_SERVER_REC *server, const char *data)
 
 	rec = whois_get_or_create(server, nick);
 	if (rec != NULL && awaymsg != NULL && *awaymsg != '\0') {
-		GString *line = g_string_new(NULL);
-		g_string_printf(line, "is away: %s", awaymsg);
-		rec->special = g_slist_append(rec->special, g_strdup(line->str));
-		g_string_free(line, TRUE);
+		char *msg = fe_web_utf8_in(SERVER(server), nick, awaymsg);
+
+		rec->special = g_slist_append(rec->special,
+		                              g_strdup_printf("is away: %s", msg));
+		g_free(msg);
 	}
 
 	g_free(params);
@@ -1213,7 +1214,7 @@ static void event_away_status(IRC_SERVER_REC *server, const char *data)
 	msg->id = fe_web_generate_message_id();
 	msg->server_tag = g_strdup(server->tag);
 	msg->nick = g_strdup(nick);
-	msg->text = g_strdup(awaymsg);
+	msg->text = fe_web_utf8_in(SERVER(server), nick, awaymsg);
 
 	fe_web_send_to_server_clients(server, msg);
 	fe_web_message_free(msg);
@@ -1247,7 +1248,8 @@ static void event_whois_default(IRC_SERVER_REC *server, const char *data)
 	rec = whois_get_or_create(server, nick);
 	if (rec != NULL && text != NULL && *text != '\0') {
 		/* Add to special list - only non-standard events */
-		rec->special = g_slist_append(rec->special, g_strdup(text));
+		rec->special = g_slist_append(rec->special,
+		                              fe_web_utf8_in(SERVER(server), nick, text));
 	}
 
 	g_free(params);

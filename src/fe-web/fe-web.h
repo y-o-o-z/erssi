@@ -193,6 +193,10 @@ void fe_web_send_to_all_clients(WEB_MESSAGE_REC *msg);
 
 /* JSON utilities */
 char *fe_web_message_to_json(WEB_MESSAGE_REC *msg);
+/* str as UTF-8: as it is when it is, else read in the charset /RECODE
+ * gives target on server (either may be NULL), else in recode_fallback;
+ * bytes no charset reads become U+FFFD. To be freed. */
+char *fe_web_utf8_in(const SERVER_REC *server, const char *target, const char *str);
 char *fe_web_escape_json(const char *str);
 char *fe_web_generate_message_id(void);
 

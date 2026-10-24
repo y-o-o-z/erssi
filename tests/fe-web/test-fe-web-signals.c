@@ -21,6 +21,7 @@
 
 #include <irssi/src/core/misc.h>
 #include <irssi/src/core/settings.h>
+#include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
@@ -217,6 +218,33 @@ static void test_json_is_utf8(void)
 	fe_web_fuzz_server_free(server);
 }
 
+/* recode_fallback CP1252 (irssi's default) and "/RECODE ADD fuzz ISO-8859-2":
+ * the realname is read as irssi reads that server's lines, in ISO-8859-2
+ * (CP1252 made "\xb3" a "³" where it is a "ł") */
+static void test_json_follows_recode(void)
+{
+	IRC_SERVER_REC *server = connected();
+	WEB_CLIENT_REC *c = client_new();
+	gsize mark;
+	char *heard, *fallback = g_strdup(settings_get_str("recode_fallback"));
+
+	settings_set_str("recode_fallback", "CP1252");
+	iconfig_set_str("conversions", "fuzz", "ISO-8859-2");
+	mark = heard_len();
+	server_says(server, ":irc.example.net 311 me bob b example.net * :Kr\xf3l \xb3\xf3" "d\xbc");
+	server_says(server, ":irc.example.net 318 me bob :End of /WHOIS list.");
+	heard = payloads_since(mark);
+	g_assert_true(g_utf8_validate(heard, -1, NULL));
+	g_assert_nonnull(strstr(heard, "\"realname\":\"Kr\xc3\xb3l \xc5\x82\xc3\xb3""d\xc5\xba\""));
+	g_free(heard);
+	iconfig_set_str("conversions", "fuzz", NULL);
+	settings_set_str("recode_fallback", fallback);
+	g_free(fallback);
+
+	fe_web_fuzz_client_free(c);
+	fe_web_fuzz_server_free(server);
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -227,6 +255,7 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/fe-web/signals/quit-removes-where-member", test_quit_removes_where_member);
 	g_test_add_func("/fe-web/signals/json-is-utf8", test_json_is_utf8);
+	g_test_add_func("/fe-web/signals/json-follows-recode", test_json_follows_recode);
 
 	ret = g_test_run();
 
