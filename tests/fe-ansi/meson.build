@@ -222,8 +222,10 @@ test_test_textbuffer = executable('test-textbuffer',
   dependencies : dep,
 )
 
+# with leak detection under AddressSanitizer, whatever ASAN_OPTIONS the
+# caller has: finding leaks is what this test is for
 test('test-textbuffer test', test_test_textbuffer,
-  env : test_env,
+  env : fuzz_test_env,
   args : ['--tap'],
   protocol : 'tap')
 
