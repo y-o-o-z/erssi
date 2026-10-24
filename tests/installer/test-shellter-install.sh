@@ -903,7 +903,7 @@ prefix-lock)
     mkdir -p "$HOME/.local/opt/erssi/.install.lock"
     run_install
     check "the prefix locked (an installer before 2026.10.6): refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi - the lock was made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it); after 10 minutes it counts as left over (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
+    check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi - the lock was made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it), so whether it still runs cannot be told (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
     check "... nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi" "$HOME/.local/src/erssi/Build"
     check "... its lock kept, the source lock gone" eval '[ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"'
     # the names of its own locks and of the bin/erssi link, set in the
@@ -997,14 +997,15 @@ stale-lock)
     touch -t 202001010000 "$S.lock.takeover"
     run_install
     check "an old empty takeover: cleaned up, lock taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
-    # a lock with nothing in it: fresh, refused; ten minutes old, taken over
+    # a lock with nothing in it (installers before 2026.10.6 write no pid):
+    # refused however old, naming what to remove
     mkdir "$S.lock"
     run_install
     check "a fresh lock without a pid: refused" eval '[ "$RC" = 1 ] && [ -d "$S.lock" ]'
-    check "... named" grep -qF 'wrote no pid into it' "$W/out"
+    check "... named" grep -qF "wrote no pid into it (one before 2026.10.6, or one that has only just made it), so whether it still runs cannot be told (if not, remove $S.lock)" "$W/out"
     touch -t 202001010000 "$S.lock"
     run_install
-    check "an old lock without a pid: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
+    check "an old lock without a pid: refused too" eval '[ "$RC" = 1 ] && [ -d "$S.lock" ]'
     rm -rf "$S.lock"
     # where neither side can tell boot or namespace (FreeBSD): the pid
     # and host decide, as before

@@ -547,10 +547,11 @@ safe_prefix() {
 # such process. A pid says nothing across PID namespaces (a sandbox with
 # its own, bwrap --unshare-pid, sees none of the host's processes), so a
 # lock made in another one, of another host, or where boot or namespace
-# cannot be told, is left alone and the message says why. A lock with
-# nothing in it (made by an installer before 2026.10.6, or by one stopped
-# between its mkdir and its pid line) counts as left over once it is 10
-# minutes old.
+# cannot be told, is left alone and the message says why. So is a lock
+# with nothing in it, whatever its age: installers before 2026.10.6 write
+# no pid, and one of them may still be running a long source build. Only
+# a <lock>.takeover with nothing in it, which only 2026.10.6 and later
+# make (and fill at once), counts as left over once it is 10 minutes old.
 # FreeBSD has neither file. Its kern.boottime is no boot id: it moves
 # when the clock is stepped (ntpd after a boot with a wrong clock), and a
 # moved one would make a running installer look like one of an earlier
@@ -575,15 +576,16 @@ lock_id() {   # "host boot pidns" of this installer
 }
 # 0 when the installer that holds lock $1 is gone; LOCK_SEEN what the
 # lock held, LOCK_WHY why it is not taken over, when that is not plain
-lock_stale() {
+lock_stale() {   # dir [takeover]
     LOCK_WHY=""
     LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || LOCK_SEEN=""
     if [ -z "$LOCK_SEEN" ]; then
-        # nothing in it: made by an installer before 2026.10.6, or by one
-        # stopped between making it and writing its pid line, a moment
-        # later. Only its age can tell: one that old is left over
-        if lock_old "$1"; then return 0; fi
-        LOCK_WHY="made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it); after 10 minutes it counts as left over"
+        # a .takeover with nothing in it: its installer was stopped between
+        # its mkdir and its pid line, a moment later; one that old is left
+        # over. A lock with nothing in it may be an older installer's that
+        # still runs (they write no pid): never taken over
+        if [ "${2:-}" = takeover ] && lock_old "$1"; then return 0; fi
+        LOCK_WHY="made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it), so whether it still runs cannot be told"
         return 1
     fi
     # shellcheck disable=SC2086 # the fields of the lock
@@ -646,7 +648,7 @@ lock_take() {   # dir -> 0 when this installer holds it now
     if ! mkdir "$1.takeover" 2>/dev/null; then
         # left by an installer stopped inside its takeover: removed under
         # the same rules as a lock, checked again right before
-        if lock_stale "$1.takeover" && lock_stale "$1.takeover"; then
+        if lock_stale "$1.takeover" takeover && lock_stale "$1.takeover" takeover; then
             rm -rf "$1.takeover"
         fi
         if ! mkdir "$1.takeover" 2>/dev/null; then
