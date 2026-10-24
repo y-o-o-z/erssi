@@ -770,6 +770,11 @@ relative-prefix)
     check "... nothing made" none_exist "$W/cwd/opt" "$HOME/.local/src/erssi" "$HOME/.local/src/erssi.lock"
     (cd "$W/cwd" && sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --no-test --prefix ./opt) > "$W/out" 2>&1 < /dev/null
     check "./ refused too" [ $? = 2 ]
+    for r in / //; do
+        sh "$SRC/shellter-install.sh" --uninstall --prefix "$r" > "$W/out" 2>&1 < /dev/null
+        check "--prefix $r: refused" [ $? = 2 ]
+        check "... named" grep -qF -- '--prefix / is the whole system' "$W/out"
+    done
     run_install --prefix "$W/abs/erssi"
     check "an absolute prefix: installed" [ "$RC" = 0 ]
     ;;

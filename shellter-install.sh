@@ -1415,6 +1415,12 @@ case "$PREFIX" in
     /*) ;;
     *) echo "shellter-install.sh: --prefix needs an absolute path, e.g. --prefix $HOME/opt/erssi (--help)" >&2; exit 2 ;;
 esac
+# / itself is no prefix: nothing would hold erssi's files apart from the
+# system's, and with its slash taken off below it would become empty
+case "$PREFIX" in
+    *[!/]*) ;;
+    *) echo "shellter-install.sh: --prefix / is the whole system - give a directory of its own, e.g. --prefix /opt/erssi (--help)" >&2; exit 2 ;;
+esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
 [ "$UPDATE" = 0 ] || [ -z "$REF" ] || { echo "shellter-install.sh: --update takes the newest signed release; for a given one use --ref without --update" >&2; exit 2; }
 if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
