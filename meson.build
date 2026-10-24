@@ -201,8 +201,11 @@ message('*** to download and build it automatically')
 message('*** Or alternatively install your distribution\'s package')
 message('*** On Debian: sudo apt-get install libglib2.0-dev')
 message('*** On Redhat: dnf install glib2-devel')
+# 2.70: the newest GLib API used without a fallback is
+# g_pattern_spec_match_string() (log search); newer calls have one, behind
+# GLIB_CHECK_VERSION. Debian 12 has 2.74, Debian 13 2.84, FreeBSD 14 2.80+.
 if not require_glib_internal
-  glib_dep = dependency('glib-2.0', version : '>=2.32', required : not want_glib_internal, static : want_static_dependency, include_type : 'system')
+  glib_dep = dependency('glib-2.0', version : '>=2.70', required : not want_glib_internal, static : want_static_dependency, include_type : 'system')
 else
   glib_dep = dependency('', required : false)
 endif
