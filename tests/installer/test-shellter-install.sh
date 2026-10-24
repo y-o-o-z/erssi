@@ -2215,6 +2215,40 @@ binary-rollback-uninstall)
     check "--prefix ~/.local: refused" [ $? = 1 ]
     check "... named" grep -q 'is shared with other software - nothing was removed' "$W/out"
     ;;
+binary-interrupted)
+    # an install stopped half-way (Ctrl-C, a TERM) leaves a prefix that
+    # works and says what it is: the stand-in tools send the installer
+    # TERM at the worst moment
+    binary_tools
+    for v in 1 2 3 4; do good_pkg "2026.10.$v" "$(fsha "2026.10.$v")"; done
+    record 2026.10.1 "$(fsha 2026.10.1)" 2026.10.2 "$(fsha 2026.10.2)" 2026.10.3 "$(fsha 2026.10.3)" 2026.10.4 "$(fsha 2026.10.4)"
+    for v in 1 2 3; do run_bin --ref "shellter-v2026.10.$v"; done
+    check "2026.10.3 over 2026.10.2 and .1" current_is 2026.10.3 && releases_are 2026.10.1 2026.10.2 2026.10.3
+    # while old releases are removed: the conf already names the release
+    # current points to
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\ncase "$*" in *"$FAKE_TERM_AT"*) kill -TERM "$PPID" ;; esac\nexec "$TEST_W/bin/rm" "$@"\n' | stand rm
+    use_tool rm
+    exported FAKE_TERM_AT=releases/2026.10.1 run_bin --ref shellter-v2026.10.4 --keep 1
+    rm -f "$W/shim/rm"
+    check "TERM while pruning: interrupted" [ "$RC" = 130 ]
+    check "... 2026.10.4 in use" current_is 2026.10.4
+    check "... and recorded" grep -qx VERSION=2026.10.4 "$CONF" && grep -qx "COMMIT=$(fsha 2026.10.4)" "$CONF" && grep -qx METHOD=binary "$CONF"
+    check "... no lock left" none_exist "$P/.install.lock"
+    # a release of the same version but another package moved aside, the
+    # new one not yet moved in: the old one goes back, previous keeps it
+    echo rebuilt=1 >> "$P/releases/2026.10.3/MANIFEST"
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\ncase "$1 $2" in */u/*" $FAKE_TERM_AT") kill -TERM "$PPID"; exit 1 ;; esac\nexec "$TEST_W/bin/mv" "$@"\n' | stand mv
+    use_tool mv
+    exported FAKE_TERM_AT="$P/releases/2026.10.3" run_bin --ref shellter-v2026.10.3
+    rm -f "$W/shim/mv"
+    check "TERM between moving the old tree aside and the new in: interrupted" [ "$RC" = 130 ]
+    check "... the old tree back" grep -qx rebuilt=1 "$P/releases/2026.10.3/MANIFEST"
+    check "... previous still leads to it" [ -x "$P/previous/bin/erssi" ]
+    check "... 2026.10.4 still in use" current_is 2026.10.4
+    check "... no stage left" none_exist "$P"/releases/.stage.*
+    ;;
 prefix-foreign)
     # the prefix holds the erssi that is run (also by the installer, for
     # its version) and the installer erssi --update runs: refused when

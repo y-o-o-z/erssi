@@ -840,6 +840,13 @@ summary() {
 # the installer stops there). A package whose signature, checksum or
 # MANIFEST does not verify stops the installer with nothing changed.
 bin_cleanup() {
+    # an install stopped between moving a release of the same version aside
+    # and moving the new one in (Ctrl-C, a failed rename): the old one goes
+    # back, or previous would point to nothing and --rollback lose it
+    if [ -n "${STAGE:-}" ] && [ -n "${ASIDE:-}" ] && [ -d "$STAGE/old" ] &&
+            [ ! -e "$ASIDE" ] && [ ! -L "$ASIDE" ]; then
+        mv "$STAGE/old" "$ASIDE" 2>/dev/null || true
+    fi
     [ -z "${STAGE:-}" ] || rm -rf "$STAGE"
     [ -z "${BWORK:-}" ] || rm -rf "$BWORK"
     [ -z "${BLOCK:-}" ] || lock_drop "$BLOCK"
@@ -1061,20 +1068,22 @@ binary_install() {
     # then current is switched in one step; until then the release in use is
     # untouched, and an interrupted install leaves only its .stage.
     step "Installing"
-    REUSED=0
+    REUSED=0 ASIDE=""
     if [ -e "$RELS/$V" ] || [ -L "$RELS/$V" ]; then
-        if [ "$cur" = "$V" ]; then
-            # the release in use: not replaced under a running erssi; the
-            # same package stays as it is
-            cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST" ||
-                die "$(tilde "$RELS/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
+        if cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
+            # the same package (a release tree only ever arrives whole, by
+            # one rename): kept as it is - never replaced under a running
+            # erssi, and previous keeps pointing to it
             REUSED=1
+        elif [ "$cur" = "$V" ]; then
+            die "$(tilde "$RELS/$V") is in use but holds another package - nothing was changed; --rollback first, or remove it"
         else
+            # bin_cleanup moves it back if the new one does not get there
+            ASIDE="$RELS/$V"
             mv "$RELS/$V" "$STAGE/old" || die "cannot move $(tilde "$RELS/$V") aside - nothing was changed"
         fi
     fi
     if [ "$REUSED" = 0 ] && ! mv "$T" "$RELS/$V"; then
-        [ ! -d "$STAGE/old" ] || mv "$STAGE/old" "$RELS/$V"
         die "cannot move the package to $(tilde "$RELS/$V") - nothing was changed"
     fi
     if [ "$cur" != "$V" ]; then
@@ -1082,18 +1091,22 @@ binary_install() {
         [ -z "$cur" ] || switch_link "$PREFIX/previous" "releases/$cur" ||
             warn "cannot link $(tilde "$PREFIX/previous") - --rollback will not find releases/$cur"
     fi
+    # what is installed now, recorded right after the switch: an install
+    # stopped later (while old releases are removed, say) must not leave
+    # the conf naming the release before, or the next --update would take
+    # its commit for a moved tag and --rollback a source build for this
     mkdir -p "$PREFIX/bin" "$PREFIX/share/irssi"
+    VERSION=$V
+    write_conf binary || die "cannot write $CONF"
     if [ "$(readlink "$PREFIX/bin/erssi" 2>/dev/null)" != ../current/bin/erssi ]; then
         [ ! -d "$PREFIX/bin/erssi" ] || [ -L "$PREFIX/bin/erssi" ] || die "$PREFIX/bin/erssi is a directory"
         switch_link "$PREFIX/bin/erssi" ../current/bin/erssi || die "cannot link $(tilde "$PREFIX/bin/erssi")"
     fi
-    prune_releases
     # erssi --update and --rollback run the installer of the release
     [ ! -f "$RELS/$V/share/irssi/shellter-install.sh" ] ||
         cp "$RELS/$V/share/irssi/shellter-install.sh" "$PREFIX/share/irssi/shellter-install.sh" 2>/dev/null || true
-    VERSION=$V
-    write_conf binary || die "cannot write $CONF"
     link_bin
+    prune_releases
     bin_cleanup
     trap - EXIT
     if [ "$REUSED" = 1 ]; then done_ "$(tilde "$PREFIX") $S_SEP releases/$V was already there"; else done_ "$(tilde "$PREFIX") $S_SEP releases/$V"; fi

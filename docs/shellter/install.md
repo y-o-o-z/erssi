@@ -106,7 +106,9 @@ What goes where:
 
 The new release is unpacked next to the one in use and moved into place
 before `current` is switched, so an interrupted install leaves the release
-in use as it was. After the switch, old releases beyond `--keep N` are
+in use as it was. The conf records the new release right after the
+switch, before anything else happens, so an install stopped later still
+says what is in use. After the switch, old releases beyond `--keep N` are
 removed: N counts the releases kept besides the one in use (two by
 default), and the one `--rollback` returns to counts first. N is at least
 1, because a running erssi needs the release it was started from (its
