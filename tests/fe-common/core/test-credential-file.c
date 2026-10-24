@@ -514,9 +514,11 @@ static void test_migrate_link_empties_target(void)
  * does not write them into ~/.erssi/config. A value of the user's own in
  * the configuration stays. */
 static char *seen_password;
+static int seen_reads;
 
 static void sig_chatnet_read_seen(CHATNET_REC *rec, CONFIG_NODE *node)
 {
+	seen_reads++;
 	g_free(seen_password);
 	seen_password = g_strdup(config_node_get_str(node, "sasl_password", NULL));
 }
@@ -532,10 +534,13 @@ static void test_read_fill_not_saved(void)
 	g_assert_true(credential_set("Net", CREDENTIAL_CONTEXT_SASL_PASSWORD, "loaded-secret"));
 	node = net_node();
 	config_node_set_str(mainconfig, node, "sasl_username", "my-own-user");
+	seen_reads = 0;
 	signal_add("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_seen);
 	signal_emit("chatnet read", 2, net, node);
 	signal_remove("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_seen);
-	/* the protocol's handler saw it, the configuration does not keep it */
+	/* the protocol's handler saw it, once (a second run leaked what the
+	   IRC one had read), the configuration does not keep it */
+	g_assert_cmpint(seen_reads, ==, 1);
 	g_assert_cmpstr(seen_password, ==, "loaded-secret");
 	g_assert_null(config_node_get_str(node, "sasl_password", NULL));
 	g_assert_cmpstr(config_node_get_str(node, "sasl_username", NULL), ==, "my-own-user");

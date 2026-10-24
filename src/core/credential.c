@@ -2141,7 +2141,9 @@ void credential_init(void)
 	signal_add("setup changed", (SIGNAL_FUNC) credential_config_encrypt_changed);
 
 	/* Hook to fill credentials from credential storage */
-	signal_add("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_fill);
+	/* first: the protocol's own "chatnet read" handler then takes the
+	   filled values from the node, in the same emission */
+	signal_add_first("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_fill);
 	signal_add_last("chatnet read", (SIGNAL_FUNC) sig_chatnet_read_credential_unfill);
 
 	/* Hook to capture saves in external mode */
@@ -2218,12 +2220,6 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 	char *sasl_username, *sasl_password;
 	char *credential_value;
 	gboolean changed = FALSE;
-	static gboolean in_reemit = FALSE; /* Protection against loop */
-
-	/* Prevent loop during re-emitting */
-	if (in_reemit) {
-		return;
-	}
 
 	rec = (CHATNET_REC*)chatnet_rec;
 	config_node = (CONFIG_NODE*)node;
@@ -2267,14 +2263,12 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		}
 	}
 
-	/* If something changed, re-emit "chatnet read" signal
-	 * so the IRC module loads data from config node into its structure */
-	if (changed) {
-		in_reemit = TRUE;
-		signal_emit("chatnet read", 2, rec, config_node);
-		in_reemit = FALSE;
+	/* No second "chatnet read" from here: this handler runs first, so
+	 * the protocol's handler reads the filled node in this emission.
+	 * Emitting it again ran every handler twice, and the IRC one leaked
+	 * the strings of its first run. */
+	if (changed)
 		filled_node = config_node;
-	}
 }
 
 /* Last, after the protocol's own "chatnet read" has taken them: the values
