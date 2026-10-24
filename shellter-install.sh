@@ -1504,6 +1504,13 @@ if [ "$CHECK" = 0 ]; then
     trap 'rmdir "$SRC.lock" 2>/dev/null' EXIT
     safe_dir "$SRC"
     safe_dir "$SRC.venv"
+    # and on the prefix, as the binary path, --rollback and --uninstall
+    # take it: none of them may switch, replace or remove what this build
+    # installs while it does
+    mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
+    mkdir "$PREFIX/.install.lock" 2>/dev/null ||
+        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+    trap 'rmdir "$SRC.lock" "$PREFIX/.install.lock" 2>/dev/null' EXIT
 fi
 mkdir -p "$STATE"
 if [ "$CHECK" = 1 ]; then
@@ -1513,7 +1520,6 @@ else
     LOG="$STATE/install.log"
     rm -f "$LOG"
     ( umask 077; : > "$LOG" )
-    mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
 fi
 
 # ── 1. the system ────────────────────────────────────────────────────

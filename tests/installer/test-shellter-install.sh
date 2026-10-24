@@ -808,6 +808,20 @@ lock-before-venv)
     check "the other installer's log is kept" \
         [ "$(cat "$HOME/.local/state/erssi/install.log")" = "the other installer's log" ]
     ;;
+prefix-lock)
+    # the source build takes the lock of the prefix too: no source install
+    # while --rollback, --uninstall or another install works on it
+    mkdir -p "$HOME/.local/opt/erssi/.install.lock"
+    run_install
+    check "the prefix locked (an installer before 2026.10.6): refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
+    check "... nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi" "$HOME/.local/src/erssi/Build"
+    check "... its lock kept, the source lock gone" [ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"
+    rmdir "$HOME/.local/opt/erssi/.install.lock"
+    run_install
+    check "unlocked: installed" [ "$RC" = 0 ]
+    check "... both locks gone" none_exist "$HOME/.local/opt/erssi/.install.lock" "$HOME/.local/src/erssi.lock"
+    ;;
 lock-held-during-venv)
     # the venv is built while this installer holds the lock
     no_meson_python

@@ -163,6 +163,10 @@ tools and the build files). The installer checks this before it runs or
 changes anything there. In a rootless container or another user namespace see
 `sh shellter-install.sh --help` (`SHELLTER_INSTALL_TRUST_OVERFLOW_UID`).
 
+One installer at a time works on a prefix and on a source directory: each
+has a lock (`<prefix>/.install.lock`, `<src>.lock`), the source build
+taking both. If one is stuck, the message names the directory to remove.
+
 ## FreeBSD
 
 2026.10.0 builds with no warnings and passes its test suite on FreeBSD
