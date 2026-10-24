@@ -216,6 +216,31 @@ static void test_login_with_query(void)
 	g_free(fe_web_fuzz_take_printed());
 }
 
+/* a wrong password whose 401 cannot be written at once (a full socket):
+ * while the answer lingers, the request with the password it guessed is
+ * no longer kept */
+static void test_refused_request_not_kept(void)
+{
+	static const int script[] = { FE_WEB_SSL_WANT_WRITE };
+	WEB_CLIENT_REC *c;
+	char *request;
+
+	fe_web_fuzz_reset_login_state();
+	c = fe_web_fuzz_client_new_peer("p", FALSE, TRUE);
+	fe_web_fuzz_tls_write_script(script, G_N_ELEMENTS(script));
+	request = test_request("guessed-secret");
+	/* one read, and nothing runs the writable watch after it */
+	fe_web_fuzz_peer_write(request, strlen(request));
+	fe_web_fuzz_client_input(c);
+	g_free(request);
+	g_free(fe_web_fuzz_take_printed());
+	g_assert_true(fe_web_fuzz_client_alive(c));
+	g_assert_true(c->closing);
+	g_assert_cmpuint(test_pending(c), >, 0);
+	g_assert_cmpuint(c->input_buffer->len, ==, 0);
+	fe_web_fuzz_client_free(c);
+}
+
 int main(int argc, char **argv)
 {
 	test_init(&argc, &argv);
@@ -230,6 +255,7 @@ int main(int argc, char **argv)
 	                test_query_only_in_request_line);
 	g_test_add_func("/fe-web/password/query-percent-decoded", test_query_percent_decoded);
 	g_test_add_func("/fe-web/password/login-with-query", test_login_with_query);
+	g_test_add_func("/fe-web/password/refused-request-not-kept", test_refused_request_not_kept);
 
 	return g_test_run();
 }

@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <openssl/crypto.h>
 
 static GIOChannel *listen_channel = NULL;
 static int listen_port = -1;
@@ -482,7 +483,12 @@ static int fe_web_verify_password(const char *data)
 		for (i = 0; want[i] != '\0'; i++)
 			diff |= want[i] ^ got[i];
 		result = diff == 0;
-		memset(password, 0, strlen(password));
+		/* OPENSSL_cleanse(): a memset() right before free() may be
+		 * dropped by the compiler. The digest of the configured
+		 * password is as good as the password for logging in. */
+		OPENSSL_cleanse(password, strlen(password));
+		OPENSSL_cleanse(want, strlen(want));
+		OPENSSL_cleanse(got, strlen(got));
 		g_free(password);
 		g_free(want);
 		g_free(got);
@@ -1085,8 +1091,10 @@ static void client_input_once(WEB_CLIENT_REC *client)
 		return;
 	}
 
-	/* Append to input buffer */
+	/* Append to input buffer; the read itself is wiped from the stack
+	 * (the upgrade request holds the password) */
 	g_byte_array_append(client->input_buffer, buffer, ret);
+	OPENSSL_cleanse(buffer, ret);
 
 	/* Handle handshake first */
 	if (!client->handshake_done) {
@@ -1106,12 +1114,15 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			request = g_strndup((const char *) data, request_len);
 			ret = fe_web_handle_handshake(client, request);
 			/* the password is in there */
-			memset(request, 0, strlen(request));
+			OPENSSL_cleanse(request, strlen(request));
 			g_free(request);
 		}
 		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
 			/* wrong password (after the 401 or 429 is written), failed
-			 * write or an endless request */
+			 * write or an endless request; the request is not kept
+			 * while the answer lingers */
+			OPENSSL_cleanse(client->input_buffer->data, client->input_buffer->len);
+			g_byte_array_set_size(client->input_buffer, 0);
 			fe_web_close_client_flushed(client);
 			return;
 		}
@@ -1138,7 +1149,7 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 			/* the request is done with; what came after it are
 			 * frames */
-			memset(client->input_buffer->data, 0, request_len);
+			OPENSSL_cleanse(client->input_buffer->data, request_len);
 			g_byte_array_remove_range(client->input_buffer, 0, request_len);
 			if (client->input_buffer->len > 0 && !client->closing &&
 			    !client->output_failed)
