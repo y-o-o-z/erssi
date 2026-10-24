@@ -155,8 +155,12 @@ or `/opt`).
 `<prefix>/share/irssi/shellter-install.conf`: the next install into the
 same prefix and `erssi --update` use them again until you give them again.
 
-The source directory and its venv must be yours, and every directory above
-them yours or root's. In a rootless container or another user namespace see
+The prefix, the source directory and its venv must be yours, only you may
+write to them and to the directories that hold them, and every directory
+above those must be yours or root's: whoever can change them runs code as
+you (the installed erssi, the installer `erssi --update` runs, the build
+tools and the build files). The installer checks this before it runs or
+changes anything there. In a rootless container or another user namespace see
 `sh shellter-install.sh --help` (`SHELLTER_INSTALL_TRUST_OVERFLOW_UID`).
 
 ## FreeBSD

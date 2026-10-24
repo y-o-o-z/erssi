@@ -2165,6 +2165,50 @@ binary-rollback-uninstall)
     check "--prefix ~/.local: refused" [ $? = 1 ]
     check "... named" grep -q 'is shared with other software - nothing was removed' "$W/out"
     ;;
+prefix-foreign)
+    # the prefix holds the erssi that is run (also by the installer, for
+    # its version) and the installer erssi --update runs: refused when
+    # another user owns it, others can write to it or to its parent
+    another_user
+    mk_theirs() {   # prefix: an erssi there that leaves a mark when run
+        mkdir -p "$1/bin" "$1/share/irssi" &&
+            printf '#!/bin/sh\n: > "%s/ran"\necho "erssi 1.3.9 (20250101 1200)"\n' "$W" > "$1/bin/erssi" &&
+            chmod 755 "$1/bin/erssi"
+    }
+    mk_theirs "$W/theirs"
+    foreign "$W/theirs"
+    run_install --prefix "$W/theirs"
+    check "a prefix of another user: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/theirs belongs to another user (uid 4242) - use a directory of your own: --prefix DIR" "$W/out"
+    check "... its erssi not run" none_exist "$W/ran"
+    sh "$SRC/shellter-install.sh" --update --prefix "$W/theirs" > "$W/out" 2>&1
+    check "... erssi --update there: refused before running it" [ $? = 1 ] && none_exist "$W/ran"
+    mk_theirs "$W/open"
+    fake_mode "$W/open" drwxrwxrwx
+    run_install --prefix "$W/open"
+    check "a prefix others can write to: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/open can be changed by other users" "$W/out"
+    check "... its erssi not run" none_exist "$W/ran"
+    mkdir -p "$W/shared"
+    fake_mode "$W/shared" drwxrwxrwt
+    run_install --prefix "$W/shared/erssi"
+    check "a new prefix in a directory others can write to: refused" [ "$RC" = 1 ]
+    check "... named" grep -qF "$W/shared is writable by other users - choose a --prefix under a directory only you can write" "$W/out"
+    check "... nothing made" none_exist "$W/shared/erssi"
+    mk_theirs "$W/shared/erssi"
+    run_install --prefix "$W/shared/erssi"
+    check "an existing one there: refused" [ "$RC" = 1 ] && none_exist "$W/ran"
+    rm -rf "$W/shared/erssi"
+    mkdir -p "$W/mine/erssi" "$W/up"
+    sh "$SRC/shellter-install.sh" --uninstall --prefix "$W/open" > "$W/out" 2>&1
+    check "--uninstall of a prefix others can write to: refused" [ $? = 1 ] && [ -x "$W/open/bin/erssi" ]
+    no_fakes
+    run_install --prefix "$W/mine/erssi"
+    check "a prefix of the user's own: installed" [ "$RC" = 0 ]
+    ln -s "$W/mine/erssi" "$W/up/link"
+    run_install --prefix "$W/up/link"
+    check "... and through a link to it: installed" [ "$RC" = 0 ]
+    ;;
 binary-dry-run)
     # --dry-run downloads and checks, and changes nothing
     binary_tools

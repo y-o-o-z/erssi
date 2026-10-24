@@ -53,7 +53,7 @@
 # Inside a user namespace (rootless container, bwrap) root's directories,
 # like those of every user the namespace does not map, show as the overflow
 # uid; SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 counts it as root's above the
-# parent of --src (safe_path). SHELLTER_PROC, SHELLTER_OS_RELEASE and
+# parent of --src and of --prefix (safe_path). SHELLTER_PROC, SHELLTER_OS_RELEASE and
 # SHELLTER_BASE_OPENSSL are for the tests only (a stand-in /proc,
 # os-release and FreeBSD base OpenSSL).
 #
@@ -161,15 +161,17 @@ for the administrator. There a missing meson or ninja comes from pip, into
 a venv next to the source directory (DIR.venv), as a ready-made wheel only:
 where pip has none (ninja on FreeBSD), the package is asked for instead.
 
-The source directory and its venv must be yours; the directories above
-them yours or root's. In a user namespace (rootless container, bwrap,
+The prefix, the source directory and its venv must be yours, and only
+you may write to them and to their parents; the directories above them
+must be yours or root's. In a user namespace (rootless container, bwrap,
 unshare) root's directories, like those of every user it does not map,
 show as the overflow uid (65534), which may also be a user the namespace
 maps (rootless podman's nobody):
   SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1
-                 count that uid as root's above the parent of --src (so
-                 every unmapped user's directories there are trusted, not
-                 only root's; never the parent, --src or its venv); does
+                 count that uid as root's above the parent of --src and
+                 of --prefix (so every unmapped user's directories there
+                 are trusted, not only root's; never the parents, --src,
+                 its venv or --prefix); does
                  nothing outside a user namespace or without /proc
 USAGE
 }
@@ -419,11 +421,11 @@ others_can_write() {
 safe_dir() {   # dir - when it exists: the user's, and only the user can write to it
     mapped_self
     [ -e "$1" ] || [ -L "$1" ] || return 0
-    [ ! -L "$1" ] || die "$1 is a symbolic link - use a directory of your own: --src DIR"
+    [ ! -L "$1" ] || die "$1 is a symbolic link - use a directory of your own: ${CHK_OPT:---src} DIR"
     o=$(owner "$1")
-    [ "$o" = "$(id -u)" ] || die "$1 belongs to another user (uid ${o:-unknown}) - use a directory of your own: --src DIR"
+    [ "$o" = "$(id -u)" ] || die "$1 belongs to another user (uid ${o:-unknown}) - use a directory of your own: ${CHK_OPT:---src} DIR"
     if others_can_write "$1"; then
-        die "$1 can be changed by other users - use a directory of your own (--src DIR) or take their write access away"
+        die "$1 can be changed by other users - use a directory of your own (${CHK_OPT:---src} DIR) or take their write access away"
     fi
 }
 # In a user namespace (a rootless container, bwrap, unshare) the files of
@@ -460,7 +462,7 @@ mapped_self() {
 # with SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 (see in_userns).
 safe_path() {
     d=$1
-    hint="choose a --src under a directory only you can write"
+    hint="choose a ${CHK_OPT:---src} under a directory only you can write"
     mapped_self
     ovf=$(overflow_uid)
     trust=""
@@ -473,9 +475,9 @@ safe_path() {
             if [ -n "$ovf" ] && [ "$o" = "$ovf" ]; then
                 # a user namespace: root's directories show as this uid
                 if [ "$d" = "$1" ]; then
-                    die "$d belongs to another user (uid $o) - $hint (in this user namespace uid $o is every user outside it, root included; SHELLTER_INSTALL_TRUST_OVERFLOW_UID does not cover the parent of --src)"
+                    die "$d belongs to another user (uid $o) - $hint (in this user namespace uid $o is every user outside it, root included; SHELLTER_INSTALL_TRUST_OVERFLOW_UID does not cover the parent of ${CHK_OPT:---src})"
                 fi
-                die "$d belongs to another user (uid $o) - $hint, or, as uid $o is every user outside this user namespace (root included), set SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 to count it as root's above the parent of --src"
+                die "$d belongs to another user (uid $o) - $hint, or, as uid $o is every user outside this user namespace (root included), set SHELLTER_INSTALL_TRUST_OVERFLOW_UID=1 to count it as root's above the parent of ${CHK_OPT:---src}"
             fi
             die "$d belongs to another user (uid ${o:-unknown}) - $hint"
         fi
@@ -499,6 +501,26 @@ safe_path() {
 conf_get() {   # key -> value from shellter-install.conf (never run as shell)
     [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -n 1
     return 0
+}
+# The prefix holds the erssi the user runs and the installer that erssi
+# --update runs, so whoever can change it runs code as this user, as with
+# the source directory: the prefix must be the user's and only the user's
+# to write (safe_dir), and its parent and every directory above it the
+# user's or root's (safe_path). A prefix that does not exist yet: the
+# nearest directory above it that does is checked as its parent.
+safe_prefix() {
+    CHK_OPT=--prefix
+    sp=$PREFIX
+    if [ -e "$sp" ] || [ -L "$sp" ]; then
+        sp=$(cd -P -- "$sp" 2>/dev/null && pwd -P) || die "$PREFIX is not a directory - use --prefix DIR"
+        safe_dir "$sp"
+        sp=$(dirname -- "$sp")
+    else
+        while [ ! -e "$sp" ] && [ ! -L "$sp" ]; do sp=$(dirname -- "$sp"); done
+        sp=$(cd -P -- "$sp" 2>/dev/null && pwd -P) || die "cannot open $sp"
+    fi
+    safe_path "$sp"
+    CHK_OPT=--src
 }
 
 # ── binary packages ──────────────────────────────────────────────────
@@ -1299,6 +1321,8 @@ for v in "$SRC" "$REPO" "$PREFIX" "$BINARY_BASE"; do
 "*) die "invalid directory or repository: $v" ;;
     esac
 done
+# before anything in the prefix is run, read or changed
+safe_prefix
 case "$ACTION" in
     rollback) do_rollback ;;
     uninstall) do_uninstall ;;
