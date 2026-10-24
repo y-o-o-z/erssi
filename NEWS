@@ -35,24 +35,38 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    anyone who reaches the port can start, costs about an 18th of
 	    one with the RSA key of older versions (still used until its
 	    certificate is renewed)
-	  - a peer may open at most 8 new connections in 10 seconds; more
-	    are closed before their TLS handshake (yours are not counted)
-	  - a QUIT removes the nick from the web client's nicklists of the
-	    channels it was in only, not of every channel: a netsplit no
-	    longer floods web clients off
+	  - a new certificate has a random serial, says it is for a TLS
+	    server (serverAuth, no CA) and is valid for 825 days, which
+	    Firefox and Apple clients need. A stored one is kept: if Firefox
+	    says the serial was used before, or Safari or iOS refuse it,
+	    remove ~/.erssi/fe-web-key.pem and ~/.erssi/fe-web-cert.pem; the
+	    next start makes a new pair (pin it again in the web client)
+	  - a remote address, or another local user known by uid, may open
+	    at most 8 new connections in 10 seconds; more are closed before
+	    their TLS handshake. Your own uid is not counted, and neither is
+	    a loopback peer whose uid is not known (the BSDs, or Linux
+	    without an answer from the kernel), which every local user then
+	    shares
+	  - the web client's nicklists lose a nick that quits only in the
+	    channels it was in, not in every channel, and also when the
+	    quit, part or kick is hidden (/IGNORE, netsplit hiding)
 	  - text the server sends in another charset (a WHOIS realname in
-	    ISO-8859-2) reaches web clients as valid UTF-8, read in
-	    recode_fallback like other messages
+	    ISO-8859-2) reaches web clients as valid UTF-8: WHOIS text is
+	    read in the charset /RECODE gives the network or nick, else in
+	    recode_fallback
 	  - the startup notices, /FE_WEB STATUS and /HELP FE_WEB no longer
 	    present the AES-256-GCM layer over the messages as protection:
 	    its key comes from the password, which travels inside the same
 	    TLS connection
-	  - /HELP FE_WEB explains the login pacing, and that on the BSDs and
-	    macOS every local user is one peer on a loopback port, so
-	    fe_web_socket is what keeps users apart there; fe-web says so
-	    when it listens on TCP on those systems
-	  - the copies of a login's password (the read buffer, a refused
-	    request, the digest of the configured password) are wiped
+	  - /HELP FE_WEB explains the login and connection limits, what
+	    they mean behind a proxy, and that on the BSDs and macOS every
+	    local user is one peer on a loopback port, so fe_web_socket is
+	    what keeps users apart there; fe-web says so when it listens on
+	    TCP on those systems
+	  - the copies of a login's password that fe-web and its libraries
+	    keep (the read buffers, OpenSSL's record buffer, a refused
+	    request, the digests of the password and the guess) are wiped;
+	    the configured password itself stays in the settings
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
