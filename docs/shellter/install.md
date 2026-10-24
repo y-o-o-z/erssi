@@ -449,7 +449,7 @@ meson setup Build -Dprefix="$HOME/.local/opt/erssi" -Dwith-proxy=yes
 ninja -C Build && meson test -C Build && ninja -C Build install
 ```
 
-GLib (2.32 or newer) and OpenSSL are required, and Perl to build (the
+GLib (2.70 or newer) and OpenSSL are required, and Perl to build (the
 build generates sources with it). Perl scripting (libperl), utf8proc,
 libcurl + chafa (image preview) and libotr + libgcrypt (OTR) are detected
 and used when present. For a system-wide install use

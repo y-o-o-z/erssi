@@ -72,10 +72,22 @@ mode=$1; shift
 case "$mode" in
     --exists)
         case " $* " in *openssl*) [ "${FAKE_NO_OPENSSL_PC:-0}" = 1 ] && exit 1 ;; esac
-        exit 0 ;;
+        # glib-2.0 >= X against the version $FAKE_GLIB_V (2.80.0)
+        case "$*" in
+            "glib-2.0 >= "*)
+                awk -v a="${FAKE_GLIB_V:-2.80.0}" -v b="${*#glib-2.0 >= }" 'BEGIN {
+                    n = split(a, x, "."); m = split(b, y, ".")
+                    for (i = 1; i <= (n > m ? n : m); i++) {
+                        if ((x[i] + 0) > (y[i] + 0)) exit 0
+                        if ((x[i] + 0) < (y[i] + 0)) exit 1
+                    }
+                    exit 0 }'
+                exit ;;
+            *) exit 0 ;;
+        esac ;;
     --modversion)
         case "$1" in
-            glib-2.0) echo 2.80.0 ;;
+            glib-2.0) echo "${FAKE_GLIB_V:-2.80.0}" ;;
             openssl) [ "${FAKE_NO_OPENSSL_PC:-0}" = 1 ] && exit 1; echo 3.0.15 ;;
             *) echo 1.0 ;;
         esac ;;
@@ -926,6 +938,18 @@ stale-lock)
     RC=$?
     check "--uninstall over a stale lock: done" eval '[ "$RC" = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"'
     kill "$alive" 2>/dev/null
+    ;;
+glib-old)
+    # a GLib older than meson.build takes: named before anything is
+    # downloaded or built, with the version it found
+    exported FAKE_GLIB_V=2.68.0 run_install
+    check "GLib 2.68: refused" [ "$RC" = 1 ]
+    check "... named, with its version" grep -qF 'GLib 2.70 or newer is needed; this system has 2.68.0' "$W/out"
+    check "... as a package to install" grep -qF 'erssi needs packages that only the administrator can install' "$W/out"
+    check "... nothing downloaded or built" none_exist "$HOME/.local/src/erssi/.git" "$HOME/.local/opt/erssi/bin/erssi"
+    exported FAKE_GLIB_V=2.70.0 run_install
+    check "GLib 2.70: installed" [ "$RC" = 0 ]
+    check "... no word about the version" no_grep 'or newer is needed' "$W/out"
     ;;
 lock-held-during-venv)
     # the venv is built while this installer holds the lock

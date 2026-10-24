@@ -101,6 +101,10 @@ LWVkMjU1MTkAAABAl/SNOpZPDqDX4lqGV2GRdxwlMh9vgV0ameb+vFBuDrre1SigohZndm
 gEVGAHMwzYnHcHITvNK47wzKTJCfzdBw==
 -----END SSH SIGNATURE-----'
 MESON_PIP="meson==1.12.1"
+# the oldest GLib the build takes (dependency('glib-2.0') in meson.build):
+# checked before the build, so that an older one is named here and not
+# by meson setup after the download
+GLIB_MIN=2.70
 NINJA_PIP="ninja==1.13.2"
 
 usage() {
@@ -1820,7 +1824,7 @@ openssl_version() {
 }
 # missing features -> $REQ (needed) and $REC (recommended)
 check_system() {
-    REQ="" REC=""
+    REQ="" REC="" GLIB_OLD=""
     have git || REQ="$REQ git"
     have cc || have gcc || have clang || REQ="$REQ cc"
     PKGCONFIG=""
@@ -1829,7 +1833,12 @@ check_system() {
         REQ="$REQ pkgconf glib"
         base_openssl >/dev/null || REQ="$REQ openssl"
     else
-        $PKGCONFIG --exists 'glib-2.0 >= 2.32' && $PKGCONFIG --exists gmodule-2.0 && $PKGCONFIG --exists gio-2.0 || REQ="$REQ glib"
+        $PKGCONFIG --exists "glib-2.0 >= $GLIB_MIN" && $PKGCONFIG --exists gmodule-2.0 && $PKGCONFIG --exists gio-2.0 || REQ="$REQ glib"
+        # there, but too old: named with its version
+        if ! $PKGCONFIG --exists "glib-2.0 >= $GLIB_MIN" && $PKGCONFIG --exists glib-2.0; then
+            GLIB_OLD=$($PKGCONFIG --modversion glib-2.0 2>/dev/null) || GLIB_OLD=""
+            : "${GLIB_OLD:=unknown}"
+        fi
         $PKGCONFIG --exists openssl || base_openssl >/dev/null || REQ="$REQ openssl"
     fi
     have perl || REQ="$REQ perl"
@@ -1904,7 +1913,7 @@ else
         check_system
         # shellcheck disable=SC2086
         still=$(names $REQ)
-        [ -z "$still" ] || die "still missing after installing the packages: $still"
+        [ -z "$still" ] || die "still missing after installing the packages: $still${GLIB_OLD:+ (GLib $GLIB_MIN or newer is needed; this system has $GLIB_OLD)}"
         done_ "installed"
         STEP=$((STEP - 1)); step "Checking the system"
         else
@@ -1914,7 +1923,8 @@ else
         # shellcheck disable=SC2086
         die "erssi needs packages that only the administrator can install:
       ${NEED:-$REQ}
-    $(pm_hint ${NEED:-$REQ})${WANT:+
+    $(pm_hint ${NEED:-$REQ})${GLIB_OLD:+
+  GLib $GLIB_MIN or newer is needed; this system has $GLIB_OLD}${WANT:+
   recommended as well: $WANT}"
     fi
     if [ -n "$WANT" ] && [ "$ROOT" = 0 ]; then
