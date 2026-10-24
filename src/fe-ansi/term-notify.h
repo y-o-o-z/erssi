@@ -47,6 +47,12 @@ char *term_notify_encode(TermNotifyProto proto, gboolean tmux, const char *title
  * and left alone if there was none. */
 int term_focus_filter(unsigned char *buf, int len, int *focus);
 
+/* How many bytes at the end of buf may be the start of a focus report
+ * that the next read completes (ESC, or ESC [): 0, 1 or 2. They are kept
+ * for the next read instead of being read as keys. A key never needs them
+ * alone: ESC and ESC [ only start a key sequence. */
+int term_focus_held(const unsigned char *buf, int len);
+
 /* TRUE, and *last_ms = now_ms, when *last_ms is 0 or at least min_ms have
  * passed since it. */
 gboolean term_notify_throttle(gint64 now_ms, gint64 *last_ms, int min_ms);

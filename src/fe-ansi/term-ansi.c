@@ -1585,7 +1585,7 @@ void term_set_input_type(int type)
 
 void term_gets(GArray *buffer, int *line_count)
 {
-	int ret, i, char_len;
+	int ret, i, char_len, end;
 
 	ret = read(STDIN_FILENO, inbuf + inbuf_pos, sizeof(inbuf) - inbuf_pos);
 	if (ret == 0) {
@@ -1608,10 +1608,15 @@ void term_gets(GArray *buffer, int *line_count)
 				ansi_term->focused = focus;
 				signal_emit("terminal focus changed", 1, GINT_TO_POINTER(focus));
 			}
+			/* a report the read cut after ESC or ESC [ waits for
+			 * the rest, or it would become the keys ESC [ I */
+			end = inbuf_pos - term_focus_held(inbuf, inbuf_pos);
+		} else {
+			end = inbuf_pos;
 		}
-		for (i = 0; i < inbuf_pos; ) {
+		for (i = 0; i < end; ) {
 			unichar key;
-			char_len = input_func(inbuf + i, inbuf_pos - i, &key);
+			char_len = input_func(inbuf + i, end - i, &key);
 			if (char_len < 0)
 				break;
 			g_array_append_val(buffer, key);

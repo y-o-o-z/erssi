@@ -12,6 +12,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    C1 are now drawn as '?' by the terminal output itself, also in
 	    UTF-8 mode, and a Latin-1 or other 8-bit name is shown as its bytes
 	    there, as the text view shows it
+	  - with term_notify on, a focus report the terminal sends in two
+	    pieces (over a slow ssh link) is still read as one: it used to
+	    become the keys ESC [ I or ESC [ O, and the focus change was
+	    missed
 
 	+ Image preview
 	  - a preview no longer outlives its line: after /CLEAR or closing a
