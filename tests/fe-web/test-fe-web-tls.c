@@ -21,6 +21,7 @@
 
 #include "fe-web-test.h"
 
+#include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
@@ -100,6 +101,37 @@ static void assert_no_temporary_files(void)
 	g_dir_close(dir);
 }
 
+/* the type and size of the key in fe-web-key.pem */
+static int key_type(void)
+{
+	FILE *f = fopen(key_path, "r");
+	EVP_PKEY *pkey;
+	int type;
+
+	g_assert_nonnull(f);
+	pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(pkey);
+	type = EVP_PKEY_base_id(pkey);
+	EVP_PKEY_free(pkey);
+	return type;
+}
+
+static int key_bits(void)
+{
+	FILE *f = fopen(key_path, "r");
+	EVP_PKEY *pkey;
+	int bits;
+
+	g_assert_nonnull(f);
+	pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(pkey);
+	bits = EVP_PKEY_bits(pkey);
+	EVP_PKEY_free(pkey);
+	return bits;
+}
+
 static void test_made_at_first_start(void)
 {
 	char *out;
@@ -115,6 +147,9 @@ static void test_made_at_first_start(void)
 	out = fe_web_fuzz_take_printed();
 	g_assert_cmpstr(out, ==, "");
 	g_free(out);
+	/* ECDSA P-256: every handshake signs with it before any password */
+	g_assert_cmpint(key_type(), ==, EVP_PKEY_EC);
+	g_assert_cmpint(key_bits(), ==, 256);
 	/* prepared once: a second call changes nothing */
 	g_assert_true(fe_web_ssl_prepare());
 }
@@ -479,6 +514,66 @@ static void test_old_pin_refused_after_new_key(void)
 	g_free(fe_web_fuzz_take_printed());
 }
 
+/* a pair of an older version (RSA) is still used, and a client pinned to
+ * it still connects */
+static void test_rsa_pair_kept(void)
+{
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+	EVP_PKEY *pkey = NULL;
+	X509 *x509 = X509_new();
+	X509_NAME *name;
+	X509V3_CTX v3ctx;
+	X509_EXTENSION *ext;
+	FILE *f;
+	char *cert, *out;
+	TLS_PAIR p;
+
+	reset();
+	g_assert_true(EVP_PKEY_keygen_init(ctx) > 0);
+	g_assert_true(EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) > 0);
+	g_assert_true(EVP_PKEY_keygen(ctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(ctx);
+	X509_set_version(x509, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x509), 7);
+	X509_gmtime_adj(X509_get_notBefore(x509), 0);
+	X509_gmtime_adj(X509_get_notAfter(x509), 86400L * 365);
+	X509_set_pubkey(x509, pkey);
+	name = X509_get_subject_name(x509);
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char *) "old", -1, -1, 0);
+	X509_set_issuer_name(x509, name);
+	X509V3_set_ctx_nodb(&v3ctx);
+	X509V3_set_ctx(&v3ctx, x509, x509, NULL, NULL, 0);
+	ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name, "IP:127.0.0.1,DNS:localhost");
+	X509_add_ext(x509, ext, -1);
+	X509_EXTENSION_free(ext);
+	g_assert_true(X509_sign(x509, pkey, EVP_sha256()) > 0);
+	f = fopen(key_path, "w");
+	g_assert_nonnull(f);
+	g_assert_cmpint(fchmod(fileno(f), 0600), ==, 0);
+	g_assert_true(PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL));
+	fclose(f);
+	f = fopen(cert_path, "w");
+	g_assert_nonnull(f);
+	g_assert_true(PEM_write_X509(f, x509));
+	fclose(f);
+	EVP_PKEY_free(pkey);
+	X509_free(x509);
+	cert = read_file(cert_path);
+
+	out = restart();
+	g_assert_cmpstr(out, ==, "");
+	g_free(out);
+	g_assert_true(file_is(cert_path, cert));
+	g_assert_cmpint(key_type(), ==, EVP_PKEY_RSA);
+	pair_new(&p, cert_path, "127.0.0.1");
+	if (!pair_handshake(&p))
+		g_error("no handshake with the RSA pair");
+	g_assert_cmpint(SSL_get_verify_result(p.ssl), ==, X509_V_OK);
+	pair_free(&p);
+	g_free(cert);
+	g_free(fe_web_fuzz_take_printed());
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -501,6 +596,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/damaged-files-replaced", test_damaged_files_replaced);
 	g_test_add_func("/fe-web/tls/save-failure", test_save_failure);
 	g_test_add_func("/fe-web/tls/handshake-with-pin", test_handshake_with_pin);
+	g_test_add_func("/fe-web/tls/rsa-pair-kept", test_rsa_pair_kept);
 	g_test_add_func("/fe-web/tls/old-pin-refused-after-new-key",
 	                test_old_pin_refused_after_new_key);
 

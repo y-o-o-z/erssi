@@ -13,6 +13,7 @@
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/safe-file.h>
 
+#include <openssl/ec.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -36,40 +37,33 @@ SSL_CTX *fe_web_ssl_ctx = NULL;
 static X509 *server_cert = NULL;
 static EVP_PKEY *server_key = NULL;
 
-/* Generate RSA key pair (2048-bit) using modern OpenSSL 3.0 API */
-static EVP_PKEY *generate_rsa_key(void)
+/* Generate an ECDSA key on P-256. Every TLS handshake signs with the key
+ * in the main loop before any password is checked, so its cost is what an
+ * unauthenticated flood of handshakes costs: a P-256 signature is about 18
+ * times cheaper than an RSA-2048 one. A stored key of another type (RSA,
+ * made by older versions) is still used as long as its certificate is. */
+static EVP_PKEY *generate_key(void)
 {
 	EVP_PKEY *pkey = NULL;
 	EVP_PKEY_CTX *ctx;
 
-	/* Create context for RSA key generation */
-	ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+	ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
 	if (!ctx) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: Failed to create EVP_PKEY_CTX");
 		return NULL;
 	}
-
-	/* Initialize key generation */
-	if (EVP_PKEY_keygen_init(ctx) <= 0) {
+	if (EVP_PKEY_keygen_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1) <= 0 ||
+	    EVP_PKEY_CTX_set_ec_param_enc(ctx, OPENSSL_EC_NAMED_CURVE) <= 0) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: Failed to initialize key generation");
 		EVP_PKEY_CTX_free(ctx);
 		return NULL;
 	}
-
-	/* Set RSA key size to 2048 bits */
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) <= 0) {
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to set key size");
-		EVP_PKEY_CTX_free(ctx);
-		return NULL;
-	}
-
-	/* Generate the key */
 	if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to generate RSA key");
+		          "fe-web-ssl: Failed to generate the key");
 		EVP_PKEY_CTX_free(ctx);
 		return NULL;
 	}
@@ -311,11 +305,11 @@ int fe_web_ssl_prepare(void)
 		break;
 	}
 
-	/* Generate RSA key */
-	server_key = generate_rsa_key();
+	/* Generate the key */
+	server_key = generate_key();
 	if (!server_key) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to generate RSA key - SSL disabled");
+		          "fe-web-ssl: Failed to generate a key - SSL disabled");
 		return FALSE;
 	}
 
