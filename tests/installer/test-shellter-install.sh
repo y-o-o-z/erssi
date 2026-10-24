@@ -859,6 +859,44 @@ lock-before-venv)
     check "the other installer's log is kept" \
         [ "$(cat "$HOME/.local/state/erssi/install.log")" = "the other installer's log" ]
     ;;
+lock-freebsd)
+    # FreeBSD: no boot id, the jail state in place of the PID namespace.
+    # lock_take alone, with a stand-in uname (FreeBSD) and sysctl
+    # (security.jail.jailed from $FAKE_JAILED; none when it is unset)
+    [ -n "$PS" ] || { echo "skip: no ps"; exit 77; }
+    ln -s "$PS" "$W/bin/ps"
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\ncase "${1:-}" in -s) echo FreeBSD ;; -n) echo bsdhost ;; -m) echo amd64 ;; *) echo FreeBSD ;; esac\n' | stand uname
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\n[ "$1 $2" = "-n security.jail.jailed" ] && [ -n "${FAKE_JAILED:-}" ] || exit 1\necho "$FAKE_JAILED"\n' | stand sysctl
+    use_tool uname sysctl
+    sh -c 'exit 0' & gone=$!
+    wait "$gone"
+    sleep 30 & alive=$!
+    trap 'kill "$alive" 2>/dev/null; rm -rf "$W"' EXIT
+    L=$W/lk
+    # shellcheck disable=SC2016 # run by sh
+    lt() { SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; r=0; lock_take "$2" || r=$?; echo "rc=$r $LOCK_WHY"' sh "$SRC/shellter-install.sh" "$L" > "$W/lt.out" 2>&1; }
+    mk() { rm -rf "$L"; mkdir "$L" && printf '%s\n' "$1" > "$L/pid"; }
+    FAKE_JAILED=0; export FAKE_JAILED
+    lt
+    check "the host: a new lock names it" eval 'grep -qx "rc=0 " "$W/lt.out" && grep -qx "[0-9]* bsdhost - host" "$L/pid"'
+    mk "$gone bsdhost - host"; lt
+    check "the host: a lock of a gone installer taken over" grep -qx 'rc=0 ' "$W/lt.out"
+    mk "$alive bsdhost - host"; lt
+    check "the host: a lock of a running one refused" grep -q '^rc=1' "$W/lt.out"
+    mk "$gone bsdhost - jail"; lt
+    check "the host: a lock made in a jail refused" grep -qF 'rc=1 made where this installer cannot tell whether its process still runs (a FreeBSD jail sees only its own processes)' "$W/lt.out"
+    FAKE_JAILED=1
+    mk "$gone bsdhost - jail"; lt
+    check "a jail: a lock of a jail refused, even with its pid gone" grep -qF 'a FreeBSD jail sees only its own processes' "$W/lt.out"
+    mk "$gone bsdhost - host"; lt
+    check "a jail: a lock of the host refused" grep -q '^rc=1' "$W/lt.out"
+    unset FAKE_JAILED
+    mk "$gone bsdhost - host"; lt
+    check "the jail state unreadable: refused" grep -qF 'a FreeBSD jail sees only its own processes' "$W/lt.out"
+    kill "$alive" 2>/dev/null
+    ;;
 prefix-lock)
     # the source build takes the lock of the prefix too: no source install
     # while --rollback, --uninstall or another install works on it

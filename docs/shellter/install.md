@@ -183,7 +183,9 @@ changes anything there. In a rootless container or another user namespace see
 One installer at a time works on a prefix and on a source directory: each
 has a lock (`<prefix>/.install.lock`, `<src>.lock`) that names the
 installer's process, host, boot and PID namespace (the last two where
-Linux shows them). A lock left behind by an installer that was killed
+Linux shows them; FreeBSD has no boot id that survives a clock step, and
+gives whether the installer runs in a jail in place of the namespace: a
+lock made in a jail, or seen from one, is never taken over). A lock left behind by an installer that was killed
 (`kill -9`, the OOM killer) is taken over by the next one once that
 process is gone, when both run on the same host, in the same boot and
 in the same PID namespace; one left by a reboot (an earlier boot of the

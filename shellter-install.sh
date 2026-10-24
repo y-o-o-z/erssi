@@ -551,11 +551,26 @@ safe_prefix() {
 # nothing in it (made by an installer before 2026.10.6, or by one stopped
 # between its mkdir and its pid line) counts as left over once it is 10
 # minutes old.
+# FreeBSD has neither file. Its kern.boottime is no boot id: it moves
+# when the clock is stepped (ntpd after a boot with a wrong clock), and a
+# moved one would make a running installer look like one of an earlier
+# boot, so the boot stays "-". In place of the namespace it gives the jail
+# state (security.jail.jailed): on the host ps sees every process, in a
+# jail only that jail's, and two jails cannot be told apart, so a lock
+# made in a jail, or seen from one, or where the state cannot be read, is
+# never taken over.
 lock_id() {   # "host boot pidns" of this installer
-    lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
-    lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
-    case "$lb" in ''|*[!0-9a-f-]*) lb=- ;; esac
-    case "$lns" in pid:\[[0-9]*\]) ;; *) lns=- ;; esac
+    if [ "$(uname -s 2>/dev/null)" = FreeBSD ]; then
+        lb=-
+        case "$(sysctl -n security.jail.jailed 2>/dev/null)" in
+            0) lns=host ;; 1) lns=jail ;; *) lns=unknown ;;
+        esac
+    else
+        lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
+        lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
+        case "$lb" in ''|*[!0-9a-f-]*) lb=- ;; esac
+        case "$lns" in pid:\[[0-9]*\]) ;; *) lns=- ;; esac
+    fi
     printf '%s %s %s\n' "$(uname -n 2>/dev/null || echo unknown)" "$lb" "$lns"
 }
 # 0 when the installer that holds lock $1 is gone; LOCK_SEEN what the
@@ -586,6 +601,11 @@ lock_stale() {
         # made before this system last started: its installer is gone
         return 0
     fi
+    case " $lns $3 " in
+        *" jail "*|*" unknown "*)
+            LOCK_WHY="made where this installer cannot tell whether its process still runs (a FreeBSD jail sees only its own processes)"
+            return 1 ;;
+    esac
     if [ "$lns" != "$3" ]; then
         if [ "$lns" = - ] || [ "$3" = - ]; then
             LOCK_WHY="made where this installer cannot tell whether its process still runs"
