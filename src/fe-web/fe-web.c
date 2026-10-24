@@ -202,15 +202,19 @@ static void cmd_fe_web(const char *data, IRC_SERVER_REC *server, void *item)
 	command_runsub("fe_web", data, server, item);
 }
 
-void fe_web_init(void)
+void fe_web_settings_init(void)
 {
-	/* Register settings */
 	settings_add_bool("lookandfeel", "fe_web_enabled", FALSE);
 	settings_add_int("lookandfeel", "fe_web_port", 9001);
 	settings_add_str("lookandfeel", "fe_web_bind", "127.0.0.1");
 	/* a Unix socket path; when set it is used instead of fe_web_bind/port */
 	settings_add_str("lookandfeel", "fe_web_socket", "");
 	settings_add_str("lookandfeel", "fe_web_password", "");
+}
+
+void fe_web_init(void)
+{
+	fe_web_settings_init();
 
 	/* Register commands */
 	command_bind("fe_web", NULL, (SIGNAL_FUNC) cmd_fe_web);
