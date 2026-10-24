@@ -1374,6 +1374,13 @@ keep_value() {
 
 main() {
 unset CDPATH        # cd in $(...) must print nothing
+# What the cleanup traps and the later steps test or remove, empty before
+# any trap is set: a variable of the same name in the environment (STAGE
+# is a common one in CI and deploy scripts) would otherwise be taken for
+# this installer's own, and rm -rf'ed, or have another installer's lock
+# dropped, on an early exit such as an up to date erssi --update
+STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
+UD="" UL="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""

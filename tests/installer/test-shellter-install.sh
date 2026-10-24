@@ -838,6 +838,12 @@ prefix-lock)
     check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
     check "... nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi" "$HOME/.local/src/erssi/Build"
     check "... its lock kept, the source lock gone" [ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"
+    # the names of its own locks and of the bin/erssi link, set in the
+    # environment: the other installer's lock stays, no link is made
+    exported PREFIX_LOCKED=1 SRC_LOCKED=1 OLD_LINK=/nonexistent/erssi run_install
+    check "PREFIX_LOCKED SRC_LOCKED OLD_LINK in the environment: refused" [ "$RC" = 1 ]
+    check "... the other installer's lock kept" [ -d "$HOME/.local/opt/erssi/.install.lock" ]
+    check "... no link made" none_exist "$HOME/.local/opt/erssi/bin/erssi"
     rmdir "$HOME/.local/opt/erssi/.install.lock"
     run_install
     check "unlocked: installed" [ "$RC" = 0 ]
@@ -2439,6 +2445,18 @@ binary-update)
     up 2026.10.5
     check "again: up to date" grep -q 'erssi Shellter Edition 2026.10.5 is up to date' "$W/out"
     check "... nothing downloaded" no_grep 'Downloading' "$W/out"
+    # names the cleanup traps use, set in the environment (STAGE is common
+    # in CI and deploy scripts): never taken for the installer's own
+    mkdir -p "$W/victim/stage" "$W/victim/work" && : > "$W/victim/stage/keep" && : > "$W/victim/work/keep" && : > "$W/victim/log"
+    exported STAGE="$W/victim/stage" BWORK="$W/victim/work" BLOG="$W/victim/log" up 2026.10.5
+    check "up to date, STAGE BWORK BLOG in the environment: done" [ "$RC" = 0 ]
+    check "... none of them removed" [ -f "$W/victim/stage/keep" ] && [ -f "$W/victim/work/keep" ] && [ -f "$W/victim/log" ]
+    mkdir "$P/.install.lock"
+    exported STAGE="$W/victim/stage" BLOCK="$P/.install.lock" run_bin --binary --ref shellter-v2026.10.5
+    check "the prefix locked, STAGE BLOCK in the environment: refused" [ "$RC" = 1 ] && grep -q 'another installer is using' "$W/out"
+    check "... STAGE not removed" [ -f "$W/victim/stage/keep" ]
+    check "... the other installer's lock kept" [ -d "$P/.install.lock" ]
+    rmdir "$P/.install.lock"
     # a signed package of a newer release that names another commit than
     # its signed tag: refused
     c6=$(release_commit 2026.10.6); rtag shellter-v2026.10.6 "$c6"

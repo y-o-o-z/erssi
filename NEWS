@@ -29,6 +29,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    to become --keep 1 and remove old releases)
 	  - erssi --update on a box without git says that git is missing
 	    instead of blaming the signature check
+	  - a variable in the environment named like one of the installer's
+	    own (STAGE, say, common in CI and deploy scripts) no longer makes
+	    it remove that directory, or drop another installer's lock, when
+	    it exits early, as an erssi --update with nothing new does
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
