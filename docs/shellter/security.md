@@ -58,12 +58,17 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 
 - **Protected** — the text of PRIVMSGs and actions (`/me`) in a channel or
   query with E2E on, against the server and the other users: nobody
-  without the keys can read it or change it unnoticed. Once you have
+  without the keys can read it or change the text of a line unnoticed
+  (but see below: lines and parts can go missing). Once you have
   verified a person's key (`/e2e verify`, compared over another channel),
   the keys you get from them are really theirs.
 - **Not protected** — NOTICEs, CTCPs other than ACTION, and bot commands
   while `e2e_bot_bypass` is on (sent in clear text); nicks, addresses,
   channel names, who talks to whom, when, and how long the messages are;
+  that every message arrives, and in order: the server can drop whole
+  messages, drop some parts of a long one (each part is shown on its
+  own, nothing says one is missing) or reorder messages, as long as each
+  arrives within 5 minutes of its timestamp;
   which of a channel's readers wrote a line (a sender's key there is
   shared with everyone they let read, so one of them, with the server's
   help, could pass a line off as the sender's); everything on your own
