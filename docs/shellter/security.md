@@ -26,7 +26,10 @@ Built for a shared shell box.
   (`fe_web_socket`) on a shared box.
 - **Limits** — 16 KB and 10 seconds to log in, with a separate limit for
   connections still logging in; at most 8 new connections per peer in 10
-  seconds, refused before their TLS handshake (yours are not counted);
+  seconds, refused before their TLS handshake - a peer being a remote
+  address or a local uid other than yours; a loopback peer whose uid is
+  not known (every local user then, you too) is not limited, so nobody
+  can keep you out with it;
   at most 16 clients; messages of at most 16 MB, also when fragmented (in
   at most 4096 frames). A key fe-web makes is ECDSA P-256, whose
   handshake costs a fraction of the RSA key of older versions (still used

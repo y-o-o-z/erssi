@@ -1335,9 +1335,16 @@ static void sig_listen(void)
 		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 	/* A TLS handshake costs a signature before any password is read: a
 	 * loop of new connections from one peer is refused before it, not
-	 * only made to close its own older ones. The owner's own
-	 * connections are not counted. */
-	if (strcmp(peer_key, own_peer_key) != 0) {
+	 * only made to close its own older ones. Counted are only peers that
+	 * are one party: an address that is not loopback, or a uid that is
+	 * known and not ours. A key many users share (ip:loopback: always on
+	 * the BSDs, on Linux when the uid could not be found, also when only
+	 * the /proc budget was spent) or "uid:unknown" may be the owner's own
+	 * connection too: limited, another local user could keep the owner
+	 * out with a few bare connects. Those are left to the pending limit
+	 * below. */
+	if (!peer_shared && strcmp(peer_key, "uid:unknown") != 0 &&
+	    strcmp(peer_key, own_peer_key) != 0) {
 		if (accept_limit == NULL)
 			accept_limit = fe_web_accept_limit_new();
 		if (!fe_web_accept_allow(accept_limit, peer_key, time(NULL))) {
@@ -1966,8 +1973,9 @@ gboolean fe_web_server_init(void)
 	   one of them, the owner too, is the peer "ip:loopback" */
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: on this system every local user connecting to the port is one "
-	          "peer, you too: their wrong passwords slow down your logins. On a shared "
-	          "box use /SET fe_web_socket (a Unix socket only you can reach)");
+	          "peer, you too: their wrong passwords slow down your logins, and their "
+	          "pending connections can close yours. On a shared box use /SET "
+	          "fe_web_socket (a Unix socket only you can reach)");
 #endif
 	return TRUE;
 }

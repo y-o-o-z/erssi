@@ -80,12 +80,15 @@
     erssi a TLS handshake before any password is read. After 5 wrong
     passwords from one peer, that peer gets one check every 2 seconds.
     On the socket, and on Linux also on a loopback port, a peer is a
-    user, and your own are never slowed down. On the BSDs and macOS erssi
-    cannot tell who connects to a loopback port: every local user, you
-    as well, is the one peer 127.0.0.1, so another user's wrong passwords
-    or new connections slow down your own web client's logins. There
-    fe_web_socket is the only setting that keeps the users of a shared
-    box apart.
+    user whose uid erssi can find; your own connections are never
+    limited or slowed down then. When the uid cannot be found - always
+    on the BSDs and macOS, on Linux when the kernel does not tell and
+    the lookups of the moment are used up - every local user, you as
+    well, is the one peer "loopback": such connections are not limited
+    in number (or another user could keep yours out), but another user's
+    wrong passwords slow down your logins and their pending connections
+    can close yours. There fe_web_socket is the only setting that keeps
+    the users of a shared box apart.
 
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not
