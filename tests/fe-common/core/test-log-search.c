@@ -647,6 +647,14 @@ static void perf_run(int every)
 	gsize i;
 	gboolean wrote_ok;
 
+	/* each run writes and scans 1 GiB in TMPDIR: only on request, with
+	   -m perf or, for `meson test --suite perf`, ERSSI_TEST_PERF=1 */
+	if (!g_test_perf() && g_getenv("ERSSI_TEST_PERF") == NULL) {
+		g_test_skip("writes 1 GiB: run with -m perf or ERSSI_TEST_PERF=1");
+		i_regex_unref(re);
+		return;
+	}
+
 	for (i = 0; i < line_len - 1; i++)
 		line[i] = "abcdefghij klmnopqrst uvwxyz 0123456789 <nick> "[i % 46];
 	line[line_len - 1] = '\n';
@@ -717,10 +725,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/log_search/invalid_utf8", test_invalid_utf8);
 	g_test_add_func("/log_search/percent_literal", test_percent_literal);
 	g_test_add_func("/log_search/encode_roundtrip", test_encode_roundtrip);
-	if (g_test_perf()) {
-		g_test_add_func("/log_search/perf_1g", test_perf_1g);
-		g_test_add_func("/log_search/perf_1g_hits", test_perf_1g_hits);
-	}
+	g_test_add_func("/log_search/perf/1g", test_perf_1g);
+	g_test_add_func("/log_search/perf/1g_hits", test_perf_1g_hits);
 
 	return g_test_run();
 }

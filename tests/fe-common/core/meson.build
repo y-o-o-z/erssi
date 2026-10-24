@@ -208,6 +208,13 @@ test_test_log_search = executable('test-log-search',
 test('test-log-search test', test_test_log_search,
   args : ['--tap'],
   protocol : 'tap')
+# the two 1 GiB scans alone; they skip unless ERSSI_TEST_PERF is set:
+# ERSSI_TEST_PERF=1 meson test --suite perf
+test('test-log-search perf', test_test_log_search,
+  args : ['--tap', '-p', '/log_search/perf'],
+  protocol : 'tap',
+  suite : 'perf',
+  timeout : 600)
 
 test_test_shipped_themes = executable('test-shipped-themes',
   files(
