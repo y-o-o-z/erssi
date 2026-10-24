@@ -253,15 +253,19 @@ check_stage() {
 # full disk) left only xz's status, and the cut-off package would have
 # been listed in SHA256SUMS and signed.
 pack_tree() {   # dir tarball work
-    ptop=$(dirname -- "$1") pname=$(basename -- "$1")
-    (cd "$ptop" && find "$pname" -print | LC_ALL=C sort) > "$3/files" || die "cannot list the package"
+    # tar runs in the tree's parent: the work directory and the tarball
+    # made absolute first, or relative ones would be taken from there
+    ptop=$(cd -- "$(dirname -- "$1")" && pwd) || die "cannot open $(dirname -- "$1")"
+    pname=$(basename -- "$1")
+    pwork=$(cd -- "$3" && pwd) || die "cannot open $3"
+    ptar=$(cd -- "$(dirname -- "$2")" && pwd) || die "cannot open $(dirname -- "$2")"
+    ptar=$ptar/$(basename -- "$2")
+    (cd "$ptop" && find "$pname" -print | LC_ALL=C sort) > "$pwork/files" || die "cannot list the package"
     if tar --version 2>/dev/null | grep -q 'GNU tar'; then
-        set -- "$@" --format=gnu --no-recursion --numeric-owner --owner=0 --group=0 -T "$3/files"
+        set -- --format=gnu --no-recursion --numeric-owner --owner=0 --group=0 -T "$pwork/files"
     else  # bsdtar (FreeBSD)
-        set -- "$@" --format=ustar -n --numeric-owner --uid 0 --gid 0 -T "$3/files"
+        set -- --format=ustar -n --numeric-owner --uid 0 --gid 0 -T "$pwork/files"
     fi
-    ptar=$2 pwork=$3
-    shift 3
     if ! (cd "$ptop" && tar -cf "$pwork/package.tar" "$@"); then
         rm -f "$pwork/package.tar"
         die "packing failed (tar)"

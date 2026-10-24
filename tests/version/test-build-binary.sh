@@ -334,7 +334,12 @@ EOF
     sh "$BB" --pack "$PK/tree/erssi-x" "$PK/out/erssi-x.tar.xz" "$PK/work" > "$tmp/pack.out" 2>&1
     check "--pack: packed" [ $? = 0 ]
     check "... the tree in it, sorted" [ "$(xz -dc "$PK/out/erssi-x.tar.xz" | tar -tf - | sed 's|/$||' | tr '\n' ' ')" = "erssi-x erssi-x/bin erssi-x/bin/erssi " ]
-    check "... nothing else left" [ "$(ls -A "$PK/out")" = erssi-x.tar.xz ] && [ ! -e "$PK/work/package.tar" ]
+    check "... nothing else left" sh -c '[ "$(ls -A "$1/out")" = erssi-x.tar.xz ] && [ ! -e "$1/work/package.tar" ]' sh "$PK"
+    # the same with relative paths, from another directory
+    rm -f "$PK/out/erssi-x.tar.xz"
+    (cd "$PK" && sh "$BB" --pack tree/erssi-x out/erssi-x.tar.xz work) > "$tmp/pack.out" 2>&1
+    check "--pack with relative paths: packed" [ $? = 0 ]
+    check "... the tree in it" [ "$(xz -dc "$PK/out/erssi-x.tar.xz" | tar -tf - | sed 's|/$||' | tr '\n' ' ')" = "erssi-x erssi-x/bin erssi-x/bin/erssi " ]
 
     # SHA256SUMS over the tarballs of one release, sorted, signed and
     # checked with the commands of releasing.md
