@@ -24,8 +24,8 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - the keyring is read from disk again only when the file changed,
 	    and a handshake that changed nothing writes nothing: a stranger's
 	    handshake NOTICE costs a fraction of what it did with a large
-	    keyring. One sender's handshakes are limited to 16 in 10 seconds
-	    whatever context they name
+	    keyring. One sender's requests are limited to 16 in 10 seconds
+	    whatever context they name (its answers and new keys to 64)
 	  - a peer whose ident holds '|' is no longer taken for a damaged
 	    entry (which skipped its acceptance and rotated the key), and
 	    /e2e export and /e2e list show its address and channel right

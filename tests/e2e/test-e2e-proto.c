@@ -7831,31 +7831,40 @@ static void test_request_expiry(void)
 	peer_free(&b);
 }
 
-/* one sender gets E2E_HANDSHAKE_SENDER_MAX handshakes per 10 s whatever
-   context it names (each context had its own allowance, so a stranger
-   naming a new one in every NOTICE made the keyring be read for each);
-   other senders are not held back */
+/* one sender gets E2E_HANDSHAKE_SENDER_MAX KEYREQs per 10 s whatever
+ * context it names (each context had its own allowance, so a stranger
+ * naming a new one in every NOTICE made the keyring be read for each);
+ * its KEYRSPs and REKEYs - a burst of answers across many shared
+ * channels - count apart, with more room; other senders are not held
+ * back */
 static void test_handshake_sender_budget(void)
 {
 	GHashTable *budgets = e2e_stamps_new();
 	int i;
 
 	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX; i++)
-		g_assert_true(e2e_handshake_sender_allow(budgets, "net\x1fx@y"));
-	g_assert_false(e2e_handshake_sender_allow(budgets, "net\x1fx@y"));
-	g_assert_true(e2e_handshake_sender_allow(budgets, "net\x1fz@y"));
-	g_assert_true(e2e_handshake_sender_allow(budgets, "other\x1fx@y"));
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
+	/* a reply burst over more channels than the KEYREQ budget */
+	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX_REPLY; i++)
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYRSP, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_KEYRSP, "net\x1fx@y"));
+	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX_REPLY; i++)
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_REKEY, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_REKEY, "net\x1fx@y"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fz@y"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "other\x1fx@y"));
 	fake_now += E2E_KEYREQ_INBOUND_MIN_INTERVAL;
-	g_assert_true(e2e_handshake_sender_allow(budgets, "net\x1fx@y"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
 	/* many senders: the old ones go */
 	for (i = 0; i < 1000; i++) {
 		char *who = g_strdup_printf("net\x1fu%d@h", i);
 
-		g_assert_true(e2e_handshake_sender_allow(budgets, who));
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, who));
 		g_free(who);
 	}
 	fake_now += E2E_KEYREQ_INBOUND_MIN_INTERVAL;
-	g_assert_true(e2e_handshake_sender_allow(budgets, "net\x1flast@h"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1flast@h"));
 	g_assert_cmpuint(g_hash_table_size(budgets), <=, 2);
 	g_hash_table_destroy(budgets);
 }

@@ -2460,22 +2460,28 @@ typedef struct {
 	guint count;
 } HANDSHAKE_BUDGET;
 
-gboolean e2e_handshake_sender_allow(GHashTable *budgets, const char *sender)
+gboolean e2e_handshake_sender_allow(GHashTable *budgets, E2E_HS_TYPE type, const char *sender)
 {
+	static const char *const names[] = { "", "KEYREQ", "KEYRSP", "REKEY" };
 	gint64 now = e2e_now();
+	guint max = type == E2E_HS_KEYREQ ? E2E_HANDSHAKE_SENDER_MAX : E2E_HANDSHAKE_SENDER_MAX_REPLY;
 	HANDSHAKE_BUDGET *b;
+	char *key;
 
 	/* "" is where stamps_prune() keeps its time */
 	g_return_val_if_fail(*sender != '\0', FALSE);
 	stamps_prune(budgets, now, E2E_KEYREQ_INBOUND_MIN_INTERVAL);
-	b = g_hash_table_lookup(budgets, sender);
+	key = g_strconcat(names[type <= E2E_HS_REKEY ? type : 0], "|", sender, NULL);
+	b = g_hash_table_lookup(budgets, key);
 	if (b == NULL || now - b->start >= E2E_KEYREQ_INBOUND_MIN_INTERVAL) {
 		b = g_new(HANDSHAKE_BUDGET, 1);
 		b->start = now;
 		b->count = 0;
-		g_hash_table_replace(budgets, g_strdup(sender), b);
+		g_hash_table_replace(budgets, key, b);
+	} else {
+		g_free(key);
 	}
-	if (b->count >= E2E_HANDSHAKE_SENDER_MAX)
+	if (b->count >= max)
 		return FALSE;
 	b->count++;
 	return TRUE;

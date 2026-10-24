@@ -39,10 +39,14 @@
    are answered, all together, per WINDOW s */
 #define E2E_INBOUND_BURST               5
 #define E2E_KEYREQ_INBOUND_MIN_INTERVAL 10
-/* handshakes of one sender, of any kind and for any context, read per
+/* handshakes of one sender of each kind, for any context, read per
    E2E_KEYREQ_INBOUND_MIN_INTERVAL s: room for a peer in many shared
-   channels, not for one that names a new context with every NOTICE */
+   channels, not for one that names a new context with every NOTICE.
+   KEYRSPs and REKEYs come in bursts across all the channels shared with
+   a peer (the answers to our requests after a rejoin, a rotation): they
+   get more, and act only on our own pending request or a session we hold */
 #define E2E_HANDSHAKE_SENDER_MAX        16
+#define E2E_HANDSHAKE_SENDER_MAX_REPLY  64
 #define E2E_PENDING_KEYREQ_TTL          120
 /* growth limits of what anyone can make us store */
 #define E2E_MAX_PENDING_INBOUND         64
@@ -132,10 +136,11 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 /* "at most once per 10 s" for each kind of handshake, sender and context */
 gboolean e2e_handshake_allow(GHashTable *stamps, E2E_HS_TYPE type, const char *sender,
                              const char *ctx);
-/* and at most E2E_HANDSHAKE_SENDER_MAX of them per 10 s from sender (the
-   caller puts the network in it), whatever the kind and context: the
-   context is the sender's to choose. budgets: e2e_stamps_new() */
-gboolean e2e_handshake_sender_allow(GHashTable *budgets, const char *sender);
+/* and at most E2E_HANDSHAKE_SENDER_MAX KEYREQs, E2E_HANDSHAKE_SENDER_MAX_REPLY
+   KEYRSPs and as many REKEYs per 10 s from sender (the caller puts the
+   network in it), whatever the context: the context is the sender's to
+   choose. budgets: e2e_stamps_new() */
+gboolean e2e_handshake_sender_allow(GHashTable *budgets, E2E_HS_TYPE type, const char *sender);
 
 /* ---- trust decisions of the user ---- */
 

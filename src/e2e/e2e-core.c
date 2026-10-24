@@ -2449,9 +2449,9 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	/* a flood must not become a KEYRSP flood (Excess Flood), a stream of
 	   signature checks or of keyring writes: each kind once per 10 s per
 	   sender and context - of this server - and, as the context is the
-	   sender's to choose, a few per 10 s per sender in all */
+	   sender's to choose, a number of each kind per 10 s per sender */
 	limit = g_strdup_printf("%s%c%s", server->tag, E2E_SCOPE_SEP, sender);
-	if (!e2e_handshake_sender_allow(sender_budget, limit)) {
+	if (!e2e_handshake_sender_allow(sender_budget, type, limit)) {
 		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s dropped: too many from them",
 		                names[type], nick, sender, ctx);
 		g_free(limit);
