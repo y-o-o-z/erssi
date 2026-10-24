@@ -23,6 +23,11 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    an extension other than jpg, jpeg, png, gif and webp) is found in
 	    the cache again: it was saved under another name than the one
 	    looked for, and downloaded again for every line with the link
+	  - the picture of a page (og:image) is found when the page writes
+	    its address with &amp; or relative to the page ("/img.png",
+	    "//cdn.example.net/x.png"): it is decoded and resolved against
+	    the page's address before it is downloaded; it must still be an
+	    http or https address
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5

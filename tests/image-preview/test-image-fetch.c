@@ -294,6 +294,43 @@ static void test_retry_refused_when_full(void)
 	image_fetch_deinit();
 }
 
+/* og:image is attribute text, and may be relative to its page: the URL
+ * downloaded is decoded and resolved, and stays a web URL */
+static void test_og_image_url(void)
+{
+	static const struct {
+		const char *content;
+		const char *expected;
+	} rows[] = {
+		{ "https://i.example.org/a.png?w=1&amp;h=2", "https://i.example.org/a.png?w=1&h=2" },
+		{ "https://i.example.org/a.png?w=1&#38;h=2&#x26;q=3",
+		  "https://i.example.org/a.png?w=1&h=2&q=3" },
+		{ "/img/b.jpg", "https://www.example.org/img/b.jpg" },
+		{ "c.jpg", "https://www.example.org/gallery/c.jpg" },
+		{ "//cdn.example.net/d.webp", "https://cdn.example.net/d.webp" },
+		{ "  https://i.example.org/e.gif  ", "https://i.example.org/e.gif" },
+		{ "http://i.example.org/f.png", "http://i.example.org/f.png" },
+		{ "file:///etc/passwd", NULL },
+		{ "javascript:alert(1)", NULL },
+		{ "ftp://i.example.org/g.png", NULL },
+	};
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS(rows); i++) {
+		char *html, *url;
+
+		html = g_strdup_printf("<html><head><meta property=\"og:image\" content=\"%s\">"
+		                       "</head></html>", rows[i].content);
+		url = og_image_url(html, "https://www.example.org/gallery/page?id=7");
+		if (g_strcmp0(url, rows[i].expected) != 0)
+			g_error("og:image \"%s\": got %s, expected %s", rows[i].content,
+				url != NULL ? url : "NULL",
+				rows[i].expected != NULL ? rows[i].expected : "NULL");
+		g_free(url);
+		g_free(html);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -306,6 +343,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-fetch/cancel", test_cancel);
 	g_test_add_func("/image-fetch/cache_file_refused", test_cache_file_refused);
 	g_test_add_func("/image-fetch/retry_refused_when_full", test_retry_refused_when_full);
+	g_test_add_func("/image-fetch/og_image_url", test_og_image_url);
 
 	return g_test_run();
 }
