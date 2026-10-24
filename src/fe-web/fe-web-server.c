@@ -36,6 +36,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 static GIOChannel *listen_channel = NULL;
 static int listen_port = -1;
@@ -63,7 +64,6 @@ static gboolean econnrefused_means_no_listener = FALSE;
 /* Limits for clients that have not logged in yet: one password guess per
  * connection, a few KB of request and a few seconds to send it. */
 #define FE_WEB_MAX_CLIENTS 16
-#define FE_WEB_MAX_REQUEST 16384
 #define FE_WEB_HANDSHAKE_TIMEOUT 10
 static guint relisten_tag = 0;
 static time_t refused_logged = 0;
@@ -468,10 +468,9 @@ static int fe_web_verify_password(const char *data)
 	/* Verify password: compare digests, in time independent of where
 	 * the first difference is */
 	if (password != NULL) {
-		char *want, *got;
-		unsigned char diff = 0;
+		unsigned char want[EVP_MAX_MD_SIZE], got[EVP_MAX_MD_SIZE];
+		unsigned int want_len_md = 0, got_len_md = 0;
 		gsize want_len = strlen(configured_password);
-		int i;
 
 		/* a header cannot carry whitespace at the end of the password
 		 * (see above): such a password is compared without it */
@@ -479,21 +478,21 @@ static int fe_web_verify_password(const char *data)
 		       (configured_password[want_len - 1] == ' ' ||
 		        configured_password[want_len - 1] == '\t'))
 			want_len--;
-		want = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
-		                                   (const guchar *) configured_password, want_len);
-		got = g_compute_checksum_for_string(G_CHECKSUM_SHA256, password, -1);
-		for (i = 0; want[i] != '\0'; i++)
-			diff |= want[i] ^ got[i];
-		result = diff == 0;
+		/* EVP_Digest() into the stack, compared in constant time and
+		 * cleansed: g_compute_checksum_*() freed a GChecksum whose block
+		 * buffer still held the hashed password (and each guess) */
+		result = EVP_Digest(configured_password, want_len, want, &want_len_md,
+		                    EVP_sha256(), NULL) == 1 &&
+		         EVP_Digest(password, strlen(password), got, &got_len_md,
+		                    EVP_sha256(), NULL) == 1 &&
+		         want_len_md == got_len_md &&
+		         CRYPTO_memcmp(want, got, want_len_md) == 0;
 		/* OPENSSL_cleanse(): a memset() right before free() may be
-		 * dropped by the compiler. The digest of the configured
-		 * password is as good as the password for logging in. */
+		 * dropped by the compiler */
 		OPENSSL_cleanse(password, strlen(password));
-		OPENSSL_cleanse(want, strlen(want));
-		OPENSSL_cleanse(got, strlen(got));
+		OPENSSL_cleanse(want, sizeof(want));
+		OPENSSL_cleanse(got, sizeof(got));
 		g_free(password);
-		g_free(want);
-		g_free(got);
 	}
 
 	return result;
@@ -1037,7 +1036,7 @@ static void client_input(WEB_CLIENT_REC *client)
 
 static void client_input_once(WEB_CLIENT_REC *client)
 {
-	guchar buffer[8192];
+	guchar buffer[FE_WEB_READ_SIZE];
 	int ret;
 	GIOChannel *channel;
 

@@ -243,6 +243,13 @@ gboolean fe_web_e2e_json_valid(const char *json);
 
 /* WebSocket protocol (RFC 6455) */
 char *fe_web_websocket_compute_accept(const char *client_key);
+/* the longest upgrade request (the login, headers included), and how
+ * much one read of a client takes: the input buffer of a new client
+ * holds both without a reallocation, which would leave a copy of the
+ * password behind (fe-web-client.c) */
+#define FE_WEB_MAX_REQUEST 16384
+#define FE_WEB_READ_SIZE 8192
+
 /* Largest WebSocket frame accepted from a client, and the largest
  * message (the frames of a fragmented one together) */
 #define FE_WEB_MAX_FRAME (16 * 1024 * 1024)

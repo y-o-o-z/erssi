@@ -49,10 +49,10 @@ WEB_CLIENT_REC *fe_web_client_create(int fd, const char *addr)
 	client->recv_tag = -1;
 	client->send_tag = -1;
 	client->output_buffer = g_byte_array_new();
-	/* room for the longest upgrade request (16 KB) and one read (8 KB)
-	 * past it: the request, which holds the password, is never moved by
-	 * a reallocation that would leave a copy behind */
-	client->input_buffer = g_byte_array_sized_new(16384 + 8192);
+	/* room for the longest upgrade request and one read past it: the
+	 * request, which holds the password, is never moved by a
+	 * reallocation that would leave a copy behind */
+	client->input_buffer = g_byte_array_sized_new(FE_WEB_MAX_REQUEST + FE_WEB_READ_SIZE);
 	client->messages_sent = 0;
 	client->messages_received = 0;
 	client->pending_requests = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);

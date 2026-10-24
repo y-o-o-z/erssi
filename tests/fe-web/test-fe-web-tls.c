@@ -144,6 +144,10 @@ static void test_made_at_first_start(void)
 	g_assert_true(g_file_test(cert_path, G_FILE_TEST_IS_REGULAR));
 	assert_no_temporary_files();
 	g_assert_cmpint(SSL_CTX_get_min_proto_version(fe_web_ssl_ctx), ==, TLS1_2_VERSION);
+#ifdef SSL_OP_CLEANSE_PLAINTEXT
+	/* a refused login's request is not left in OpenSSL's buffer */
+	g_assert_true((SSL_CTX_get_options(fe_web_ssl_ctx) & SSL_OP_CLEANSE_PLAINTEXT) != 0);
+#endif
 	out = fe_web_fuzz_take_printed();
 	g_assert_cmpstr(out, ==, "");
 	g_free(out);

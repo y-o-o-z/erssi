@@ -337,6 +337,13 @@ have_cert:
 		return FALSE;
 	}
 
+#ifdef SSL_OP_CLEANSE_PLAINTEXT
+	/* OpenSSL 3: decrypted records are wiped from its read buffer once
+	 * read - the login request (the password) of a refused connection
+	 * stayed there until SSL_free() */
+	SSL_CTX_set_options(fe_web_ssl_ctx, SSL_OP_CLEANSE_PLAINTEXT);
+#endif
+
 	/* Enforce TLS 1.2 minimum (required by modern clients like cloudflared) */
 	if (!SSL_CTX_set_min_proto_version(fe_web_ssl_ctx, TLS1_2_VERSION)) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
