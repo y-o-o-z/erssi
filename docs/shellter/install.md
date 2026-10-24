@@ -189,9 +189,13 @@ process is gone, when both run on the same host, in the same boot and
 in the same PID namespace; one left by a reboot (an earlier boot of the
 same host) is taken over as well. A lock of a running installer, of
 another host, of a container or sandbox with a PID namespace of its own,
-of a system where the boot or the namespace cannot be told on one side,
-or of an installer before 2026.10.6 is left alone: the message says why
-and names the directory to remove.
+or of a system where the boot or the namespace cannot be told on one side
+is left alone: the message says why and names the directory to remove. A
+lock with no pid in it (made by an installer before 2026.10.6, or left by
+one stopped as it made it) counts as left over once it is 10 minutes
+old. A takeover runs under `<lock>.takeover`, which holds the taking
+installer's pid; one left by an installer stopped in the middle is
+cleaned up by the same rules.
 
 ## FreeBSD
 

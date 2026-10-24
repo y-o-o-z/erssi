@@ -547,9 +547,10 @@ safe_prefix() {
 # such process. A pid says nothing across PID namespaces (a sandbox with
 # its own, bwrap --unshare-pid, sees none of the host's processes), so a
 # lock made in another one, of another host, or where boot or namespace
-# cannot be told, is left alone and the message says why; so is a lock
-# without a pid (made by an installer before 2026.10.6, or by one that
-# has only just made it).
+# cannot be told, is left alone and the message says why. A lock with
+# nothing in it (made by an installer before 2026.10.6, or by one stopped
+# between its mkdir and its pid line) counts as left over once it is 10
+# minutes old.
 lock_id() {   # "host boot pidns" of this installer
     lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
     lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
@@ -561,7 +562,15 @@ lock_id() {   # "host boot pidns" of this installer
 # lock held, LOCK_WHY why it is not taken over, when that is not plain
 lock_stale() {
     LOCK_WHY=""
-    LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || return 1
+    LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || LOCK_SEEN=""
+    if [ -z "$LOCK_SEEN" ]; then
+        # nothing in it: made by an installer before 2026.10.6, or by one
+        # stopped between making it and writing its pid line, a moment
+        # later. Only its age can tell: one that old is left over
+        if lock_old "$1"; then return 0; fi
+        LOCK_WHY="made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it); after 10 minutes it counts as left over"
+        return 1
+    fi
     # shellcheck disable=SC2086 # the fields of the lock
     set -- $LOCK_SEEN
     lp=${1:-} lh=${2:-} lb=${3:--} lns=${4:--}
@@ -591,8 +600,13 @@ lock_stale() {
     have ps && ps -p "$$" > /dev/null 2>&1 || return 1
     ! ps -p "$lp" > /dev/null 2>&1
 }
-# The lock made, with its pid line; written to a temporary name and
-# renamed, so that it is never read half-written
+# 0 when the directory $1 was last changed more than 10 minutes ago
+# (find -mmin: GNU, BSD and busybox find; without it, never)
+lock_old() {
+    [ -n "$(find "$1" -prune -mmin +10 2>/dev/null)" ]
+}
+# The lock made, with its pid line, right after its mkdir; written to a
+# temporary name and renamed, so that it is never read half-written
 lock_mark() {
     if ! { printf '%s %s\n' "$$" "$(lock_id)" > "$1/pid.$$" && mv -f "$1/pid.$$" "$1/pid"; } 2>/dev/null; then
         rm -f "$1/pid.$$"
@@ -603,20 +617,29 @@ lock_take() {   # dir -> 0 when this installer holds it now
     LOCK_WHY=""
     if mkdir "$1" 2>/dev/null; then lock_mark "$1"; return 0; fi
     lock_stale "$1" || return 1
-    # One takeover at a time ($1.takeover, made in one step): checked
-    # again under it, the stale lock is removed and made anew, so no other
-    # installer can move or take the lock in between, and the new one
-    # always carries its pid. Between the removal and the mkdir another
-    # installer may make it first; then this one is the one that waits.
-    mkdir "$1.takeover" 2>/dev/null || {
-        LOCK_WHY="being taken over by another installer (if that is stuck too, remove $1.takeover as well)"
-        return 1
-    }
-    if ! lock_stale "$1"; then rmdir "$1.takeover"; return 1; fi
+    # One takeover at a time ($1.takeover, made in one step, with the pid
+    # line of the installer in it): checked again under it, the stale lock
+    # is removed and made anew, so no other installer can move or take the
+    # lock in between, and the new one always carries its pid. Between the
+    # removal and the mkdir another installer may make it first; then this
+    # one is the one that waits.
+    if ! mkdir "$1.takeover" 2>/dev/null; then
+        # left by an installer stopped inside its takeover: removed under
+        # the same rules as a lock, checked again right before
+        if lock_stale "$1.takeover" && lock_stale "$1.takeover"; then
+            rm -rf "$1.takeover"
+        fi
+        if ! mkdir "$1.takeover" 2>/dev/null; then
+            LOCK_WHY="being taken over by another installer (if that is stuck too, remove $1.takeover as well)"
+            return 1
+        fi
+    fi
+    lock_mark "$1.takeover"
+    if ! lock_stale "$1"; then lock_drop "$1.takeover"; return 1; fi
     rm -rf "$1"
-    if ! mkdir "$1" 2>/dev/null; then rmdir "$1.takeover"; return 1; fi
+    if ! mkdir "$1" 2>/dev/null; then lock_drop "$1.takeover"; return 1; fi
     lock_mark "$1"
-    rmdir "$1.takeover"
+    lock_drop "$1.takeover"
     return 0
 }
 # what to say when lock $1 of $2 cannot be taken (LOCK_WHY from lock_take)

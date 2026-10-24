@@ -885,6 +885,10 @@ stale-lock)
     # id and PID namespace, here those of a stand-in /proc
     [ -n "$PS" ] || { echo "skip: no ps"; exit 77; }
     ln -s "$PS" "$W/bin/ps"
+    # find -mmin tells the age of a lock with nothing in it
+    FIND=$(printf '%s\n' "$BIN_TOOLS" | tr ' ' '\n' | sed -n 's|^find=||p')
+    [ -n "$FIND" ] || { echo "skip: no find"; exit 77; }
+    ln -s "$FIND" "$W/bin/find"
     mkdir -p "$W/proc/sys/kernel/random" "$W/proc/self/ns"
     echo 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 > "$W/proc/sys/kernel/random/boot_id"
     ln -s 'pid:[4026531836]' "$W/proc/self/ns/pid"
@@ -942,6 +946,27 @@ stale-lock)
     check "a takeover under way: refused" eval '[ "$RC" = 1 ] && grep -qF "being taken over by another installer (if that is stuck too, remove $S.lock.takeover as well)" "$W/out"'
     check "... the lock and the takeover kept" eval '[ -f "$S.lock/pid" ] && [ -d "$S.lock.takeover" ]'
     rmdir "$S.lock.takeover"
+    # a takeover left by an installer stopped inside it: one whose holder
+    # is gone, or one with nothing in it that is old, is cleaned up and
+    # the stale lock taken over; one whose holder runs is not
+    mkdir "$S.lock.takeover" && printf '%s %s\n' "$alive" "$me" > "$S.lock.takeover/pid"
+    run_install
+    check "a takeover of a running installer: refused" eval '[ "$RC" = 1 ] && [ -f "$S.lock.takeover/pid" ] && [ -f "$S.lock/pid" ]'
+    printf '%s %s\n' "$gone" "$me" > "$S.lock.takeover/pid"
+    run_install
+    check "a takeover left by a gone installer: cleaned up, lock taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
+    mkdir "$S.lock" "$S.lock.takeover" && printf '%s %s\n' "$gone" "$me" > "$S.lock/pid"
+    touch -t 202001010000 "$S.lock.takeover"
+    run_install
+    check "an old empty takeover: cleaned up, lock taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
+    # a lock with nothing in it: fresh, refused; ten minutes old, taken over
+    mkdir "$S.lock"
+    run_install
+    check "a fresh lock without a pid: refused" eval '[ "$RC" = 1 ] && [ -d "$S.lock" ]'
+    check "... named" grep -qF 'wrote no pid into it' "$W/out"
+    touch -t 202001010000 "$S.lock"
+    run_install
+    check "an old lock without a pid: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
     rm -rf "$S.lock"
     # where neither side can tell boot or namespace (FreeBSD): the pid
     # and host decide, as before
