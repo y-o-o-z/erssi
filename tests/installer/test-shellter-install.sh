@@ -2126,6 +2126,13 @@ binary-rollback-uninstall)
     check "... nothing changed" current_is 2026.10.5
     sh "$R" --rollback --update > "$W/out" 2>&1
     check "--rollback with --update: usage error" [ $? = 2 ]
+    # a binary install needs no git, an update does: said so
+    mv "$W/bin/git" "$W/git.away"
+    sh "$R" --update > "$W/out" 2>&1
+    check "--update without git: refused" [ $? = 1 ]
+    check "... named" grep -qF 'erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it (sudo apt install git), or install the newest release with the current installer: curl -fsSL' "$W/out"
+    check "... not called a signature problem" no_grep 'signatures cannot be checked' "$W/out"
+    mv "$W/git.away" "$W/bin/git"
     # --uninstall: the prefix and the link go, ~/.erssi stays
     mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config"
     : > "$P/notes"

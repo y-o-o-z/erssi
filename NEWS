@@ -6,6 +6,8 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	+ Install and update
 	  - --keep with a number too large for the shell is refused (it used
 	    to become --keep 1 and remove old releases)
+	  - erssi --update on a box without git says that git is missing
+	    instead of blaming the signature check
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5

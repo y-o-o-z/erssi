@@ -217,10 +217,11 @@ of `erssi --update`. After one update to 2026.10.3 or newer, every later
   `SHA256SUMS` lists but that cannot be downloaded means a source build
   instead, with one warning (`--binary` refuses).
 - What `--update` checks: [What the installer verifies](#what-the-installer-verifies).
-- `--update` needs git 2.34+ and ssh-keygen to check the signature; without
-  them it stops and names the install command above (with your `--prefix`):
-  the current installer checks the newest release against the commit it
-  records.
+- `--update` needs git 2.34+ and ssh-keygen to check the signature, for a
+  binary install too (which needs no git otherwise); without them it stops
+  and names the install command above (with your `--prefix`): the current
+  installer checks the newest release against the commit it records.
+  Without git at all it says so, with the command that installs git.
 - A binary update keeps the release it replaces for `--rollback`.
 - In a running erssi, `/upgrade` then loads the new version and keeps your
   windows and channels. Connections over plain text stay up; TLS

@@ -1029,6 +1029,13 @@ binary_install() {
     exit 0
 }
 
+# the command that installs the newest release into this prefix with the
+# current installer
+curl_install() {
+    p=""; [ "$PREFIX" = "$HOME/.local/opt/erssi" ] || p=" -s -- --prefix $PREFIX"
+    printf 'curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh%s\n' "$p"
+}
+
 # step "Finding the release" of an update, in the git repository $1: the
 # newest release signed by the release key and newer than the installed
 # one -> REF, TAG_OBJ, NEWEST; exits when there is nothing to do, and
@@ -1040,8 +1047,7 @@ find_update() {
     # and checks that without a signature check (this copy cannot know a
     # release newer than its own)
     if ! can_verify; then
-        p=""; [ "$PREFIX" = "$HOME/.local/opt/erssi" ] || p=" -s -- --prefix $PREFIX"
-        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh$p"
+        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: $(curl_install)"
     fi
     case "$INSTALLED_REF" in
         ''|shellter-v*)
@@ -1429,6 +1435,11 @@ if [ "$UPDATE" = 0 ] && [ -z "$REF" ] && [ -n "$INSTALLED" ]; then
             "$INSTALLED" "$r" "$r"
         exit 0
     fi
+fi
+# an update finds the newest release with git (ls-remote, the signed tag),
+# for a binary install too, which needs no git otherwise
+if [ "$UPDATE" = 1 ] && ! have git; then
+    die "erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it ($(pm_hint git)), or install the newest release with the current installer: $(curl_install)"
 fi
 # a release with a package for this system: installed from it (and done),
 # otherwise built from source below
