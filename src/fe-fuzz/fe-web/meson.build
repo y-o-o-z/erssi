@@ -52,7 +52,7 @@ foreach name : fe_web_fuzz_targets
   endif
 
   replay = executable('fe-web-' + name + '-replay',
-    files(name + '.c', 'replay.c'),
+    files(name + '.c', '../replay.c'),
     link_with : fe_web_fuzz_link_with,
     include_directories : rootinc,
     implicit_include_directories : false,

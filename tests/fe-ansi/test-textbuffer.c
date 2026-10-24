@@ -9,6 +9,18 @@
 
 #define MODULE_NAME "tests"
 
+/* The leak half of this test is seen only by LeakSanitizer, so outside an
+   AddressSanitizer build it reports itself as skipped instead of passing
+   without having checked anything. The body still runs there: glibc's
+   allocator catches most double frees on its own. */
+#if defined(__SANITIZE_ADDRESS__)
+#define HAVE_LEAK_CHECK 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define HAVE_LEAK_CHECK 1
+#endif
+#endif
+
 static void test_destroy_frees_each_line_info(void)
 {
 	TEXT_BUFFER_REC *buffer;
@@ -22,6 +34,10 @@ static void test_destroy_frees_each_line_info(void)
 		buffer->cur_info = g_slist_prepend(buffer->cur_info, info);
 	}
 	textbuffer_destroy(buffer);
+#ifndef HAVE_LEAK_CHECK
+	g_test_skip("the leaks are checked only in an AddressSanitizer build "
+	            "(-Db_sanitize=address)");
+#endif
 }
 
 int main(int argc, char **argv)

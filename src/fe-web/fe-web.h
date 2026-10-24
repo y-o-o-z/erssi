@@ -156,6 +156,11 @@ extern GSList *web_clients;
 /* Module initialization */
 void fe_web_init(void);
 void fe_web_deinit(void);
+/* the fe_web_* settings with their defaults; part of fe_web_init(), and
+ * called alone by the fuzz harness (fe-web-fuzz.c, which the fe-web unit
+ * tests share), which drives fe-web without its commands, signal handlers
+ * and server */
+void fe_web_settings_init(void);
 
 /* Server functions; fe_web_server_init() returns TRUE when the server
  * listens */

@@ -35,21 +35,25 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../../tests/test-home.h"
+
+/* the theme file of each input, in the temporary home */
+static char *theme_path;
 
 int LLVMFuzzerInitialize(int *argc, char ***argv) {
-	char *irssi_argv[] = { *argv[0], "--home", FHS_PREFIX "/tmp/irssi", NULL };
-	int irssi_argc = sizeof(irssi_argv) / sizeof(char *) - 1;
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
 	g_log_set_null_logger();
 #endif
-	core_register_options();
+	/* a temporary home, removed at exit, not a fixed directory under
+	 * the prefix: `meson test` replays this target too */
 	fe_common_core_register_options();
-	args_execute(irssi_argc, irssi_argv);
+	test_home_setup();
 	core_preinit((*argv)[0]);
 	core_init();
 	fe_common_core_init();
 	theme_register(gui_text_formats);
 	module_register("core", "fe-fuzz");
+	theme_path = g_build_filename(get_irssi_dir(), "fuzz.theme", NULL);
 	return 0;
 }
 
@@ -57,7 +61,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 	THEME_REC *theme;
 	gchar *copy = g_strndup((const gchar *)data, size);
 
-	FILE *fp = fopen(FHS_PREFIX "/tmp/irssi/fuzz.theme", "wb");
+	FILE *fp = fopen(theme_path, "wb");
 	if (fp) {
 		fwrite(copy, strlen(copy), 1, fp);
 		fclose(fp);

@@ -201,8 +201,11 @@ message('*** to download and build it automatically')
 message('*** Or alternatively install your distribution\'s package')
 message('*** On Debian: sudo apt-get install libglib2.0-dev')
 message('*** On Redhat: dnf install glib2-devel')
+# 2.70: the newest GLib API used without a fallback is
+# g_pattern_spec_match_string() (log search); newer calls have one, behind
+# GLIB_CHECK_VERSION. Debian 12 has 2.74, Debian 13 2.84, FreeBSD 14 2.80+.
 if not require_glib_internal
-  glib_dep = dependency('glib-2.0', version : '>=2.32', required : not want_glib_internal, static : want_static_dependency, include_type : 'system')
+  glib_dep = dependency('glib-2.0', version : '>=2.70', required : not want_glib_internal, static : want_static_dependency, include_type : 'system')
 else
   glib_dep = dependency('', required : false)
 endif
@@ -699,9 +702,20 @@ if want_fuzzer
       error('compiler does not support -fsanitize=fuzzer-no-link, try clang?')
     endif
     add_project_arguments('-fsanitize=fuzzer-no-link', language : 'c')
+    # Every object now calls the __sanitizer_cov_* hooks, so every
+    # executable needs a runtime that defines them: the fuzz targets get
+    # libFuzzer, and the rest (erssi, the tests, the corpus replays) get
+    # the sanitizer runtime clang links for -fsanitize=fuzzer-no-link,
+    # whose definitions of them do nothing. Before, only a -Db_sanitize
+    # runtime brought them in, by chance, and a -Dwith-fuzzer=yes build
+    # without one could not link erssi or anything `meson test` runs.
+    add_project_link_arguments('-fsanitize=fuzzer-no-link', language : 'c')
   endif
   if fuzzer_link_language != 'c'
     add_languages(fuzzer_link_language)
+    if fuzzer_lib.startswith('-fsanitize=fuzzer')
+      add_project_link_arguments('-fsanitize=fuzzer-no-link', language : fuzzer_link_language)
+    endif
   endif
 endif
 
@@ -782,14 +796,23 @@ pc.generate(filebase : 'irssi-1',
   ])
 
 ###########
-# irssi.1 #
+# erssi.1 #
 ###########
 
-install_man('docs/irssi.1')
+# the page of the erssi binary; nothing here installs an irssi binary, and
+# an irssi.1 would clash with the one of an installed irssi
+install_man('docs/erssi.1')
 
 ###########
 # subdirs #
 ###########
+
+# A plain `meson test` leaves out the "perf" suite (the log search scans,
+# 1 GiB each); `ERSSI_TEST_PERF=1 meson test --suite perf` runs it. With a
+# meson older than 0.57 (no exclude_suites) it is listed as skipped.
+if meson.version().version_compare('>=0.57')
+  add_test_setup('default', exclude_suites : ['perf'], is_default : true)
+endif
 
 # Tests run with HOME in the build directory: the default configuration
 # logs to ~/.erssi/logs, and a test must never write into the real home of

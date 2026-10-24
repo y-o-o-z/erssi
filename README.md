@@ -206,6 +206,7 @@ meson setup Build
 meson test -C Build                               # unit tests and fuzz corpus replays
 meson setup Build-asan -Db_sanitize=address,undefined -Db_lundef=false
 meson test -C Build-asan                          # the same tests under ASan and UBSan
+ERSSI_TEST_PERF=1 meson test -C Build --suite perf # log search speed (2 x 1 GiB in TMPDIR)
 ```
 
 - Tests run with `HOME` inside the build directory, so building and testing

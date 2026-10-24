@@ -30,18 +30,8 @@
 #include <unistd.h>
 #include <math.h>
 
-/* STB image for loading - single header library */
-#define STB_IMAGE_IMPLEMENTATION
-/* A small file can declare a huge image: refuse it instead of allocating
- * gigabytes on the main loop */
-#define STBI_MAX_DIMENSIONS 8192
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_PNG
-#define STBI_ONLY_GIF
-#define STBI_ONLY_BMP
-#define STBI_NO_HDR
-#define STBI_NO_LINEAR
-#include "stb_image.h"
+/* the decoder, with its formats and limits */
+#include <irssi/src/image-preview/image-decode.h>
 
 /* Popup state */
 static gboolean popup_showing = FALSE;
@@ -384,6 +374,7 @@ GString *image_render_chafa(const char *image_path,
 	unsigned char *pixels = NULL;
 	FILE *fp;
 	int img_width, img_height, img_channels;
+	const char *why = NULL;
 	int target_cols, target_rows;
 	float aspect_ratio;
 	int max_bytes, source_w, source_h, estimated_bytes;
@@ -406,19 +397,10 @@ GString *image_render_chafa(const char *image_path,
 		                          safe_file_strerror(errno));
 		return NULL;
 	}
-	/* Load image using stb_image - at most 40 megapixels */
-	if (!stbi_info_from_file(fp, &img_width, &img_height, &img_channels) ||
-	    (gint64)img_width * img_height > 40 * 1000 * 1000) {
-		image_preview_debug_print("CHAFA: Not loading %s: unknown format or too large",
-		                          image_path);
-		fclose(fp);
-		return NULL;
-	}
-	pixels = stbi_load_from_file(fp, &img_width, &img_height, &img_channels, 4);
+	pixels = image_decode_file(fp, &img_width, &img_height, &img_channels, &why);
 	fclose(fp);
 	if (pixels == NULL) {
-		image_preview_debug_print("CHAFA: Failed to load image: %s",
-		                          stbi_failure_reason());
+		image_preview_debug_print("CHAFA: Not loading %s: %s", image_path, why);
 		return NULL;
 	}
 
@@ -578,7 +560,7 @@ GString *image_render_chafa(const char *image_path,
 	canvas = chafa_canvas_new(config);
 	if (canvas == NULL) {
 		image_preview_debug_print("CHAFA: Failed to create canvas");
-		stbi_image_free(pixels);
+		image_decode_free(pixels);
 		chafa_canvas_config_unref(config);
 		chafa_term_info_unref(term_info);
 		return NULL;
@@ -618,7 +600,7 @@ GString *image_render_chafa(const char *image_path,
 		*out_rows = target_rows;
 
 	/* Cleanup */
-	stbi_image_free(pixels);
+	image_decode_free(pixels);
 	chafa_term_info_unref(term_info);
 	chafa_canvas_unref(canvas);
 	chafa_canvas_config_unref(config);

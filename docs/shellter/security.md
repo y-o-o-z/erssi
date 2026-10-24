@@ -167,7 +167,10 @@ Everything fe-web reads from the network (the login request, WebSocket
 frames, encrypted frames, client messages, IRC lines turned into web
 events) is fuzzed with libFuzzer under AddressSanitizer and
 UndefinedBehaviorSanitizer; every finding is replayed by `meson test`. The
-test suite also runs under both sanitizers.
+image decoder of the image preview and irssi's parsers of server lines,
+text formats, theme files and IRC parameters have fuzz targets too, and
+`meson test` replays their seed corpora in every build. The test suite
+also runs under both sanitizers.
 
 ## Credential encryption
 

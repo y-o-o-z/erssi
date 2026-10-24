@@ -197,10 +197,10 @@ static char *fix_path(const char *str)
 void core_register_options(void)
 {
 	static GOptionEntry options[] = { { "config", 0, 0, G_OPTION_ARG_STRING, &irssi_config_file,
-		                            "Configuration file location (~/.irssi/config)",
+		                            "Configuration file location (~/.erssi/config)",
 		                            "PATH" },
 		                          { "home", 0, 0, G_OPTION_ARG_STRING, &irssi_dir,
-		                            "Irssi home dir location (~/.irssi)", "PATH" },
+		                            "Home directory location (~/.erssi)", "PATH" },
 		                          { NULL } };
 
 	args_register(options);

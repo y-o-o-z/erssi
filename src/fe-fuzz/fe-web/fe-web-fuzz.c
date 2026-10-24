@@ -126,15 +126,12 @@ void irc_core_init(void);
 /* fe-common-irc.c */
 void fe_common_irc_init(void);
 
-/* fe-web.c registers these in fe_web_init(), which also creates the TLS
- * key and certificate in irssi's home - not wanted here */
+/* the settings of fe_web_init(), not the rest of it: its commands, its
+ * "setup changed" handler and a server started by fe_web_enabled are not
+ * wanted here, the harness drives the server code itself */
 static void fe_web_fuzz_settings(void)
 {
-	settings_add_bool("lookandfeel", "fe_web_enabled", FALSE);
-	settings_add_int("lookandfeel", "fe_web_port", 9001);
-	settings_add_str("lookandfeel", "fe_web_bind", "127.0.0.1");
-	settings_add_str("lookandfeel", "fe_web_password", "");
-	settings_add_str("lookandfeel", "fe_web_socket", "");
+	fe_web_settings_init();
 	settings_set_str("fe_web_password", FE_WEB_FUZZ_PASSWORD);
 	/* no config file written for every network_add of a fuzzer */
 	settings_set_bool("settings_autosave", FALSE);
