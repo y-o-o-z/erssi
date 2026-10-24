@@ -699,9 +699,20 @@ if want_fuzzer
       error('compiler does not support -fsanitize=fuzzer-no-link, try clang?')
     endif
     add_project_arguments('-fsanitize=fuzzer-no-link', language : 'c')
+    # Every object now calls the __sanitizer_cov_* hooks, so every
+    # executable needs a runtime that defines them: the fuzz targets get
+    # libFuzzer, and the rest (erssi, the tests, the corpus replays) get
+    # the sanitizer runtime clang links for -fsanitize=fuzzer-no-link,
+    # whose definitions of them do nothing. Before, only a -Db_sanitize
+    # runtime brought them in, by chance, and a -Dwith-fuzzer=yes build
+    # without one could not link erssi or anything `meson test` runs.
+    add_project_link_arguments('-fsanitize=fuzzer-no-link', language : 'c')
   endif
   if fuzzer_link_language != 'c'
     add_languages(fuzzer_link_language)
+    if fuzzer_lib.startswith('-fsanitize=fuzzer')
+      add_project_link_arguments('-fsanitize=fuzzer-no-link', language : fuzzer_link_language)
+    endif
   endif
 endif
 
