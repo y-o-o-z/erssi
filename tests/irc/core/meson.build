@@ -114,10 +114,10 @@ test('test-scram test', test_test_scram,
   args : ['--tap'],
   protocol : 'tap')
 
-# keepnick next to a script that handles the MONITOR numerics. Leak
-# detection is off as in test-sasl-upgrade: irssi core state is not freed
-# on deinit.
-foreach name : ['keepnick-monitor']
+# /UPGRADE with a session file that cannot be written, and keepnick next to
+# a script that handles the MONITOR numerics. Leak detection is off as in
+# test-sasl-upgrade: irssi core state is not freed on deinit.
+foreach name : ['upgrade-session', 'keepnick-monitor']
   exe = executable('test-' + name,
     files('test-' + name + '.c'),
     link_with : [
