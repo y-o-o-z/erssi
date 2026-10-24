@@ -519,12 +519,17 @@ static void sig_message_quit(IRC_SERVER_REC *server, const char *nick, const cha
 	fe_web_send_to_server_clients(server, web_msg);
 	fe_web_message_free(web_msg);
 
-	/* Send nicklist update (delta: remove) for all channels the user was in */
+	/* Send nicklist update (delta: remove) for the channels the user was
+	   in: at "message quit" the nick is still in their nicklists (the
+	   core's "event quit" handler, which removes it, runs after
+	   fe-common's, which sends this). A remove for every channel of the
+	   server made a netsplit cost a frame per quit and channel for each
+	   web client, enough to push a slow one over its output limit. */
 	for (tmp = server->channels; tmp != NULL; tmp = tmp->next) {
 		IRC_CHANNEL_REC *channel = tmp->data;
-		/* The user has already been removed from the nicklist by irssi core,
-		   so we just need to send delta update for each channel */
-		fe_web_send_nicklist_update(server, channel, nick, "remove");
+
+		if (nicklist_find(CHANNEL(channel), nick) != NULL)
+			fe_web_send_nicklist_update(server, channel, nick, "remove");
 	}
 }
 
