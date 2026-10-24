@@ -103,7 +103,7 @@ What goes where:
 | `<prefix>/previous` | Link to the release in use before; `--rollback` returns to it. |
 | `<prefix>/bin/erssi` | Link to `../current/bin/erssi`; `~/.local/bin/erssi` links to it as before. |
 | `<prefix>/share/irssi/shellter-install.conf` | `METHOD=binary`, `VERSION`, `COMMIT`, `PLATFORM` and the settings below. |
-| `<prefix>/share/irssi/shellter-install.files` | After a source install: the files and directories it put into the prefix (from meson's install log), for `--uninstall`. |
+| `<prefix>/share/irssi/shellter-install.files` | What the installs put into the prefix, for `--uninstall`: the files and directories of a source install (from meson's install log) and the directories a binary install made. |
 
 The new release is unpacked next to the one in use and moved into place
 before `current` is switched, so an interrupted install leaves the release
@@ -130,14 +130,17 @@ sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --uninstall   # remove ~/.
 
 After `--rollback`, `/upgrade` in a running erssi loads the release it
 switched to. `--uninstall` removes what this installer put into the
-prefix and nothing else: the files and directories its source installs
+prefix and nothing else: the files and directories its installs
 recorded in `shellter-install.files`, the release trees of a binary
 install, `current`, `previous`, the `bin/erssi` link, its conf and its own
 copy, and the `~/.local/bin/erssi` link to it. Anything else in the
 prefix stays, such as libraries, headers, configuration in `etc/` or man
 pages that other software built into the same `~/local`, and so does a
-directory that still holds such a file; the installer names what it left.
-The prefix itself goes only when nothing is left in it. `~/.erssi`
+directory that was there before the install or still holds such a file;
+the installer names what it left. Nothing is removed through a directory
+of the prefix that has become a link out of it. The prefix itself goes
+only when nothing is left in it, and never when it is your home or holds
+it. `~/.erssi`
 (configuration, logs, keys) and the source directory stay. A source
 install made by an installer before 2026.10.6 kept no such record: then
 `--uninstall` uses the install log of the build directory it came from

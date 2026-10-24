@@ -789,27 +789,42 @@ src_cleanup() {
     [ -z "${PREFIX_LOCKED:-}" ] || lock_drop "$PREFIX/.install.lock"
     [ -z "${SRC_LOCKED:-}" ] || lock_drop "$SRC.lock"
 }
-# What a source install put into the prefix, from meson's install log (the
-# files, and the directories it made), relative to the prefix and added to
-# what earlier source installs recorded: --uninstall removes exactly these,
-# also after a switch to a binary install, and nothing else that shares
-# the prefix.
+# The paths (relative to the prefix) on stdin added to FILES, the record
+# of what this installer's installs put into the prefix, which --uninstall
+# removes, and nothing else that shares the prefix
+files_add() {
+    if ! {
+        echo "# written by shellter-install.sh - what its installs put here (--uninstall)"
+        { [ ! -f "$FILES" ] || grep -v '^#' "$FILES"; cat; } | awk 'NF' | LC_ALL=C sort -u
+    } > "$FILES.tmp" || ! mv "$FILES.tmp" "$FILES"; then
+        rm -f "$FILES.tmp"
+        warn "cannot write $(tilde "$FILES") - --uninstall will not know what this install put there"
+    fi
+}
+# What a source install put into the prefix, from meson's install log: the
+# files, and the directories it made (only those it made), also kept
+# after a switch to a binary install
 record_files() {
     ml="$SRC/Build/meson-logs/install-log.txt"
     if [ ! -f "$ml" ]; then
         warn "meson wrote no install log - --uninstall will not know what this install put into $(tilde "$PREFIX")"
         return 0
     fi
-    if ! {
-        echo "# written by shellter-install.sh - what its source installs put here (--uninstall)"
-        {
-            [ ! -f "$FILES" ] || grep -v '^#' "$FILES"
-            awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' "$ml"
-        } | awk 'NF' | LC_ALL=C sort -u
-    } > "$FILES.tmp" || ! mv "$FILES.tmp" "$FILES"; then
-        rm -f "$FILES.tmp"
-        warn "cannot write $(tilde "$FILES") - --uninstall will not know what this install put there"
-    fi
+    awk -v p="$PREFIX/" 'index($0, p) == 1 { print substr($0, length(p) + 1) }' "$ml" | files_add
+}
+# mkdir -p of the directories $@ (relative to the prefix, names without
+# spaces), noting in MADE every level of them that was not there yet:
+# --uninstall removes only directories an install made
+mkdir_made() {
+    for md in "$@"; do
+        mp=""
+        for c in $(printf '%s\n' "$md" | tr '/' ' '); do
+            mp=${mp:+$mp/}$c
+            [ -e "$PREFIX/$mp" ] || [ -L "$PREFIX/$mp" ] || MADE="$MADE
+$mp"
+        done
+        mkdir -p "$PREFIX/$md" || return 1
+    done
 }
 write_conf() {   # METHOD (binary|source)
     {
@@ -972,7 +987,7 @@ binary_install() {
     if [ "$DRY_RUN" = 1 ]; then
         STAGE=$(mktemp -d) || die "cannot create a temporary directory"
     else
-        mkdir -p "$PREFIX/releases" || die "cannot create $PREFIX/releases"
+        mkdir_made releases || die "cannot create $PREFIX/releases"
         STAGE=$(mktemp -d "$PREFIX/releases/.stage.XXXXXX") || die "cannot create a directory in $PREFIX/releases"
     fi
     if ! download SHA256SUMS "$REF" "$STAGE/SHA256SUMS" || ! download SHA256SUMS.sig "$REF" "$STAGE/SHA256SUMS.sig"; then
@@ -1124,9 +1139,10 @@ binary_install() {
     # stopped later (while old releases are removed, say) must not leave
     # the conf naming the release before, or the next --update would take
     # its commit for a moved tag and --rollback a source build for this
-    mkdir -p "$PREFIX/bin" "$PREFIX/share/irssi"
+    mkdir_made bin share/irssi || die "cannot create $PREFIX/bin or $PREFIX/share/irssi"
     VERSION=$V
     write_conf binary || die "cannot write $CONF"
+    [ -z "$MADE" ] || printf '%s\n' "$MADE" | files_add
     if [ "$(readlink "$PREFIX/bin/erssi" 2>/dev/null)" != ../current/bin/erssi ]; then
         [ ! -d "$PREFIX/bin/erssi" ] || [ -L "$PREFIX/bin/erssi" ] || die "$PREFIX/bin/erssi is a directory"
         switch_link "$PREFIX/bin/erssi" ../current/bin/erssi || die "cannot link $(tilde "$PREFIX/bin/erssi")"
@@ -1350,11 +1366,11 @@ do_uninstall() {
     # its own: the conf goes last, so that a removal stopped half-way can
     # be run again
     rm -f "$PREFIX/share/irssi/shellter-install.sh" "$FILES" "$CONF"
-    # then the directories that are empty now: those recorded, those that
-    # held what was removed, and those the binary install makes, deepest
-    # first, never the prefix's own parents, nor one reached through a link
-    { cat "$UL"; printf '%s\n' releases bin share/irssi; } |
-        awk '{ print; while (sub(/\/[^\/]*$/, "")) print }' |
+    # then the directories that are empty now, deepest first: only those
+    # an install made (the record lists them), releases and share/irssi,
+    # which are the installer's and erssi's own - a bin/ or share/ that
+    # was there before stays
+    { cat "$UL"; printf '%s\n' releases share/irssi; } |
         awk '!seen[$0]++ { n = gsub(/\//, "/"); print n "\t" $0 }' | sort -rn | cut -f 2- |
         while IFS= read -r r; do
             if [ ! -L "$PREFIX/$r" ] && [ -d "$PREFIX/$r" ] && in_prefix "$r"; then
@@ -1365,7 +1381,13 @@ do_uninstall() {
     rm -rf "$UD"
     lock_drop "$PREFIX/.install.lock"
     trap - EXIT
-    rmdir "$PREFIX" 2>/dev/null || true
+    # the prefix itself when nothing is left in it, unless it is the home
+    # or a directory above it
+    h=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || h=""
+    case "$h/" in
+        "${RP%/}"/*) ;;
+        *) rmdir "$PREFIX" 2>/dev/null || true ;;
+    esac
     printf '  %s%serssi removed%s from %s.\n\n' "$B" "$G" "$N" "$(tilde "$PREFIX")"
     [ -z "$skipped" ] ||
         field "skipped" "reached through a link out of $(tilde "$PREFIX") now, so not removed: $skipped"
@@ -1403,7 +1425,7 @@ unset CDPATH        # cd in $(...) must print nothing
 # this installer's own, and rm -rf'ed, or have another installer's lock
 # dropped, on an early exit such as an up to date erssi --update
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
-UD="" UL="" RP="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
+UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""

@@ -2322,6 +2322,24 @@ uninstall-foreign)
     check "... nothing behind the link removed" [ -f "$HOME/elsewhere-lib/irssi/modules/libfe_web.so" ]
     check "... named" grep -qF 'reached through a link out of ~/local now, so not removed: lib/irssi/modules/libfe_web.so' "$W/out"
     rm -rf "$L" "$HOME/elsewhere-lib"
+    # directories that were there before the install stay, even empty
+    mkdir -p "$L/bin" "$L/share/man"
+    run_release --ref main --prefix "$L"
+    sh "$INSTALLER" --uninstall --prefix "$L" > "$W/out" 2>&1
+    RC=$?
+    check "empty directories from before: kept" eval '[ "$RC" = 0 ] && [ -d "$L/bin" ] && [ -d "$L/share/man" ]'
+    check "... those the install made removed" none_exist "$L/bin/erssi" "$L/lib" "$L/include" "$L/share/irssi" "$L/share/man/man1"
+    rm -rf "$L"
+    # an empty home as the prefix of a binary install: the home stays
+    oh=$HOME
+    HOME=$W/emptyhome; mkdir "$HOME"
+    exported XDG_STATE_HOME="$W/state" run_bin --prefix "$HOME" --ref shellter-v2026.10.4
+    check "binary install into an empty home" eval '[ "$RC" = 0 ] && [ -L "$HOME/current" ]'
+    sh "$INSTALLER" --uninstall --prefix "$HOME" > "$W/out" 2>&1
+    RC=$?
+    check "... --uninstall: done" eval '[ "$RC" = 0 ] && none_exist "$HOME/current" "$HOME/releases" "$HOME/bin" "$HOME/share"'
+    check "... the home itself kept" [ -d "$HOME" ]
+    HOME=$oh
     # the home as the prefix: only erssi's files there go
     rm -rf "$L"
     mkdir -p "$HOME/.erssi" && : > "$HOME/.erssi/config" && echo theirs > "$HOME/notes"
