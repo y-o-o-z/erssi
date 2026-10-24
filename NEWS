@@ -19,6 +19,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    click on its link showed the picture of the old link. The
 	    records go with their lines, and a record is only used for the
 	    link it was made for
+	  - a picture downloaded from a direct link with a query string (or
+	    an extension other than jpg, jpeg, png, gif and webp) is found in
+	    the cache again: it was saved under another name than the one
+	    looked for, and downloaded again for every line with the link
 
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5

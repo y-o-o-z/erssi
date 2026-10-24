@@ -169,6 +169,16 @@ static char *generate_cache_path(const char *url)
 	return path;
 }
 
+/* The download writes the file under the name the lookups look for: one
+ * function names it (a direct link with a query string, "a.png?x", was
+ * written as <sha>.png?x and looked up as <sha>.img, so it was downloaded
+ * again for every line) */
+char *image_cache_path(const char *url)
+{
+	g_return_val_if_fail(url != NULL, NULL);
+	return generate_cache_path(url);
+}
+
 /* Check if URL is cached (and valid) */
 gboolean image_cache_has(const char *url)
 {
@@ -237,8 +247,7 @@ char *image_cache_get(const char *url)
 }
 
 /* TRUE for the name of a file the cache writes: the SHA-256 of the URL in
- * lower-case hex and a short extension (see generate_cache_path() and
- * image_preview_queue_fetch()). Nothing else in the directory is deleted,
+ * lower-case hex and a short extension (see generate_cache_path()). Nothing else in the directory is deleted,
  * even when the directory is not the one erssi made. */
 static gboolean is_cache_file_name(const char *name)
 {

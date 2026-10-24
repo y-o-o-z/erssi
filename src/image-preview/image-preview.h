@@ -112,6 +112,10 @@ void image_cache_init(void);
 void image_cache_deinit(void);
 gboolean image_cache_has(const char *url);
 char *image_cache_get(const char *url);
+/* Where the cache keeps the image of url, whether it is there or not -
+ * the one name both the download and the lookup use (NULL: no cache
+ * directory) */
+char *image_cache_path(const char *url);
 void image_cache_clear_all(void);
 void image_cache_cleanup(void);
 void image_cache_enforce_limit(const char *path);

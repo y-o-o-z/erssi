@@ -440,28 +440,14 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 	}
 
 	if (rec->cache_path == NULL) {
-		GChecksum *checksum;
-		const char *hash;
-		const char *ext;
-		char *cache_dir;
-
-		checksum = g_checksum_new(G_CHECKSUM_SHA256);
-		g_checksum_update(checksum, (guchar *)url, strlen(url));
-		hash = g_checksum_get_string(checksum);
-
-		if (is_page_url) {
-			ext = ".img";
-		} else {
-			ext = strrchr(url, '.');
-			if (ext == NULL || strlen(ext) > 6 || strchr(ext, '/') != NULL) {
-				ext = ".img";
-			}
+		/* the name image_cache_get() looks for next time */
+		rec->cache_path = image_cache_path(url);
+		if (rec->cache_path == NULL) {
+			debug_print("queue_fetch: no cache directory");
+			rec->fetch_failed = TRUE;
+			rec->error_message = g_strdup("No cache directory");
+			return FALSE;
 		}
-
-		cache_dir = g_strdup_printf("%s/%s", get_irssi_dir(), IMAGE_CACHE_DIR);
-		rec->cache_path = g_strdup_printf("%s/%s%s", cache_dir, hash, ext);
-		g_free(cache_dir);
-		g_checksum_free(checksum);
 	}
 
 	rec->fetch_pending = TRUE;
