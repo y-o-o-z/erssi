@@ -2573,6 +2573,20 @@ man-link)
     exported FAKE_OLD_MAN=1 run_release --ref main
     run_bin --ref shellter-v2026.10.5
     check "... removed by a binary install too" none_exist "$P/share/man/man1/irssi.1"
+    # an irssi.1 that is not erssi's file any more: a link there, or one
+    # reached through share/man linked to a shared man tree, stays
+    exported FAKE_OLD_MAN=1 run_release --ref main
+    rm -f "$P/share/man/man1/irssi.1" && echo theirs > "$W/irssi.1" && ln -s "$W/irssi.1" "$P/share/man/man1/irssi.1"
+    run_release --ref main
+    check "an irssi.1 that is a link now: kept" eval '[ "$RC" = 0 ] && [ -L "$P/share/man/man1/irssi.1" ] && grep -qx theirs "$W/irssi.1"'
+    check "... out of the record" no_grep 'share/man/man1/irssi.1' "$P/share/irssi/shellter-install.files"
+    # (without an erssi.1 there, the older install keeps its irssi.1)
+    rm -f "$P/share/man/man1/irssi.1" "$P/share/man/man1/erssi.1"
+    exported FAKE_OLD_MAN=1 run_release --ref main
+    mkdir -p "$W/shared-man" && mv "$P/share/man" "$W/shared-man/man" && ln -s "$W/shared-man/man" "$P/share/man"
+    run_release --ref main
+    check "an irssi.1 through share/man linked out: kept" eval '[ "$RC" = 0 ] && [ -f "$W/shared-man/man/man1/irssi.1" ]'
+    check "... out of the record" no_grep 'share/man/man1/irssi.1' "$P/share/irssi/shellter-install.files"
     ;;
 binary-dry-run)
     # --dry-run downloads and checks, and changes nothing

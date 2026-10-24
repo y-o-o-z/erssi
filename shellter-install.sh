@@ -936,11 +936,18 @@ link_man() {   # METHOD
 }
 # The irssi.1 that installs before erssi.1 put into share/man/man1 (in the
 # record): gone once the release in use has erssi.1, so that man finds
-# one manual, and out of the record
+# one manual, and out of the record. Only the file erssi put there: a
+# regular file still inside the prefix - not a link, nor one reached
+# through share/man linked to a shared man tree, where it is another
+# program's irssi.1 - which stays, and only the record line goes.
 drop_old_man() {   # METHOD
     [ -f "$FILES" ] && grep -qx 'share/man/man1/irssi.1' "$FILES" || return 0
     [ -n "$(man_page "$1")" ] || return 0
-    rm -f "$PREFIX/share/man/man1/irssi.1"
+    om="$PREFIX/share/man/man1/irssi.1"
+    RP=$(cd -P -- "$PREFIX" 2>/dev/null && pwd -P) || RP=""
+    if [ -n "$RP" ] && [ -f "$om" ] && [ ! -L "$om" ] && in_prefix share/man/man1/irssi.1; then
+        rm -f "$om"
+    fi
     if ! { grep -vx 'share/man/man1/irssi.1' "$FILES" > "$FILES.tmp" && mv "$FILES.tmp" "$FILES"; }; then
         rm -f "$FILES.tmp"
     fi
