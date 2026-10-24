@@ -23,10 +23,14 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - the prefix is checked like the source directory: it must be yours
 	    and only you may write to it and to the directory that holds it,
 	    before its erssi is run or anything in it is changed
-	  - an install stopped half-way leaves a working prefix that says what
-	    is in it: the settings name the new release right after the
-	    switch, a release of the same version moved aside goes back, and
-	    a source install over a binary one puts the bin/erssi link back
+	  - a binary install stopped half-way leaves a working prefix that
+	    says what is in it: the settings name the new release right
+	    after the switch, a release of the same version moved aside goes
+	    back, and old releases are renamed before they are removed, so a
+	    half-removed one is never used again. A source install over a
+	    binary one puts the bin/erssi link back when it is stopped; a
+	    source install stopped inside its install step can still leave
+	    old and new files mixed (install again to repair it)
 	  - --keep with a number too large for the shell is refused (it used
 	    to become --keep 1 and remove old releases)
 	  - erssi --update on a box without git says that git is missing
