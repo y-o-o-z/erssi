@@ -6,8 +6,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	+ Core
 	  - /UPGRADE goes ahead only when the session file can be written:
 	    with a full disk or quota, or a directory erssi cannot write to,
-	    it says why and keeps every connection (before, they were all
-	    lost and the new process started with no session)
+	    it says why and keeps its connections (before, they were all
+	    lost and the new process started with no session); only when the
+	    final write is what fails, the TLS connections, already quit for
+	    the upgrade, connect again
 	  - a script that handles the MONITOR replies (730/731) no longer
 	    sees them printed a second time by erssi; the built-in keepnick
 	    hides only its own targets from erssi's own print of them
