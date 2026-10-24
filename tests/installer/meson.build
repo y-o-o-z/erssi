@@ -11,7 +11,7 @@ test('installer versions test (shellter-v1.3.10)', find_program('sh'),
 # HOME (test-shellter-install.sh SOURCE_ROOT CASE)
 foreach c : ['ascii', 'utf8',
     'link-home', 'link-system-prefix', 'link-root', 'link-same-dir', 'relative-prefix',
-    'lock-before-venv', 'lock-held-during-venv', 'prefix-lock', 'stale-lock', 'lock-freebsd', 'prefix-foreign', 'glib-old',
+    'lock-before-venv', 'lock-held-during-venv', 'prefix-lock', 'stale-lock', 'lock-freebsd', 'prefix-foreign', 'glib-old', 'glib-min',
     'freebsd-base-openssl', 'freebsd-no-openssl',
     'src-foreign', 'src-writable', 'src-writable-named', 'src-shared-parent', 'acl-bsd',
     'userns', 'userns-kernel',

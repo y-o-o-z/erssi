@@ -1019,6 +1019,15 @@ stale-lock)
     check "--uninstall over a stale lock: done" eval '[ "$RC" = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"'
     kill "$alive" 2>/dev/null
     ;;
+glib-min)
+    # GLIB_MIN, what the installer asks for, is the minimum meson.build
+    # takes: a lower one lets a too old GLib through to meson setup, a
+    # higher one refuses systems that would build
+    want=$(sed -n "s/.*dependency('glib-2.0', version : '>=\([0-9.]*\)'.*/\1/p" "$SRC/meson.build" | head -n 1)
+    have=$(sed -n 's/^GLIB_MIN=\([0-9.]*\)$/\1/p' "$SRC/shellter-install.sh")
+    check "meson.build names a GLib minimum" [ -n "$want" ]
+    check "GLIB_MIN ($have) is the minimum of meson.build ($want)" [ "$have" = "$want" ]
+    ;;
 glib-old)
     # a GLib older than meson.build takes: named before anything is
     # downloaded or built, with the version it found
