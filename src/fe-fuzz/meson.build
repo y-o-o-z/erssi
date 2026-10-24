@@ -1,12 +1,13 @@
 # this file is part of irssi
 
 # irssi's fuzz targets: what the server sends, text formats, theme files
-# and IRC parameters. With -Dwith-fuzzer=yes each is a libFuzzer binary
-# (<name>-fuzz), and `meson test` runs it over corpus/<name> with
-# -runs=0: every input once, nothing mutated, nothing written. In every
-# other build the target is linked with replay.c and `meson test` replays
-# corpus/<name> with that: the seeds and the inputs of fixed crashes.
-# (fe-web/ and e2e/ have their own meson.build files.)
+# and IRC parameters; and the image decoder of the image preview. With
+# -Dwith-fuzzer=yes each is a libFuzzer binary (<name>-fuzz), and
+# `meson test` runs it over corpus/<name> with -runs=0: every input once,
+# nothing mutated, nothing written. In every other build the target is
+# linked with replay.c and `meson test` replays corpus/<name> with that:
+# the seeds and the inputs of fixed crashes. (fe-web/ and e2e/ have their
+# own meson.build files.)
 
 fuzz_formats = files('null-logger.c', '../fe-ansi/module-formats.c')
 
@@ -22,6 +23,12 @@ fuzz_targets = [
   ['theme-load', files('fe-common/core/theme-load.c') + fuzz_formats,
    [libconfig_a, libcore_a, libfuzzer_fe_common_core_a], [dep]],
 ]
+if have_image_preview
+  fuzz_targets += [
+    ['image-decode', files('image-preview/decode.c', '../image-preview/image-decode.c'),
+     [], [dep, math_dep]],
+  ]
+endif
 
 foreach t : fuzz_targets
   name = t[0]
