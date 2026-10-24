@@ -1,34 +1,45 @@
 #!/usr/bin/env python3
 """docs/erssi.1 documents every command-line option of erssi.
 
-The options are the GOptionEntry tables that the erssi binary registers
-(src/core/core.c, src/core/session.c, src/fe-common/core/fe-common-core.c,
-src/fe-ansi/irssi.c). Each option shown by --help must have a ".B" or ".BI"
-entry naming --<long name> in the page; hidden ones are internal and only
-checked when the page names them anyway. The page must also not name
-irssi's home directory, ~/.irssi: erssi uses ~/.erssi.
+The options are the GOptionEntry tables of every file under src/ that
+calls args_register(), except the bot (fe-none) and the fuzz targets
+(fe-fuzz), which are other programs. Each option shown by --help must have
+an entry of its own in the page: a ".TP" whose next line, a ".B" or ".BI",
+names --<long name>. A mention in the text of another option does not
+count. Hidden options are internal and only checked when the page has an
+entry for them anyway. The page must also not name irssi's home directory,
+~/.irssi: erssi uses ~/.erssi.
 
 Prints TAP. Usage: check-man-options.py <source dir>"""
 import re
 import sys
 from pathlib import Path
 
-SOURCES = [
-    "src/core/core.c",
-    "src/core/session.c",
-    "src/fe-common/core/fe-common-core.c",
-    "src/fe-ansi/irssi.c",
-]
+# programs of their own, not erssi; args.c defines args_register()
+EXCLUDED = ("src/fe-none/", "src/fe-fuzz/", "src/core/args.c")
 # { "long-name", 'c' or 0, FLAGS, G_OPTION_ARG_...
 ENTRY_RE = re.compile(r'\{\s*"([a-z][a-z0-9-]*)",\s*(?:\'.\'|0)\s*,\s*([^,]+),\s*G_OPTION_ARG_')
-# the option as roff writes it: \-\-name
-MAN_RE = re.compile(r'^\.BI?\s+"?[^\n]*?\\-\\-([a-z][a-z0-9\\-]*)', re.M)
+# an option entry: ".TP", then the option line, roff writing --name as \-\-name
+ENTRY_LINE_RE = re.compile(r'^\.TP[ \t]*\n(\.BI?[ \t][^\n]*)', re.M)
+LONG_RE = re.compile(r'\\-\\-([a-z][a-z0-9\\-]*)')
+
+
+def option_sources(root):
+    """the files under src/ that register command-line options"""
+    found = []
+    for path in sorted((root / "src").rglob("*.c")):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith(EXCLUDED):
+            continue
+        if "args_register(" in path.read_text(errors="replace"):
+            found.append(rel)
+    return found
 
 
 def main():
     root = Path(sys.argv[1])
     options = []
-    for src in SOURCES:
+    for src in option_sources(root):
         for m in ENTRY_RE.finditer((root / src).read_text(errors="replace")):
             options.append((m.group(1), "G_OPTION_FLAG_HIDDEN" in m.group(2), src))
     page = root / "docs" / "erssi.1"
@@ -37,10 +48,9 @@ def main():
         return 1
     text = page.read_text(errors="replace")
     documented = set()
-    for m in MAN_RE.finditer(text):
-        documented.add(m.group(1).replace("\\-", "-"))
+    for m in ENTRY_LINE_RE.finditer(text):
         # ".BI "\-c, \-\-connect=" SERVER" and ".B "\-\-update"" alike
-        for name in re.findall(r'\\-\\-([a-z][a-z0-9\\-]*)', m.group(0)):
+        for name in LONG_RE.findall(m.group(1)):
             documented.add(name.replace("\\-", "-"))
 
     checks = []
