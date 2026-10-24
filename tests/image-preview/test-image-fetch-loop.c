@@ -3,9 +3,10 @@
  * handled by the same loop. image-preview-fetch.c (compiled into this test,
  * allowed to connect to 127.0.0.1) downloads from a local server that sends
  * a little data every 20 ms, and a 10 ms timer counts how often the loop
- * gets to run meanwhile. curl used to be polled from a 50 ms timer that
- * waited inside curl_multi_poll() for up to 10 rounds while data kept
- * coming: the loop then ran about a quarter of the time.
+ * gets to run meanwhile, against the same count with no download (so a
+ * slow or busy machine slows both). curl used to be polled from a 50 ms
+ * timer that waited inside curl_multi_poll() for up to 10 rounds while
+ * data kept coming: the loop then ran 6 times a second instead of ~100.
  */
 #include <irssi/src/common.h>
 /* the test server is on this host */
@@ -134,6 +135,20 @@ static gboolean quit_loop(gpointer loop)
 	return FALSE;
 }
 
+/* how often a 10 ms timer runs in ms milliseconds of the main loop */
+static int count_ticks(GMainLoop *loop, int ms)
+{
+	guint tick_tag;
+
+	ticks = 0;
+	last_tick = max_gap = 0;
+	tick_tag = g_timeout_add(10, tick, NULL);
+	g_timeout_add(ms, quit_loop, loop);
+	g_main_loop_run(loop);
+	g_source_remove(tick_tag);
+	return ticks;
+}
+
 static GThread *start_server(int *port)
 {
 	struct sockaddr_in sin;
@@ -158,8 +173,8 @@ static void test_download_does_not_block(void)
 	GThread *server;
 	IMAGE_FETCH_REC *fetch;
 	char *dir, *path, *url;
-	guint tick_tag;
-	int port;
+	int port, idle, busy;
+	gint64 idle_gap;
 
 	server_chunks = 150;
 	server_length = 1000000;
@@ -169,34 +184,37 @@ static void test_download_does_not_block(void)
 	path = g_build_filename(dir, "picture.png", NULL);
 	url = g_strdup_printf("http://127.0.0.1:%d/picture.png", port);
 
+	/* the machine's own pace, nothing downloading */
+	loop = g_main_loop_new(NULL, FALSE);
+	idle = count_ticks(loop, 1000);
+	idle_gap = max_gap;
+
 	image_fetch_init();
 	g_assert_true(image_fetch_start(url, path, NULL, NULL, FALSE));
 
 	/* let the transfer start, then count for one second */
-	loop = g_main_loop_new(NULL, FALSE);
 	g_timeout_add(300, quit_loop, loop);
 	g_main_loop_run(loop);
 	fetch = g_hash_table_lookup(active_fetches, url);
 	g_assert_nonnull(fetch);
 	g_assert_cmpint(fetch->received_bytes, >, 0);
 
-	ticks = 0;
-	last_tick = max_gap = 0;
-	tick_tag = g_timeout_add(10, tick, NULL);
-	g_timeout_add(1000, quit_loop, loop);
-	g_main_loop_run(loop);
-	g_source_remove(tick_tag);
+	busy = count_ticks(loop, 1000);
 	g_main_loop_unref(loop);
 
-	g_test_message("main loop ran %d times in 1 s, longest gap %" G_GINT64_FORMAT " ms",
-	               ticks, max_gap / 1000);
+	g_test_message("main loop ran %d times in 1 s while downloading (longest gap %"
+	               G_GINT64_FORMAT " ms), %d with nothing (longest gap %" G_GINT64_FORMAT
+	               " ms)", busy, max_gap / 1000, idle, idle_gap / 1000);
 	/* the download was still running all along */
 	fetch = g_hash_table_lookup(active_fetches, url);
 	g_assert_nonnull(fetch);
-	/* about 100 with nothing in the way; the old polling gave 20-30 */
-	if (ticks < 50)
-		g_error("the main loop ran only %d times in a second during a download "
-			"(longest gap %" G_GINT64_FORMAT " ms)", ticks, max_gap / 1000);
+	/* at least half of the idle pace: the old polling gave less than a
+	 * tenth (6 of ~100), a slow machine slows both counts alike */
+	if (idle < 10)
+		g_test_skip("the main loop is too slow here to measure");
+	else if (busy * 2 < idle)
+		g_error("the main loop ran %d times in a second during a download, %d without "
+			"(longest gap %" G_GINT64_FORMAT " ms)", busy, idle, max_gap / 1000);
 
 	image_fetch_deinit();
 	server_stop = TRUE;
