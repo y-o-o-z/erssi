@@ -913,9 +913,22 @@ stale-lock)
     run_install
     check "a lock of another PID namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made in another PID namespace (a container or a sandbox)" "$W/out"'
     check "... kept" [ -f "$S.lock/pid" ]
+    # an earlier boot (a reboot): taken over, even with a pid that runs
+    # now and another PID namespace - nothing of that boot still runs
+    printf '%s %s\n' "$alive" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]" > "$S.lock/pid"
+    run_install
+    check "a lock of an earlier boot: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
+    mkdir "$S.lock"
+    # this boot, a pid that runs: still refused
+    printf '%s %s\n' "$alive" "$me" > "$S.lock/pid"
+    run_install
+    check "... the same boot and a running pid: refused" eval '[ "$RC" = 1 ] && [ "$(cat "$S.lock/pid")" = "$alive $me" ]'
+    # an earlier boot, but this side cannot tell its own: refused
+    mv "$W/proc/sys/kernel/random/boot_id" "$W/boot_id.away"
     printf '%s %s\n' "$gone" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
     run_install
-    check "a lock of another boot: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made before this system last started (another boot id)" "$W/out"'
+    mv "$W/boot_id.away" "$W/proc/sys/kernel/random/boot_id"
+    check "... a boot id this side cannot read: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'
     printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
     run_install
     check "a lock without boot id and namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'

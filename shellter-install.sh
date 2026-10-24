@@ -539,14 +539,17 @@ safe_prefix() {
 # holding "pid host boot pidns" of the installer that holds it: its pid,
 # uname -n, the kernel's boot id and its PID namespace (Linux /proc; "-"
 # where there is none, as on FreeBSD). A lock whose installer is gone
-# (kill -9, the OOM killer) would otherwise stop every later erssi
-# --update until someone removes it by hand, so it is taken over when it
-# names this host, this boot and this PID namespace and ps shows no such
-# process. A pid says nothing across boots or PID namespaces (a sandbox
-# with its own, bwrap --unshare-pid, sees none of the host's processes),
-# so a lock made in another one, or where they cannot be told, is left
-# alone and the message says why; so is a lock without a pid (made by an
-# installer before 2026.10.6, or by one that has only just made it).
+# (kill -9, the OOM killer, a reboot) would otherwise stop every later
+# erssi --update until someone removes it by hand, so it is taken over
+# when it names this host and either an earlier boot (the boot id is the
+# kernel's, the same in every container of it, so no process of that boot
+# can still run) or this boot and this PID namespace with ps showing no
+# such process. A pid says nothing across PID namespaces (a sandbox with
+# its own, bwrap --unshare-pid, sees none of the host's processes), so a
+# lock made in another one, of another host, or where boot or namespace
+# cannot be told, is left alone and the message says why; so is a lock
+# without a pid (made by an installer before 2026.10.6, or by one that
+# has only just made it).
 lock_id() {   # "host boot pidns" of this installer
     lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
     lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
@@ -569,10 +572,10 @@ lock_stale() {
     if [ "$lb" != "$2" ]; then
         if [ "$lb" = - ] || [ "$2" = - ]; then
             LOCK_WHY="made where this installer cannot tell whether its process still runs"
-        else
-            LOCK_WHY="made before this system last started (another boot id)"
+            return 1
         fi
-        return 1
+        # made before this system last started: its installer is gone
+        return 0
     fi
     if [ "$lns" != "$3" ]; then
         if [ "$lns" = - ] || [ "$3" = - ]; then

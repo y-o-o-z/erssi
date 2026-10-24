@@ -186,10 +186,12 @@ installer's process, host, boot and PID namespace (the last two where
 Linux shows them). A lock left behind by an installer that was killed
 (`kill -9`, the OOM killer) is taken over by the next one once that
 process is gone, when both run on the same host, in the same boot and
-in the same PID namespace. A lock of a running installer, of another
-host, of an earlier boot (after a reboot), of a container or sandbox with
-PID namespace of its own, or of an installer before 2026.10.6 is left
-alone: the message says why and names the directory to remove.
+in the same PID namespace; one left by a reboot (an earlier boot of the
+same host) is taken over as well. A lock of a running installer, of
+another host, of a container or sandbox with a PID namespace of its own,
+of a system where the boot or the namespace cannot be told on one side,
+or of an installer before 2026.10.6 is left alone: the message says why
+and names the directory to remove.
 
 ## FreeBSD
 
