@@ -175,6 +175,10 @@ static void cmd_upgrade(const char *data)
 
 	/* save the session */
         session_file = g_strdup_printf("%s/session", get_irssi_dir());
+	/* an old session file is worth nothing; removed first, a symbolic
+	   link there is dropped, not written through (config_write()
+	   follows it), as before the probe */
+	unlink(session_file);
 	if (!session_probe(session_file, &error)) {
 		upgrade_refused(session_file, error, FALSE);
 		g_free(error);

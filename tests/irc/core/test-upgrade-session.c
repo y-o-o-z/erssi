@@ -209,6 +209,27 @@ static void test_refused_after_save_sends_once(void)
 	finish(server);
 }
 
+/* a symbolic link where the session goes: dropped, its target untouched
+ * (the probe wrote through it) */
+static void test_link_not_followed(void)
+{
+	SERVER_REC *server = connected_server();
+	char *victim = g_strdup_printf("%s/victim", get_irssi_dir()), *data = NULL;
+
+	g_assert_true(g_file_set_contents(victim, "precious", -1, NULL));
+	g_assert_cmpint(symlink(victim, session_path), ==, 0);
+	upgrade();
+	g_assert_cmpint(gui_exits, ==, 1);
+	g_assert_true(g_file_get_contents(victim, &data, NULL, NULL));
+	g_assert_cmpstr(data, ==, "precious");
+	g_assert_false(g_file_test(session_path, G_FILE_TEST_IS_SYMLINK));
+	g_assert_true(g_file_test(session_path, G_FILE_TEST_IS_REGULAR));
+	g_free(data);
+	g_unlink(victim);
+	g_free(victim);
+	finish(server);
+}
+
 /* a session file that can be written: the server is handed over */
 static void test_upgrade_written(void)
 {
@@ -237,6 +258,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/upgrade/refused-after-save", test_refused_after_save);
 	g_test_add_func("/upgrade/refused-after-save-sends-once",
 	                test_refused_after_save_sends_once);
+	g_test_add_func("/upgrade/link-not-followed", test_link_not_followed);
 	g_test_add_func("/upgrade/written", test_upgrade_written);
 
 	test_home_setup();
