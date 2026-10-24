@@ -903,7 +903,7 @@ prefix-lock)
     mkdir -p "$HOME/.local/opt/erssi/.install.lock"
     run_install
     check "the prefix locked (an installer before 2026.10.6): refused" [ "$RC" = 1 ]
-    check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
+    check "... named" grep -qF "another installer is using $HOME/.local/opt/erssi - the lock was made by an installer that wrote no pid into it (one before 2026.10.6, or one that has only just made it); after 10 minutes it counts as left over (if not, remove $HOME/.local/opt/erssi/.install.lock)" "$W/out"
     check "... nothing installed" none_exist "$HOME/.local/opt/erssi/bin/erssi" "$HOME/.local/src/erssi/Build"
     check "... its lock kept, the source lock gone" eval '[ -d "$HOME/.local/opt/erssi/.install.lock" ] && none_exist "$HOME/.local/src/erssi.lock"'
     # the names of its own locks and of the bin/erssi link, set in the
