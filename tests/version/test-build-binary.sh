@@ -319,6 +319,23 @@ EOF
     check "--check-stage: a file in /etc is refused" [ $? = 1 ]
     check "--check-stage: and named" grep -q "outside $prefix - no package: .*/etc/erssi.conf" "$tmp/stage.out"
 
+    # packing (--pack, as a package build packs): a tar that fails after
+    # writing its archive, as one does for an unreadable file or a full
+    # disk, means no package - not a cut-off one, signed
+    PK=$tmp/pack
+    mkdir -p "$PK/tree/erssi-x/bin" "$PK/out" "$PK/work" "$PK/stub" && echo erssi > "$PK/tree/erssi-x/bin/erssi" || exit 1
+    realtar=$(command -v tar)
+    printf '#!/bin/sh\ncase " $* " in *" -cf "*) "%s" "$@"; exit 2 ;; esac\nexec "%s" "$@"\n' "$realtar" "$realtar" > "$PK/stub/tar" &&
+        chmod 755 "$PK/stub/tar" || exit 1
+    PATH="$PK/stub:$PATH" sh "$BB" --pack "$PK/tree/erssi-x" "$PK/out/erssi-x.tar.xz" "$PK/work" > "$tmp/pack.out" 2>&1
+    check "--pack: a failing tar is a failure" [ $? = 1 ]
+    check "... named" grep -q 'packing failed (tar)' "$tmp/pack.out"
+    check "... no tarball" [ -z "$(ls -A "$PK/out")" ]
+    sh "$BB" --pack "$PK/tree/erssi-x" "$PK/out/erssi-x.tar.xz" "$PK/work" > "$tmp/pack.out" 2>&1
+    check "--pack: packed" [ $? = 0 ]
+    check "... the tree in it, sorted" [ "$(xz -dc "$PK/out/erssi-x.tar.xz" | tar -tf - | sed 's|/$||' | tr '\n' ' ')" = "erssi-x erssi-x/bin erssi-x/bin/erssi " ]
+    check "... nothing else left" [ "$(ls -A "$PK/out")" = erssi-x.tar.xz ] && [ ! -e "$PK/work/package.tar" ]
+
     # SHA256SUMS over the tarballs of one release, sorted, signed and
     # checked with the commands of releasing.md
     D=$tmp/release
