@@ -84,6 +84,8 @@ static time_t refused_logged = 0;
  * and has its own sign-in does. */
 static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
+/* new connections per peer, before their TLS handshake (fe-web-pacing.h) */
+static FE_WEB_ACCEPT_LIMIT *accept_limit = NULL;
 /* the pacing notice is printed once a minute at most, the peers paced in
  * between are counted */
 static time_t paced_logged = 0;
@@ -1329,6 +1331,24 @@ static void sig_listen(void)
 		}
 	}
 
+	if (own_peer_key == NULL)
+		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
+	/* A TLS handshake costs a signature before any password is read: a
+	 * loop of new connections from one peer is refused before it, not
+	 * only made to close its own older ones. The owner's own
+	 * connections are not counted. */
+	if (strcmp(peer_key, own_peer_key) != 0) {
+		if (accept_limit == NULL)
+			accept_limit = fe_web_accept_limit_new();
+		if (!fe_web_accept_allow(accept_limit, peer_key, time(NULL))) {
+			log_refused_addr(addr, "too many new connections");
+			g_free(addr);
+			g_free(peer_key);
+			net_disconnect(handle);
+			return;
+		}
+	}
+
 	{
 		WEB_CLIENT_REC *victim;
 
@@ -1345,8 +1365,6 @@ static void sig_listen(void)
 		 * connections while anyone else is waiting; a trusted peer
 		 * keeps only its oldest pending one, and its lingering
 		 * connections go first (fe_web_pending_victim()). */
-		if (own_peer_key == NULL)
-			own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 		victim = fe_web_pending_victim(web_clients, FE_WEB_MAX_PENDING, own_peer_key,
 		                               login_pacing);
 		if (victim != NULL) {
@@ -1994,6 +2012,8 @@ void fe_web_server_deinit(void)
 
 	fe_web_pacing_free(login_pacing);
 	login_pacing = NULL;
+	fe_web_accept_limit_free(accept_limit);
+	accept_limit = NULL;
 	g_free(own_peer_key);
 	own_peer_key = NULL;
 

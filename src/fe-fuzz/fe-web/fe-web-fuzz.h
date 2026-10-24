@@ -53,7 +53,8 @@ gboolean fe_web_fuzz_client_alive(WEB_CLIENT_REC *client);
  * next fe_web_fuzz_client_new*() may follow. NULL: only the browser end. */
 void fe_web_fuzz_client_free(WEB_CLIENT_REC *client);
 
-/* Forget login failures so every input gets its password checked */
+/* Forget login failures (and the count of new connections) so every
+ * input gets its password checked */
 void fe_web_fuzz_reset_login_state(void);
 
 /* The login pacing of fe-web-server.c (made if there is none yet) */

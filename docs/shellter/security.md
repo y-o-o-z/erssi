@@ -25,8 +25,12 @@ Built for a shared shell box.
   every local user is the one peer 127.0.0.1, so use the socket
   (`fe_web_socket`) on a shared box.
 - **Limits** — 16 KB and 10 seconds to log in, with a separate limit for
-  connections still logging in; at most 16 clients; messages of at most
-  16 MB, also when fragmented (in at most 4096 frames).
+  connections still logging in; at most 8 new connections per peer in 10
+  seconds, refused before their TLS handshake (yours are not counted);
+  at most 16 clients; messages of at most 16 MB, also when fragmented (in
+  at most 4096 frames). A key fe-web makes is ECDSA P-256, whose
+  handshake costs a fraction of the RSA key of older versions (still used
+  while its certificate is valid).
 - **WebSocket rules** — a frame that breaks RFC 6455 closes the
   connection with the status the RFC gives: unmasked frames, reserved
   bits, unknown opcodes, a continuation of nothing, a message started

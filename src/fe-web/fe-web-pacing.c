@@ -373,6 +373,75 @@ static gboolean ip_v4(const IPADDR *ip, struct in_addr *v4)
 	return ip_mapped_v4(ip, v4);
 }
 
+/* ---- new connections per peer ---- */
+
+typedef struct {
+	time_t start;	/* of the window */
+	guint count;	/* connections in it */
+} ACCEPT_COUNT;
+
+struct _FE_WEB_ACCEPT_LIMIT {
+	GHashTable *peers;	/* peer -> ACCEPT_COUNT */
+	ACCEPT_COUNT overflow;	/* the peers that found no room */
+};
+
+FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void)
+{
+	FE_WEB_ACCEPT_LIMIT *limit = g_new0(FE_WEB_ACCEPT_LIMIT, 1);
+
+	limit->peers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	return limit;
+}
+
+void fe_web_accept_limit_free(FE_WEB_ACCEPT_LIMIT *limit)
+{
+	if (limit == NULL)
+		return;
+	g_hash_table_destroy(limit->peers);
+	g_free(limit);
+}
+
+static gboolean accept_window_over(const ACCEPT_COUNT *c, time_t now)
+{
+	return now < c->start || now - c->start >= FE_WEB_ACCEPT_WINDOW;
+}
+
+static gboolean accept_count(ACCEPT_COUNT *c, time_t now)
+{
+	if (accept_window_over(c, now)) {
+		c->start = now;
+		c->count = 0;
+	}
+	if (c->count >= FE_WEB_ACCEPT_BURST)
+		return FALSE;
+	c->count++;
+	return TRUE;
+}
+
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, time_t now)
+{
+	ACCEPT_COUNT *c = g_hash_table_lookup(limit->peers, peer);
+
+	if (c == NULL && g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS) {
+		GHashTableIter iter;
+		gpointer value;
+
+		/* only when full, so at most once per new peer */
+		g_hash_table_iter_init(&iter, limit->peers);
+		while (g_hash_table_iter_next(&iter, NULL, &value))
+			if (accept_window_over(value, now))
+				g_hash_table_iter_remove(&iter);
+	}
+	if (c == NULL && g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS)
+		return accept_count(&limit->overflow, now);
+	if (c == NULL) {
+		c = g_new0(ACCEPT_COUNT, 1);
+		c->start = now;
+		g_hash_table_insert(limit->peers, g_strdup(peer), c);
+	}
+	return accept_count(c, now);
+}
+
 char *fe_web_peer_key_ip(const IPADDR *ip)
 {
 	char host[INET6_ADDRSTRLEN];

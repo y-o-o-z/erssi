@@ -95,6 +95,24 @@ guint fe_web_pacing_table_size(FE_WEB_PACING *pacing);
 /* Is peer one of the trusted peers (it logged in); changes nothing */
 gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
 
+/* New connections per peer, counted before TLS: each one costs a TLS
+ * handshake, a private-key signature in the main loop, before any
+ * password is read. A peer starts at most FE_WEB_ACCEPT_BURST of them in
+ * FE_WEB_ACCEPT_WINDOW seconds; erssi's own uid is not counted
+ * (fe-web-server.c). At most FE_WEB_ACCEPT_MAX_PEERS peers are counted
+ * on their own; beyond that, new peers share one count. A clock that goes
+ * back starts a new window. */
+#define FE_WEB_ACCEPT_BURST 8
+#define FE_WEB_ACCEPT_WINDOW 10
+#define FE_WEB_ACCEPT_MAX_PEERS 256
+
+typedef struct _FE_WEB_ACCEPT_LIMIT FE_WEB_ACCEPT_LIMIT;
+
+FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void);
+void fe_web_accept_limit_free(FE_WEB_ACCEPT_LIMIT *limit);
+/* May peer start one more connection at now (counted when TRUE) */
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, time_t now);
+
 /* The login queue: at most this many clients that did not log in yet */
 #define FE_WEB_MAX_PENDING 8 /* moved from fe-web-server.c */
 
