@@ -691,10 +691,26 @@ static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const ch
 	return bar != NULL && strcmp(bar + 1, ctx) == 0;
 }
 
+/* s is one handle ident@host, by the rule of e2e_row_key_bar(): an
+   ident may hold '|', never '@', so no '|' follows the first '@' (a
+   handle without '@' holds no '|'). "|@" is taken as the start of a
+   query context ("@<handle>"), not as an ident ending in '|' */
+static gboolean whole_handle(const char *s)
+{
+	const char *at = strchr(s, '@');
+
+	return strchr(at != NULL ? at : s, '|') == NULL && strstr(s, "|@") == NULL;
+}
+
 /* key is the "<ctx>|<handle>" key of row, or "<ctx>" alone (a request
    sent without a handle): the handle is the row's "handle" member when it
    has one; without one the row's "channel" member names the context, and
-   only when it has neither, everything after the last '|' is the handle */
+   only when it has neither, everything after the last '|' is the handle.
+   Not whole_handle() here: "#a|b|u@h" may be "#a" with the handle b|u@h
+   or "#a|b" with u@h - channel names hold '|' as idents may - and such a
+   row taken for "#a" would block or move "#a" for a row of "#a|b". The
+   rows the module writes have the members; an old one whose handle's
+   ident holds '|' is left where it is (it is never used for "#a") */
 static gboolean key_starts_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
 {
 	const char *handle = e2e_json_get_string(row, "handle");
@@ -1029,8 +1045,9 @@ static void own_ctxs_of(const E2E_JSON *kr, const char *peer, GHashTable *out)
 		    strchr(k + pl + 1, E2E_SCOPE_SEP) != NULL)
 			continue;
 		/* the peer's own row: its "handle" member says so; without one
-		   the rest must be one "@<own>" ("bob@h|@z|@me" is "bob@h|@z"'s) */
-		if (handle != NULL ? strcmp(handle, peer) == 0 : strchr(k + pl + 1, '|') == NULL)
+		   the rest must be one "@<own>", by whole_handle() ("bob@h|@z|@me"
+		   is "bob@h|@z"'s; "bob@h|@a|b@me" is bob@h's, own a|b@me) */
+		if (handle != NULL ? strcmp(handle, peer) == 0 : whole_handle(k + pl + 2))
 			g_hash_table_add(out, g_strdup(k + pl + 1));
 	}
 	g_ptr_array_unref(keys);

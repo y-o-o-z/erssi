@@ -1208,6 +1208,14 @@ static void test_adopt_peer_sessions_own_only(void)
 	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h|@z"), ==, 1);
 	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@z|IRCnet\x1f@me@x"));
 	e2e_json_free(kr);
+
+	/* our own ident holds '|' (some servers allow it): "@a|b@x" is one
+	   query context, bob's */
+	kr = e2e_json_new(E2E_JSON_OBJECT);
+	put_row(kr, "incoming", "bob@h|@a|b@x");
+	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h"), ==, 1);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|IRCnet\x1f@a|b@x"));
+	e2e_json_free(kr);
 }
 
 static void test_ctx_resolve(void)
