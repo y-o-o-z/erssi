@@ -1,7 +1,50 @@
 shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.6
 
-	Fixes from another full review of the code.
+	Fixes from a full review of 2026.10.5.
+
+	+ Screen
+	  - no control character from the network reaches the terminal any
+	    more, on any terminal type: the side panels drew the low byte of
+	    each character of a channel name or nick on a terminal that is not
+	    UTF-8, so a name with a Cyrillic letter could send ESC (and with it
+	    a clipboard write by OSC 52, a new window title, ...). C0, DEL and
+	    C1 are now drawn as '?' by the terminal output itself, also in
+	    UTF-8 mode, and an 8-bit name is shown as its bytes there, as the
+	    text view shows it. What now shows as '?': on an 8-bit terminal
+	    the bytes 0x80-0x9F (ISO-8859-x is not affected, but CP125x
+	    letters there are, such as CP1250 ś Ś ź Ź); on a Big5 terminal
+	    the lead bytes 0x81-0xA0 (HKSCS, user-defined area); on a UTF-8
+	    terminal bytes that are not valid UTF-8 in the text view and the
+	    status bar (the side panels show U+FFFD for them)
+	  - with term_notify on, a focus report the terminal sends in two
+	    pieces (over a slow ssh link) is still read as one: it used to
+	    become the keys ESC [ I or ESC [ O, and the focus change was
+	    missed
+
+	+ Image preview
+	  - a preview no longer outlives its line: after /CLEAR or closing a
+	    window, a new line could get the address of a freed one and a
+	    click on its link showed the picture of the old link. The
+	    records go with their lines, and a record is only used for the
+	    link it was made for
+	  - a picture downloaded from a direct link with a query string (or
+	    an extension other than jpg, jpeg, png, gif and webp) is found in
+	    the cache again: it was saved under another name than the one
+	    looked for, and downloaded again for every line with the link
+	  - a download is written as <name>.part and gets the cache's name
+	    only when complete: a download that failed or was cancelled
+	    after /CLEAR or closing its window left its partial file in the
+	    cache, shown as a broken picture on the next click
+	  - the picture of a page (og:image) is found when the page writes
+	    its address with &amp; or relative to the page ("/img.png",
+	    "//cdn.example.net/x.png"): it is decoded and resolved against
+	    the page's address before it is downloaded; it must still be an
+	    http or https address
+	  - typing and drawing no longer lag while a picture downloads: curl
+	    waited up to 50 ms at a time (up to half a second while data
+	    came in) inside erssi's main loop; it is now only called when
+	    one of its sockets is ready or its timer is due
 
 	+ Build and documentation
 	  - erssi has a manual page of its own, erssi(1), installed into the

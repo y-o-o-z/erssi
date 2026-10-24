@@ -15,7 +15,11 @@ typedef gboolean (*SIDEPANEL_TEXT_FUNC)(unichar chr, int width, int color, unsig
  * names) are copied verbatim, so it must not be expanded again with
  * format_string_expand(): a 24-bit colour stores a channel byte below 0x21
  * as byte + 0x20, so 0x05 becomes '%', and a '%' in a channel name or the
- * halfop prefix would be read as a format code too. */
-void sidepanel_text_walk(const char *text, SIDEPANEL_TEXT_FUNC func, void *data);
+ * halfop prefix would be read as a format code too.
+ *
+ * type is the terminal's TERM_TYPE_*: UTF-8 text is read as grapheme
+ * clusters, otherwise bytes (and Big5 pairs) are read as the text view
+ * reads them. */
+void sidepanel_text_walk(const char *text, int type, SIDEPANEL_TEXT_FUNC func, void *data);
 
 #endif

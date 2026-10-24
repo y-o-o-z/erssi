@@ -172,6 +172,15 @@ int term_focus_filter(unsigned char *buf, int len, int *focus)
 	return out;
 }
 
+int term_focus_held(const unsigned char *buf, int len)
+{
+	if (len >= 2 && buf[len - 2] == '\033' && buf[len - 1] == '[')
+		return 2;
+	if (len >= 1 && buf[len - 1] == '\033')
+		return 1;
+	return 0;
+}
+
 gboolean term_notify_throttle(gint64 now_ms, gint64 *last_ms, int min_ms)
 {
 	if (*last_ms != 0 && now_ms - *last_ms < min_ms)

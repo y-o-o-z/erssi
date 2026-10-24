@@ -34,6 +34,7 @@
 struct _IMAGE_FETCH_REC {
 	char *url;               /* URL being fetched */
 	char *cache_path;        /* Target cache path */
+	char *part_path;         /* written here, renamed to cache_path when complete */
 	CURL *curl_handle;       /* curl easy handle */
 	FILE *fp;                /* Output file handle */
 	LINE_REC *line;          /* Associated line in textbuffer */
@@ -55,8 +56,13 @@ static CURLM *curl_multi = NULL;
 /* Active fetches: url -> IMAGE_FETCH_REC */
 static GHashTable *active_fetches = NULL;
 
-/* GMainLoop timer for processing */
-static guint curl_timer_tag = 0;
+/* libcurl is driven from the main loop: it names the sockets to watch
+ * (CURLMOPT_SOCKETFUNCTION) and when to call it back (CURLMOPT_TIMERFUNCTION),
+ * and is only called when one of them is ready or the time has come. It
+ * never waits itself, so a download does not hold up input and drawing. */
+static GHashTable *curl_watches = NULL; /* socket -> GSource id */
+static guint curl_timeout_tag = 0;
+static int curl_running = 0;            /* transfers curl has going */
 
 /* Maximum concurrent fetches */
 #define MAX_CONCURRENT_FETCHES 3
@@ -151,15 +157,14 @@ gboolean image_fetch_is_active(const char *url)
 		return FALSE;
 	}
 
-	/* Check if curl actually has active transfers */
-	if (curl_multi != NULL) {
-		curl_multi_perform(curl_multi, &still_running);
-	}
-
-	/* Active means: in hash table AND (timer running OR curl has active transfers) */
-	active = (curl_timer_tag != 0 || still_running > 0);
+	/* Active means: in hash table, with its transfer in curl, and curl
+	 * waiting for a socket or its timer */
+	still_running = curl_running;
+	active = fetch->curl_handle != NULL &&
+		(still_running > 0 || curl_timeout_tag != 0 ||
+		 (curl_watches != NULL && g_hash_table_size(curl_watches) > 0));
 	image_preview_debug_print("FETCH_IS_ACTIVE: %s found, timer=%u still_running=%d -> %s",
-	                          url, curl_timer_tag, still_running, active ? "ACTIVE" : "STUCK");
+	                          url, curl_timeout_tag, still_running, active ? "ACTIVE" : "STUCK");
 	return active;
 }
 
@@ -170,8 +175,9 @@ void image_fetch_debug_dump(void)
 	gpointer key, value;
 	int count = 0;
 
-	image_preview_debug_print("FETCH_DUMP: curl_multi=%p timer_tag=%u",
-	                          (void*)curl_multi, curl_timer_tag);
+	image_preview_debug_print("FETCH_DUMP: curl_multi=%p timer_tag=%u running=%d sockets=%u",
+	                          (void*)curl_multi, curl_timeout_tag, curl_running,
+	                          curl_watches != NULL ? g_hash_table_size(curl_watches) : 0);
 
 	if (active_fetches == NULL) {
 		image_preview_debug_print("FETCH_DUMP: active_fetches is NULL!");
@@ -194,13 +200,6 @@ void image_fetch_debug_dump(void)
 		                          count++, fetch->url, stage_str, fetch->cancelled);
 	}
 
-	/* Check curl multi status */
-	if (curl_multi != NULL) {
-		int still_running;
-		CURLMcode mc = curl_multi_perform(curl_multi, &still_running);
-		image_preview_debug_print("FETCH_DUMP: curl_multi_perform: mc=%d still_running=%d",
-		                          mc, still_running);
-	}
 }
 
 /* A clicked link is someone else's URL: it may only lead to a public web
@@ -255,6 +254,11 @@ static gboolean address_is_public(const struct sockaddr *sa)
 	return FALSE;
 }
 
+/* the test of the main loop downloads from this host */
+#ifndef IMAGE_FETCH_ADDRESS_ALLOWED
+#define IMAGE_FETCH_ADDRESS_ALLOWED(sa) address_is_public(sa)
+#endif
+
 /* The socket of a download is close-on-exec: neither /EXEC children nor
  * the programs scripts start, nor the binary /UPGRADE runs, get it. curl
  * does not set that on its sockets, so it is done here. */
@@ -263,7 +267,7 @@ static curl_socket_t open_public_socket(void *clientp, curlsocktype purpose,
 {
 	curl_socket_t fd;
 
-	if (!address_is_public(&address->addr)) {
+	if (!IMAGE_FETCH_ADDRESS_ALLOWED(&address->addr)) {
 		image_preview_debug_print("FETCH: refusing to connect to a local address");
 		return CURL_SOCKET_BAD;
 	}
@@ -523,59 +527,120 @@ static char *extract_og_image(const char *html)
 	return og_image;
 }
 
-/* Process curl events - called from GMainLoop */
-static gboolean curl_process(gpointer data)
+/* The og:image value is HTML attribute text: "&amp;" in it is "&". Only
+ * the entities a URL needs are decoded (the five basic ones and numeric
+ * references to printable ASCII), anything else is kept as it is. */
+static char *html_attr_decode(const char *value)
 {
-	int still_running;
-	CURLMcode mc;
+	static const struct {
+		const char *name;
+		char chr;
+	} entities[] = {
+		{ "amp;", '&' }, { "lt;", '<' }, { "gt;", '>' }, { "quot;", '"' }, { "apos;", '\'' },
+	};
+	GString *out;
+	const char *p;
+
+	out = g_string_sized_new(strlen(value));
+	for (p = value; *p != '\0'; p++) {
+		gboolean done = FALSE;
+		guint i;
+
+		if (*p != '&') {
+			g_string_append_c(out, *p);
+			continue;
+		}
+		for (i = 0; i < G_N_ELEMENTS(entities) && !done; i++) {
+			size_t len = strlen(entities[i].name);
+
+			if (strncmp(p + 1, entities[i].name, len) == 0) {
+				g_string_append_c(out, entities[i].chr);
+				p += len;
+				done = TRUE;
+			}
+		}
+		if (!done && p[1] == '#') {
+			const char *num = p + 2;
+			char *end;
+			gulong chr;
+
+			if (*num == 'x' || *num == 'X')
+				chr = strtoul(num + 1, &end, 16);
+			else
+				chr = strtoul(num, &end, 10);
+			if (end != num && end != num + 1 && *end == ';' && chr >= 0x20 && chr < 0x7f) {
+				g_string_append_c(out, (char) chr);
+				p = end;
+				done = TRUE;
+			}
+		}
+		if (!done)
+			g_string_append_c(out, '&');
+	}
+	return g_string_free(out, FALSE);
+}
+
+/* The URL of the picture: og:image decoded and, when it is relative
+ * ("/img.png", "//cdn/x.png"), resolved against the page it was found on.
+ * NULL unless the result is an http or https URL - the download is limited
+ * to those anyway, and to public addresses (open_public_socket()). */
+static char *og_image_resolve(const char *page_url, const char *value)
+{
+	char *decoded, *result = NULL;
+
+	decoded = html_attr_decode(value);
+	g_strstrip(decoded);
+	if (*decoded == '\0') {
+		g_free(decoded);
+		return NULL;
+	}
+#if LIBCURL_VERSION_NUM >= 0x073e00
+	{
+		CURLU *url = curl_url();
+		char *scheme = NULL, *full = NULL;
+
+		if (url != NULL && page_url != NULL &&
+		    curl_url_set(url, CURLUPART_URL, page_url, 0) == CURLUE_OK &&
+		    curl_url_set(url, CURLUPART_URL, decoded, 0) == CURLUE_OK &&
+		    curl_url_get(url, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+		    (g_ascii_strcasecmp(scheme, "http") == 0 ||
+		     g_ascii_strcasecmp(scheme, "https") == 0) &&
+		    curl_url_get(url, CURLUPART_URL, &full, 0) == CURLUE_OK)
+			result = g_strdup(full);
+		curl_free(scheme);
+		curl_free(full);
+		curl_url_cleanup(url);
+	}
+#else
+	/* no URL parser in this libcurl: absolute URLs only */
+	if (g_ascii_strncasecmp(decoded, "http://", 7) == 0 ||
+	    g_ascii_strncasecmp(decoded, "https://", 8) == 0)
+		result = g_strdup(decoded);
+#endif
+	g_free(decoded);
+	return result;
+}
+
+/* The picture of a downloaded page, NULL when it names none */
+static char *og_image_url(const char *html, const char *page_url)
+{
+	char *value, *url;
+
+	value = extract_og_image(html);
+	if (value == NULL)
+		return NULL;
+	url = og_image_resolve(page_url, value);
+	image_preview_debug_print("FETCH: og:image %s -> %s", value, url != NULL ? url : "(refused)");
+	g_free(value);
+	return url;
+}
+
+/* Hands every finished transfer to fetch_complete() */
+static void check_multi_info(void)
+{
 	CURLMsg *msg;
 	int msgs_left;
-	static int call_count = 0;
-	int numfds;
-	int max_loops = 10;  /* Prevent infinite loops */
 
-	if (curl_multi == NULL)
-		return FALSE;
-
-	call_count++;
-
-	/* First perform to drive any pending work */
-	mc = curl_multi_perform(curl_multi, &still_running);
-	if (mc != CURLM_OK) {
-		image_preview_debug_print("FETCH: curl_multi_perform failed: %s",
-		                          curl_multi_strerror(mc));
-	}
-
-	/* Keep polling and performing while there's activity */
-	while (still_running > 0 && max_loops-- > 0) {
-		/* Wait for activity (up to 50ms) - gives curl time to receive data */
-		mc = curl_multi_poll(curl_multi, NULL, 0, 50, &numfds);
-		if (mc != CURLM_OK) {
-			image_preview_debug_print("FETCH: curl_multi_poll failed: %s",
-			                          curl_multi_strerror(mc));
-			break;
-		}
-
-		/* If no file descriptors had activity and no timeout, break */
-		if (numfds == 0) {
-			/* Still do one more perform in case data arrived */
-			mc = curl_multi_perform(curl_multi, &still_running);
-			break;
-		}
-
-		/* Perform transfers after poll detected activity */
-		mc = curl_multi_perform(curl_multi, &still_running);
-		if (mc != CURLM_OK) {
-			break;
-		}
-	}
-
-	/* Log periodically to confirm timer is running */
-	if (call_count % 100 == 0 && still_running > 0) {
-		image_preview_debug_print("FETCH: timer tick #%d, still_running=%d", call_count, still_running);
-	}
-
-	/* Check for completed transfers */
 	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
 		if (msg->msg == CURLMSG_DONE) {
 			CURL *easy = msg->easy_handle;
@@ -599,101 +664,92 @@ static gboolean curl_process(gpointer data)
 			}
 		}
 	}
-
-	/* Re-check still_running in case new transfers were added during
-	 * completion handling (e.g., stage 2 of a two-stage fetch).
-	 * The fetch_complete() -> image_fetch_start_stage2() path may have
-	 * added new handles that we need to continue processing. */
-	mc = curl_multi_perform(curl_multi, &still_running);
-
-	/* CRITICAL: Check for completed messages again!
-	 * If stage 2 started and completed quickly (e.g., network error),
-	 * the completion message will be waiting but we haven't checked it.
-	 * Without this, the fetch stays "pending" forever. */
-	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
-		if (msg->msg == CURLMSG_DONE) {
-			CURL *easy = msg->easy_handle;
-			CURLcode result = msg->data.result;
-			IMAGE_FETCH_REC *fetch = NULL;
-
-			curl_easy_getinfo(easy, CURLINFO_PRIVATE, &fetch);
-
-			image_preview_debug_print("FETCH: (post-recheck) transfer done, result=%d (%s)",
-			                          result, curl_easy_strerror(result));
-
-			if (fetch != NULL) {
-				if (result == CURLE_OK && !fetch->cancelled) {
-					fetch_complete(fetch, TRUE, NULL);
-				} else if (fetch->cancelled) {
-					fetch_complete(fetch, FALSE, "Cancelled or file too large");
-				} else {
-					fetch_complete(fetch, FALSE, curl_easy_strerror(result));
-				}
-			}
-		}
-	}
-
-	/* Final check after processing any remaining messages */
-	mc = curl_multi_perform(curl_multi, &still_running);
-
-	/* Third check for completion messages - covers edge case where
-	 * stage 2 data arrived between perform calls */
-	while ((msg = curl_multi_info_read(curl_multi, &msgs_left)) != NULL) {
-		if (msg->msg == CURLMSG_DONE) {
-			CURL *easy = msg->easy_handle;
-			CURLcode result = msg->data.result;
-			IMAGE_FETCH_REC *fetch = NULL;
-
-			curl_easy_getinfo(easy, CURLINFO_PRIVATE, &fetch);
-
-			image_preview_debug_print("FETCH: (final-check) transfer done, result=%d (%s)",
-			                          result, curl_easy_strerror(result));
-
-			if (fetch != NULL) {
-				if (result == CURLE_OK && !fetch->cancelled) {
-					fetch_complete(fetch, TRUE, NULL);
-				} else if (fetch->cancelled) {
-					fetch_complete(fetch, FALSE, "Cancelled or file too large");
-				} else {
-					fetch_complete(fetch, FALSE, curl_easy_strerror(result));
-				}
-			}
-		}
-	}
-
-	/* Re-check still_running after processing any final messages */
-	curl_multi_perform(curl_multi, &still_running);
-
-	/* Continue if there are active transfers */
-	if (still_running > 0) {
-		return TRUE;
-	}
-
-	/* Also continue if we have active fetches in hash table that haven't
-	 * been cleaned up yet - this covers race conditions where curl says
-	 * 0 active but we haven't processed completion yet */
-	if (active_fetches != NULL && g_hash_table_size(active_fetches) > 0) {
-		image_preview_debug_print("FETCH: still_running=0 but %u active in hash table, continuing",
-		                          g_hash_table_size(active_fetches));
-		return TRUE;
-	}
-
-	/* No more transfers - stop timer */
-	image_preview_debug_print("FETCH: timer STOPPING - no active transfers");
-	curl_timer_tag = 0;
-	return FALSE;
 }
 
-/* Start processing timer if not already running */
-static void ensure_processing_timer(void)
+/* Lets curl work on a socket that is ready (or on its timers) */
+static void curl_socket_action(curl_socket_t fd, int flags)
 {
-	if (curl_timer_tag == 0) {
-		/* Poll every 50ms - each tick does multiple poll/perform cycles */
-		curl_timer_tag = g_timeout_add(50, curl_process, NULL);
-		image_preview_debug_print("FETCH: timer STARTED, tag=%u", curl_timer_tag);
-	} else {
-		image_preview_debug_print("FETCH: timer already running, tag=%u", curl_timer_tag);
+	CURLMcode mc;
+
+	if (curl_multi == NULL)
+		return;
+	mc = curl_multi_socket_action(curl_multi, fd, flags, &curl_running);
+	if (mc != CURLM_OK)
+		image_preview_debug_print("FETCH: curl_multi_socket_action failed: %s",
+		                          curl_multi_strerror(mc));
+	check_multi_info();
+}
+
+static gboolean curl_fd_ready(GIOChannel *source, GIOCondition condition, gpointer data)
+{
+	int fd = GPOINTER_TO_INT(data);
+	int flags = 0;
+
+	/* a hang-up is read as the end of the data */
+	if (condition & (G_IO_IN | G_IO_PRI | G_IO_HUP))
+		flags |= CURL_CSELECT_IN;
+	if (condition & G_IO_OUT)
+		flags |= CURL_CSELECT_OUT;
+	if (condition & (G_IO_ERR | G_IO_NVAL))
+		flags |= CURL_CSELECT_ERR;
+	/* curl removes or replaces this watch through curl_socket_cb()
+	 * when it is done with the socket */
+	curl_socket_action(fd, flags);
+	return G_SOURCE_CONTINUE;
+}
+
+static void curl_watch_remove(curl_socket_t fd)
+{
+	gpointer tag;
+
+	if (curl_watches != NULL &&
+	    g_hash_table_lookup_extended(curl_watches, GINT_TO_POINTER(fd), NULL, &tag)) {
+		g_source_remove(GPOINTER_TO_UINT(tag));
+		g_hash_table_remove(curl_watches, GINT_TO_POINTER(fd));
 	}
+}
+
+/* CURLMOPT_SOCKETFUNCTION: watch fd for what curl waits for */
+static int curl_socket_cb(CURL *easy, curl_socket_t fd, int what, void *userp, void *socketp)
+{
+	GIOCondition condition = 0;
+	GIOChannel *channel;
+	guint tag;
+
+	curl_watch_remove(fd);
+	if (what == CURL_POLL_REMOVE || curl_watches == NULL)
+		return 0;
+
+	if (what & CURL_POLL_IN)
+		condition |= G_IO_IN | G_IO_PRI | G_IO_HUP | G_IO_ERR;
+	if (what & CURL_POLL_OUT)
+		condition |= G_IO_OUT | G_IO_ERR;
+	/* the watch keeps the channel; it does not close the socket */
+	channel = g_io_channel_unix_new(fd);
+	tag = g_io_add_watch(channel, condition, curl_fd_ready, GINT_TO_POINTER(fd));
+	g_io_channel_unref(channel);
+	g_hash_table_insert(curl_watches, GINT_TO_POINTER(fd), GUINT_TO_POINTER(tag));
+	return 0;
+}
+
+static gboolean curl_timeout_fire(gpointer data)
+{
+	curl_timeout_tag = 0;
+	curl_socket_action(CURL_SOCKET_TIMEOUT, 0);
+	return G_SOURCE_REMOVE;
+}
+
+/* CURLMOPT_TIMERFUNCTION: call curl back in timeout_ms (-1: never). Not
+ * at once from here: curl must not be called from its own callback. */
+static int curl_timer_cb(CURLM *multi, long timeout_ms, void *userp)
+{
+	if (curl_timeout_tag != 0) {
+		g_source_remove(curl_timeout_tag);
+		curl_timeout_tag = 0;
+	}
+	if (timeout_ms >= 0)
+		curl_timeout_tag = g_timeout_add(timeout_ms, curl_timeout_fire, NULL);
+	return 0;
 }
 
 static void retry_data_free(RetryData *retry)
@@ -740,7 +796,7 @@ static gboolean retry_fetch_callback(gpointer user_data)
 	image_preview_debug_print("RETRY: timer fired, starting retry for %s", retry->url);
 
 	/* Find the preview record */
-	preview = image_preview_get(retry->line);
+	preview = image_preview_get_url(retry->line, retry->url);
 	if (preview == NULL) {
 		image_preview_debug_print("RETRY: preview record gone, aborting");
 		retry_data_free(retry);
@@ -772,6 +828,12 @@ static gboolean retry_fetch_callback(gpointer user_data)
 	return FALSE;  /* Don't repeat timer */
 }
 
+/* The URL of the line the download is for: the page of a page URL */
+static const char *fetch_record_url(IMAGE_FETCH_REC *fetch)
+{
+	return fetch->original_url != NULL ? fetch->original_url : fetch->url;
+}
+
 /* Handle fetch completion */
 static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char *error)
 {
@@ -795,10 +857,17 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		}
 
 		if (success && fetch->html_buffer != NULL && fetch->html_buffer->len > 0) {
+			const char *page_url = NULL;
+
 			image_preview_debug_print("FETCH: HTML buffer has %zu bytes, parsing for og:image...",
 			                          fetch->html_buffer->len);
+			/* relative to the page as served, after any redirect */
+			if (fetch->curl_handle == NULL ||
+			    curl_easy_getinfo(fetch->curl_handle, CURLINFO_EFFECTIVE_URL,
+			                      &page_url) != CURLE_OK || page_url == NULL)
+				page_url = fetch->original_url != NULL ? fetch->original_url : fetch->url;
 			/* Parse HTML for og:image */
-			og_image = extract_og_image(fetch->html_buffer->str);
+			og_image = og_image_url(fetch->html_buffer->str, page_url);
 		} else {
 			image_preview_debug_print("FETCH: HTML stage failed - success=%d buffer=%p len=%zu",
 			                          success,
@@ -824,7 +893,7 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		}
 
 		/* Update preview record - check for retry */
-		preview = image_preview_get(fetch->line);
+		preview = image_preview_get_url(fetch->line, fetch_record_url(fetch));
 		if (preview != NULL) {
 			/* Check if we can retry (max 1 retry) */
 			if (preview->retry_count < 1) {
@@ -889,10 +958,19 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		                          fetch->content_length, fetch->received_bytes);
 		success = FALSE;
 		error = "Incomplete download";
-		/* Remove partial file */
-		if (fetch->cache_path != NULL) {
-			unlink(fetch->cache_path);
+	}
+
+	/* complete: under the cache's name; anything else: gone, whether or
+	 * not the line still has a record */
+	if (fetch->part_path != NULL) {
+		if (success && rename(fetch->part_path, fetch->cache_path) != 0) {
+			image_preview_debug_print("FETCH: rename to %s failed: %s",
+			                          fetch->cache_path, strerror(errno));
+			success = FALSE;
+			error = "Failed to save the download";
 		}
+		if (!success)
+			unlink(fetch->part_path);
 	}
 
 	/* Remove from curl multi */
@@ -902,8 +980,9 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		fetch->curl_handle = NULL;
 	}
 
-	/* Update preview record */
-	preview = image_preview_get(fetch->line);
+	/* Update preview record: the line's record for this URL, not one
+	 * a new line at the address of a freed one has */
+	preview = image_preview_get_url(fetch->line, fetch_record_url(fetch));
 	if (preview != NULL) {
 		preview->fetch_pending = FALSE;
 		if (success) {
@@ -912,11 +991,6 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 			/* the new file may take the cache over its size limit */
 			image_cache_enforce_limit(fetch->cache_path);
 		} else {
-			/* Remove failed download file */
-			if (fetch->cache_path != NULL) {
-				unlink(fetch->cache_path);
-			}
-
 			/* Check if we can retry (max 1 retry) */
 			if (preview->retry_count < 1) {
 				RetryData *retry;
@@ -960,8 +1034,9 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		image_preview_debug_print("FETCH: WARNING preview record is NULL!");
 	}
 
-	/* Emit signal for UI update */
-	if (success) {
+	/* Emit signal for UI update - only for the record of this download,
+	 * the receiver finds it by the line alone */
+	if (success && preview != NULL) {
 		image_preview_debug_print("FETCH: emitting 'image preview ready' signal");
 		signal_emit("image preview ready", 2, fetch->line, fetch->window);
 	}
@@ -982,6 +1057,10 @@ static void fetch_rec_free(IMAGE_FETCH_REC *fetch)
 	if (fetch->fp != NULL) {
 		fclose(fetch->fp);
 	}
+	/* a download that did not complete (cancelled, deinit, failed): after
+	 * a completed one the .part file was renamed and this does nothing */
+	if (fetch->part_path != NULL)
+		unlink(fetch->part_path);
 
 	if (fetch->curl_handle != NULL) {
 		if (curl_multi != NULL) {
@@ -996,15 +1075,17 @@ static void fetch_rec_free(IMAGE_FETCH_REC *fetch)
 
 	g_free(fetch->url);
 	g_free(fetch->cache_path);
+	g_free(fetch->part_path);
 	g_free(fetch->original_url);
 	g_free(fetch);
 }
 
-/* The download is written in place, under the cache's name (see
- * cache_cleanup() for why files being downloaded keep that name): not
- * through a symbolic link, never into a FIFO or another user's file. A
- * partial file is removed when the download fails, and a cached file is
- * checked for an image's magic bytes before it is shown. */
+/* The download is written to <cache name>.part: not through a symbolic
+ * link, never into a FIFO or another user's file. Only a complete download
+ * is renamed to the cache's name, so the cache never finds a partial file
+ * (its first bytes would pass the check for an image's magic bytes); the
+ * .part file is removed when the download fails, is cancelled or is still
+ * running when the module goes (fetch_rec_free()). */
 static FILE *open_cache_file(const char *path)
 {
 	FILE *fp;
@@ -1020,6 +1101,13 @@ static FILE *open_cache_file(const char *path)
 		errno = err;
 	}
 	return fp;
+}
+
+static FILE *open_part_file(IMAGE_FETCH_REC *fetch)
+{
+	if (fetch->part_path == NULL)
+		fetch->part_path = g_strconcat(fetch->cache_path, ".part", NULL);
+	return open_cache_file(fetch->part_path);
 }
 
 /* Start stage 2: fetch actual image from og:image URL */
@@ -1047,7 +1135,7 @@ static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_imag
 	fetch->received_bytes = 0;  /* Reset for stage 2 */
 
 	/* Open cache file for image */
-	fetch->fp = open_cache_file(fetch->cache_path);
+	fetch->fp = open_part_file(fetch);
 	if (fetch->fp == NULL) {
 		image_preview_debug_print("FETCH: stage2 failed to open cache file: %s", strerror(errno));
 		fetch_complete(fetch, FALSE, "Failed to open cache file");
@@ -1093,21 +1181,8 @@ static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_imag
 		return;
 	}
 
-	/* CRITICAL: Kick curl immediately after adding stage 2!
-	 * We're likely being called from inside curl_process() callback where
-	 * still_running was already set to 0 (from stage 1 completion).
-	 * If we don't call curl_multi_perform() now, the callback will return
-	 * FALSE and stop the timer before stage 2 can be processed.
-	 * This call updates still_running so the timer continues. */
-	{
-		int still_running;
-		curl_multi_perform(curl_multi, &still_running);
-		image_preview_debug_print("FETCH: stage2 kicked curl, still_running=%d", still_running);
-	}
-
-	/* Also ensure timer is running (in case we weren't called from callback) */
-	ensure_processing_timer();
-
+	/* curl_multi_add_handle() set curl's timer: the main loop goes on
+	 * with stage 2 */
 	image_preview_debug_print("FETCH: stage2 started successfully");
 }
 
@@ -1175,7 +1250,7 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 		fetch->html_buffer = NULL;
 
 		/* Open output file */
-		fetch->fp = open_cache_file(cache_path);
+		fetch->fp = open_part_file(fetch);
 		if (fetch->fp == NULL) {
 			g_warning("image-fetch: Failed to open %s for writing: %s",
 			          cache_path, strerror(errno));
@@ -1237,10 +1312,9 @@ gboolean image_fetch_start(const char *url, const char *cache_path,
 	/* Track active fetch - use original_url for page URLs so we can find it later */
 	g_hash_table_insert(active_fetches, fetch->original_url ? fetch->original_url : fetch->url, fetch);
 
-	/* Start processing timer */
-	ensure_processing_timer();
-
-	image_preview_debug_print("FETCH: started successfully, stage=%d timer running", fetch->stage);
+	/* curl_multi_add_handle() set curl's timer: the main loop takes it
+	 * from here */
+	image_preview_debug_print("FETCH: started successfully, stage=%d", fetch->stage);
 	return TRUE;
 }
 
@@ -1297,6 +1371,10 @@ void image_fetch_init(void)
 	/* Enable HTTP/2 multiplexing */
 	curl_multi_setopt(curl_multi, CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
 
+	curl_watches = g_hash_table_new(g_direct_hash, g_direct_equal);
+	curl_multi_setopt(curl_multi, CURLMOPT_SOCKETFUNCTION, curl_socket_cb);
+	curl_multi_setopt(curl_multi, CURLMOPT_TIMERFUNCTION, curl_timer_cb);
+
 	/* Create active fetches hash table */
 	active_fetches = g_hash_table_new_full(g_str_hash, g_str_equal,
 	                                       NULL, (GDestroyNotify)fetch_rec_free);
@@ -1307,20 +1385,36 @@ void image_fetch_init(void)
 /* Deinitialize fetch system */
 void image_fetch_deinit(void)
 {
-	/* Stop processing timer */
-	if (curl_timer_tag != 0) {
-		g_source_remove(curl_timer_tag);
-		curl_timer_tag = 0;
-	}
-
-	/* and the retries still waiting: their lines and windows go away */
+	/* the retries still waiting: their lines and windows go away */
 	cancel_retries(NULL);
 
-	/* Clear active fetches */
+	/* Clear active fetches (removing their handles tells curl_socket_cb()
+	 * which sockets are no longer watched) */
 	if (active_fetches != NULL) {
 		g_hash_table_destroy(active_fetches);
 		active_fetches = NULL;
 	}
+
+	/* no more callbacks, then the watches and the timer go */
+	if (curl_multi != NULL) {
+		curl_multi_setopt(curl_multi, CURLMOPT_SOCKETFUNCTION, NULL);
+		curl_multi_setopt(curl_multi, CURLMOPT_TIMERFUNCTION, NULL);
+	}
+	if (curl_watches != NULL) {
+		GHashTableIter iter;
+		gpointer key, tag;
+
+		g_hash_table_iter_init(&iter, curl_watches);
+		while (g_hash_table_iter_next(&iter, &key, &tag))
+			g_source_remove(GPOINTER_TO_UINT(tag));
+		g_hash_table_destroy(curl_watches);
+		curl_watches = NULL;
+	}
+	if (curl_timeout_tag != 0) {
+		g_source_remove(curl_timeout_tag);
+		curl_timeout_tag = 0;
+	}
+	curl_running = 0;
 
 	/* Cleanup curl multi */
 	if (curl_multi != NULL) {

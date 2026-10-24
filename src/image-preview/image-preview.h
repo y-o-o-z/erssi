@@ -23,6 +23,7 @@ typedef struct _TEXT_BUFFER_VIEW_REC TEXT_BUFFER_VIEW_REC;
 typedef struct {
 	LINE_REC *line;              /* Associated text line */
 	WINDOW_REC *window;          /* Target window */
+	void *buffer;                /* The TEXT_BUFFER_REC that holds the line */
 	char *url;                   /* Original image URL */
 	char *cache_path;            /* Local cached file path */
 	GString *rendered;           /* Rendered escape sequences (from Chafa) */
@@ -83,8 +84,25 @@ void image_preview_clear_planes(void);
 /* Clear all previews and cached data */
 void image_preview_clear_all(void);
 
+/* The preview records (image-preview-records.c) */
+void image_preview_records_init(void);
+void image_preview_records_deinit(void);
 /* Get preview record for a line (or NULL) */
 IMAGE_PREVIEW_REC *image_preview_get(LINE_REC *line);
+/* The record of the line for this URL; a record the line has for another
+ * URL belongs to a freed line whose address was reused: it is removed and
+ * NULL returned */
+IMAGE_PREVIEW_REC *image_preview_get_url(LINE_REC *line, const char *url);
+/* A new record for the line of window (replacing any it had); it goes
+ * when the window's buffer is cleared ("gui textbuffer cleared") */
+IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window, const char *url);
+/* The line was removed: its record goes */
+gboolean image_preview_forget_line(LINE_REC *line);
+/* All lines of the buffer were freed (/CLEAR, window closed): the records
+ * go, returns how many */
+guint image_preview_forget_buffer(void *buffer);
+guint image_preview_records_count(void);
+void image_preview_records_remove_all(void);
 
 /* Render visible image previews for a view */
 void image_preview_render_view(TEXT_BUFFER_VIEW_REC *view, WINDOW_REC *window);
@@ -94,6 +112,10 @@ void image_cache_init(void);
 void image_cache_deinit(void);
 gboolean image_cache_has(const char *url);
 char *image_cache_get(const char *url);
+/* Where the cache keeps the image of url, whether it is there or not -
+ * the one name both the download and the lookup use (NULL: no cache
+ * directory) */
+char *image_cache_path(const char *url);
 void image_cache_clear_all(void);
 void image_cache_cleanup(void);
 void image_cache_enforce_limit(const char *path);

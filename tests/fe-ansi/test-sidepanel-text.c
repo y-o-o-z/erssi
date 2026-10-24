@@ -30,7 +30,7 @@ static void walk(const char *text, WALK_REC *rec)
 {
 	rec->text = g_string_new(NULL);
 	rec->fg24 = g_array_new(FALSE, FALSE, sizeof(unsigned int));
-	sidepanel_text_walk(text, collect, rec);
+	sidepanel_text_walk(text, TERM_TYPE_UTF8, collect, rec);
 }
 
 static void walk_free(WALK_REC *rec)
@@ -136,7 +136,7 @@ static void test_stop(void)
 	int count = 0;
 
 	text = format_string_expand("%Gabcdef", NULL);
-	sidepanel_text_walk(text, stop_after_two, &count);
+	sidepanel_text_walk(text, TERM_TYPE_UTF8, stop_after_two, &count);
 	g_assert_cmpint(count, ==, 2);
 	g_free(text);
 }

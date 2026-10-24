@@ -40,8 +40,6 @@ static Regex *url_regex_imgur_page = NULL;    /* imgur.com page links */
 static Regex *url_regex_imgbb_page = NULL;    /* ibb.co page links */
 static Regex *url_regex_kermit = NULL;        /* kermit.pw links */
 
-/* Hash table: LINE_REC* -> IMAGE_PREVIEW_REC* */
-static GHashTable *image_previews = NULL;
 
 /* Debug flag and file */
 static gboolean image_preview_debug = FALSE;
@@ -117,28 +115,6 @@ void image_preview_debug_print(const char *fmt, ...)
 gboolean image_preview_enabled(void)
 {
 	return settings_get_bool(IMAGE_PREVIEW_SETTING);
-}
-
-/* Free an IMAGE_PREVIEW_REC */
-static void image_preview_rec_free(IMAGE_PREVIEW_REC *rec)
-{
-	if (rec == NULL)
-		return;
-
-	/* Cancel any pending cache cleanup timer */
-	if (rec->cache_cleanup_tag != 0) {
-		g_source_remove(rec->cache_cleanup_tag);
-		rec->cache_cleanup_tag = 0;
-	}
-
-	if (rec->rendered != NULL) {
-		g_string_free(rec->rendered, TRUE);
-	}
-
-	g_free(rec->url);
-	g_free(rec->cache_path);
-	g_free(rec->error_message);
-	g_free(rec);
 }
 
 /* Initialize URL regex patterns */
@@ -346,15 +322,6 @@ ImageUrlType image_preview_classify_url(const char *url)
 	return URL_TYPE_DIRECT_IMAGE;
 }
 
-/* Get preview record for a line */
-IMAGE_PREVIEW_REC *image_preview_get(LINE_REC *line)
-{
-	if (image_previews == NULL || line == NULL)
-		return NULL;
-
-	return g_hash_table_lookup(image_previews, line);
-}
-
 /* Register URL for a line without starting fetch */
 gboolean image_preview_register_url(const char *url, LINE_REC *line, WINDOW_REC *window)
 {
@@ -373,39 +340,20 @@ gboolean image_preview_register_url(const char *url, LINE_REC *line, WINDOW_REC 
 		return FALSE;
 	}
 
-	rec = image_preview_get(line);
+	rec = image_preview_get_url(line, url);
 	if (rec != NULL) {
 		debug_print("register_url: already registered");
 		return FALSE;
 	}
 
 	cache_path = image_cache_get(url);
+	rec = image_preview_rec_add(line, window, url);
 	if (cache_path != NULL) {
 		debug_print("register_url: CACHED at %s", cache_path);
-		rec = g_new0(IMAGE_PREVIEW_REC, 1);
-		rec->line = line;
-		rec->window = window;
-		rec->url = g_strdup(url);
 		rec->cache_path = cache_path;
-		rec->fetch_pending = FALSE;
-		rec->fetch_failed = FALSE;
-		rec->show_on_complete = FALSE;
-
-		g_hash_table_insert(image_previews, line, rec);
-		return TRUE;
+	} else {
+		debug_print("register_url: not cached, will fetch on click");
 	}
-
-	debug_print("register_url: not cached, will fetch on click");
-	rec = g_new0(IMAGE_PREVIEW_REC, 1);
-	rec->line = line;
-	rec->window = window;
-	rec->url = g_strdup(url);
-	rec->cache_path = NULL;
-	rec->fetch_pending = FALSE;
-	rec->fetch_failed = FALSE;
-	rec->show_on_complete = FALSE;
-
-	g_hash_table_insert(image_previews, line, rec);
 	return TRUE;
 }
 
@@ -433,7 +381,7 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 	is_page_url = (url_type != URL_TYPE_DIRECT_IMAGE);
 	debug_print("queue_fetch: url_type=%d is_page_url=%d", url_type, is_page_url);
 
-	rec = image_preview_get(line);
+	rec = image_preview_get_url(line, url);
 	if (rec != NULL) {
 		if (rec->fetch_pending) {
 			debug_print("queue_fetch: already fetching (rec=%p url=%s)",
@@ -460,11 +408,7 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 			return FALSE;
 		}
 	} else {
-		rec = g_new0(IMAGE_PREVIEW_REC, 1);
-		rec->line = line;
-		rec->window = window;
-		rec->url = g_strdup(url);
-		g_hash_table_insert(image_previews, line, rec);
+		rec = image_preview_rec_add(line, window, url);
 	}
 
 	cache_path = image_cache_get(url);
@@ -485,28 +429,14 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 	}
 
 	if (rec->cache_path == NULL) {
-		GChecksum *checksum;
-		const char *hash;
-		const char *ext;
-		char *cache_dir;
-
-		checksum = g_checksum_new(G_CHECKSUM_SHA256);
-		g_checksum_update(checksum, (guchar *)url, strlen(url));
-		hash = g_checksum_get_string(checksum);
-
-		if (is_page_url) {
-			ext = ".img";
-		} else {
-			ext = strrchr(url, '.');
-			if (ext == NULL || strlen(ext) > 6 || strchr(ext, '/') != NULL) {
-				ext = ".img";
-			}
+		/* the name image_cache_get() looks for next time */
+		rec->cache_path = image_cache_path(url);
+		if (rec->cache_path == NULL) {
+			debug_print("queue_fetch: no cache directory");
+			rec->fetch_failed = TRUE;
+			rec->error_message = g_strdup("No cache directory");
+			return FALSE;
 		}
-
-		cache_dir = g_strdup_printf("%s/%s", get_irssi_dir(), IMAGE_CACHE_DIR);
-		rec->cache_path = g_strdup_printf("%s/%s%s", cache_dir, hash, ext);
-		g_free(cache_dir);
-		g_checksum_free(checksum);
 	}
 
 	rec->fetch_pending = TRUE;
@@ -531,34 +461,13 @@ void image_preview_cancel_fetch(const char *url)
 	image_fetch_cancel(url);
 }
 
-/* Clear all rendered previews */
-void image_preview_clear_planes(void)
-{
-	GHashTableIter iter;
-	gpointer key, value;
-
-	if (image_previews == NULL)
-		return;
-
-	g_hash_table_iter_init(&iter, image_previews);
-	while (g_hash_table_iter_next(&iter, &key, &value)) {
-		IMAGE_PREVIEW_REC *rec = value;
-		if (rec->rendered != NULL) {
-			g_string_free(rec->rendered, TRUE);
-			rec->rendered = NULL;
-		}
-	}
-}
-
 /* Clear all previews */
 void image_preview_clear_all(void)
 {
 	image_fetch_cancel_all();
 	image_preview_clear_planes();
 
-	if (image_previews != NULL) {
-		g_hash_table_remove_all(image_previews);
-	}
+	image_preview_records_remove_all();
 }
 
 /* Render visible image previews for a view - stub for now */
@@ -1118,8 +1027,9 @@ static gboolean image_preview_mouse_handler(const GuiMouseEvent *event, gpointer
 
 	debug_print("CLICK: found URL in line: %s", url);
 
-	/* Check if we already have a preview record for this line */
-	preview = image_preview_get(line);
+	/* Check if we already have a preview record for this line (and
+	 * this URL: the record of a freed line is not this line's) */
+	preview = image_preview_get_url(line, url);
 
 	/* Case 1: Already cached - verify file exists then show popup */
 	if (preview != NULL && preview->cache_path != NULL &&
@@ -1178,11 +1088,7 @@ static gboolean image_preview_mouse_handler(const GuiMouseEvent *event, gpointer
 
 	/* Create or update preview record */
 	if (preview == NULL) {
-		preview = g_new0(IMAGE_PREVIEW_REC, 1);
-		preview->line = line;
-		preview->window = window;
-		preview->url = g_strdup(url);
-		g_hash_table_insert(image_previews, line, preview);
+		preview = image_preview_rec_add(line, window, url);
 		debug_print("CLICK: created new preview record");
 	} else {
 		/* Reset failed state for retry */
@@ -1242,10 +1148,7 @@ static void sig_textbuffer_line_removed(TEXT_BUFFER_VIEW_REC *view,
 	(void)view;
 	(void)prev_line;
 
-	if (image_previews == NULL || line == NULL)
-		return;
-
-	if (g_hash_table_remove(image_previews, line)) {
+	if (image_preview_forget_line(line)) {
 		debug_print("LINE_REMOVED: cleaned up preview for line %p", line);
 	}
 }
@@ -1320,8 +1223,7 @@ void image_preview_init(void)
 		return;
 	}
 
-	image_previews = g_hash_table_new_full(g_direct_hash, g_direct_equal,
-	                                       NULL, (GDestroyNotify)image_preview_rec_free);
+	image_preview_records_init();
 
 	image_cache_init();
 	image_fetch_init();
@@ -1360,10 +1262,7 @@ void image_preview_deinit(void)
 	image_fetch_deinit();
 	image_cache_deinit();
 
-	if (image_previews != NULL) {
-		g_hash_table_destroy(image_previews);
-		image_previews = NULL;
-	}
+	image_preview_records_deinit();
 
 	deinit_url_patterns();
 

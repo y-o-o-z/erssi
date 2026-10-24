@@ -376,6 +376,64 @@ static void test_get_fifo_dev_null(void)
 	teardown();
 }
 
+/* a downloaded image is found again: image_preview_queue_fetch() writes
+ * it at image_cache_path(), image_cache_get() looks there. A direct link
+ * with a query string or an unusual extension was written under one name
+ * and looked up under another, and downloaded again for every line */
+static void test_download_name_is_lookup_name(void)
+{
+	static const char *const urls[] = {
+		"https://example.invalid/a.png?x",
+		"https://example.invalid/a.png?x=1",
+		"https://example.invalid/a.jpg#top",
+		"https://example.invalid/a.bmp",
+		"https://example.invalid/photo.JPEG",
+		"https://imgur.com/gallery/abc",
+		"https://example.invalid/noext",
+	};
+	guint i;
+
+	setup();
+	for (i = 0; i < G_N_ELEMENTS(urls); i++) {
+		char *path, *found;
+
+		path = image_cache_path(urls[i]);
+		g_assert_nonnull(path);
+		g_assert_true(is_cache_file_name(strrchr(path, '/') + 1));
+		write_png(path);
+		found = image_cache_get(urls[i]);
+		if (g_strcmp0(found, path) != 0)
+			g_error("%s: downloaded to %s, looked up as %s", urls[i], path,
+				found != NULL ? found : "(not found)");
+		g_free(found);
+		g_unlink(path);
+		g_free(path);
+	}
+	teardown();
+}
+
+/* a download in progress is <cache name>.part: never found as the
+ * picture, even with an image's first bytes, and removed by /IMAGE CLEAR
+ * like the cache's other files */
+static void test_part_file(void)
+{
+	const char *url = "https://example.invalid/partial.png";
+	char *path, *part;
+
+	setup();
+	path = image_cache_path(url);
+	part = g_strconcat(path, ".part", NULL);
+	g_assert_true(is_cache_file_name(strrchr(part, '/') + 1));
+	write_png(part);
+	g_assert_null(image_cache_get(url));
+	g_assert_false(image_cache_has(url));
+	image_cache_clear_all();
+	g_assert_false(g_file_test(part, G_FILE_TEST_EXISTS));
+	g_free(part);
+	g_free(path);
+	teardown();
+}
+
 /* the hard limit: no new download while the cache holds more than twice
  * image_preview_cache_size of files too new to be removed; files that can
  * be removed are removed first, and do not count */
@@ -433,6 +491,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/image-cache/full", test_full);
 	g_test_add_func("/image-cache/full_size_zero", test_full_size_zero);
 	g_test_add_func("/image-cache/get_fifo_dev_null", test_get_fifo_dev_null);
+	g_test_add_func("/image-cache/part_file", test_part_file);
+	g_test_add_func("/image-cache/download_name_is_lookup_name",
+	                test_download_name_is_lookup_name);
 
 	return g_test_run();
 }

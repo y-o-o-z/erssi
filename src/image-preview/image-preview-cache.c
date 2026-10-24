@@ -169,6 +169,16 @@ static char *generate_cache_path(const char *url)
 	return path;
 }
 
+/* The download writes the file under the name the lookups look for: one
+ * function names it (a direct link with a query string, "a.png?x", was
+ * written as <sha>.png?x and looked up as <sha>.img, so it was downloaded
+ * again for every line) */
+char *image_cache_path(const char *url)
+{
+	g_return_val_if_fail(url != NULL, NULL);
+	return generate_cache_path(url);
+}
+
 /* Check if URL is cached (and valid) */
 gboolean image_cache_has(const char *url)
 {
@@ -237,18 +247,24 @@ char *image_cache_get(const char *url)
 }
 
 /* TRUE for the name of a file the cache writes: the SHA-256 of the URL in
- * lower-case hex and a short extension (see generate_cache_path() and
- * image_preview_queue_fetch()). Nothing else in the directory is deleted,
- * even when the directory is not the one erssi made. */
+ * lower-case hex and a short extension (see generate_cache_path()), or that
+ * name with ".part" (a download in progress, or one left by a crash: it is
+ * never looked up, but it counts towards the size and is removed with the
+ * rest). Nothing else in the directory is deleted, even when the directory
+ * is not the one erssi made. */
 static gboolean is_cache_file_name(const char *name)
 {
+	size_t len;
 	int i;
 
 	for (i = 0; i < 64; i++) {
 		if (!g_ascii_isxdigit(name[i]) || g_ascii_isupper(name[i]))
 			return FALSE;
 	}
-	return name[64] == '.' && name[65] != '\0' && strlen(name + 64) <= 6;
+	len = strlen(name + 64);
+	if (len > 5 && strcmp(name + 64 + len - 5, ".part") == 0)
+		len -= 5;
+	return name[64] == '.' && len >= 2 && len <= 6;
 }
 
 /* Opens the cache directory for reading entries relative to it */

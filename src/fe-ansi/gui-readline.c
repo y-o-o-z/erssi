@@ -112,10 +112,12 @@ void input_listen_init(int handle)
 {
 	readtag = i_input_add_poll(handle, G_PRIORITY_HIGH, I_INPUT_READ,
 	                           (GInputFunction) sig_input, NULL);
+	term_set_held_input_func(sig_input);
 }
 
 void input_listen_deinit(void)
 {
+	term_set_held_input_func(NULL);
 	g_source_remove(readtag);
 	readtag = -1;
 }

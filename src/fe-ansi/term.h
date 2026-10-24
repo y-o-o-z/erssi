@@ -127,6 +127,11 @@ void term_set_reserved_lines(int top, int bottom);
 /* keyboard input handling */
 void term_set_input_type(int type);
 void term_gets(GArray *buffer, int *line_count);
+/* With focus reporting on, term_gets() keeps a lone ESC at the end of a
+ * read (it may start a focus report); when nothing follows in a moment,
+ * func is called and must call term_gets() again, which then hands the
+ * ESC on as a key. NULL: no such call. */
+void term_set_held_input_func(void (*func)(void));
 
 /* internal */
 void term_common_init(void);

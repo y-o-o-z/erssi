@@ -375,6 +375,10 @@ gui-printtext.c:
 
 textbuffer-view.c
  "gui textbuffer line removed", TEXTBUFFER_VIEW_REC *view, LINE_REC *line, LINE_REC *prev_line
+ "gui textbuffer cleared", TEXT_BUFFER_REC *buffer
+   (every line of the buffer is about to be freed, by /CLEAR or because
+   its window is destroyed; no "gui textbuffer line removed" is sent for
+   them)
 
 textbuffer-formats.c
  "gui render line text", TEXT_DEST_REC, GString *str, LINE_INFO_META_REC
