@@ -1,3 +1,18 @@
+shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.6
+
+	Fixes from a full review of 2026.10.5.
+
+	+ Screen
+	  - no control character from the network reaches the terminal any
+	    more, on any terminal type: the side panels drew the low byte of
+	    each character of a channel name or nick on a terminal that is not
+	    UTF-8, so a name with a Cyrillic letter could send ESC (and with it
+	    a clipboard write by OSC 52, a new window title, ...). C0, DEL and
+	    C1 are now drawn as '?' by the terminal output itself, also in
+	    UTF-8 mode, and a Latin-1 or other 8-bit name is shown as its bytes
+	    there, as the text view shows it
+
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
 

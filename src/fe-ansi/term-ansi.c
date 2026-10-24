@@ -1171,12 +1171,53 @@ static void term_printed_text(int count)
 		term->cforcemove = TRUE;
 }
 
+/* Everything below writes text, and much of that text comes from the
+ * network: channel names, nicks, topics. A control byte in it would be read
+ * by the terminal as the start of an escape sequence (OSC 52 sets the
+ * clipboard, OSC 0 the title, DCS talks to tmux), so these functions are the
+ * one place that makes sure none gets through, whatever the caller did: C0,
+ * DEL and C1 are drawn as '?'. In UTF-8 mode C1 is the code points
+ * U+0080..U+009F (xterm acts on them encoded as UTF-8 too) and a byte that is
+ * not part of valid UTF-8; in the 8-bit modes it is the raw bytes 0x80..0x9F,
+ * which the text view already draws as reversed letters there. */
+#define TERM_CONTROL_REPLACEMENT '?'
+
+static int term_byte_is_control(unsigned char chr)
+{
+	if (chr < 0x20 || chr == 0x7f)
+		return TRUE;
+	return term_type != TERM_TYPE_UTF8 && chr >= 0x80 && chr <= 0x9f;
+}
+
+static int term_unichar_is_control(unichar chr)
+{
+	return chr < 0x20 || (chr >= 0x7f && chr <= 0x9f);
+}
+
+/* A Big5 pair the terminal reads as one character: lead and trail bytes
+ * from the ranges Big5, CP950 and HKSCS use that are not C1 bytes
+ * themselves, so a terminal that is not really in Big5 mode cannot see a
+ * C1 control in it either. */
+static int term_big5_pair_is_safe(unsigned int hi, unsigned int lo)
+{
+	return hi >= 0xa1 && hi <= 0xfe &&
+	       ((lo >= 0x40 && lo <= 0x7e) || (lo >= 0xa1 && lo <= 0xfe));
+}
+
 void term_addch(TERM_WINDOW *window, char chr)
 {
 	ANSI_TERM *term = ansi_term;
 
 	if (term->vcx != term->crealx || term->vcy != term->crealy || term->cforcemove)
 		term_move_real();
+
+	/* a single byte of a UTF-8 terminal is ASCII: written one at a
+	 * time, C2 9B would pass as two harmless looking bytes and be read
+	 * as CSI. Multi-byte characters go through term_add_unichar() or
+	 * term_addstr(). */
+	if (term_byte_is_control((unsigned char) chr) ||
+	    (term_type == TERM_TYPE_UTF8 && (chr & 0x80) != 0))
+		chr = TERM_CONTROL_REPLACEMENT;
 
 	if (term_type != TERM_TYPE_UTF8 ||
 	    (chr & 0x80) == 0 || (chr & 0x40) == 0) {
@@ -1206,28 +1247,98 @@ void term_add_unichar(TERM_WINDOW *window, unichar chr)
 
 	switch (term_type) {
 	case TERM_TYPE_UTF8:
-		term_printed_text(unichar_isprint(chr) ? unichar_width(chr) : 1);
+		if (term_unichar_is_control(chr) || chr > 0x10ffff ||
+		    (chr >= 0xd800 && chr <= 0xdfff)) {
+			term_printed_text(1);
+			fputc(TERM_CONTROL_REPLACEMENT, term->out);
+			break;
+		}
+		term_printed_text(unichar_width(chr));
 		term_addch_utf8(chr);
 		break;
 	case TERM_TYPE_BIG5:
 		if (chr > 0xff) {
+			/* a double-byte character, or nothing that fits */
 			term_printed_text(2);
-			fputc((chr >> 8) & 0xff, term->out);
-		} else {
-			term_printed_text(1);
+			if (chr <= 0xffff &&
+			    term_big5_pair_is_safe((chr >> 8) & 0xff, chr & 0xff)) {
+				fputc((chr >> 8) & 0xff, term->out);
+				fputc(chr & 0xff, term->out);
+			} else {
+				fputc(TERM_CONTROL_REPLACEMENT, term->out);
+				fputc(TERM_CONTROL_REPLACEMENT, term->out);
+			}
+			break;
 		}
-		fputc((chr & 0xff), term->out);
+		term_printed_text(1);
+		fputc(term_byte_is_control(chr) ? TERM_CONTROL_REPLACEMENT : (int) chr,
+		      term->out);
 		break;
 	default:
+		/* one byte per character: a code point that does not fit in a
+		 * byte must not be cut to its low byte (U+041B would become
+		 * ESC) */
 		term_printed_text(1);
-		fputc(chr, term->out);
+		fputc(chr > 0xff || term_byte_is_control(chr) ? TERM_CONTROL_REPLACEMENT :
+		      (int) chr, term->out);
 		break;
 	}
+}
+
+/* Is str free of anything term_byte_is_control() and the UTF-8 rules above
+ * refuse? The common case, checked without copying. */
+static int term_str_is_safe(const char *str, size_t len)
+{
+	const unsigned char *p = (const unsigned char *) str;
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		if (term_byte_is_control(p[i]))
+			return FALSE;
+		/* U+0080..U+009F is C2 80..C2 9F */
+		if (term_type == TERM_TYPE_UTF8 && p[i] == 0xc2 && i + 1 < len &&
+		    p[i + 1] >= 0x80 && p[i + 1] <= 0x9f)
+			return FALSE;
+	}
+	return term_type != TERM_TYPE_UTF8 || g_utf8_validate(str, len, NULL);
+}
+
+/* A copy of str with every control (and in UTF-8 mode every byte that is
+ * not valid UTF-8) replaced by one '?'. */
+static char *term_str_sanitize(const char *str, size_t len)
+{
+	GString *out;
+	const char *p, *end;
+
+	out = g_string_sized_new(len);
+	if (term_type != TERM_TYPE_UTF8) {
+		for (p = str, end = str + len; p < end; p++)
+			g_string_append_c(out, term_byte_is_control((unsigned char) *p) ?
+			                  TERM_CONTROL_REPLACEMENT : *p);
+		return g_string_free(out, FALSE);
+	}
+
+	for (p = str, end = str + len; p < end;) {
+		gunichar chr = g_utf8_get_char_validated(p, end - p);
+
+		if (chr == (gunichar) -1 || chr == (gunichar) -2) {
+			g_string_append_c(out, TERM_CONTROL_REPLACEMENT);
+			p++;
+			continue;
+		}
+		if (term_unichar_is_control(chr))
+			g_string_append_c(out, TERM_CONTROL_REPLACEMENT);
+		else
+			g_string_append_len(out, p, g_utf8_next_char(p) - p);
+		p = g_utf8_next_char(p);
+	}
+	return g_string_free(out, FALSE);
 }
 
 int term_addstr(TERM_WINDOW *window, const char *str)
 {
 	ANSI_TERM *term = ansi_term;
+	char *safe = NULL;
 	int len, raw_len;
 
 	if (term->vcx != term->crealx || term->vcy != term->crealy || term->cforcemove)
@@ -1235,6 +1346,12 @@ int term_addstr(TERM_WINDOW *window, const char *str)
 
 	len = 0;
 	raw_len = strlen(str);
+
+	if (!term_str_is_safe(str, raw_len)) {
+		safe = term_str_sanitize(str, raw_len);
+		str = safe;
+		raw_len = strlen(str);
+	}
 
 	if (term_type == TERM_TYPE_UTF8) {
 		len = string_width(str, TREAT_STRING_AS_UTF8);
@@ -1245,6 +1362,7 @@ int term_addstr(TERM_WINDOW *window, const char *str)
 	term_printed_text(len);
 	fwrite(str, 1, raw_len, term->out);
 
+	g_free(safe);
 	return len;
 }
 

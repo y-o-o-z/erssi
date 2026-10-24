@@ -248,7 +248,7 @@ static void draw_formatted(TERM_WINDOW *tw, int x, int y, const char *text, int 
 	rec.col = 0;
 	rec.last_color = ATTR_RESET;
 	rec.last_fg24 = rec.last_bg24 = UINT_MAX;
-	sidepanel_text_walk(text, draw_formatted_char, &rec);
+	sidepanel_text_walk(text, term_type, draw_formatted_char, &rec);
 }
 
 void draw_str_themed(TERM_WINDOW *tw, int x, int y, WINDOW_REC *wctx, int format_id,
