@@ -464,6 +464,11 @@ mapped_self() {
 safe_path() {
     d=$1
     hint="choose a ${CHK_OPT:---src} under a directory only you can write"
+    # as root: the directory is root's, but a group (Debian's staff on a
+    # 2775 /usr/local) or everyone may write to it, and could change what
+    # root runs
+    [ "${ROOT:-0}" != 1 ] ||
+        hint="choose a ${CHK_OPT:---src} under a directory only root can write, or take the others' write access away (Debian: /usr/local is group-writable for staff while /etc/staff-group-for-usr-local exists)"
     mapped_self
     ovf=$(overflow_uid)
     trust=""

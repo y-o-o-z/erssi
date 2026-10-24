@@ -794,6 +794,12 @@ link-root)
     check "the binary" [ -x "$HOME/.local/opt/erssi/bin/erssi" ]
     check "no ~/.local/bin/erssi" no_link
     check "start names the installed erssi" grep -q 'start  *~/.local/opt/erssi/bin/erssi ' "$W/out"
+    # a prefix under a directory that others may write to: refused, with
+    # a hint meant for root
+    mkdir -p "$W/ulocal" && chmod 777 "$W/ulocal"
+    run_install --prefix "$W/ulocal/erssi"
+    check "root, a prefix under an open directory: refused" [ "$RC" = 1 ]
+    check "... the hint for root" grep -qF "$W/ulocal is writable by other users - choose a --prefix under a directory only root can write, or take the others' write access away" "$W/out"
     ;;
 link-same-dir)
     # --prefix ~/.local: the binary is ~/.local/bin/erssi itself
