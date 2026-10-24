@@ -807,6 +807,13 @@ install_man('docs/erssi.1')
 # subdirs #
 ###########
 
+# A plain `meson test` leaves out the "perf" suite (the log search scans,
+# 1 GiB each); `ERSSI_TEST_PERF=1 meson test --suite perf` runs it. With a
+# meson older than 0.57 (no exclude_suites) it is listed as skipped.
+if meson.version().version_compare('>=0.57')
+  add_test_setup('default', exclude_suites : ['perf'], is_default : true)
+endif
+
 # Tests run with HOME in the build directory: the default configuration
 # logs to ~/.erssi/logs, and a test must never write into the real home of
 # whoever builds erssi.

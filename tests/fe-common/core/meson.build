@@ -205,10 +205,13 @@ test_test_log_search = executable('test-log-search',
   implicit_include_directories : false,
   dependencies : dep
 )
+# without the two 1 GiB scans: they are the perf test's, so that
+# ERSSI_TEST_PERF=1 never runs them twice
 test('test-log-search test', test_test_log_search,
-  args : ['--tap'],
+  args : ['--tap', '-s', '/log_search/perf/1g', '-s', '/log_search/perf/1g_hits'],
   protocol : 'tap')
-# the two 1 GiB scans alone; they skip unless ERSSI_TEST_PERF is set:
+# the two 1 GiB scans alone, in the "perf" suite that a plain meson test
+# leaves out (meson.build); they also skip unless ERSSI_TEST_PERF is set:
 # ERSSI_TEST_PERF=1 meson test --suite perf
 test('test-log-search perf', test_test_log_search,
   args : ['--tap', '-p', '/log_search/perf'],
