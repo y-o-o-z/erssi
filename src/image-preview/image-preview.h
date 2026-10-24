@@ -93,9 +93,9 @@ IMAGE_PREVIEW_REC *image_preview_get(LINE_REC *line);
  * URL belongs to a freed line whose address was reused: it is removed and
  * NULL returned */
 IMAGE_PREVIEW_REC *image_preview_get_url(LINE_REC *line, const char *url);
-/* A new record for the line (replacing any it had) */
-IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window,
-                                         void *buffer, const char *url);
+/* A new record for the line of window (replacing any it had); it goes
+ * when the window's buffer is cleared ("gui textbuffer cleared") */
+IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window, const char *url);
 /* The line was removed: its record goes */
 gboolean image_preview_forget_line(LINE_REC *line);
 /* All lines of the buffer were freed (/CLEAR, window closed): the records

@@ -117,17 +117,6 @@ gboolean image_preview_enabled(void)
 	return settings_get_bool(IMAGE_PREVIEW_SETTING);
 }
 
-/* The buffer a window's lines are in: the record forgets them with it */
-static TEXT_BUFFER_REC *window_buffer(WINDOW_REC *window)
-{
-	GUI_WINDOW_REC *gui;
-
-	if (window == NULL)
-		return NULL;
-	gui = WINDOW_GUI(window);
-	return gui != NULL && gui->view != NULL ? gui->view->buffer : NULL;
-}
-
 /* Initialize URL regex patterns */
 static gboolean init_url_patterns(void)
 {
@@ -358,7 +347,7 @@ gboolean image_preview_register_url(const char *url, LINE_REC *line, WINDOW_REC 
 	}
 
 	cache_path = image_cache_get(url);
-	rec = image_preview_rec_add(line, window, window_buffer(window), url);
+	rec = image_preview_rec_add(line, window, url);
 	if (cache_path != NULL) {
 		debug_print("register_url: CACHED at %s", cache_path);
 		rec->cache_path = cache_path;
@@ -419,7 +408,7 @@ gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *
 			return FALSE;
 		}
 	} else {
-		rec = image_preview_rec_add(line, window, window_buffer(window), url);
+		rec = image_preview_rec_add(line, window, url);
 	}
 
 	cache_path = image_cache_get(url);
@@ -1099,7 +1088,7 @@ static gboolean image_preview_mouse_handler(const GuiMouseEvent *event, gpointer
 
 	/* Create or update preview record */
 	if (preview == NULL) {
-		preview = image_preview_rec_add(line, window, gui->view->buffer, url);
+		preview = image_preview_rec_add(line, window, url);
 		debug_print("CLICK: created new preview record");
 	} else {
 		/* Reset failed state for retry */
@@ -1162,18 +1151,6 @@ static void sig_textbuffer_line_removed(TEXT_BUFFER_VIEW_REC *view,
 	if (image_preview_forget_line(line)) {
 		debug_print("LINE_REMOVED: cleaned up preview for line %p", line);
 	}
-}
-
-/* Signal: every line of a buffer is about to be freed (/CLEAR, window
- * closed) - no "line removed" comes for them, and the addresses of the
- * freed lines are given to new lines soon */
-static void sig_textbuffer_cleared(TEXT_BUFFER_REC *buffer)
-{
-	guint count;
-
-	count = image_preview_forget_buffer(buffer);
-	if (count > 0)
-		debug_print("CLEARED: forgot %u previews of buffer %p", count, (void *) buffer);
 }
 
 /* Command: /IMAGE */
@@ -1259,7 +1236,6 @@ void image_preview_init(void)
 	signal_add("setup changed", (SIGNAL_FUNC)sig_setup_changed);
 	signal_add_first("gui key pressed", (SIGNAL_FUNC)sig_key_pressed_preview);
 	signal_add("gui textbuffer line removed", (SIGNAL_FUNC)sig_textbuffer_line_removed);
-	signal_add("gui textbuffer cleared", (SIGNAL_FUNC)sig_textbuffer_cleared);
 
 	gui_mouse_add_handler(image_preview_mouse_handler, NULL);
 
@@ -1277,7 +1253,6 @@ void image_preview_deinit(void)
 
 	command_unbind("image", (SIGNAL_FUNC)cmd_image);
 
-	signal_remove("gui textbuffer cleared", (SIGNAL_FUNC)sig_textbuffer_cleared);
 	signal_remove("gui textbuffer line removed", (SIGNAL_FUNC)sig_textbuffer_line_removed);
 	signal_remove("gui key pressed", (SIGNAL_FUNC)sig_key_pressed_preview);
 	signal_remove("setup changed", (SIGNAL_FUNC)sig_setup_changed);

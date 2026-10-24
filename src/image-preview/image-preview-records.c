@@ -12,6 +12,10 @@
 #include "module.h"
 #include "image-preview.h"
 
+#include <irssi/src/core/signals.h>
+#include <irssi/src/fe-common/core/fe-windows.h>
+#include <irssi/src/fe-ansi/gui-windows.h>
+
 #include <string.h>
 
 /* LINE_REC * -> IMAGE_PREVIEW_REC *. A line is identified by its address
@@ -42,14 +46,29 @@ static void image_preview_rec_free(IMAGE_PREVIEW_REC *rec)
 	g_free(rec);
 }
 
+/* Signal: every line of a buffer is about to be freed (/CLEAR, window
+ * closed) - no "line removed" comes for them, and the addresses of the
+ * freed lines are given to new lines soon */
+static void sig_textbuffer_cleared(TEXT_BUFFER_REC *buffer)
+{
+	guint count;
+
+	count = image_preview_forget_buffer(buffer);
+	if (count > 0)
+		image_preview_debug_print("CLEARED: forgot %u previews of buffer %p", count,
+		                          (void *) buffer);
+}
+
 void image_preview_records_init(void)
 {
 	image_previews = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
 	                                       (GDestroyNotify) image_preview_rec_free);
+	signal_add("gui textbuffer cleared", (SIGNAL_FUNC) sig_textbuffer_cleared);
 }
 
 void image_preview_records_deinit(void)
 {
+	signal_remove("gui textbuffer cleared", (SIGNAL_FUNC) sig_textbuffer_cleared);
 	if (image_previews != NULL) {
 		g_hash_table_destroy(image_previews);
 		image_previews = NULL;
@@ -82,8 +101,18 @@ IMAGE_PREVIEW_REC *image_preview_get_url(LINE_REC *line, const char *url)
 	return rec;
 }
 
-IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window,
-                                         void *buffer, const char *url)
+/* The buffer a window's lines are in: the record forgets them with it */
+static TEXT_BUFFER_REC *window_buffer(WINDOW_REC *window)
+{
+	GUI_WINDOW_REC *gui;
+
+	if (window == NULL)
+		return NULL;
+	gui = WINDOW_GUI(window);
+	return gui != NULL && gui->view != NULL ? gui->view->buffer : NULL;
+}
+
+IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window, const char *url)
 {
 	IMAGE_PREVIEW_REC *rec;
 
@@ -93,7 +122,7 @@ IMAGE_PREVIEW_REC *image_preview_rec_add(LINE_REC *line, WINDOW_REC *window,
 	rec = g_new0(IMAGE_PREVIEW_REC, 1);
 	rec->line = line;
 	rec->window = window;
-	rec->buffer = buffer;
+	rec->buffer = window_buffer(window);
 	rec->url = g_strdup(url);
 	/* replaces (and frees) an older record of the same line */
 	g_hash_table_insert(image_previews, line, rec);

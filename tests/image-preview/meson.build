@@ -43,6 +43,10 @@ test_test_image_records = executable('test-image-records',
     'test-image-records.c',
     '../../src/image-preview/image-preview-records.c',
   ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+  ],
   c_args : [
     '-D' + 'PACKAGE_STRING' + '="' + 'image-preview' + '"',
   ],
