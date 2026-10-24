@@ -777,8 +777,14 @@ link_bin() {
         warn "$(tilde "$l") exists and is not a link - kept; this erssi is $(tilde "$PREFIX/bin/erssi")"
     fi
 }
-# The source build's cleanup on exit: the locks go.
+# The source build's cleanup on exit: a binary install's bin/erssi link,
+# removed for the build's erssi, goes back when the install did not put an
+# erssi there (it failed, or Ctrl-C stopped it), so the prefix keeps a
+# working erssi and erssi --update; then the locks go.
 src_cleanup() {
+    if [ -n "${OLD_LINK:-}" ] && [ ! -e "$PREFIX/bin/erssi" ] && [ ! -L "$PREFIX/bin/erssi" ]; then
+        ln -s "$OLD_LINK" "$PREFIX/bin/erssi" 2>/dev/null || true
+    fi
     [ -z "${PREFIX_LOCKED:-}" ] || lock_drop "$PREFIX/.install.lock"
     [ -z "${SRC_LOCKED:-}" ] || lock_drop "$SRC.lock"
 }
@@ -1857,13 +1863,11 @@ fi
 # ── 6. install ───────────────────────────────────────────────────────
 step "Installing"
 # a binary install before: its bin/erssi is a link into current, which the
-# build's erssi must replace, not write through; put back if that fails
+# build's erssi must replace, not write through; src_cleanup puts it back
+# when the install fails or is interrupted before a new one is there
 OLD_LINK=$(readlink "$PREFIX/bin/erssi" 2>/dev/null) || OLD_LINK=""
 [ -z "$OLD_LINK" ] || rm -f "$PREFIX/bin/erssi"
-if ! run_logged "$NINJA" -C "$SRC/Build" install; then
-    [ -z "$OLD_LINK" ] || [ -e "$PREFIX/bin/erssi" ] || ln -s "$OLD_LINK" "$PREFIX/bin/erssi"
-    die_log "installing failed"
-fi
+run_logged "$NINJA" -C "$SRC/Build" install || die_log "installing failed"
 # erssi before 2026.10.0 shipped it
 rm -f "$PREFIX/share/irssi/themes/nexus.theme"
 mkdir -p "$PREFIX/share/irssi"

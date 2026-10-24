@@ -2248,6 +2248,15 @@ binary-interrupted)
     check "... previous still leads to it" [ -x "$P/previous/bin/erssi" ]
     check "... 2026.10.4 still in use" current_is 2026.10.4
     check "... no stage left" none_exist "$P"/releases/.stage.*
+    # the source build replacing a binary install's bin/erssi link: back
+    # when its install is stopped
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nif [ "${3:-}" = install ]; then kill -TERM "$PPID"; exit 1; fi\nexec "$TEST_W/stand/ninja" "$@"\n' > "$W/shim/ninja"
+    run_bin --source --ref main
+    use_tool ninja
+    check "TERM in the source install: interrupted" [ "$RC" = 130 ]
+    check "... bin/erssi the link into current again" current_is 2026.10.4
+    check "... no locks left" none_exist "$P/.install.lock" "$HOME/.local/src/erssi.lock"
     ;;
 prefix-foreign)
     # the prefix holds the erssi that is run (also by the installer, for
