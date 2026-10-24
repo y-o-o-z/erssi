@@ -350,6 +350,15 @@ GByteArray *e2e_aad(const char *ctx, const unsigned char msgid[8], gint64 ts,
 
 /* ---- chunking and encryption ---- */
 
+/* a copy of plaintext is wiped before it is freed, as everywhere else in
+   the module */
+static void wipe_free(gpointer str)
+{
+	if (str != NULL)
+		e2e_wipe(str, strlen(str));
+	g_free(str);
+}
+
 GPtrArray *e2e_split_plaintext(const char *text, size_t budget, const char **error)
 {
 	GPtrArray *chunks;
@@ -360,7 +369,7 @@ GPtrArray *e2e_split_plaintext(const char *text, size_t budget, const char **err
 		return NULL;
 	}
 	len = strlen(text);
-	chunks = g_ptr_array_new_with_free_func(g_free);
+	chunks = g_ptr_array_new_with_free_func(wipe_free);
 	for (i = 0; i < len; i = j) {
 		j = MIN(i + budget, len);
 		/* back to the start of a UTF-8 character */
@@ -457,7 +466,7 @@ GPtrArray *e2e_encrypt_ctcp(const unsigned char key[32], const char *ctx,
 	}
 	body = g_strndup(frame + prefix, len - prefix - 1);
 	pieces = e2e_split_plaintext(body, E2E_MAX_PT_PER_CHUNK - prefix - 1, error);
-	g_free(body);
+	wipe_free(body);
 	if (pieces == NULL)
 		return NULL;
 	out = g_ptr_array_new_with_free_func(g_free);
@@ -466,7 +475,7 @@ GPtrArray *e2e_encrypt_ctcp(const unsigned char key[32], const char *ctx,
 		                          "\001", NULL);
 
 		one = e2e_encrypt_plain(key, ctx, piece, ts, error);
-		g_free(piece);
+		wipe_free(piece);
 		if (one == NULL) {
 			g_ptr_array_unref(out);
 			out = NULL;
