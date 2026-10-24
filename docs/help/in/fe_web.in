@@ -76,6 +76,14 @@
     work on it exactly as on TCP; the web client connects to the socket
     path and checks the certificate for the name localhost.
 
+    After 5 wrong passwords from one peer, that peer gets one check every
+    2 seconds. On the socket, and on Linux also on a loopback port, a peer
+    is a user, and your own are never slowed down. On the BSDs and macOS
+    erssi cannot tell who connects to a loopback port: every local user,
+    you as well, is the one peer 127.0.0.1, so another user's wrong
+    passwords slow down your own web client's logins. There fe_web_socket
+    is the only setting that keeps the users of a shared box apart.
+
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not
     start. A socket left behind by an erssi that did not exit cleanly is

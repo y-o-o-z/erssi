@@ -1281,9 +1281,12 @@ int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *u
 		return 0;
 	return tcp_peer_proc_uid(&c, "/proc/net", unmapped, uid);
 #else
-	/* The BSDs and macOS have no /proc/net; their socket tables
-	 * (net.inet.tcp.pcblist) are for root only, so the peer stays its
-	 * address */
+	/* The BSDs and macOS have no /proc/net and no sock_diag, so the peer
+	 * stays its address: every local user is the one "ip:loopback", the
+	 * owner too (said at startup, and in /HELP FE_WEB). Their socket
+	 * tables (net.inet.tcp.pcblist, whose entries carry the owner's uid,
+	 * readable by others where security.bsd.see_other_uids is 1) could
+	 * tell; reading them is not done here, it is untested there. */
 	(void) fd;
 	(void) budget;
 	(void) now;

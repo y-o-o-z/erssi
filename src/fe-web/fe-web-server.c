@@ -1943,6 +1943,14 @@ gboolean fe_web_server_init(void)
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: Security: TLS with the certificate in ~/.erssi/fe-web-cert.pem: "
 	          "a web client that pins it cannot be fooled by another listener");
+#ifndef __linux__
+	/* fe_web_tcp_peer_uid() cannot tell local users apart here: every
+	   one of them, the owner too, is the peer "ip:loopback" */
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web: on this system every local user connecting to the port is one "
+	          "peer, you too: their wrong passwords slow down your logins. On a shared "
+	          "box use /SET fe_web_socket (a Unix socket only you can reach)");
+#endif
 	return TRUE;
 }
 
