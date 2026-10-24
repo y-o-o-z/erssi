@@ -19,11 +19,8 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope', 'outq', 'state']
     'proto' : ['proto', 'other'],
   }.get(name, [''])
   foreach part : parts
-    part_env = environment()
-    part_env.set('HOME', meson.build_root() / 'test-home')
-    part_env.set('E2E_TEST_PART', part)
     test('test-e2e-' + name + (part == '' ? '' : ' ' + part) + ' test', exe,
-      env : part == '' ? test_env : part_env,
+      env : part == '' ? test_env : environment(test_env_vars + {'E2E_TEST_PART' : part}),
       args : ['--tap'],
       protocol : 'tap',
       timeout : part == '' ? 30 : 120)
