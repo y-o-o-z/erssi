@@ -858,36 +858,64 @@ prefix-lock)
     check "... both locks gone" none_exist "$HOME/.local/opt/erssi/.install.lock" "$HOME/.local/src/erssi.lock"
     ;;
 stale-lock)
-    # a lock its installer left behind (kill -9, a reboot) is taken over
-    # when that installer is gone: the lock names its pid and host
+    # a lock its installer left behind (kill -9, the OOM killer) is taken
+    # over when that installer is gone: the lock names its pid, host, boot
+    # id and PID namespace, here those of a stand-in /proc
     [ -n "$PS" ] || { echo "skip: no ps"; exit 77; }
     ln -s "$PS" "$W/bin/ps"
+    mkdir -p "$W/proc/sys/kernel/random" "$W/proc/self/ns"
+    echo 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 > "$W/proc/sys/kernel/random/boot_id"
+    ln -s 'pid:[4026531836]' "$W/proc/self/ns/pid"
+    SHELLTER_PROC=$W/proc; export SHELLTER_PROC
     host=$(uname -n)
+    me="$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]"
     sh -c 'exit 0' & gone=$!
     wait "$gone"
     sleep 30 & alive=$!
     trap 'kill "$alive" 2>/dev/null; rm -rf "$W"' EXIT
     P=$HOME/.local/opt/erssi S=$HOME/.local/src/erssi
     mkdir -p "$P/.install.lock" "$S.lock"
-    printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
-    printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
+    printf '%s %s\n' "$gone" "$me" > "$P/.install.lock/pid"
+    printf '%s %s\n' "$gone" "$me" > "$S.lock/pid"
     run_install
     check "stale locks of a gone installer: installed" eval '[ "$RC" = 0 ] && [ -x "$P/bin/erssi" ]'
-    check "... and released" none_exist "$P/.install.lock" "$S.lock"
-    check "... nothing of them left" none_exist "$P/.install.lock.stale.$$" "$S.lock.stale.$$"
-    mkdir "$S.lock" && printf '%s %s\n' "$alive" "$host" > "$S.lock/pid"
+    check "... and released" none_exist "$P/.install.lock" "$S.lock" "$P/.install.lock.takeover" "$S.lock.takeover"
+    mkdir "$S.lock" && printf '%s %s\n' "$alive" "$me" > "$S.lock/pid"
     run_install
-    check "a lock of a running installer: refused" eval '[ "$RC" = 1 ] && grep -qF "another installer is using $S" "$W/out"'
-    check "... kept" [ "$(cat "$S.lock/pid")" = "$alive $host" ]
-    printf '%s %s\n' "$gone" "elsewhere.example" > "$S.lock/pid"
+    check "a lock of a running installer: refused" eval '[ "$RC" = 1 ] && grep -qF "another installer is using $S (if not, remove $S.lock)" "$W/out"'
+    check "... kept" [ "$(cat "$S.lock/pid")" = "$alive $me" ]
+    printf '%s %s\n' "$gone" "elsewhere.example 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
     run_install
-    check "a lock of another host: refused" eval '[ "$RC" = 1 ] && [ -f "$S.lock/pid" ]'
-    printf 'x %s\n' "$host" > "$S.lock/pid"
+    check "a lock of another host: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made on elsewhere.example" "$W/out"'
+    printf '%s %s\n' "$gone" "$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]" > "$S.lock/pid"
+    run_install
+    check "a lock of another PID namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made in another PID namespace (a container or a sandbox)" "$W/out"'
+    check "... kept" [ -f "$S.lock/pid" ]
+    printf '%s %s\n' "$gone" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
+    run_install
+    check "a lock of another boot: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made before this system last started (another boot id)" "$W/out"'
+    printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
+    run_install
+    check "a lock without boot id and namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'
+    printf 'x %s\n' "$me" > "$S.lock/pid"
     run_install
     check "a lock without a pid: refused" eval '[ "$RC" = 1 ] && [ -f "$S.lock/pid" ]'
+    # a takeover by another installer under way: refused, and named
+    printf '%s %s\n' "$gone" "$me" > "$S.lock/pid"
+    mkdir "$S.lock.takeover"
+    run_install
+    check "a takeover under way: refused" eval '[ "$RC" = 1 ] && grep -qF "being taken over by another installer (if that is stuck too, remove $S.lock.takeover as well)" "$W/out"'
+    check "... the lock and the takeover kept" eval '[ -f "$S.lock/pid" ] && [ -d "$S.lock.takeover" ]'
+    rmdir "$S.lock.takeover"
     rm -rf "$S.lock"
+    # where neither side can tell boot or namespace (FreeBSD): the pid
+    # and host decide, as before
+    rm -rf "$W/proc/sys" "$W/proc/self/ns"
+    mkdir "$S.lock" && printf '%s %s - -\n' "$gone" "$host" > "$S.lock/pid"
+    run_install
+    check "no boot id or namespace on either side: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock"'
     # --rollback and --uninstall take a stale prefix lock over as well
-    mkdir "$P/.install.lock" && printf '%s %s\n' "$gone" "$host" > "$P/.install.lock/pid"
+    mkdir "$P/.install.lock" && printf '%s %s - -\n' "$gone" "$host" > "$P/.install.lock/pid"
     sh "$SRC/shellter-install.sh" --uninstall > "$W/out" 2>&1
     RC=$?
     check "--uninstall over a stale lock: done" eval '[ "$RC" = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"'

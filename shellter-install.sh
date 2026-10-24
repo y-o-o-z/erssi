@@ -527,44 +527,92 @@ safe_prefix() {
 # ── locks ────────────────────────────────────────────────────────────
 # One installer at a time on a prefix ($PREFIX/.install.lock) and on a
 # source directory ($SRC.lock): a directory, made in one step (mkdir),
-# holding "pid host" of the installer that holds it. A lock whose
-# installer is gone (kill -9, the OOM killer, a reboot) would otherwise
-# stop every later erssi --update until someone removes it by hand, so it
-# is taken over when it names this host and ps shows no such process. A
-# lock without a pid (made by an installer before 2026.10.6, or by one
-# that has only just made it) is never taken over.
-lock_host() { uname -n 2>/dev/null || echo unknown; }
-lock_stale() {   # dir -> 0 when its installer is gone; LOCK_SEEN what it held
+# holding "pid host boot pidns" of the installer that holds it: its pid,
+# uname -n, the kernel's boot id and its PID namespace (Linux /proc; "-"
+# where there is none, as on FreeBSD). A lock whose installer is gone
+# (kill -9, the OOM killer) would otherwise stop every later erssi
+# --update until someone removes it by hand, so it is taken over when it
+# names this host, this boot and this PID namespace and ps shows no such
+# process. A pid says nothing across boots or PID namespaces (a sandbox
+# with its own, bwrap --unshare-pid, sees none of the host's processes),
+# so a lock made in another one, or where they cannot be told, is left
+# alone and the message says why; so is a lock without a pid (made by an
+# installer before 2026.10.6, or by one that has only just made it).
+lock_id() {   # "host boot pidns" of this installer
+    lb=$(cat "${SHELLTER_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null) || lb=""
+    lns=$(readlink "${SHELLTER_PROC:-/proc}/self/ns/pid" 2>/dev/null) || lns=""
+    case "$lb" in ''|*[!0-9a-f-]*) lb=- ;; esac
+    case "$lns" in pid:\[[0-9]*\]) ;; *) lns=- ;; esac
+    printf '%s %s %s\n' "$(uname -n 2>/dev/null || echo unknown)" "$lb" "$lns"
+}
+# 0 when the installer that holds lock $1 is gone; LOCK_SEEN what the
+# lock held, LOCK_WHY why it is not taken over, when that is not plain
+lock_stale() {
+    LOCK_WHY=""
     LOCK_SEEN=$(cat "$1/pid" 2>/dev/null) || return 1
-    lp=${LOCK_SEEN%% *} lh=${LOCK_SEEN#* }
+    # shellcheck disable=SC2086 # the fields of the lock
+    set -- $LOCK_SEEN
+    lp=${1:-} lh=${2:-} lb=${3:--} lns=${4:--}
     case "$lp" in ''|*[!0-9]*) return 1 ;; esac
-    [ "$lh" = "$(lock_host)" ] || return 1
-    # that pid is this installer: whatever held it is gone
+    # shellcheck disable=SC2046 # the fields of this installer
+    set -- $(lock_id)
+    [ "$lh" = "$1" ] || { LOCK_WHY="made on $lh"; return 1; }
+    if [ "$lb" != "$2" ]; then
+        if [ "$lb" = - ] || [ "$2" = - ]; then
+            LOCK_WHY="made where this installer cannot tell whether its process still runs"
+        else
+            LOCK_WHY="made before this system last started (another boot id)"
+        fi
+        return 1
+    fi
+    if [ "$lns" != "$3" ]; then
+        if [ "$lns" = - ] || [ "$3" = - ]; then
+            LOCK_WHY="made where this installer cannot tell whether its process still runs"
+        else
+            LOCK_WHY="made in another PID namespace (a container or a sandbox), whose processes this installer cannot see"
+        fi
+        return 1
+    fi
+    # that pid is this installer (same boot and namespace): the holder is gone
     [ "$lp" != "$$" ] || return 0
     # a ps that cannot see this installer (no /proc) tells nothing
     have ps && ps -p "$$" > /dev/null 2>&1 || return 1
     ! ps -p "$lp" > /dev/null 2>&1
 }
-lock_take() {   # dir -> 0 when this installer holds it now
-    if ! mkdir "$1" 2>/dev/null; then
-        lock_stale "$1" || return 1
-        # moved aside in one rename: of two installers that both found it
-        # stale, only one moves it; one that moved a lock taken in between
-        # (not the one it read) gives it back
-        rm -rf "$1.stale.$$"
-        mv "$1" "$1.stale.$$" 2>/dev/null || return 1
-        if [ "$(cat "$1.stale.$$/pid" 2>/dev/null)" != "$LOCK_SEEN" ]; then
-            [ -e "$1" ] || mv "$1.stale.$$" "$1" 2>/dev/null
-            return 1
-        fi
-        rm -rf "$1.stale.$$"
-        mkdir "$1" 2>/dev/null || return 1
+# The lock made, with its pid line; written to a temporary name and
+# renamed, so that it is never read half-written
+lock_mark() {
+    if ! { printf '%s %s\n' "$$" "$(lock_id)" > "$1/pid.$$" && mv -f "$1/pid.$$" "$1/pid"; } 2>/dev/null; then
+        rm -f "$1/pid.$$"
     fi
-    printf '%s %s\n' "$$" "$(lock_host)" > "$1/pid" 2>/dev/null || true
     return 0
 }
+lock_take() {   # dir -> 0 when this installer holds it now
+    LOCK_WHY=""
+    if mkdir "$1" 2>/dev/null; then lock_mark "$1"; return 0; fi
+    lock_stale "$1" || return 1
+    # One takeover at a time ($1.takeover, made in one step): checked
+    # again under it, the stale lock is removed and made anew, so no other
+    # installer can move or take the lock in between, and the new one
+    # always carries its pid. Between the removal and the mkdir another
+    # installer may make it first; then this one is the one that waits.
+    mkdir "$1.takeover" 2>/dev/null || {
+        LOCK_WHY="being taken over by another installer (if that is stuck too, remove $1.takeover as well)"
+        return 1
+    }
+    if ! lock_stale "$1"; then rmdir "$1.takeover"; return 1; fi
+    rm -rf "$1"
+    if ! mkdir "$1" 2>/dev/null; then rmdir "$1.takeover"; return 1; fi
+    lock_mark "$1"
+    rmdir "$1.takeover"
+    return 0
+}
+# what to say when lock $1 of $2 cannot be taken (LOCK_WHY from lock_take)
+lock_busy() {
+    printf 'another installer is using %s%s (if not, remove %s)' "$2" "${LOCK_WHY:+ - the lock was $LOCK_WHY}" "$1"
+}
 lock_drop() {   # dir: a lock this installer holds
-    rm -f "$1/pid"
+    rm -f "$1/pid" "$1/pid.$$"
     rmdir "$1" 2>/dev/null
     return 0
 }
@@ -952,7 +1000,7 @@ binary_install() {
         mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
         # one installer at a time on this prefix
         lock_take "$PREFIX/.install.lock" ||
-            die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+            die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
         BLOCK="$PREFIX/.install.lock"
         mkdir -p "$STATE"
         LOG="$STATE/install.log"
@@ -1251,7 +1299,7 @@ do_rollback() {
         exit 0
     fi
     lock_take "$PREFIX/.install.lock" ||
-        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
     trap 'lock_drop "$PREFIX/.install.lock"' EXIT
     LOG=/dev/null
     switch_link "$PREFIX/current" "releases/$prev" || die "cannot switch $(tilde "$PREFIX/current") - nothing was changed"
@@ -1344,7 +1392,7 @@ do_uninstall() {
         exit 0
     fi
     lock_take "$PREFIX/.install.lock" ||
-        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
     trap 'rm -rf "$UD"; lock_drop "$PREFIX/.install.lock"' EXIT
     [ "$unlink" = 0 ] || rm -f "$l"
     RP=$(cd -P -- "$PREFIX" && pwd -P) || die "cannot open $PREFIX"
@@ -1433,7 +1481,7 @@ unset CDPATH        # cd in $(...) must print nothing
 # this installer's own, and rm -rf'ed, or have another installer's lock
 # dropped, on an early exit such as an up to date erssi --update
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
-UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" JOB="" LOG=""
+UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
@@ -1726,7 +1774,7 @@ if [ "$CHECK" = 0 ]; then
 "*) die "invalid directory: $SRC" ;;
     esac
     safe_path "$(dirname -- "$SRC")"
-    lock_take "$SRC.lock" || die "another installer is using $SRC (if not, remove $SRC.lock)"
+    lock_take "$SRC.lock" || die "$(lock_busy "$SRC.lock" "$SRC")"
     SRC_LOCKED=1
     trap 'src_cleanup' EXIT
     safe_dir "$SRC"
@@ -1736,7 +1784,7 @@ if [ "$CHECK" = 0 ]; then
     # installs while it does
     mkdir -p "$PREFIX" 2>/dev/null; [ -w "$PREFIX" ] || die "cannot write to $PREFIX"
     lock_take "$PREFIX/.install.lock" ||
-        die "another installer is using $PREFIX (if not, remove $PREFIX/.install.lock)"
+        die "$(lock_busy "$PREFIX/.install.lock" "$PREFIX")"
     PREFIX_LOCKED=1
 fi
 mkdir -p "$STATE"

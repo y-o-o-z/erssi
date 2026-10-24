@@ -180,11 +180,14 @@ changes anything there. In a rootless container or another user namespace see
 
 One installer at a time works on a prefix and on a source directory: each
 has a lock (`<prefix>/.install.lock`, `<src>.lock`) that names the
-installer's process and host. A lock left behind by an installer that was
-killed (`kill -9`, the OOM killer, a reboot) is taken over by the next one
-on the same host once that process is gone; a lock of a running installer,
-of another host, or of an installer before 2026.10.6 is not. If one is
-stuck anyway, the message names the directory to remove.
+installer's process, host, boot and PID namespace (the last two where
+Linux shows them). A lock left behind by an installer that was killed
+(`kill -9`, the OOM killer) is taken over by the next one once that
+process is gone, when both run on the same host, in the same boot and
+in the same PID namespace. A lock of a running installer, of another
+host, of an earlier boot (after a reboot), of a container or sandbox with
+PID namespace of its own, or of an installer before 2026.10.6 is left
+alone: the message says why and names the directory to remove.
 
 ## FreeBSD
 
