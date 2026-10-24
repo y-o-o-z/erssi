@@ -35,3 +35,22 @@ test('test-image-fetch test', test_test_image_fetch,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# the preview records of the lines: a record goes with its line and is
+# only used for the URL it was made for
+test_test_image_records = executable('test-image-records',
+  files(
+    'test-image-records.c',
+    '../../src/image-preview/image-preview-records.c',
+  ),
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'image-preview' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-image-records test', test_test_image_records,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

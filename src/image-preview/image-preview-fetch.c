@@ -740,7 +740,7 @@ static gboolean retry_fetch_callback(gpointer user_data)
 	image_preview_debug_print("RETRY: timer fired, starting retry for %s", retry->url);
 
 	/* Find the preview record */
-	preview = image_preview_get(retry->line);
+	preview = image_preview_get_url(retry->line, retry->url);
 	if (preview == NULL) {
 		image_preview_debug_print("RETRY: preview record gone, aborting");
 		retry_data_free(retry);
@@ -770,6 +770,12 @@ static gboolean retry_fetch_callback(gpointer user_data)
 
 	retry_data_free(retry);
 	return FALSE;  /* Don't repeat timer */
+}
+
+/* The URL of the line the download is for: the page of a page URL */
+static const char *fetch_record_url(IMAGE_FETCH_REC *fetch)
+{
+	return fetch->original_url != NULL ? fetch->original_url : fetch->url;
 }
 
 /* Handle fetch completion */
@@ -824,7 +830,7 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		}
 
 		/* Update preview record - check for retry */
-		preview = image_preview_get(fetch->line);
+		preview = image_preview_get_url(fetch->line, fetch_record_url(fetch));
 		if (preview != NULL) {
 			/* Check if we can retry (max 1 retry) */
 			if (preview->retry_count < 1) {
@@ -902,8 +908,9 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		fetch->curl_handle = NULL;
 	}
 
-	/* Update preview record */
-	preview = image_preview_get(fetch->line);
+	/* Update preview record: the line's record for this URL, not one
+	 * a new line at the address of a freed one has */
+	preview = image_preview_get_url(fetch->line, fetch_record_url(fetch));
 	if (preview != NULL) {
 		preview->fetch_pending = FALSE;
 		if (success) {
@@ -960,8 +967,9 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 		image_preview_debug_print("FETCH: WARNING preview record is NULL!");
 	}
 
-	/* Emit signal for UI update */
-	if (success) {
+	/* Emit signal for UI update - only for the record of this download,
+	 * the receiver finds it by the line alone */
+	if (success && preview != NULL) {
 		image_preview_debug_print("FETCH: emitting 'image preview ready' signal");
 		signal_emit("image preview ready", 2, fetch->line, fetch->window);
 	}

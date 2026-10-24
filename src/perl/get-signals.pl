@@ -64,6 +64,7 @@ while (<>) {
 
 		# fe-text
 		TEXTBUFFER_VIEW_REC => 'Irssi::TextUI::TextBufferView',
+		TEXT_BUFFER_REC	    => 'Irssi::TextUI::TextBuffer',
 		LINE_REC	    => 'Irssi::TextUI::Line',
 
 		# perl

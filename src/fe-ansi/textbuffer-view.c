@@ -589,6 +589,7 @@ void textbuffer_view_destroy(TEXT_BUFFER_VIEW_REC *view)
 
 	if (view->siblings == NULL) {
 		/* last view for textbuffer, destroy */
+		signal_emit("gui textbuffer cleared", 1, view->buffer);
                 textbuffer_destroy(view->buffer);
 	} else {
 		/* remove ourself from siblings lists */
@@ -1258,6 +1259,9 @@ void textbuffer_view_remove_all_lines(TEXT_BUFFER_VIEW_REC *view)
 {
 	g_return_if_fail(view != NULL);
 
+	/* the lines are freed without a "gui textbuffer line removed" each:
+	 * whoever keeps LINE_REC pointers of this buffer forgets them here */
+	signal_emit("gui textbuffer cleared", 1, view->buffer);
 	textbuffer_remove_all_lines(view->buffer);
 
 	g_hash_table_foreach(view->bookmarks, (GHFunc) g_free, NULL);

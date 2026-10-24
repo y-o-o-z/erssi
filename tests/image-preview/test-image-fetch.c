@@ -27,7 +27,7 @@ void image_preview_debug_print(const char *fmt, ...)
 {
 }
 
-IMAGE_PREVIEW_REC *image_preview_get(LINE_REC *line)
+IMAGE_PREVIEW_REC *image_preview_get_url(LINE_REC *line, const char *url)
 {
 	preview_lookups++;
 	/* without a preview record a retry that fires starts nothing */

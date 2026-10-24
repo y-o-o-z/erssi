@@ -186,6 +186,47 @@ test('test-term-output test', test_test_term_output,
   args : ['--tap'],
   protocol : 'tap')
 
+test_test_textbuffer_cleared = executable('test-textbuffer-cleared',
+  files(
+    '../../src/fe-ansi/gui-entry.c',
+    '../../src/fe-ansi/gui-gestures.c',
+    '../../src/fe-ansi/gui-mouse.c',
+    '../../src/fe-ansi/gui-printtext.c',
+    '../../src/fe-ansi/gui-windows.c',
+    '../../src/fe-ansi/mainwindows.c',
+    '../../src/fe-ansi/term-ansi.c',
+    '../../src/fe-ansi/term-notify.c',
+    '../../src/fe-ansi/sidepanels-core.c',
+    '../../src/fe-ansi/sidepanels-render.c',
+    '../../src/fe-ansi/sidepanels-text.c',
+    '../../src/fe-ansi/sidepanels-activity.c',
+    '../../src/fe-ansi/sidepanels-signals.c',
+    '../../src/fe-ansi/sidepanels-layout.c',
+    '../../src/fe-ansi/textbuffer-formats.c',
+    '../../src/fe-ansi/textbuffer-view.c',
+    '../../src/fe-ansi/textbuffer.c',
+    '../../src/fe-ansi/resize-debug.c',
+    'mock-irssi.c',
+    'test-textbuffer-cleared.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-textbuffer-cleared test', test_test_textbuffer_cleared,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
+
 test_test_mainwindows_line = executable('test-mainwindows-line',
   files(
     '../../src/fe-ansi/gui-entry.c',

@@ -5,6 +5,7 @@ image_preview_sources = files(
   'image-preview-cache.c',
   'image-preview-fetch.c',
   'image-preview-chafa.c',
+  'image-preview-records.c',
 )
 
 image_preview_inc = include_directories('.')

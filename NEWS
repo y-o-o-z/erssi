@@ -13,6 +13,13 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    UTF-8 mode, and a Latin-1 or other 8-bit name is shown as its bytes
 	    there, as the text view shows it
 
+	+ Image preview
+	  - a preview no longer outlives its line: after /CLEAR or closing a
+	    window, a new line could get the address of a freed one and a
+	    click on its link showed the picture of the old link. The
+	    records go with their lines, and a record is only used for the
+	    link it was made for
+
 shellter-v2026.10.5 2026-10-19  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.5
 
