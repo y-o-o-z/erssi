@@ -23,6 +23,8 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <irssi/src/e2e/e2e-crypto.h>
@@ -991,6 +993,123 @@ static void test_legacy_export_keeps_scope(void)
 	e2e_json_free(kr);
 }
 
+/* every setter counts as a change, a read does not: a handshake that
+   changed nothing writes no keyring */
+static void test_json_changes(void)
+{
+	E2E_JSON *kr = e2e_keyring_new(), *list = e2e_json_new(E2E_JSON_ARRAY);
+	guint64 c = e2e_json_changes();
+	char *text;
+
+	g_assert_null(e2e_json_get(kr, "nothing"));
+	text = e2e_keyring_snapshot(kr);
+	g_free(text);
+	g_ptr_array_unref(e2e_json_keys(kr));
+	g_assert_cmpuint(e2e_json_changes(), ==, c);
+	e2e_json_set_string(kr, "a", "1");
+	g_assert_cmpuint(e2e_json_changes(), >, c);
+	c = e2e_json_changes();
+	e2e_json_remove(kr, "a");
+	g_assert_cmpuint(e2e_json_changes(), >, c);
+	c = e2e_json_changes();
+	e2e_json_array_add(list, e2e_json_new_int(1));
+	g_assert_cmpuint(e2e_json_changes(), >, c);
+	c = e2e_json_changes();
+	e2e_json_array_remove(list, 0);
+	g_assert_cmpuint(e2e_json_changes(), >, c);
+	g_assert_cmpuint(e2e_json_size(list), ==, 0);
+	c = e2e_json_changes();
+	e2e_json_object_member(kr, "new");
+	g_assert_cmpuint(e2e_json_changes(), >, c);
+	e2e_json_free(list);
+	e2e_json_free(kr);
+}
+
+/* the file read once while it does not change: the next load is a copy
+   of what was read; a change by another writer, a chmod or our own save
+   is seen at once */
+static void cache_age(void)
+{
+	struct timespec times[2] = { { 0, UTIME_OMIT }, { time(NULL) - 10, 0 } };
+
+	/* older than this second: written in place in the same tick, size
+	   and times could look the same */
+	g_assert_cmpint(utimensat(AT_FDCWD, path, times, 0), ==, 0);
+}
+
+static void test_cache(void)
+{
+	E2E_KEYRING_CACHE cache = { NULL };
+	E2E_LOAD_STATUS status;
+	E2E_JSON *kr;
+	char *notice = NULL, *error = NULL;
+
+	setup();
+	kr = e2e_keyring_new();
+	e2e_json_set_string(kr, "one", "1");
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	e2e_json_free(kr);
+
+	/* written this second: read every time */
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	e2e_json_free(kr);
+	g_assert_cmpuint(cache.reads, ==, 1);
+	g_assert_null(cache.kr);
+
+	cache_age();
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "1");
+	/* the caller may change its copy */
+	e2e_json_set_string(kr, "one", "changed");
+	e2e_json_free(kr);
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_null(notice);
+	g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "1");
+	e2e_json_free(kr);
+	g_assert_cmpuint(cache.reads, ==, 2);
+
+	/* another writer */
+	kr = e2e_keyring_new();
+	e2e_json_set_string(kr, "one", "2");
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	e2e_json_free(kr);
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "2");
+	e2e_json_free(kr);
+	g_assert_cmpuint(cache.reads, ==, 3);
+
+	/* our own save is kept as written */
+	kr = e2e_keyring_new();
+	e2e_json_set_string(kr, "one", "3");
+	g_assert_true(e2e_keyring_save(path, kr, &error));
+	e2e_keyring_cache_saved(&cache, path, kr);
+	e2e_json_free(kr);
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "3");
+	e2e_json_free(kr);
+	g_assert_cmpuint(cache.reads, ==, 3);
+
+	/* a chmod */
+	cache_age();
+	g_assert_cmpint(g_chmod(path, 0644), ==, 0);
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	e2e_json_free(kr);
+	g_free(notice);
+	notice = NULL;
+	g_assert_cmpuint(cache.reads, ==, 4);
+
+	/* gone: an empty keyring, not the copy */
+	g_assert_cmpint(g_unlink(path), ==, 0);
+	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+	g_assert_cmpint(status, ==, E2E_LOAD_OK);
+	g_assert_null(e2e_json_get(kr, "one"));
+	e2e_json_free(kr);
+	e2e_keyring_cache_clear(&cache);
+	remove_tree();
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -1003,6 +1122,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/json/keys-while-changing", test_json_keys_while_changing);
 	g_test_add_func("/e2e/keyring/absent", test_absent);
 	g_test_add_func("/e2e/keyring/save-load", test_save_load);
+	g_test_add_func("/e2e/keyring/cache", test_cache);
+	g_test_add_func("/e2e/json/changes", test_json_changes);
 	g_test_add_func("/e2e/keyring/corrupt", test_corrupt);
 	g_test_add_func("/e2e/keyring/corrupt-fails-closed", test_corrupt_fails_closed);
 	g_test_add_func("/e2e/keyring/own-members", test_own_members);

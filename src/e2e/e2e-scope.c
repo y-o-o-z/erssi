@@ -959,7 +959,7 @@ static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scop
 		}
 		*found = TRUE;
 		if (dup) {
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 			continue;
 		}
 		e2e_json_set_string(row, "channel", scoped);

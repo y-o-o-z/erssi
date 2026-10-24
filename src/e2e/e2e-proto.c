@@ -789,18 +789,33 @@ GHashTable *e2e_stamps_new(void)
 	return g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 }
 
+/* the entry under the key "" (no key of a stamp is empty) holds when the
+   map was pruned last. Every value starts with its gint64 time. */
+static void stamps_prune(GHashTable *stamps, gint64 now, int interval)
+{
+	GHashTableIter iter;
+	gpointer key, value;
+	gint64 *pruned;
+
+	if (g_hash_table_size(stamps) <= 256)
+		return;
+	pruned = g_hash_table_lookup(stamps, "");
+	if (pruned != NULL && *pruned == now)
+		return;
+	g_hash_table_iter_init(&iter, stamps);
+	while (g_hash_table_iter_next(&iter, &key, &value))
+		if (*(const char *) key != '\0' && now - *(gint64 *) value >= interval)
+			g_hash_table_iter_remove(&iter);
+	pruned = g_new(gint64, 1);
+	*pruned = now;
+	g_hash_table_replace(stamps, g_strdup(""), pruned);
+}
+
 gboolean e2e_stamp_allow(GHashTable *stamps, const char *key, int interval)
 {
 	gint64 now = e2e_now(), *stamp;
-	GHashTableIter iter;
-	gpointer value;
 
-	if (g_hash_table_size(stamps) > 256) {
-		g_hash_table_iter_init(&iter, stamps);
-		while (g_hash_table_iter_next(&iter, NULL, &value))
-			if (now - *(gint64 *) value >= interval)
-				g_hash_table_iter_remove(&iter);
-	}
+	stamps_prune(stamps, now, interval);
 	stamp = g_hash_table_lookup(stamps, key);
 	if (stamp != NULL && now - *stamp < interval)
 		return FALSE;
@@ -1026,14 +1041,14 @@ static void record_pending_trust_change(E2E_JSON *kr, const char *handle, const 
 			if (kept == NULL && g_strcmp0(e2e_json_get_string(row, "new_fp"), new_fp) == 0 &&
 			    e2e_json_get(row, "session_sk") != NULL)
 				kept = e2e_json_copy(e2e_json_get(row, "session_sk"));
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		} else {
 			i++;
 		}
 	}
 	/* bounded: anyone can make these with a forwarded request */
 	while (list->array->len >= E2E_MAX_TRUST_CHANGES)
-		g_ptr_array_remove_index(list->array, 0);
+		e2e_json_array_remove(list, 0);
 	row = e2e_json_new(E2E_JSON_OBJECT);
 	e2e_json_set_string(row, "handle", handle);
 	e2e_json_set_string(row, "channel", ctx);
@@ -1179,7 +1194,7 @@ static void drop_trust_rows(E2E_JSON *kr, const char *handle, const char *change
 		if (g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0 &&
 		    (change == NULL || g_strcmp0(e2e_json_get_string(row, "change"), change) == 0) &&
 		    (fp == NULL || g_strcmp0(e2e_json_get_string(row, "new_fp"), fp) == 0))
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		else
 			i++;
 	}
@@ -2438,6 +2453,32 @@ gboolean e2e_handshake_allow(GHashTable *stamps, E2E_HS_TYPE type, const char *s
 	ok = e2e_stamp_allow(stamps, key, E2E_KEYREQ_INBOUND_MIN_INTERVAL);
 	g_free(key);
 	return ok;
+}
+
+typedef struct {
+	gint64 start;	/* first, as in a stamp: stamps_prune() reads it */
+	guint count;
+} HANDSHAKE_BUDGET;
+
+gboolean e2e_handshake_sender_allow(GHashTable *budgets, const char *sender)
+{
+	gint64 now = e2e_now();
+	HANDSHAKE_BUDGET *b;
+
+	/* "" is where stamps_prune() keeps its time */
+	g_return_val_if_fail(*sender != '\0', FALSE);
+	stamps_prune(budgets, now, E2E_KEYREQ_INBOUND_MIN_INTERVAL);
+	b = g_hash_table_lookup(budgets, sender);
+	if (b == NULL || now - b->start >= E2E_KEYREQ_INBOUND_MIN_INTERVAL) {
+		b = g_new(HANDSHAKE_BUDGET, 1);
+		b->start = now;
+		b->count = 0;
+		g_hash_table_replace(budgets, g_strdup(sender), b);
+	}
+	if (b->count >= E2E_HANDSHAKE_SENDER_MAX)
+		return FALSE;
+	b->count++;
+	return TRUE;
 }
 
 /* ---- trust decisions of the user ---- */
@@ -4875,7 +4916,7 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 		const char *c = e2e_json_get_string(g_ptr_array_index(list->array, i), "channel");
 
 		if (c == NULL || strchr(c, E2E_SCOPE_SEP) == NULL)
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		else
 			i++;
 	}

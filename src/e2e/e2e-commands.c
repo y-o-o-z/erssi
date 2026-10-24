@@ -298,7 +298,7 @@ static void filter_trust_changes(E2E_JSON *kr, const char *handle, GPtrArray *ta
 		if (g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0) {
 			if (taken != NULL)
 				g_ptr_array_add(taken, e2e_json_copy(row));
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		} else {
 			i++;
 		}
@@ -2135,7 +2135,7 @@ static void cmd_autotrust(SERVER_REC *server, WI_ITEM_REC *item, char **args)
 			for (i = 0; i < rules->array->len;) {
 				rule = g_ptr_array_index(rules->array, i);
 				if (g_strcmp0(str_or(e2e_json_get_string(rule, "handle_pattern"), ""), args[1]) == 0)
-					g_ptr_array_remove_index(rules->array, i);
+					e2e_json_array_remove(rules, i);
 				else
 					i++;
 			}

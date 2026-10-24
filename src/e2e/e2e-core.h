@@ -25,8 +25,6 @@ void *e2e_notice_item(SERVER_REC *server, const char *ctx, const char *nick);
 void e2e_warn_session_only(void *item);
 
 const char *e2e_keyring_file(void);
-/* the same file at two looks (stat: device, inode, size, mtime, ctime) */
-gboolean e2e_same_file(const struct stat *a, const struct stat *b);
 /* load_keyring of rpe2e.pl: problems are printed */
 E2E_JSON *e2e_load(void);
 /* the same; *lost: the keyring is lost (a corrupt one was moved aside),

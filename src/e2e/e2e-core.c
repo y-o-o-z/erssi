@@ -95,6 +95,7 @@ static char *keyring_file;
 
 static GHashTable *keyreq_out;		/* "handle|ctx" -> our last KEYREQ (30 s), and the cap of all */
 static GHashTable *keyreq_in;		/* "kind|handle|ctx" -> their last handshake (10 s) */
+static GHashTable *sender_budget;	/* "tag<SEP>handle" -> their handshakes (10 s) */
 /* "tag|handle|change|fp" -> the last warning about a blocked key exchange */
 static GHashTable *trust_notice;
 /* chunks read lately: a repeat is dropped */
@@ -117,6 +118,8 @@ static gint64 lost_notice_at;
 /* the keyring file as the module last read or wrote it */
 static gboolean seen_stat_valid;
 static struct stat seen_stat;
+/* its content then, for e2e_load_status() */
+static E2E_KEYRING_CACHE keyring_cache;
 
 static gboolean script_seen;
 static guint script_check_id;
@@ -394,13 +397,6 @@ static gboolean script_loaded(void)
 	return FALSE;
 }
 
-gboolean e2e_same_file(const struct stat *a, const struct stat *b)
-{
-	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
-	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
-	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
-}
-
 /* rpe2e.pl cannot see rows of the network scope: where only those say E2E
    is on, the script sends in clear text. Said loudly, once while the
    script is loaded; the keyring is read (without side effects) only when
@@ -624,7 +620,7 @@ E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
 	chmod(keyring_dir, 0700);
 	was_lost = e2e_keyring_lost(keyring_file);
 	note_keyring_stat(FALSE);
-	kr = e2e_keyring_load_status(keyring_file, &status, &notice);
+	kr = e2e_keyring_cache_load(&keyring_cache, keyring_file, &status, &notice);
 	/* the keys REKEYs replaced, once their grace is over, leave the
 	   file too */
 	if (status == E2E_LOAD_OK) {
@@ -664,6 +660,7 @@ gboolean e2e_save(const E2E_JSON *kr)
 	char *error = NULL;
 
 	if (e2e_keyring_save(keyring_file, kr, &error)) {
+		e2e_keyring_cache_saved(&keyring_cache, keyring_file, kr);
 		note_keyring_stat(TRUE);
 		e2e_state_changed();
 		return TRUE;
@@ -2426,8 +2423,9 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	E2E_JSON *kr;
 	E2E_NET net;
 	const char *sender, *ctx;
-	char *before, *after, *key, *rsp = NULL, *recip = NULL, *limit, *sctx = NULL;
+	char *key, *rsp = NULL, *recip = NULL, *limit, *sctx = NULL;
 	gboolean have_id, lost;
+	guint64 changes;
 	E2E_LOAD_STATUS status = E2E_LOAD_OK;
 	size_t taglen = strlen(E2E_CTCP_TAG);
 	static const char *const names[] = { "", "KEYREQ", "KEYRSP", "REKEY" };
@@ -2449,7 +2447,17 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 
 	/* a flood must not become a KEYRSP flood (Excess Flood), a stream of
 	   signature checks or of keyring writes: each kind once per 10 s per
-	   sender and context - of this server */
+	   sender and context - of this server - and, as the context is the
+	   sender's to choose, a few per 10 s per sender in all */
+	limit = g_strdup_printf("%s%c%s", server->tag, E2E_SCOPE_SEP, sender);
+	if (!e2e_handshake_sender_allow(sender_budget, limit)) {
+		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s dropped: too many from them",
+		                names[type], nick, sender, ctx);
+		g_free(limit);
+		e2e_handshake_free(parsed);
+		return;
+	}
+	g_free(limit);
 	limit = g_strdup_printf("%s%c%s", server->tag, E2E_SCOPE_SEP, ctx);
 	if (!e2e_handshake_allow(keyreq_in, type, sender, limit)) {
 		e2e_print_debug(server, ctx, nick, "%s from %s (%s) for %s dropped: rate limit",
@@ -2496,7 +2504,9 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	}
 	g_free(sctx);
 	sctx = NULL;
-	before = e2e_keyring_snapshot(kr);
+	/* written only when a handler changed it; told by the count of
+	   changes, not by encoding the whole keyring twice per NOTICE */
+	changes = e2e_json_changes();
 	have_id = e2e_ensure_identity(kr, &id);
 	switch (type) {
 	case E2E_HS_KEYREQ:
@@ -2521,8 +2531,7 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	default:
 		break;
 	}
-	after = e2e_keyring_snapshot(kr);
-	if (strcmp(before, after) != 0)
+	if (e2e_json_changes() != changes)
 		e2e_save(kr);
 	/* blocked by a trust change of the sender (recorded just now, or
 	   before): said with the command that settles it */
@@ -2578,10 +2587,6 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 			}
 		}
 	}
-	e2e_wipe(before, strlen(before));
-	e2e_wipe(after, strlen(after));
-	g_free(before);
-	g_free(after);
 	g_free(rsp);
 	g_free(recip);
 	g_free(sctx);
@@ -2635,6 +2640,7 @@ void e2e_core_init(void)
 
 	keyreq_out = e2e_stamps_new();
 	keyreq_in = e2e_stamps_new();
+	sender_budget = e2e_stamps_new();
 	trust_notice = e2e_stamps_new();
 	replay = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
 	replay_file = g_build_filename(keyring_dir, E2E_REPLAY_FILE, NULL);
@@ -2787,6 +2793,7 @@ void e2e_core_deinit(void)
 
 	g_hash_table_destroy(keyreq_out);
 	g_hash_table_destroy(keyreq_in);
+	g_hash_table_destroy(sender_budget);
 	g_hash_table_destroy(trust_notice);
 	if (plain_enabled != NULL) {
 		g_hash_table_destroy(plain_enabled);
@@ -2816,6 +2823,7 @@ void e2e_core_deinit(void)
 	scoped_warned = FALSE;
 	scoped_stat_valid = FALSE;
 	seen_stat_valid = FALSE;
+	e2e_keyring_cache_clear(&keyring_cache);
 	exiting = FALSE;
 }
 

@@ -363,6 +363,63 @@ E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, cha
 	return kr;
 }
 
+gboolean e2e_same_file(const struct stat *a, const struct stat *b)
+{
+	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
+void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache)
+{
+	e2e_json_free(cache->kr);
+	cache->kr = NULL;
+}
+
+/* kept only when the file is the same before and after the read (a
+   writer that replaced it meanwhile is read again next time), and older
+   than the current second: a write in place within one tick of the
+   file system's clock could leave size and times as they were (as the
+   status bar's and fe-web's caches do) */
+E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
+                                 E2E_LOAD_STATUS *status, char **notice)
+{
+	struct stat before, after;
+	gboolean have = lstat(path, &before) == 0 && S_ISREG(before.st_mode);
+	E2E_JSON *kr;
+
+	if (have && cache->kr != NULL && e2e_same_file(&before, &cache->st) &&
+	    before.st_mode == cache->st.st_mode && before.st_uid == cache->st.st_uid) {
+		*status = E2E_LOAD_OK;
+		*notice = NULL;
+		return e2e_json_copy(cache->kr);
+	}
+	e2e_keyring_cache_clear(cache);
+	cache->reads++;
+	kr = e2e_keyring_load_status(path, status, notice);
+	if (have && *status == E2E_LOAD_OK && lstat(path, &after) == 0 &&
+	    e2e_same_file(&before, &after) && before.st_mode == after.st_mode &&
+	    before.st_uid == after.st_uid && after.st_mtim.tv_sec < time(NULL)) {
+		cache->kr = e2e_json_copy(kr);
+		cache->st = after;
+	}
+	return kr;
+}
+
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const char *path, const E2E_JSON *kr)
+{
+	struct stat st;
+
+	e2e_keyring_cache_clear(cache);
+	/* the file as the rename left it (ours, whatever its times);
+	   another writer in between is the race every load-change-save of
+	   the keyring has */
+	if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+		cache->kr = e2e_json_copy(kr);
+		cache->st = st;
+	}
+}
+
 static gboolean write_all(int fd, const char *data, size_t len)
 {
 	ssize_t n;

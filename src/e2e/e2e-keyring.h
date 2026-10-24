@@ -37,6 +37,8 @@
 
 #include "e2e-json.h"
 
+#include <sys/stat.h>
+
 #define E2E_LOST_HINT "E2E state is LOST: nothing is sent to any channel or query and nothing is saved until you run /e2e reset (a new keyring and identity; E2E is then off everywhere until /e2e on)"
 
 typedef enum {
@@ -58,6 +60,29 @@ E2E_JSON *e2e_keyring_parse_checked(const char *data, size_t len, E2E_LOAD_STATU
 E2E_JSON *e2e_keyring_load(const char *path, char **notice);
 /* the same with the status: E2E_LOAD_LOST once the file was moved aside */
 E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, char **notice);
+/* the same file at two looks (stat: device, inode, size, mtime, ctime) */
+gboolean e2e_same_file(const struct stat *a, const struct stat *b);
+
+/* The keyring as it was last read from (or written to) its file, kept
+   while the file is the same (e2e_same_file(), on an lstat): any write,
+   rename, chmod or chown of it changes one of those. A load then copies
+   it instead of reading and parsing the whole file again - which every
+   handshake NOTICE and encrypted line from anyone used to cost. */
+typedef struct {
+	E2E_JSON *kr;		/* NULL: nothing kept */
+	struct stat st;
+	guint reads;		/* how many times the file was read (tests) */
+} E2E_KEYRING_CACHE;
+
+/* e2e_keyring_load_status() through the cache: a copy of the kept
+   keyring while the file is unchanged (E2E_LOAD_OK, no notice) */
+E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
+                                 E2E_LOAD_STATUS *status, char **notice);
+/* kr was just written to path: kept as the file's content */
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const char *path, const E2E_JSON *kr);
+/* forgets (and wipes) what is kept */
+void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache);
+
 /* keyring.json is missing because a corrupt one was moved aside */
 gboolean e2e_keyring_lost(const char *path);
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error);
