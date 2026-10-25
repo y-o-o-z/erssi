@@ -49,11 +49,13 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    warns in those 30 days
 	  - a remote address, or another local user known by uid, may open
 	    at most 8 new connections in 10 seconds, and all of them together
-	    200 a second; more are closed before their TLS handshake. Your
-	    own uid is not counted. A loopback peer whose uid is not known
-	    (the BSDs, or Linux without an answer from the kernel), which
-	    every local user then shares, is held to 50 a second. A
-	    connection its peer already reset or closed is closed at once
+	    200 a second (a peer that logged in before is not held by the
+	    200); more are closed before their TLS handshake. Your own uid
+	    is not counted. A loopback peer whose uid is not known (the BSDs,
+	    or Linux without an answer from the kernel), which every local
+	    user then shares, is not refused: its handshakes are spaced out
+	    to 50 a second. A connection its peer already reset or closed is
+	    closed at once
 	  - the web client's nicklists lose a nick that quits only in the
 	    channels it was in, not in every channel, and joins, parts,
 	    kicks, quits and nick changes reach them also when they are

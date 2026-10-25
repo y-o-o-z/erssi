@@ -95,12 +95,13 @@
     are never limited or slowed down then. When the uid cannot be found -
     always on the BSDs and macOS, on Linux when the kernel does not tell
     and the lookups of the moment are used up - every local user, you as
-    well, is the one peer "loopback". Its new connections are held only
-    to 50 a second, so another user cannot keep yours out with a few,
-    but a user who keeps up that rate costs erssi up to 50 handshakes a
-    second and closes your pending connections; their wrong passwords
-    slow down your logins. There fe_web_socket is the only setting that
-    keeps the users of a shared box apart.
+    well, is the one peer "loopback". Its connections are never refused
+    for their number: their handshakes are spaced out to 50 a second, the
+    others wait among the connections still logging in. So another user
+    cannot lock you out by connecting, but can still slow down your
+    connections and close your pending ones; their wrong passwords slow
+    down your logins. There fe_web_socket is the only setting that keeps
+    the users of a shared box apart.
 
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not

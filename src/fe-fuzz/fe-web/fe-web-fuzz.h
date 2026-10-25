@@ -163,6 +163,11 @@ void fe_web_fuzz_allow_commands(gboolean allow);
 /* Run the default main context for 'ms' milliseconds */
 void fe_web_fuzz_iterate(int ms);
 
+/* No handshake token of the shared key left now (fe-web-pacing.h) */
+void fe_web_fuzz_spend_shared_tokens(void);
+/* How many connections wait for a handshake token */
+guint fe_web_fuzz_tls_waiting(void);
+
 /* With TRUE the server start runs the real fe_web_ssl_prepare() (the key,
  * the certificate and their renewal); FALSE: the stand-in, as by default */
 void fe_web_fuzz_real_tls_prepare(gboolean on);

@@ -86,6 +86,13 @@ static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
 /* new connections per peer, before their TLS handshake (fe-web-pacing.h) */
 static FE_WEB_ACCEPT_LIMIT *accept_limit = NULL;
+/* connections of the shared key waiting for a handshake token, oldest
+ * first; they are pending clients like any other (the pending limit
+ * closes the oldest of them for a new one), and are read once a token
+ * is theirs. tls_wait_tag hands the tokens out. */
+static GQueue tls_waiting = G_QUEUE_INIT;
+static guint tls_wait_tag = 0;
+#define FE_WEB_TLS_WAIT_STEP 20 /* ms */
 /* the pacing notice is printed once a minute at most, the peers paced in
  * between are counted */
 static time_t paced_logged = 0;
@@ -130,6 +137,8 @@ static void fe_web_close_client(WEB_CLIENT_REC *client)
 		g_source_remove(client->close_tag);
 		client->close_tag = 0;
 	}
+
+	g_queue_remove(&tls_waiting, client);
 
 	/* Remove input and output handlers */
 	if (client->recv_tag != -1) {
@@ -1252,6 +1261,27 @@ static GIOChannel *socket_accept(GIOChannel *channel)
 	return i_io_channel_new(fd);
 }
 
+/* The waiting connections of the shared key get their handshake tokens,
+ * oldest first; a client closed meanwhile has left the queue
+ * (fe_web_close_client()) */
+static gboolean tls_wait_step(gpointer data)
+{
+	while (!g_queue_is_empty(&tls_waiting)) {
+		WEB_CLIENT_REC *client = g_queue_peek_head(&tls_waiting);
+
+		if (accept_limit != NULL &&
+		    !fe_web_accept_shared_token(accept_limit, g_get_monotonic_time()))
+			return TRUE;
+		g_queue_pop_head(&tls_waiting);
+		if (client->handle == NULL || client->closing)
+			continue;
+		client->recv_tag = i_input_add(net_sendbuffer_handle(client->handle), I_INPUT_READ,
+		                               (GInputFunction) client_input, client);
+	}
+	tls_wait_tag = 0;
+	return FALSE;
+}
+
 /* Accept new connection */
 static void sig_listen(void)
 {
@@ -1260,7 +1290,7 @@ static void sig_listen(void)
 	GIOChannel *handle;
 	char host[MAX_IP_LEN];
 	char *addr, *peer_key;
-	gboolean peer_shared = FALSE;
+	gboolean peer_shared = FALSE, tls_wait = FALSE;
 	WEB_CLIENT_REC *client;
 	NET_SENDBUF_REC *sendbuf;
 
@@ -1346,18 +1376,27 @@ static void sig_listen(void)
 	/* A TLS handshake costs a signature before any password is read: a
 	 * loop of new connections is refused before it, not only made to
 	 * close its older ones (fe-web-pacing.h). A peer that is one party
-	 * (an address that is not loopback, a known uid) has its own count.
-	 * A key many users share (ip:loopback: always on the BSDs, on Linux
-	 * when the kernel cannot tell the uid) or "uid:unknown" may be the
-	 * owner too: it gets a ceiling high enough that no other local user
-	 * can keep the owner out with it, which still bounds the CPU. The
-	 * owner's own connections are never counted. */
+	 * (an address that is not loopback, a known uid) has its own count;
+	 * one that logged in before is not held by the ceiling of all. A key
+	 * many users share (ip:loopback: always on the BSDs, on Linux when
+	 * the kernel cannot tell the uid) or "uid:unknown" may be the owner
+	 * too: it is never refused here, its handshakes are only spaced out
+	 * (tls_waiting). That bounds the CPU; on such a system another local
+	 * user can still slow down or close the owner's pending connections,
+	 * which only fe_web_socket prevents. The owner's own connections are
+	 * never counted. */
 	if (strcmp(peer_key, own_peer_key) != 0) {
 		gboolean shared = peer_shared || strcmp(peer_key, "uid:unknown") == 0;
 
 		if (accept_limit == NULL)
 			accept_limit = fe_web_accept_limit_new();
-		if (!fe_web_accept_allow(accept_limit, peer_key, shared, time(NULL))) {
+		if (shared) {
+			tls_wait = !fe_web_accept_shared_token(accept_limit,
+			                                       g_get_monotonic_time());
+		} else if (!fe_web_accept_allow(accept_limit, peer_key,
+		                                login_pacing != NULL &&
+		                                fe_web_pacing_is_trusted(login_pacing, peer_key),
+		                                time(NULL))) {
 			log_refused_addr(addr, "too many new connections");
 			g_free(addr);
 			g_free(peer_key);
@@ -1433,9 +1472,17 @@ static void sig_listen(void)
 	/* Encryption is ALWAYS enabled - no option to disable */
 	client->encryption_enabled = TRUE;
 
-	/* Add input handler */
-	client->recv_tag = i_input_add(handle, I_INPUT_READ,
-	                               (GInputFunction) client_input, client);
+	/* Add input handler - for a connection waiting for its handshake
+	 * token, once it has one; the time limit of the login runs anyway */
+	if (tls_wait) {
+		client->recv_tag = -1;
+		g_queue_push_tail(&tls_waiting, client);
+		if (tls_wait_tag == 0)
+			tls_wait_tag = g_timeout_add(FE_WEB_TLS_WAIT_STEP, tls_wait_step, NULL);
+	} else {
+		client->recv_tag = i_input_add(handle, I_INPUT_READ,
+		                               (GInputFunction) client_input, client);
+	}
 	client->handshake_tag = g_timeout_add_seconds(FE_WEB_HANDSHAKE_TIMEOUT,
 	                                              handshake_timeout, client);
 
@@ -2002,6 +2049,11 @@ void fe_web_server_deinit(void)
 		WEB_CLIENT_REC *client = tmp->data;
 		next = tmp->next;
 		fe_web_close_client(client);
+	}
+	g_queue_clear(&tls_waiting);
+	if (tls_wait_tag != 0) {
+		g_source_remove(tls_wait_tag);
+		tls_wait_tag = 0;
 	}
 
 	if (relisten_tag != 0) {
