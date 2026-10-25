@@ -3,597 +3,225 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>erssi Shellter Edition: IRC in your shell, made for IRCnet</title>
-<meta name="description" content="erssi Shellter Edition is the modern irssi, tuned for IRCnet users on shell accounts: keepnick and a Mentions window built in, end-to-end encryption compatible with repartee, and one signed command to install and update. No root needed.">
-<link rel="canonical" href="https://y-o-o-z.github.io/erssi/">
+<title>erssi Shellter Edition</title>
+<meta name="description" content="The modern irssi, tuned for IRCnet. A no-root install from a signed release: ready-made for Debian 13 and FreeBSD 14, built from source elsewhere. Release 2026.10.6.">
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="erssi Shellter Edition">
-<meta property="og:title" content="erssi Shellter Edition">
-<meta property="og:description" content="The modern irssi, tuned for IRCnet. One command to install, no root, signed releases.">
+<meta property="og:title" content="erssi Shellter Edition 2026.10.6">
+<meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
+<meta property="og:image" content="https://y-o-o-z.github.io/erssi/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://y-o-o-z.github.io/erssi/">
-<meta property="og:image" content="https://y-o-o-z.github.io/erssi/images/erssi-shellter.png">
-<meta property="og:image:width" content="2663">
-<meta property="og:image:height" content="1282">
-<meta property="og:image:alt" content="erssi Shellter Edition in #shellter, in the dark shellter theme">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="erssi Shellter Edition">
-<meta name="twitter:description" content="The modern irssi, tuned for IRCnet. One command to install, no root, signed releases.">
-<meta name="twitter:image" content="https://y-o-o-z.github.io/erssi/images/erssi-shellter.png">
+<link rel="alternate" hreflang="en" href="https://y-o-o-z.github.io/erssi/">
+<link rel="alternate" hreflang="pl" href="https://y-o-o-z.github.io/erssi/pl/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preload" href="fonts/jetbrains-mono-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
-<style>
-@font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url(fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url(fonts/ibm-plex-sans-latin-400-italic.woff2) format("woff2"); font-weight: 400; font-style: italic; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url(fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
-
-/* The page is laid out like an erssi window in the shellter theme
-   (themes/shellter.theme, shellter-light.theme): a topic bar, a window
-   list, one amber separator that every line starts after, and a statusbar.
-   The colours are the themes' own; a light system gets shellter-light. */
-:root {
-  --bg: #0d1117;        /* the terminal background of the screenshot */
-  --band: #161b22;      /* statusbar */
-  --text: #e6edf3;
-  --soft: #c9d1d9;
-  --muted: #8b949e;
-  --rule: #30363d;      /* the grey message separator */
-  --bar: #f59e0b;       /* the amber window separator */
-  --amber: #f59e0b;
-  --amber-2: #fcd34d;
-  --blue: #79c0ff;
-  --green: #3fb950;
-  --red: #ff7b72;
-  --violet: #d2a8ff;
-  --mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
-  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --gutter: 10.5rem;    /* the window list */
-  --gap: 1.75rem;       /* from the separator to the text */
-  --nickcol: 13ch;      /* nick_column_width 13 */
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ffffff;
-    --band: #eff2f5;
-    --text: #1f2328;
-    --soft: #31373d;
-    --muted: #59636e;
-    --rule: #d0d7de;
-    --bar: #9a6700;
-    --amber: #9a6700;
-    --amber-2: #7d4e00;
-    --blue: #0969da;
-    --green: #1a7f37;
-    --red: #cf222e;
-    --violet: #8250df;
-    color-scheme: light;
-  }
-}
-
-*, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 400 1.0625rem/1.6 var(--sans);
-  overflow-wrap: break-word;
-}
-a { color: var(--blue); text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 2px; }
-code, kbd, pre, samp { font-family: var(--mono); font-size: 0.875em; }
-p code, li code, td code { color: var(--text); white-space: nowrap; }
-h1, h2, h3 { margin: 0; }
-p { margin: 0 0 1rem; }
-
-.skip {
-  position: absolute; left: 1rem; top: -4rem;
-  background: var(--band); color: var(--text);
-  padding: 0.5rem 0.75rem; font: 400 0.875rem/1.4 var(--mono);
-}
-.skip:focus { top: 0.5rem; }
-
-.frame { max-width: 78rem; margin: 0 auto; padding: 0 2rem; }
-
-/* ---- topic bar ---- */
-.topic {
-  font: 400 0.9375rem/1.5 var(--mono);
-  color: var(--soft);
-  padding: 1.1rem 0 1.15rem;
-}
-.topic p { margin: 0; }
-.topic .sep { color: var(--muted); padding: 0 0.55ch; }
-.topic .name { color: var(--text); font-weight: 700; text-decoration: none; }
-.topic a:not(.name) { color: var(--soft); }
-.topic a:not(.name):hover { color: var(--text); }
-
-/* ---- window list | separator | text ---- */
-.screen {
-  display: grid;
-  grid-template-columns: var(--gutter) minmax(0, 1fr);
-  column-gap: 1.25rem;
-}
-.windows {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  padding-top: 0.2rem;
-  font: 400 0.9375rem/1.95 var(--mono);
-}
-.windows ol { list-style: none; margin: 0; padding: 0; }
-.windows a { color: var(--text); text-decoration: none; display: block; white-space: nowrap; }
-.windows a:hover .w { text-decoration: underline; text-underline-offset: 0.2em; }
-.windows .n { color: var(--muted); display: inline-block; min-width: 2ch; }
-.windows a[aria-current="true"] .w { color: var(--amber); font-weight: 700; }
-
-main {
-  border-left: 2px solid var(--bar);
-  padding-left: var(--gap);
-  min-width: 0;
-}
-main > section { padding: 0 0 5.5rem; scroll-margin-top: 1rem; }
-main > section:last-child { padding-bottom: 3rem; }
-main p, main li { max-width: 42rem; color: var(--soft); }
-
-/* ---- hero ---- */
-#erssi { padding-top: 0.6rem; padding-bottom: 0; }
-h1 {
-  font: 700 clamp(2.05rem, 4.4vw, 3.5rem)/1.08 var(--mono);
-  letter-spacing: -0.035em;
-  max-width: 17ch;
-  margin-bottom: 1.4rem;
-  text-wrap: balance;
-}
-.lede { font-size: 1.25rem; line-height: 1.55; max-width: 40rem; color: var(--soft); margin-bottom: 2rem; }
-
-.install {
-  display: flex;
-  align-items: stretch;
-  width: fit-content;
-  max-width: 100%;
-  background: var(--band);
-  border-radius: 4px;
-}
-.install pre {
-  margin: 0;
-  flex: 1;
-  min-width: 0;
-  padding: 1.1rem 1.25rem;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.9375rem;
-  line-height: 1.55;
-  color: var(--text);
-}
-.install .nb { white-space: nowrap; }
-.install .ps { color: var(--amber); user-select: none; -webkit-user-select: none; }
-.copy {
-  display: none;
-  font: 400 0.875rem/1 var(--mono);
-  color: var(--soft);
-  background: transparent;
-  border: 0;
-  border-left: 1px solid var(--rule);
-  padding: 0 1.25rem;
-  min-width: 7.5rem;
-  cursor: pointer;
-  border-radius: 0 4px 4px 0;
-}
-.js .copy { display: block; }
-.copy:hover { color: var(--text); }
-.copy:focus-visible { outline-offset: -3px; }
-.facts { margin: 1.1rem 0 0; font-size: 0.9375rem; color: var(--muted); max-width: 46rem; }
-.facts code { color: var(--soft); }
-
-/* the real screenshot, cropped at the window list separator so it sits on
-   the page's own separator */
-.shot { margin: 3.5rem 0 5.5rem calc(-1 * var(--gap)); }
-.shot .view { overflow: hidden; }
-.shot img { display: block; width: 100%; height: auto; }
-.shot figcaption {
-  margin: 0.9rem 0 0 var(--gap);
-  font-size: 0.875rem;
-  color: var(--muted);
-  max-width: 46rem;
-}
-.shot .hint { display: none; }
-
-/* ---- headings ---- */
-h2 {
-  font: 700 1.875rem/1.2 var(--mono);
-  letter-spacing: -0.03em;
-  margin-bottom: 1.1rem;
-  max-width: 42ch;
-}
-h3 { font: 600 1.125rem/1.4 var(--sans); color: var(--text); margin-bottom: 0.3rem; }
-.intro { margin-bottom: 2.25rem; }
-
-/* ---- built in: lines with a nick column, like the channel ---- */
-.lines { margin: 0; max-width: 58rem; }
-.line {
-  display: grid;
-  grid-template-columns: var(--nickcol) minmax(0, 1fr);
-  column-gap: 0;
-  padding: 0;
-}
-.line dt {
-  text-align: right;
-  padding: 0.12rem 1.1ch 0 0;
-  font: 700 0.875rem/1.6 var(--mono);
-  color: var(--amber);
-  white-space: nowrap;
-}
-.line dd {
-  margin: 0;
-  border-left: 1px solid var(--rule);
-  padding: 0 0 1.75rem 1.4rem;
-}
-.line:last-child dd { padding-bottom: 0.25rem; }
-.line dd p { margin-bottom: 0.4rem; }
-.line dd p:last-child { margin-bottom: 0; }
-.also { font-size: 0.9375rem; color: var(--muted); }
-
-/* ---- install ---- */
-ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; max-width: 50rem; }
-ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 2.25rem minmax(0, 1fr); margin-bottom: 2.25rem; max-width: none; }
-ol.steps > li:last-child { margin-bottom: 0; }
-ol.steps > li::before {
-  content: counter(step);
-  font: 700 1rem/1.55 var(--mono);
-  color: var(--amber);
-}
-ol.steps > li > div { min-width: 0; }
-ol.steps h3 { margin-bottom: 0.5rem; }
-
-pre.block {
-  margin: 0.5rem 0 1rem;
-  padding: 1rem 1.25rem;
-  background: var(--band);
-  border-radius: 4px;
-  overflow-x: auto;
-  font-size: 0.875rem;
-  line-height: 1.65;
-  color: var(--text);
-  max-width: 46rem;
-  tab-size: 4;
-}
-pre.block .c { color: var(--muted); }
-
-table.where {
-  border-collapse: collapse;
-  margin: 0.75rem 0 1rem;
-  width: 100%;
-  max-width: 46rem;
-  font-size: 0.9375rem;
-}
-table.where th, table.where td { text-align: left; vertical-align: top; padding: 0.7rem 1rem 0.7rem 0; border-top: 1px solid var(--rule); }
-table.where thead th { font: 400 0.8125rem/1.4 var(--mono); color: var(--muted); border-top: 0; padding-top: 0; }
-table.where tbody th { font-weight: 600; color: var(--text); width: 34%; }
-table.where td { color: var(--soft); }
-table.where td.t { font-family: var(--mono); font-size: 0.875rem; white-space: nowrap; color: var(--text); padding-right: 0; }
-
-/* ---- verify: a WHOIS of the release key ---- */
-.whois {
-  margin: 1.5rem 0 1.75rem;
-  max-width: 50rem;
-  font: 400 0.9375rem/1.75 var(--mono);
-}
-.whois div { display: grid; grid-template-columns: 13.5ch minmax(0, 1fr); }
-.whois dt { display: grid; grid-template-columns: 2ch 9ch 2.5ch; }
-.whois .g { color: var(--amber); }
-.whois .k { color: var(--muted); white-space: nowrap; }
-.whois .a { color: var(--blue); }
-.whois dd { margin: 0; color: var(--text); min-width: 0; }
-.whois .fp { color: var(--green); word-break: break-all; }
-
-/* ---- statusbar ---- */
-.status { padding: 0 0 2.5rem; }
-.status .bar {
-  display: inline-flex;
-  max-width: 100%;
-  flex-wrap: wrap;
-  align-items: baseline;
-  background: var(--band);
-  font: 400 0.875rem/1.5 var(--mono);
-  padding: 0.35rem 0.5ch;
-}
-.status .bar > * { padding: 0.4rem 1.2ch; border-right: 1px solid var(--rule); }
-.status .bar > *:last-child { border-right: 0; }
-.status .bar a { color: var(--blue); text-decoration: none; }
-.status .bar a:hover { text-decoration: underline; }
-.status .v { color: var(--muted); }
-.status .credit { margin: 0.55rem 0 0; font: 400 0.875rem/1.5 var(--mono); color: var(--muted); }
-.status .credit a { color: var(--soft); }
-
-@media (max-width: 1100px) {
-  .frame { padding: 0 1.5rem; }
-  :root { --gutter: 9.5rem; --gap: 1.5rem; }
-}
-
-@media (max-width: 760px) {
-  :root { --gap: 0.9rem; }
-  body { font-size: 1rem; }
-  .frame { padding: 0 1rem; }
-  .topic { font-size: 0.8125rem; padding: 0.85rem 0 0.75rem; }
-  .screen { display: block; }
-  .windows { position: static; padding: 0 0 0.9rem; font-size: 0.8125rem; line-height: 1.7; }
-  .windows ol { display: flex; flex-wrap: wrap; column-gap: 2ch; }
-  main > section { padding-bottom: 3.75rem; }
-  #erssi { padding-top: 0.35rem; }
-  h1 { font-size: clamp(1.9rem, 8.6vw, 2.4rem); letter-spacing: -0.03em; }
-  .lede { font-size: 1.0625rem; margin-bottom: 1.5rem; }
-  .install { flex-direction: column; }
-  .install pre { font-size: 0.8125rem; padding: 1rem; }
-  .copy { border-left: 0; border-top: 1px solid var(--rule); padding: 0.85rem 1rem; text-align: left; border-radius: 0 0 4px 4px; }
-  .shot { margin: 2.5rem 0 3.75rem calc(-1 * var(--gap)); }
-  .shot .view { overflow-x: auto; overscroll-behavior-x: contain; }
-  .shot img { width: 60rem; max-width: none; }
-  .shot .hint { display: inline; }
-  h2 { font-size: 1.5rem; }
-  .line { display: block; }
-  .line dt { text-align: left; padding: 0 0 0.25rem; }
-  .line dd { border-left: 0; padding: 0 0 1.6rem; }
-  ol.steps > li { grid-template-columns: 1.6rem minmax(0, 1fr); }
-  pre.block { font-size: 0.8125rem; padding: 0.9rem 1rem; }
-  table.where, table.where tbody, table.where tr, table.where th, table.where td { display: block; width: auto; }
-  table.where thead { display: none; }
-  table.where tr { border-top: 1px solid var(--rule); padding: 0.65rem 0; }
-  table.where th, table.where td, table.where tbody th { border: 0; padding: 0; width: auto; }
-  table.where td.t { white-space: normal; margin-top: 0.2rem; color: var(--muted); }
-  .whois { font-size: 0.8125rem; }
-  .whois div { grid-template-columns: 13.2ch minmax(0, 1fr); }
-  .whois dt { grid-template-columns: 2ch 9ch 2.2ch; }
-  .status .bar { font-size: 0.8125rem; }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .windows .w, .copy { transition: color 0.15s ease; }
-}
-</style>
+<link rel="preload" href="fonts/Literata-normal-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
-<a class="skip" href="#content">Skip to content</a>
+<a class="skip" href="#plan">Skip to content</a>
 
-<div class="frame">
-  <header class="topic">
-    <p><a class="name" href="./">erssi Shellter Edition</a><span class="sep" aria-hidden="true">|</span>the modern irssi, tuned for IRCnet<span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi">GitHub</a><span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes</a></p>
-  </header>
-
-  <div class="screen">
-    <nav class="windows" aria-label="Sections">
-      <ol>
-        <li><a href="#erssi"><span class="n">1</span> <span class="w">erssi</span></a></li>
-        <li><a href="#built-in"><span class="n">2</span> <span class="w">built in</span></a></li>
-        <li><a href="#install"><span class="n">3</span> <span class="w">install</span></a></li>
-        <li><a href="#verify"><span class="n">4</span> <span class="w">verify</span></a></li>
-        <li><a href="#new"><span class="n">5</span> <span class="w">2026.10.6</span></a></li>
-        <li><a href="#credits"><span class="n">6</span> <span class="w">credits</span></a></li>
-      </ol>
-    </nav>
-
-    <main id="content">
-      <section id="erssi" aria-labelledby="title">
-        <h1 id="title">IRC in your shell, made for IRCnet.</h1>
-        <p class="lede">erssi Shellter Edition is the modern irssi with what an IRCnet user sets up by hand already built in. It keeps your nick, gathers your mentions, encrypts what you ask it to and updates itself from signed releases.</p>
-        <div class="install">
-          <pre id="cmd"><span class="ps" aria-hidden="true">$ </span><code>curl -fsSL https://raw.githubusercontent.com/<wbr><span class="nb">y-o-o-z/erssi/main/</span><wbr><span class="nb">shellter-install.sh | sh</span></code></pre>
-          <button class="copy" type="button" aria-describedby="copy-status">copy</button>
-        </div>
-        <p class="facts">No root needed, Linux or FreeBSD. It installs to <code>~/.local/opt/erssi</code> and keeps its settings in <code>~/.erssi</code>, so it runs next to irssi. <span id="copy-status" role="status"></span></p>
-
-        <figure class="shot">
-          <div class="view" tabindex="0" role="region" aria-label="Screenshot">
-            <picture>
-              <source srcset="images/erssi-shellter-light-window.png" media="(prefers-color-scheme: light)" width="2363" height="1077">
-              <img src="images/erssi-shellter-window.png" width="2363" height="1077"
-                   alt="erssi in #shellter: join, topic and mode lines with their glyphs, a summary line for the channel (nicks 13, ops 3, voiced 3, regular 7), people asking about the release, every line after the same separator, and the nick list with ranks on the right">
-            </picture>
-          </div>
-          <figcaption>erssi 2026.10.4 in #shellter, in the shellter theme (shellter-light when your system is light). Every line starts after the same separator, and wrapped text stays under it. <span class="hint">Scroll the picture sideways to see all of it.</span> Full screenshots: <a href="images/erssi-shellter.png">dark</a>, <a href="images/erssi-shellter-light.png">light</a>.</figcaption>
-        </figure>
-      </section>
-
-      <section id="built-in" aria-labelledby="h-built-in">
-        <h2 id="h-built-in">What an IRCnet user would otherwise script</h2>
-        <p class="intro">Everything erssi brings stays: side panels, mouse support, 24-bit colour, image preview, a web frontend and irssi's Perl scripts. This edition adds the rest, and every command has a page in <code>/help</code>.</p>
-
-        <dl class="lines">
-          <div class="line">
-            <dt>/keepnick</dt>
-            <dd>
-              <h3>Your nick, kept</h3>
-              <p>When someone holds your nick, erssi takes it back the moment it is free: through MONITOR where the server offers it, otherwise ISON, and at once when the holder quits or changes nick in a channel you share. If you had to connect on another nick, it does this on its own.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/mentions</dt>
-            <dd>
-              <h3>Mentions in one place</h3>
-              <p>Private messages, notices from people and channel hilights are collected in a background window and a log only you can read. With the terminal out of focus, a desktop notification pops up through iTerm2, kitty, WezTerm, Ghostty or foot, also inside tmux.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/search</dt>
-            <dd>
-              <h3>Search your logs</h3>
-              <p>Looks through the logs of the channel or query you are in, or of every network with <code>-all</code>. It runs in a separate process, so erssi goes on while it searches.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/e2e on</dt>
-            <dd>
-              <h3>End-to-end encryption</h3>
-              <p>RPE2E, natively and wire-compatible with repartee and its WeeChat and irssi scripts: XChaCha20-Poly1305 with per-sender keys, given only to people you accept with <code>/e2e accept</code>. A message that cannot be read is never hidden: its line says why and names the command that fixes it, and plain text in an encrypted channel is marked.</p>
-              <p>It protects the text of messages, not who talks to whom or when, and NOTICEs stay in clear text. There is no forward secrecy: RPE2E v1.0 has none, and erssi keeps to it so repartee still understands it. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md#what-end-to-end-encryption-protects-and-what-it-does-not">What it protects and what it does not</a></p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/layout save</dt>
-            <dd>
-              <h3>Windows that stay where you put them</h3>
-              <p>Side panels with your windows and the channel's nicks, every row of split windows with its own nick list, and saved layouts that come back after a restart exactly as they were.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/set theme</dt>
-            <dd>
-              <h3>One column for every line</h3>
-              <p>In the <code>shellter</code> theme, messages, events, server replies and WHOIS share one column and one separator, and joining a channel prints one summary line instead of a nick table. <code>shellter-light</code> does the same for light terminals. Colours are 24&#8209;bit where the terminal shows them and the nearest of 256 where it does not.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/script load</dt>
-            <dd>
-              <h3>Your irssi scripts</h3>
-              <p>irssi Perl scripts run as they are, and <code>Irssi::version()</code> returns the release date, so scripts that ask for irssi 1.4.5 or newer load. trackbar.pl comes with it and draws its read marker from the separator column.</p>
-            </dd>
-          </div>
-          <div class="line">
-            <dt>/help fe_web</dt>
-            <dd>
-              <h3>A browser, when you need one</h3>
-              <p>fe-web shares the same session with a web client such as <a href="https://github.com/kofany/nexus">NexusIRC</a>. On a shared box it listens on a Unix socket only you can open, so no one else on the machine can reach it.</p>
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <section id="install" aria-labelledby="h-install">
-        <h2 id="h-install">Install and update</h2>
-        <ol class="steps">
-          <li><div>
-            <h3>Run the installer on your shell account</h3>
-            <p>The command at the top of this page. What it does depends on the system:</p>
-            <table class="where">
-              <thead><tr><th scope="col">System</th><th scope="col">What the installer does</th><th scope="col">Time</th></tr></thead>
-              <tbody>
-                <tr><th scope="row">Debian 13 or FreeBSD 14, amd64</th><td>Installs the release's ready-made binary, once the signature on its <code>SHA256SUMS</code>, its checksum and its manifest check out.</td><td class="t">seconds</td></tr>
-                <tr><th scope="row">Other Linux and FreeBSD systems</th><td>Builds the newest signed release from source and runs the test suite. Missing packages are named with the command to give your administrator; a missing meson or ninja goes into its own directory.</td><td class="t">about 2 minutes</td></tr>
-              </tbody>
-            </table>
-            <p>Either way it links <code>~/.local/bin/erssi</code>. Binary installs keep the previous release, so <code>--rollback</code> can switch back; <code>--uninstall</code> removes the program and never touches <code>~/.erssi</code>. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md">All options</a></p>
-          </div></li>
-          <li><div>
-            <h3>Start erssi inside tmux, so the session survives logging out</h3>
-            <pre class="block">tmux new -s irc erssi</pre>
-            <p>The first start asks for a network, a nick and the theme, then connects.</p>
-          </div></li>
-          <li><div>
-            <h3>Update whenever a release comes out</h3>
-<pre class="block">erssi --check-update   <span class="c"># is a newer release available?</span>
-erssi --update         <span class="c"># install it</span></pre>
-            <p>Then <code>/upgrade</code> in a running erssi loads the new version and keeps your windows and channels. Connections over TLS cannot be handed to the new process, so they reconnect once.</p>
-          </div></li>
-        </ol>
-      </section>
-
-      <section id="verify" aria-labelledby="h-verify">
-        <h2 id="h-verify">Releases you can check</h2>
-        <p>The one-line install trusts the script it downloads from GitHub, and that script carries the release key and the commit of every release. It builds a release only when its tag is signed by that key and points to the recorded commit, and installs a binary only when the release's checksum list is signed by that key and the package matches it. <code>erssi --update</code> installs only a newer release signed by the same key. To read the script before it runs, <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#checking-the-installer-yourself">check the installer yourself</a>.</p>
-
-        <dl class="whois" aria-label="The release key">
-          <div><dt><span class="g" aria-hidden="true">◆</span><span class="k">key</span><span class="a" aria-hidden="true">⟫</span></dt><dd><span class="fp">ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</span></dd></div>
-          <div><dt><span class="g" aria-hidden="true">◆</span><span class="k">tags</span><span class="a" aria-hidden="true">⟫</span></dt><dd>every release tag is signed with it</dd></div>
-          <div><dt><span class="g" aria-hidden="true">◆</span><span class="k">commits</span><span class="a" aria-hidden="true">⟫</span></dt><dd>every commit on main, so the installer can be checked</dd></div>
-          <div><dt><span class="g" aria-hidden="true">◆</span><span class="k">packages</span><span class="a" aria-hidden="true">⟫</span></dt><dd>each release's SHA256SUMS, in the namespace erssi-release</dd></div>
-          <div><dt><span class="g" aria-hidden="true">◆</span><span class="k">public</span><span class="a" aria-hidden="true">⟫</span></dt><dd><a href="https://github.com/y-o-o-z/erssi/blob/main/utils/allowed_signers">utils/allowed_signers</a></dd></div>
-        </dl>
-
-        <p>To check a release tag by hand, in a clone of the repository (gpg is switched off so that only this SSH key counts):</p>
-<pre class="block">git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
-    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.6</pre>
-        <p>It must report a good signature with the fingerprint above, which you should compare with one you got another way.</p>
-        <p>The parts that face the network, the web frontend and end-to-end encryption among them, are fuzzed with libFuzzer, and the test suite runs under AddressSanitizer and UndefinedBehaviorSanitizer. The build is hardened by default: PIE, stack protector, stack clash protection, full RELRO, <code>FORTIFY_SOURCE=2</code>. Found a security problem? <a href="https://github.com/y-o-o-z/erssi/blob/main/SECURITY.md">Report it privately</a>.</p>
-      </section>
-
-      <section id="new" aria-labelledby="h-new">
-        <h2 id="h-new">In 2026.10.6</h2>
-        <p>The answer to another full review of the code. Nothing from the network can send control characters to your terminal any more, on any terminal type. <code>--uninstall</code> removes only what the installer put there, and other software in the same prefix stays. The web frontend limits a flood of new connections before TLS, keeps the web nick list in step with the server, and gives new certificates a random serial number and the extensions browsers expect. erssi has a manual page of its own, <code>man erssi</code>.</p>
-        <p>2026.10.4 brought the ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before.</p>
-        <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes for 2026.10.6</a><br><a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a></p>
-      </section>
-
-      <section id="credits" aria-labelledby="h-credits">
-        <h2 id="h-credits">Built on erssi and irssi</h2>
-        <p>erssi is the modern irssi by Jerzy “kofany” Dąbrowski and the <a href="https://github.com/erssi-org/erssi">erssi-org</a> team, on the core of <a href="https://irssi.org">irssi</a>. End-to-end encryption follows RPE2E from <a href="https://github.com/outragedevs/repartee">repartee</a>. Shellter Edition is made by the Shellter team at <a href="https://shellter.me">shellter.me</a>, whose colours its theme takes.</p>
-        <p>Free software under the GNU General Public License, version 2 or later. Bugs and ideas go to the <a href="https://github.com/y-o-o-z/erssi/issues">issue tracker</a>; <a href="https://github.com/y-o-o-z/erssi/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> says how to send a change.</p>
-      </section>
-    </main>
+<nav class="ls" aria-label="Sections">
+  <div class="wrap">
+    <span class="cmd" aria-hidden="true"><span class="prompt-host">erssi</span><span class="prompt-sign">:</span><span class="prompt-path">~</span><span class="prompt-sign">$</span> ls -la</span>
+    <ol>
+      <li><a href="#plan"><span class="perm" aria-hidden="true">-rw-r--r--</span>.plan</a></li>
+      <li><a href="#install"><span class="perm" aria-hidden="true">-rwxr-xr-x</span>INSTALL</a></li>
+      <li><a href="#signatures"><span class="perm" aria-hidden="true">-r--r--r--</span>SIGNATURES</a></li>
+      <li><a href="#features"><span class="perm" aria-hidden="true">drwxr-xr-x</span>features/</a></li>
+      <li><a href="#shellter"><span class="perm" aria-hidden="true">srwxr-xr-x</span>#shellter</a></li>
+      <li><a href="#credits"><span class="perm" aria-hidden="true">-rw-r--r--</span>CREDITS</a></li>
+    </ol>
+    <span class="lang"><a href="./" aria-current="page" hreflang="en" lang="en">LANG=en</a><a href="pl/" hreflang="pl" lang="pl">LANG=pl</a></span>
   </div>
+</nav>
 
-  <footer class="status">
-    <div class="bar">
-      <span class="v">2026.10.6</span>
-      <a href="https://github.com/y-o-o-z/erssi">source</a>
-      <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">NEWS</a>
-      <a href="https://github.com/y-o-o-z/erssi/issues">issues</a>
-      <a href="https://github.com/y-o-o-z/erssi/blob/main/SECURITY.md">security</a>
-      <a href="https://github.com/y-o-o-z/erssi/blob/main/COPYING">GPL-2.0-or-later</a>
+<header class="finger">
+  <div class="wrap">
+      <p class="term-cmd" aria-hidden="true"><span class="prompt-path">~</span> $ <span class="c">finger erssi</span></p>
+      <dl class="fields">
+        <div><dt>Login:</dt><dd>erssi</dd></div>
+        <div><dt>Name:</dt><dd>erssi Shellter Edition</dd></div>
+        <div><dt>Release:</dt><dd><span class="accent">2026.10.6</span> <span class="dim">on Sun Oct 25 2026</span></dd></div>
+        <div><dt>Builds on:</dt><dd><span class="nw">erssi 1.3.1</span> · <span class="nw">irssi 1.4.5</span></dd></div>
+        <div><dt>Directory:</dt><dd>~/.local/opt/erssi <span class="dim">(no root)</span></dd></div>
+        <div><dt>Settings:</dt><dd>~/.erssi <span class="dim">(next to irssi)</span></dd></div>
+        <div><dt>Shell:</dt><dd>tmux new -s irc erssi</dd></div>
+        <div><dt>Binaries:</dt><dd><span class="nw">debian13-amd64</span> · <span class="nw">freebsd14-amd64</span></dd></div>
+        <div><dt>Signed:</dt><dd><span class="nw">ED25519 hF7dvX7v…vN6jXEDAw</span></dd></div>
+        <div><dt>Mail:</dt><dd><span class="dim">No mail.</span> <a href="https://github.com/y-o-o-z/erssi/issues">Issues</a></dd></div>
+      </dl>
+      <p class="plan-label" aria-hidden="true">Plan:</p>
+      <h1>erssi Shellter Edition: the modern <span class="n">irssi</span>, tuned for IRCnet.</h1>
+      <p class="lede">What an IRCnet user sets up by hand is already built in. It keeps your nick, gathers your mentions, encrypts what you ask it to and updates itself from signed releases. No root needed, on Linux or FreeBSD.</p>
+      <div class="install">
+        <pre id="install-line"><span class="p" aria-hidden="true">$ </span>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
+        <button class="copy" type="button" data-copy="install-line" aria-label="Copy the install command">copy</button>
+      </div>
+      <p class="after"><span data-status aria-live="polite">Installs into ~/.local/opt/erssi and links ~/.local/bin/erssi.</span> <a href="#install">What it does</a> · <a href="#signatures">How to check it</a></p>
+  </div>
+</header>
+
+<main id="content">
+  <figure class="shot wrap">
+    <div class="frame" tabindex="0" role="group" aria-label="Screenshot of erssi, scrolls sideways on narrow screens">
+      <picture>
+        <source media="(max-width: 640px) and (prefers-color-scheme: light)" type="image/webp" srcset="images/shellter-phone-light.webp" width="1073" height="2226">
+        <source media="(max-width: 640px)" type="image/webp" srcset="images/shellter-phone-dark.webp" width="1073" height="2226">
+        <source media="(prefers-color-scheme: light)" type="image/webp" srcset="images/shellter-light-1400.webp 1400w, images/shellter-light-2716.webp 2716w" sizes="(min-width: 1240px) 1192px, 100vw">
+        <source type="image/webp" srcset="images/shellter-dark-1400.webp 1400w, images/shellter-dark-2716.webp 2716w" sizes="(min-width: 1240px) 1192px, 100vw">
+        <img src="images/shellter-dark-1400.png" width="1400" height="660"
+             alt="erssi 2026.10.6 in #shellter on IRCnet. Left, the window list: Notices, IRCnet, #shellter, Mentions. In the middle yooz (yooz@ircnet.pl) and kofany (kofany@irc.al) join and get op from saint, then people on the channel talk about the release: tuvok asks whether 2026.10.6 is out, yooz says it is signed and on GitHub, kofany says --uninstall removes only what the installer put there, saint says control bytes are drawn as a question mark, jacos says SHA256SUMS.sig checked out. Right, the nick list by rank: ops kofany, saint, yooz; voiced amiantos, jacos, shellter, tuvok, zuy; then the rest.">
+      </picture>
     </div>
-    <p class="credit">erssi Shellter Edition, by the Shellter team at <a href="https://shellter.me">shellter.me</a></p>
-  </footer>
-</div>
+    <figcaption>
+      <span>==&gt; #shellter on IRCnet, erssi 2026.10.6, theme shellter (shellter-light on a light system) &lt;==</span>
+      <span>Real erssi and real #shellter nicks; the lines they say were written for this page.</span>
+    </figcaption>
+  </figure>
 
-<script>
-(function () {
-  document.documentElement.className += " js";
+  <section class="file" id="plan" aria-labelledby="h-plan">
+    <div class="wrap">
+      <h2 id="h-plan"><span class="head" aria-hidden="true">==&gt; <b>~erssi/.plan</b> &lt;==</span><span class="t">What 2026.10.6 changes</span></h2>
+      <p class="intro">Fixes from a full review of the code, each with a test that failed before the fix. Released on 25 October 2026, after CI passed 6 of 6 and the packages were built and tested on Debian 13 and FreeBSD 14.</p>
+      <ul class="changes">
+        <li><span class="area">screen</span><p>Nothing from the network can send control characters to your terminal any more, on any terminal type: C0, DEL and C1 are drawn as <code>?</code>, so a channel name cannot set your clipboard or window title. A focus report split over a slow ssh link is still read as one.</p></li>
+        <li><span class="area">install</span><p><code>--uninstall</code> removes only what the installer put there; libraries, headers and man pages of other software in the same prefix stay, and it names what it left. A lock left by a killed installer or a reboot is taken over safely. <code>man erssi</code> works for an install in your home.</p></li>
+        <li><span class="area">fe-web</span><p>New connections are limited per peer before TLS starts. The web nick list follows the server, so <code>/ignore</code> leaves no ghosts. Text sent to the browser is always valid UTF&#8209;8 and follows <code>/recode</code>. New certificates get a random serial, the extensions browsers expect and a lifetime of 825 days.</p></li>
+        <li><span class="area">e2e</span><p>Key requests have a budget per sender, the keyring is cached instead of being read again for every stranger's notice, and freed plaintext is wiped. The security notes now say plainly that a server can drop or reorder the parts of a long message.</p></li>
+        <li><span class="area">core</span><p><code>/upgrade</code> checks that it can write the session file before it hands anything over, and a failed <code>/upgrade</code> sends nothing twice and keeps your windows. Keepnick no longer prints MONITOR replies twice.</p></li>
+        <li><span class="area">image preview</span><p>A preview goes with its line after <code>/clear</code>, downloads stay <code>.part</code> files until they are complete, page pictures (og:image) are found and resolved properly, and downloading no longer makes typing lag.</p></li>
+        <li><span class="area">build</span><p>A manual page of its own, erssi(1). The GLib minimum is stated truthfully (2.70), and the image decoder has a fuzz target.</p></li>
+      </ul>
+      <p class="more"><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes for 2026.10.6</a> · <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a></p>
+    </div>
+  </section>
 
-  /* copy the install command; without the clipboard API, select it */
-  var btn = document.querySelector(".copy");
-  var code = document.querySelector("#cmd code");
-  var status = document.getElementById("copy-status");
-  var text = "curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh";
-  var timer;
-  function say(label, msg) {
-    btn.textContent = label;
-    status.textContent = msg;
-    clearTimeout(timer);
-    timer = setTimeout(function () { btn.textContent = "copy"; status.textContent = ""; }, 2400);
-  }
-  function selectIt() {
-    var r = document.createRange();
-    r.selectNodeContents(code);
-    var s = window.getSelection();
-    s.removeAllRanges();
-    s.addRange(r);
-    say("selected", "The command is selected: copy it with Ctrl+C or Cmd+C.");
-  }
-  btn.addEventListener("click", function () {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(function () {
-        say("copied", "Install command copied.");
-      }, selectIt);
-    } else {
-      selectIt();
-    }
-  });
+  <section class="file" id="install" aria-labelledby="h-install">
+    <div class="wrap">
+      <h2 id="h-install"><span class="head" aria-hidden="true">==&gt; <b>~erssi/INSTALL</b> &lt;==</span><span class="t">One line on your shell account</span></h2>
+      <p class="intro">The command at the top of this page. This is what it prints on Debian 13; nothing in your home changes until every check has passed.</p>
+<pre class="transcript"><span class="k">$ curl -fsSL …/shellter-install.sh | sh</span>
+  [1/5] Checking the system  <span class="ok">✓</span> debian13-amd64 · perl 5.40.1
+  [2/5] Choosing the release <span class="ok">✓</span> shellter-v2026.10.6
+  [3/5] Downloading          <span class="ok">✓</span> erssi-2026.10.6-debian13-amd64.tar.xz · signed · sha256 verified
+  [4/5] Checking the package <span class="ok">✓</span> bdf44f57 · commit recorded · libraries present
+  [5/5] Installing           <span class="ok">✓</span> ~/.local/opt/erssi · releases/2026.10.6
+<span class="d">  start     ~/.local/bin/erssi   (inside tmux, so it keeps running when you log out)</span></pre>
+      <div class="cols">
+        <div>
+          <table class="opts">
+            <caption class="sr">What the installer does on each system</caption>
+            <tbody>
+              <tr><th scope="row">debian13 · freebsd14</th><td>Installs the release's ready-made binary (amd64) once the signature on its SHA256SUMS, its checksum and its manifest check out. Takes seconds.</td></tr>
+              <tr><th scope="row">other systems</th><td>Builds the newest signed release from source and runs the test suite. Needs GLib 2.70 or newer; missing packages are named, with the command to give your administrator.</td></tr>
+              <tr><th scope="row">--rollback</th><td>Releases sit side by side, and <code>current</code> switches back to the previous one in one step.</td></tr>
+              <tr><th scope="row">--uninstall</th><td>Removes only what the installer put there, and never <code>~/.erssi</code>.</td></tr>
+            </tbody>
+          </table>
+          <p class="more"><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md">All options, and what the installer verifies</a></p>
+        </div>
+        <ol class="steps">
+          <li><h3>Start it inside tmux</h3><p>The session survives logging out. The first start asks for a network, a nick and the theme, then connects.</p><pre>tmux new -s irc erssi</pre></li>
+          <li><h3>Update when a release comes out</h3><pre>erssi --check-update   <span class="d"># is a newer release available?</span>
+erssi --update         <span class="d"># install it</span></pre></li>
+          <li><h3>Then /upgrade in the running erssi</h3><p>It loads the new version and keeps your windows and channels. Connections over TLS cannot be handed to the new process, so they reconnect once.</p></li>
+        </ol>
+      </div>
+    </div>
+  </section>
 
-  /* the window list marks the section you are reading, as erssi marks the active window */
-  var links = Array.prototype.slice.call(document.querySelectorAll(".windows a"));
-  var sections = links.map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); });
-  var queued = false;
-  function mark() {
-    queued = false;
-    var line = window.innerHeight * 0.3, cur = 0;
-    sections.forEach(function (s, i) { if (s && s.getBoundingClientRect().top <= line) cur = i; });
-    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) cur = sections.length - 1;
-    links.forEach(function (a, i) {
-      if (i === cur) a.setAttribute("aria-current", "true");
-      else a.removeAttribute("aria-current");
-    });
-  }
-  function queue() { if (!queued) { queued = true; window.requestAnimationFrame(mark); } }
-  window.addEventListener("scroll", queue, { passive: true });
-  window.addEventListener("resize", queue);
-  mark();
-})();
-</script>
+  <section class="file" id="signatures" aria-labelledby="h-sig">
+    <div class="wrap">
+      <h2 id="h-sig"><span class="head" aria-hidden="true">==&gt; <b>~erssi/SIGNATURES</b> &lt;==</span><span class="t">Every release can be checked</span></h2>
+      <p class="intro">The one-line install trusts the script it downloads from GitHub. That script carries the release key and the commit of every release, and installs nothing that does not match. Six facts about 2026.10.6, each of which you can check yourself:</p>
+      <dl class="readouts">
+        <div class="readout"><dt>tag</dt><dd>shellter-v2026.10.6 <span class="ok">signed</span><small>commit bdf44f572</small></dd></div>
+        <div class="readout"><dt>release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw<small>utils/allowed_signers in the repository</small></dd></div>
+        <div class="readout"><dt>SHA256SUMS.sig</dt><dd><span class="ok">good signature</span><small>namespace erssi-release</small></dd></div>
+        <div class="readout"><dt>debian13-amd64</dt><dd title="ce2330cfbcacf901ab962546168609a0e482bc5c03e6e2e1d0b2b56b680e8e4d">ce2330cf…b680e8e4d<small>sha256 · 172 tests passed in its build</small></dd></div>
+        <div class="readout"><dt>freebsd14-amd64</dt><dd title="49161cd13d0de05eac09caae7ebfb39e38886b6d8fc3a1c1be67a01cc696438a">49161cd1…cc696438a<small>sha256 · 168 tests passed in its build</small></dd></div>
+        <div class="readout"><dt>CI</dt><dd><span class="ok">6 / 6</span><small>build · shellcheck · installer · e2e-live · sanitizers · fuzz</small></dd></div>
+      </dl>
+      <div class="cols">
+        <ol class="custody" aria-label="From the tag to your box">
+          <li><div><b>signed tag</b> <span>shellter-v2026.10.6 → bdf44f572</span></div></li>
+          <li><div><b>CI on the tagged commit</b> <span>six jobs, sanitizers and fuzzing included</span></div></li>
+          <li><div><b>packages built from the tag</b> <span>Debian 13 on the host, FreeBSD 14 in a VM, the full test suite in each</span></div></li>
+          <li><div><b>SHA256SUMS signed</b> <span>with the release key, namespace erssi-release</span></div></li>
+          <li><div><b>pinned in the installer</b> <span>shellter-install.sh names the commit of every release</span></div></li>
+          <li><div><b>your box</b> <span>erssi --update checks all of the above before it changes anything</span></div></li>
+        </ol>
+        <div class="verify">
+          <h3>Check the tag by hand</h3>
+          <p>In a clone of the repository, with gpg switched off so that only this SSH key counts:</p>
+<pre>git -c gpg.program=false -c gpg.openpgp.program=false \
+    -c gpg.x509.program=false -c gpg.format=ssh \
+    -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
+    verify-tag shellter-v2026.10.6</pre>
+          <p>It must report a good signature with the fingerprint above. Compare that fingerprint with one you got another way, for example by asking on #shellter. The steps for a package are in <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#checking-a-binary-package-yourself">install.md</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="file" id="features" aria-labelledby="h-feat">
+    <div class="wrap">
+      <h2 id="h-feat"><span class="head" aria-hidden="true">==&gt; <b>~erssi/features/</b> &lt;==</span><span class="t">What an IRCnet user would otherwise script</span></h2>
+      <p class="intro">Everything erssi brings stays: side panels, mouse support, 24-bit colour, image preview, a web frontend and irssi's Perl scripts. This edition adds the rest, and every command has a page in <code>/help</code>.</p>
+      <ul class="inventory">
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">keepnick</span><span class="what"><b>Your nick, kept.</b> <code>/keepnick</code> takes it back the moment it is free: through MONITOR where the server offers it, otherwise ISON, and at once when the holder quits or changes nick in a channel you share.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">e2e</span><span class="what"><b>End-to-end encryption.</b> RPE2E natively, wire-compatible with repartee and its WeeChat and irssi scripts: XChaCha20-Poly1305 with per-sender keys, given only to people you accept. It protects what you say, not who talks to whom or when, and it has no forward secrecy.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">mentions</span><span class="what"><b>Mentions in one place.</b> Private messages, notices from people and hilights in one window and in a log only you can read, with a desktop notification through the terminal, also inside tmux.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">search</span><span class="what"><b>Search your logs.</b> <code>/search</code> looks through the logs of the channel you are in, or of every network with <code>-all</code>, in a separate process, so erssi carries on while it searches.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">layout</span><span class="what"><b>Windows that stay put.</b> Side panels with your windows and the channel's nicks by rank, every row of split windows with its own nick list, and layouts that come back after a restart exactly as saved.</span></li>
+        <li><span class="perm">-rw-r--r--</span><span class="name">shellter.theme</span><span class="what"><b>One column for every line.</b> Messages, events, server replies and WHOIS share one column and one separator, as in the picture above; <code>shellter-light</code> does the same for light terminals.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">fe-web</span><span class="what"><b>A browser when you need one.</b> The same session in a web client such as <a href="https://github.com/kofany/nexus">NexusIRC</a>. On a shared box it listens on a Unix socket only you can open.</span></li>
+        <li><span class="perm">-rwxr-xr-x</span><span class="name">scripts</span><span class="what"><b>Your irssi scripts.</b> irssi Perl scripts run as they are, and scripts that ask for irssi 1.4.5 or newer load. <code>trackbar.pl</code> comes with it.</span></li>
+      </ul>
+      <p class="more"><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/features.md">The full list</a> · <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Security notes</a></p>
+    </div>
+  </section>
+
+  <section class="file" id="shellter" aria-labelledby="h-chan">
+    <div class="wrap">
+      <h2 id="h-chan"><span class="head" aria-hidden="true">==&gt; <b>/names #shellter</b> &lt;==</span><span class="t">Ask on #shellter</span></h2>
+      <div class="cols">
+        <div class="join prose">
+          <p>Questions, bugs and ideas go to the channel on IRCnet, or to the <a href="https://github.com/y-o-o-z/erssi/issues">issue tracker</a>. From erssi:</p>
+<pre>/connect IRCnet
+/join #shellter</pre>
+          <p>The channel belongs to <a href="https://shellter.me">shellter.me</a>, a FreeBSD pubnix that gives each account a shell, 150 MB of ZFS, three IPv6 addresses and web space under shltr.eu. erssi feels at home there.</p>
+        </div>
+        <div class="names" aria-label="The people on #shellter">
+          <p class="count"><b>42</b> nicks · ops <b>3</b> · voiced <b>6</b> · regular <b>33</b></p>
+          <ul>
+            <li class="op">@kofany</li><li class="op">@saint</li><li class="op">@yooz</li>
+            <li class="v">+amiantos</li><li class="v">+jacos</li><li class="v">+jacoss</li><li class="v">+shellter</li><li class="v">+tuvok</li><li class="v">+zuy</li>
+            <li>Admin_</li><li>Atari</li><li>BB_</li><li>Bro</li><li>Carlin0</li><li>ck</li><li>eemil</li><li>EmperoR</li><li>erssi_user</li><li>gemini</li><li>grafi</li><li>HaKaN</li><li>iubdan</li><li>JoJoJo</li><li>Keeper</li><li>kleku</li><li>Mentalista</li><li>muscle</li><li>nofearek9</li><li>Ruusu</li><li>rzuF</li><li>say</li><li>SK</li><li>sparco_</li><li>ST4R</li><li>t0iska</li><li>tad</li><li>themace</li><li>tortoro</li><li>torzech</li><li>Wee</li><li>wilhart</li><li>zedomega</li>
+          </ul>
+          <p class="stamp">as seen on IRCnet on 25 October 2026</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="file credits" id="credits" aria-labelledby="h-cred">
+    <div class="wrap">
+      <h2 id="h-cred"><span class="head" aria-hidden="true">==&gt; <b>~erssi/CREDITS</b> &lt;==</span><span class="t">Built on erssi and irssi</span></h2>
+      <p>erssi is the modern irssi by Jerzy “kofany” Dąbrowski and the <a href="https://github.com/erssi-org/erssi">erssi-org</a> team, on the core of <a href="https://irssi.org">irssi</a>. End-to-end encryption follows RPE2E from <a href="https://github.com/outragedevs/repartee">repartee</a>. Shellter Edition is made by the Shellter team at <a href="https://shellter.me">shellter.me</a>, whose colours its theme takes.</p>
+      <p>Free software under the GNU General Public License, version 2 or later. The <a href="https://github.com/y-o-o-z/erssi">source</a> is on GitHub, and <a href="https://github.com/y-o-o-z/erssi/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> says how to send a change.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="ring"><a href="https://irssi.org">← irssi.org</a><a href="https://shellter.me">shellter.me</a><a href="https://github.com/erssi-org/erssi">erssi-org →</a></span>
+    <span>erssi Shellter Edition 2026.10.6 · GPL-2.0-or-later · <a href="https://github.com/y-o-o-z/erssi">github.com/y-o-o-z/erssi</a></span>
+  </div>
+</footer>
+
+<script src="site.js" defer></script>
 </body>
 </html>
