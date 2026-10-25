@@ -7,7 +7,7 @@
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
 
-Website: [y-o-o-z.github.io/erssi](https://y-o-o-z.github.io/erssi/)
+Website: [erssi.shellter.me](https://erssi.shellter.me/)
 
 erssi Shellter Edition is an edition of
 [erssi](https://github.com/erssi-org/erssi), the modern irssi created by
