@@ -1155,7 +1155,17 @@ static void test_tcp_reset_closed_at_accept(void)
 		fe_web_fuzz_iterate(5);
 	g_assert_null(web_clients);
 	printed = fe_web_fuzz_take_printed();
+#ifdef __linux__
+	/* Linux hands the reset connection to accept(): closed and said */
 	g_assert_nonnull(strstr(printed, "closed by its peer before it was taken"));
+#else
+	/* the BSDs drop it from the accept queue (accept() fails with
+	   ECONNABORTED, which fe-web passes over): nothing to close or to
+	   say. One taken before the reset arrived is closed as on Linux, its
+	   getpeername() failing. Either way no web client, never a TLS
+	   handshake. */
+	g_assert_null(strstr(printed, "too many"));
+#endif
 	g_free(printed);
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
