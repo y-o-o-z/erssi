@@ -4,6 +4,7 @@
 #include <glib.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <time.h>
 
 /* SSL channel wrapper - wraps GIOChannel with SSL */
 struct _FE_WEB_SSL_CHANNEL {
@@ -26,6 +27,12 @@ void fe_web_ssl_init(void);
 /* Load or make the key and self-signed certificate and the TLS context
  * (once, when the server starts); TRUE when TLS can be used */
 int fe_web_ssl_prepare(void);
+/* A stored certificate ending within this many days is replaced when the
+ * server starts; while it runs, a daily look warns in that time */
+#define FE_WEB_CERT_RENEW_DAYS 30
+/* the warning, when the certificate ends within FE_WEB_CERT_RENEW_DAYS of
+ * now; TRUE when given */
+gboolean fe_web_ssl_check_expiry(time_t now);
 
 /* Cleanup SSL subsystem */
 void fe_web_ssl_deinit(void);

@@ -180,6 +180,21 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	return x509;
 }
 
+/* "AB:CD:..." of the certificate's SHA-256, to be freed */
+static char *cert_fingerprint(X509 *x509)
+{
+	unsigned char md[EVP_MAX_MD_SIZE];
+	unsigned int len = 0, i;
+	GString *str;
+
+	if (!X509_digest(x509, EVP_sha256(), md, &len))
+		return g_strdup("?");
+	str = g_string_new(NULL);
+	for (i = 0; i < len; i++)
+		g_string_append_printf(str, "%s%02X", i > 0 ? ":" : "", md[i]);
+	return g_string_free(str, FALSE);
+}
+
 /* The key and certificate are kept in the irssi directory, so the
  * certificate stays the same across restarts and a web client can pin it
  * instead of accepting any certificate from whatever listens on the port. */
@@ -211,8 +226,14 @@ static gboolean refused_in_place(const char *path)
 	return TRUE;
 }
 
+/* a stored key or certificate was there when a new pair was made */
+static gboolean pair_replaced;
+/* the daily look at the certificate's end */
+static guint expiry_tag;
+
 /* 1: the stored pair is used; 0: a new pair is to be made (missing,
- * damaged, expiring, a key others could read); -1: a file in the way */
+ * damaged, ending within FE_WEB_CERT_RENEW_DAYS, a key others could
+ * read); -1: a file in the way */
 static int load_key_and_cert(void)
 {
 	char *key_path, *cert_path;
@@ -229,6 +250,8 @@ static int load_key_and_cert(void)
 	/* both are looked at, so both are said */
 	key_refused = refused_in_place(key_path);
 	cert_refused = refused_in_place(cert_path);
+	pair_replaced = g_file_test(key_path, G_FILE_TEST_EXISTS) ||
+	                g_file_test(cert_path, G_FILE_TEST_EXISTS);
 	if (key_refused || cert_refused) {
 		g_free(key_path);
 		g_free(cert_path);
@@ -262,9 +285,9 @@ static int load_key_and_cert(void)
 	g_free(key_path);
 	g_free(cert_path);
 
-	/* unusable (missing, damaged, other key, expiring within a day):
-	 * a new pair is generated */
-	tomorrow = time(NULL) + 86400;
+	/* unusable (missing, damaged, other key, ending soon): a new pair
+	 * is generated - said, with its fingerprint, when one was there */
+	tomorrow = time(NULL) + FE_WEB_CERT_RENEW_DAYS * 86400;
 	if (pkey == NULL || x509 == NULL || !X509_check_private_key(x509, pkey) ||
 	    X509_cmp_time(X509_get0_notAfter(x509), &tomorrow) <= 0) {
 		EVP_PKEY_free(pkey);
@@ -332,6 +355,42 @@ void fe_web_ssl_init(void)
 
 /* The TLS context with the stored (or a new) key and certificate; made once,
  * at the first server start. Returns TRUE when TLS can be used. */
+gboolean fe_web_ssl_check_expiry(time_t now)
+{
+	const ASN1_TIME *end;
+	int days = 0, secs = 0;
+	char *fp;
+
+	if (server_cert == NULL)
+		return FALSE;
+	end = X509_get0_notAfter(server_cert);
+	{
+		ASN1_TIME *at = ASN1_TIME_set(NULL, now);
+
+		if (at == NULL || !ASN1_TIME_diff(&days, &secs, at, end)) {
+			ASN1_TIME_free(at);
+			return FALSE;
+		}
+		ASN1_TIME_free(at);
+	}
+	if (days >= FE_WEB_CERT_RENEW_DAYS)
+		return FALSE;
+	fp = cert_fingerprint(server_cert);
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web-ssl: the certificate (SHA-256 %s) ends in %d days; fe-web "
+	          "makes a new one when it starts (/SET fe_web_enabled OFF, then ON, "
+	          "or a restart) - web clients must pin that one then",
+	          fp, days > 0 ? days : 0);
+	g_free(fp);
+	return TRUE;
+}
+
+static gboolean expiry_check(gpointer data)
+{
+	fe_web_ssl_check_expiry(time(NULL));
+	return TRUE;
+}
+
 int fe_web_ssl_prepare(void)
 {
 	if (fe_web_ssl_ctx != NULL)
@@ -364,6 +423,17 @@ int fe_web_ssl_prepare(void)
 		return FALSE;
 	}
 	save_key_and_cert();
+	/* a client that pinned the old certificate is refused from now on,
+	   with no hint why: said here */
+	if (pair_replaced) {
+		char *fp = cert_fingerprint(server_cert);
+
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web-ssl: made a new key and certificate in place of the old "
+		          "ones - web clients that pinned the old certificate must pin "
+		          "this one: SHA-256 %s", fp);
+		g_free(fp);
+	}
 
 have_cert:
 	/* Create SSL context */
@@ -442,12 +512,21 @@ have_cert:
 		server_key = NULL;
 		return FALSE;
 	}
+	/* an erssi that runs for years outlives its certificate: a look a
+	   day, a warning in the last FE_WEB_CERT_RENEW_DAYS */
+	if (expiry_tag == 0)
+		expiry_tag = g_timeout_add_seconds(86400, expiry_check, NULL);
+	fe_web_ssl_check_expiry(time(NULL));
 	return TRUE;
 }
 
 /* Cleanup SSL subsystem */
 void fe_web_ssl_deinit(void)
 {
+	if (expiry_tag != 0) {
+		g_source_remove(expiry_tag);
+		expiry_tag = 0;
+	}
 	if (fe_web_ssl_ctx) {
 		SSL_CTX_free(fe_web_ssl_ctx);
 		fe_web_ssl_ctx = NULL;

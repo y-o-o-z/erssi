@@ -632,6 +632,93 @@ static void test_rsa_pair_kept(void)
 	g_free(fe_web_fuzz_take_printed());
 }
 
+/* a stored pair (P-256) whose certificate ends in 'days' */
+static void write_pair(int days)
+{
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	EVP_PKEY *pkey = NULL;
+	X509 *x509 = X509_new();
+	FILE *f;
+
+	g_assert_true(EVP_PKEY_keygen_init(ctx) > 0);
+	g_assert_true(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1) > 0);
+	g_assert_true(EVP_PKEY_keygen(ctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(ctx);
+	X509_set_version(x509, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x509), 9);
+	X509_gmtime_adj(X509_get_notBefore(x509), -86400L);
+	X509_gmtime_adj(X509_get_notAfter(x509), 86400L * days);
+	X509_set_pubkey(x509, pkey);
+	X509_NAME_add_entry_by_txt(X509_get_subject_name(x509), "CN", MBSTRING_ASC,
+	                           (unsigned char *) "old", -1, -1, 0);
+	X509_set_issuer_name(x509, X509_get_subject_name(x509));
+	g_assert_true(X509_sign(x509, pkey, EVP_sha256()) > 0);
+	f = fopen(key_path, "w");
+	g_assert_nonnull(f);
+	g_assert_cmpint(fchmod(fileno(f), 0600), ==, 0);
+	g_assert_true(PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL));
+	fclose(f);
+	f = fopen(cert_path, "w");
+	g_assert_nonnull(f);
+	g_assert_true(PEM_write_X509(f, x509));
+	fclose(f);
+	EVP_PKEY_free(pkey);
+	X509_free(x509);
+}
+
+/* the SHA-256 of fe-web-cert.pem as "AB:CD:..." (to be freed) */
+static char *cert_file_fingerprint(void)
+{
+	X509 *x509 = read_cert();
+	unsigned char md[EVP_MAX_MD_SIZE];
+	unsigned int len = 0, i;
+	GString *str = g_string_new(NULL);
+
+	g_assert_true(X509_digest(x509, EVP_sha256(), md, &len));
+	for (i = 0; i < len; i++)
+		g_string_append_printf(str, "%s%02X", i > 0 ? ":" : "", md[i]);
+	X509_free(x509);
+	return g_string_free(str, FALSE);
+}
+
+/* A stored certificate that ends within FE_WEB_CERT_RENEW_DAYS is
+ * replaced at the start, and that is said with the new fingerprint (the
+ * clients that pinned the old one fail from now on); one with more time
+ * left is kept, and the daily look warns in the last days */
+static void test_renewal_said(void)
+{
+	char *old, *out, *fp;
+
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS - 5);
+	old = read_file(cert_path);
+	out = restart();
+	g_assert_false(file_is(cert_path, old));
+	fp = cert_file_fingerprint();
+	g_assert_nonnull(strstr(out, "made a new key and certificate in place of the old ones"));
+	g_assert_nonnull(strstr(out, fp));
+	g_free(fp);
+	g_free(out);
+	g_free(old);
+
+	/* kept: more than FE_WEB_CERT_RENEW_DAYS left, nothing said */
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS + 5);
+	old = read_file(cert_path);
+	out = restart();
+	g_assert_true(file_is(cert_path, old));
+	g_assert_cmpstr(out, ==, "");
+	g_free(out);
+	g_free(old);
+	/* while running: quiet now, a warning in the last days */
+	g_assert_false(fe_web_ssl_check_expiry(time(NULL)));
+	g_assert_true(fe_web_ssl_check_expiry(time(NULL) + 10 * 86400L));
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "fe-web makes a new one when it starts"));
+	g_free(out);
+	reset();
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -655,6 +742,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/save-failure", test_save_failure);
 	g_test_add_func("/fe-web/tls/handshake-with-pin", test_handshake_with_pin);
 	g_test_add_func("/fe-web/tls/rsa-pair-kept", test_rsa_pair_kept);
+	g_test_add_func("/fe-web/tls/renewal-said", test_renewal_said);
 	g_test_add_func("/fe-web/tls/old-pin-refused-after-new-key",
 	                test_old_pin_refused_after_new_key);
 
