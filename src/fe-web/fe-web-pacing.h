@@ -95,25 +95,34 @@ guint fe_web_pacing_table_size(FE_WEB_PACING *pacing);
 /* Is peer one of the trusted peers (it logged in); changes nothing */
 gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
 
-/* New connections per peer, counted before TLS: each one costs a TLS
- * handshake, a private-key signature in the main loop, before any
- * password is read. A peer starts at most FE_WEB_ACCEPT_BURST of them in
- * FE_WEB_ACCEPT_WINDOW seconds. fe-web-server.c counts only peers that
- * are one party (an address that is not loopback, a known uid that is not
- * erssi's own); a shared or unknown key is left to the pending limit. At
- * most FE_WEB_ACCEPT_MAX_PEERS peers are counted; for a new one beyond
- * that, the peer counted longest ago is forgotten. A clock that goes back
- * starts a new window. */
+/* New connections, counted before TLS: each one costs a TLS handshake,
+ * a private-key signature in the main loop, before any password is read.
+ * erssi's own uid is never counted (fe-web-server.c).
+ * - A peer that is one party (an address that is not loopback, a known
+ *   uid) starts at most FE_WEB_ACCEPT_BURST of them in
+ *   FE_WEB_ACCEPT_WINDOW seconds. At most FE_WEB_ACCEPT_MAX_PEERS peers are
+ *   counted; for a new one beyond that, what is over is forgotten, else
+ *   the peer counted longest ago that is still under its limit, else the
+ *   newcomer is refused.
+ * - The shared or unknown key (every local user where the kernel cannot
+ *   tell them apart, the owner too) gets FE_WEB_ACCEPT_SHARED_PER_SEC a
+ *   second: a ceiling for the CPU, high enough not to lock anyone out.
+ * - All counted connections together: FE_WEB_ACCEPT_ALL_PER_SEC a second,
+ *   whatever the number of addresses.
+ * A clock that goes back starts a new window. */
 #define FE_WEB_ACCEPT_BURST 8
 #define FE_WEB_ACCEPT_WINDOW 10
 #define FE_WEB_ACCEPT_MAX_PEERS 256
+#define FE_WEB_ACCEPT_SHARED_PER_SEC 50
+#define FE_WEB_ACCEPT_ALL_PER_SEC 200
 
 typedef struct _FE_WEB_ACCEPT_LIMIT FE_WEB_ACCEPT_LIMIT;
 
 FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void);
 void fe_web_accept_limit_free(FE_WEB_ACCEPT_LIMIT *limit);
 /* May peer start one more connection at now (counted when TRUE) */
-gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, time_t now);
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gboolean shared,
+                             time_t now);
 
 /* The login queue: at most this many clients that did not log in yet */
 #define FE_WEB_MAX_PENDING 8 /* moved from fe-web-server.c */

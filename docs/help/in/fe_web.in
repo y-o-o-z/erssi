@@ -80,19 +80,22 @@
     work on it exactly as on TCP; the web client connects to the socket
     path and checks the certificate for the name localhost.
 
-    A peer may open at most 8 new connections in 10 seconds: each costs
-    erssi a TLS handshake before any password is read. After 5 wrong
-    passwords from one peer, that peer gets one check every 2 seconds.
-    On the socket, and on Linux also on a loopback port, a peer is a
-    user whose uid erssi can find; your own connections are never
-    limited or slowed down then. When the uid cannot be found - always
-    on the BSDs and macOS, on Linux when the kernel does not tell and
-    the lookups of the moment are used up - every local user, you as
-    well, is the one peer "loopback": such connections are not limited
-    in number (or another user could keep yours out), but another user's
-    wrong passwords slow down your logins and their pending connections
-    can close yours. There fe_web_socket is the only setting that keeps
-    the users of a shared box apart.
+    A peer may open at most 8 new connections in 10 seconds, and all
+    peers together at most 200 a second: each costs erssi a TLS
+    handshake before any password is read, and those beyond are closed
+    before it. A connection its peer already reset or closed is closed
+    at once. After 5 wrong passwords from one peer, that peer gets one
+    check every 2 seconds. On the socket, and on Linux also on a loopback
+    port, a peer is a user whose uid erssi can find; your own connections
+    are never limited or slowed down then. When the uid cannot be found -
+    always on the BSDs and macOS, on Linux when the kernel does not tell
+    and the lookups of the moment are used up - every local user, you as
+    well, is the one peer "loopback". Its new connections are held only
+    to 50 a second, so another user cannot keep yours out with a few,
+    but a user who keeps up that rate costs erssi up to 50 handshakes a
+    second and closes your pending connections; their wrong passwords
+    slow down your logins. There fe_web_socket is the only setting that
+    keeps the users of a shared box apart.
 
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not

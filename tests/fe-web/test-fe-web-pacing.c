@@ -2621,47 +2621,58 @@ static void test_live_not_tcp(void)
 }
 
 /* new connections: FE_WEB_ACCEPT_BURST per peer and window, then the
- * next window; a clock that goes back starts anew; a full table forgets
- * what is over, else the peer counted longest ago - a new peer always
- * gets a count of its own */
+ * next window; a clock that goes back starts anew; the shared key gets
+ * FE_WEB_ACCEPT_SHARED_PER_SEC a second; all of them together
+ * FE_WEB_ACCEPT_ALL_PER_SEC a second; a full table forgets what is over,
+ * else the oldest peer still under its limit - never one at its limit */
 static void test_accept_limit(void)
 {
 	FE_WEB_ACCEPT_LIMIT *limit = fe_web_accept_limit_new();
 	char key[32];
-	int i;
+	int i, j;
 
 	for (i = 0; i < FE_WEB_ACCEPT_BURST; i++)
-		g_assert_true(fe_web_accept_allow(limit, "ip:a", 100));
-	g_assert_false(fe_web_accept_allow(limit, "ip:a", 100));
-	g_assert_false(fe_web_accept_allow(limit, "ip:a", 100 + FE_WEB_ACCEPT_WINDOW - 1));
-	g_assert_true(fe_web_accept_allow(limit, "ip:b", 100));
-	g_assert_true(fe_web_accept_allow(limit, "ip:a", 100 + FE_WEB_ACCEPT_WINDOW));
-	g_assert_true(fe_web_accept_allow(limit, "ip:a", 50));
+		g_assert_true(fe_web_accept_allow(limit, "ip:a", FALSE, 100));
+	g_assert_false(fe_web_accept_allow(limit, "ip:a", FALSE, 100));
+	g_assert_false(fe_web_accept_allow(limit, "ip:a", FALSE, 100 + FE_WEB_ACCEPT_WINDOW - 1));
+	g_assert_true(fe_web_accept_allow(limit, "ip:b", FALSE, 100));
+	g_assert_true(fe_web_accept_allow(limit, "ip:a", FALSE, 100 + FE_WEB_ACCEPT_WINDOW));
+	g_assert_true(fe_web_accept_allow(limit, "ip:a", FALSE, 50));
+
+	/* the shared key: a high ceiling a second, not a count of 8 */
+	for (i = 0; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++)
+		g_assert_true(fe_web_accept_allow(limit, "ip:loopback", TRUE, 300));
+	g_assert_false(fe_web_accept_allow(limit, "ip:loopback", TRUE, 300));
+	g_assert_true(fe_web_accept_allow(limit, "ip:loopback", TRUE, 301));
 	fe_web_accept_limit_free(limit);
 
-	/* full of peers still counting, the first counted at 200, the rest
-	 * at 201 */
+	/* all together, whatever the number of addresses */
 	limit = fe_web_accept_limit_new();
-	for (i = 0; i < FE_WEB_ACCEPT_MAX_PEERS; i++) {
-		int j;
-
+	for (i = 0; i < FE_WEB_ACCEPT_ALL_PER_SEC / FE_WEB_ACCEPT_BURST; i++) {
 		g_snprintf(key, sizeof(key), "ip:%d", i);
 		for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
-			g_assert_true(fe_web_accept_allow(limit, key, i == 0 ? 200 : 201));
+			g_assert_true(fe_web_accept_allow(limit, key, FALSE, 400));
 	}
-	/* every newcomer gets its own count */
-	for (i = 0; i < 4; i++) {
-		int j;
+	g_assert_false(fe_web_accept_allow(limit, "ip:fresh", FALSE, 400));
+	g_assert_false(fe_web_accept_allow(limit, "ip:loopback", TRUE, 400));
+	g_assert_true(fe_web_accept_allow(limit, "ip:fresh", FALSE, 401));
+	fe_web_accept_limit_free(limit);
 
-		g_snprintf(key, sizeof(key), "ip:new%d", i);
-		for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
-			g_assert_true(fe_web_accept_allow(limit, key, 202));
-		g_assert_false(fe_web_accept_allow(limit, key, 202));
+	/* a full table: "ip:0" is at its limit, the others under it */
+	limit = fe_web_accept_limit_new();
+	for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
+		g_assert_true(fe_web_accept_allow(limit, "ip:0", FALSE, 500));
+	for (i = 1; i < FE_WEB_ACCEPT_MAX_PEERS; i++) {
+		g_snprintf(key, sizeof(key), "ip:%d", i);
+		g_assert_true(fe_web_accept_allow(limit, key, FALSE, i < 150 ? 501 : 502));
 	}
-	/* "ip:0" (the oldest) went first: it starts anew */
-	g_assert_true(fe_web_accept_allow(limit, "ip:0", 202));
-	/* the newest ones are still held (only peers of 201 or older went) */
-	g_assert_false(fe_web_accept_allow(limit, "ip:new3", 202));
+	/* newcomers take the place of peers under their limit */
+	for (i = 0; i < 4; i++) {
+		g_snprintf(key, sizeof(key), "ip:new%d", i);
+		g_assert_true(fe_web_accept_allow(limit, key, FALSE, 503));
+	}
+	/* the one at its limit was not forgotten: still held */
+	g_assert_false(fe_web_accept_allow(limit, "ip:0", FALSE, 503));
 	fe_web_accept_limit_free(limit);
 }
 

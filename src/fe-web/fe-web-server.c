@@ -1344,20 +1344,20 @@ static void sig_listen(void)
 	if (own_peer_key == NULL)
 		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 	/* A TLS handshake costs a signature before any password is read: a
-	 * loop of new connections from one peer is refused before it, not
-	 * only made to close its own older ones. Counted are only peers that
-	 * are one party: an address that is not loopback, or a uid that is
-	 * known and not ours. A key many users share (ip:loopback: always on
-	 * the BSDs, on Linux when the uid could not be found, also when only
-	 * the /proc budget was spent) or "uid:unknown" may be the owner's own
-	 * connection too: limited, another local user could keep the owner
-	 * out with a few bare connects. Those are left to the pending limit
-	 * below. */
-	if (!peer_shared && strcmp(peer_key, "uid:unknown") != 0 &&
-	    strcmp(peer_key, own_peer_key) != 0) {
+	 * loop of new connections is refused before it, not only made to
+	 * close its older ones (fe-web-pacing.h). A peer that is one party
+	 * (an address that is not loopback, a known uid) has its own count.
+	 * A key many users share (ip:loopback: always on the BSDs, on Linux
+	 * when the kernel cannot tell the uid) or "uid:unknown" may be the
+	 * owner too: it gets a ceiling high enough that no other local user
+	 * can keep the owner out with it, which still bounds the CPU. The
+	 * owner's own connections are never counted. */
+	if (strcmp(peer_key, own_peer_key) != 0) {
+		gboolean shared = peer_shared || strcmp(peer_key, "uid:unknown") == 0;
+
 		if (accept_limit == NULL)
 			accept_limit = fe_web_accept_limit_new();
-		if (!fe_web_accept_allow(accept_limit, peer_key, time(NULL))) {
+		if (!fe_web_accept_allow(accept_limit, peer_key, shared, time(NULL))) {
 			log_refused_addr(addr, "too many new connections");
 			g_free(addr);
 			g_free(peer_key);

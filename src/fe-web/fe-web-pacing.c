@@ -382,6 +382,8 @@ typedef struct {
 
 struct _FE_WEB_ACCEPT_LIMIT {
 	GHashTable *peers;	/* peer -> ACCEPT_COUNT */
+	ACCEPT_COUNT shared;	/* the shared or unknown key */
+	ACCEPT_COUNT all;	/* every connection counted here */
 };
 
 FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void)
@@ -400,29 +402,28 @@ void fe_web_accept_limit_free(FE_WEB_ACCEPT_LIMIT *limit)
 	g_free(limit);
 }
 
-static gboolean accept_window_over(const ACCEPT_COUNT *c, time_t now)
+static gboolean accept_window_over(const ACCEPT_COUNT *c, time_t now, int window)
 {
-	return now < c->start || now - c->start >= FE_WEB_ACCEPT_WINDOW;
+	return now < c->start || now - c->start >= window;
 }
 
-static gboolean accept_count(ACCEPT_COUNT *c, time_t now)
+/* the count of c in its window of `window' seconds is below burst */
+static gboolean accept_room(ACCEPT_COUNT *c, time_t now, guint burst, int window)
 {
-	if (accept_window_over(c, now)) {
+	if (accept_window_over(c, now, window)) {
 		c->start = now;
 		c->count = 0;
 	}
-	if (c->count >= FE_WEB_ACCEPT_BURST)
-		return FALSE;
-	c->count++;
-	return TRUE;
+	return c->count < burst;
 }
 
 /* the table is full: what is over goes, else the peer counted longest
- * ago. Evicting gives that peer a fresh count, which a new address would
- * get anyway - while a shared count for every peer beyond the table let
- * anyone with enough addresses keep the newcomers (the owner's phone
- * among them) out. */
-static void accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
+ * ago among those still under the limit - a peer at its limit is never
+ * forgotten, or an attacker cycling through more addresses than the
+ * table holds would find each of them fresh again. FALSE: every peer is
+ * at its limit, the newcomer finds no room (the ceiling of all
+ * connections bounds what that costs). */
+static gboolean accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
 {
 	GHashTableIter iter;
 	gpointer key, value, oldest = NULL;
@@ -432,29 +433,50 @@ static void accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
 	while (g_hash_table_iter_next(&iter, &key, &value)) {
 		const ACCEPT_COUNT *c = value;
 
-		if (accept_window_over(c, now))
+		if (accept_window_over(c, now, FE_WEB_ACCEPT_WINDOW))
 			g_hash_table_iter_remove(&iter);
-		else if (oldest == NULL || c->start < oldest_start) {
+		else if (c->count < FE_WEB_ACCEPT_BURST &&
+		         (oldest == NULL || c->start < oldest_start)) {
 			oldest = key;
 			oldest_start = c->start;
 		}
 	}
-	if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS && oldest != NULL)
-		g_hash_table_remove(limit->peers, oldest);
+	if (g_hash_table_size(limit->peers) < FE_WEB_ACCEPT_MAX_PEERS)
+		return TRUE;
+	if (oldest == NULL)
+		return FALSE;
+	g_hash_table_remove(limit->peers, oldest);
+	return TRUE;
 }
 
-gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, time_t now)
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gboolean shared,
+                             time_t now)
 {
-	ACCEPT_COUNT *c = g_hash_table_lookup(limit->peers, peer);
+	ACCEPT_COUNT *c;
 
+	if (!accept_room(&limit->all, now, FE_WEB_ACCEPT_ALL_PER_SEC, 1))
+		return FALSE;
+	if (shared) {
+		if (!accept_room(&limit->shared, now, FE_WEB_ACCEPT_SHARED_PER_SEC, 1))
+			return FALSE;
+		limit->shared.count++;
+		limit->all.count++;
+		return TRUE;
+	}
+	c = g_hash_table_lookup(limit->peers, peer);
 	if (c == NULL) {
-		if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS)
-			accept_make_room(limit, now);
+		if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS &&
+		    !accept_make_room(limit, now))
+			return FALSE;
 		c = g_new0(ACCEPT_COUNT, 1);
 		c->start = now;
 		g_hash_table_insert(limit->peers, g_strdup(peer), c);
 	}
-	return accept_count(c, now);
+	if (!accept_room(c, now, FE_WEB_ACCEPT_BURST, FE_WEB_ACCEPT_WINDOW))
+		return FALSE;
+	c->count++;
+	limit->all.count++;
+	return TRUE;
 }
 
 char *fe_web_peer_key_ip(const IPADDR *ip)

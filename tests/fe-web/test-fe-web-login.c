@@ -1005,9 +1005,9 @@ static void test_tcp_accept_rate_limited(void)
 }
 
 /* The shared key ip:loopback (sock_diag gives no answer and the /proc
- * budget is spent: the owner looks like everyone else) is never refused
- * at accept: bare connects of another local user must not keep the
- * owner's next connection out */
+ * budget is spent: the owner looks like everyone else) is not held to 8
+ * per 10 s: bare connects of another local user must not keep the
+ * owner's next connection out. It has a ceiling a second, for the CPU. */
 static void test_tcp_accept_shared_not_limited(void)
 {
 	char *printed;
@@ -1027,7 +1027,15 @@ static void test_tcp_accept_shared_not_limited(void)
 	printed = fe_web_fuzz_take_printed();
 	g_assert_null(strstr(printed, "too many new connections"));
 	g_free(printed);
-	close(fd);
+	close_and_wait(fd);
+	/* the ceiling (fe-web's clock stands still) */
+	for (i = 3 * FE_WEB_ACCEPT_BURST + 1; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++) {
+		fe_web_fuzz_spend_proc_budget();
+		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
+		close_and_wait(fd);
+	}
+	fe_web_fuzz_spend_proc_budget();
+	assert_refused_at_accept();
 	fe_web_sock_diag_set_func(NULL);
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
