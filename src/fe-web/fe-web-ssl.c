@@ -226,6 +226,19 @@ static gboolean refused_in_place(const char *path)
 	return TRUE;
 }
 
+/* the clock of the expiry checks: time() plus what a test adds */
+static time_t clock_offset;
+
+static time_t ssl_now(void)
+{
+	return time(NULL) + clock_offset;
+}
+
+void fe_web_ssl_set_clock_offset(time_t offset)
+{
+	clock_offset = offset;
+}
+
 /* a stored key or certificate was there when a new pair was made */
 static gboolean pair_replaced;
 /* the daily look at the certificate's end */
@@ -287,7 +300,7 @@ static int load_key_and_cert(void)
 
 	/* unusable (missing, damaged, other key, ending soon): a new pair
 	 * is generated - said, with its fingerprint, when one was there */
-	tomorrow = time(NULL) + FE_WEB_CERT_RENEW_DAYS * 86400;
+	tomorrow = ssl_now() + FE_WEB_CERT_RENEW_DAYS * 86400;
 	if (pkey == NULL || x509 == NULL || !X509_check_private_key(x509, pkey) ||
 	    X509_cmp_time(X509_get0_notAfter(x509), &tomorrow) <= 0) {
 		EVP_PKEY_free(pkey);
@@ -353,8 +366,14 @@ void fe_web_ssl_init(void)
 	OpenSSL_add_all_algorithms();
 }
 
-/* The TLS context with the stored (or a new) key and certificate; made once,
- * at the first server start. Returns TRUE when TLS can be used. */
+/* the certificate ends within FE_WEB_CERT_RENEW_DAYS of now */
+static gboolean ends_soon(X509 *x509, time_t now)
+{
+	time_t limit = now + FE_WEB_CERT_RENEW_DAYS * 86400;
+
+	return X509_cmp_time(X509_get0_notAfter(x509), &limit) <= 0;
+}
+
 gboolean fe_web_ssl_check_expiry(time_t now)
 {
 	const ASN1_TIME *end;
@@ -376,25 +395,50 @@ gboolean fe_web_ssl_check_expiry(time_t now)
 	if (days >= FE_WEB_CERT_RENEW_DAYS)
 		return FALSE;
 	fp = cert_fingerprint(server_cert);
-	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web-ssl: the certificate (SHA-256 %s) ends in %d days; fe-web "
-	          "makes a new one when it starts (/SET fe_web_enabled OFF, then ON, "
-	          "or a restart) - web clients must pin that one then",
-	          fp, days > 0 ? days : 0);
+	if (days < 0 || secs < 0)
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web-ssl: the certificate (SHA-256 %s) has expired; fe-web "
+		          "makes a new one when the server starts again (/SET "
+		          "fe_web_enabled OFF, then ON, or a restart) - web clients must "
+		          "pin that one then", fp);
+	else
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web-ssl: the certificate (SHA-256 %s) ends in %d days; fe-web "
+		          "makes a new one when the server starts again (/SET "
+		          "fe_web_enabled OFF, then ON, or a restart) - web clients must "
+		          "pin that one then", fp, days);
 	g_free(fp);
 	return TRUE;
 }
 
+/* the daily look, while the server is on */
 static gboolean expiry_check(gpointer data)
 {
-	fe_web_ssl_check_expiry(time(NULL));
+	if (settings_get_bool("fe_web_enabled"))
+		fe_web_ssl_check_expiry(ssl_now());
 	return TRUE;
 }
 
+/* The TLS context with the stored (or a new) key and certificate; made at
+ * the first server start, and made again at a later start once the
+ * certificate ends within FE_WEB_CERT_RENEW_DAYS (/SET fe_web_enabled OFF
+ * then ON, which the warning advises, renews it). Returns TRUE when TLS
+ * can be used. */
 int fe_web_ssl_prepare(void)
 {
-	if (fe_web_ssl_ctx != NULL)
-		return TRUE;
+	if (fe_web_ssl_ctx != NULL) {
+		if (server_cert == NULL || !ends_soon(server_cert, ssl_now()))
+			return TRUE;
+		/* the server is stopped, no session loses its pin now; a
+		   connection still around keeps its own SSL, which holds a
+		   reference to this context */
+		SSL_CTX_free(fe_web_ssl_ctx);
+		fe_web_ssl_ctx = NULL;
+		X509_free(server_cert);
+		server_cert = NULL;
+		EVP_PKEY_free(server_key);
+		server_key = NULL;
+	}
 
 	switch (load_key_and_cert()) {
 	case 1:
@@ -516,7 +560,7 @@ have_cert:
 	   day, a warning in the last FE_WEB_CERT_RENEW_DAYS */
 	if (expiry_tag == 0)
 		expiry_tag = g_timeout_add_seconds(86400, expiry_check, NULL);
-	fe_web_ssl_check_expiry(time(NULL));
+	fe_web_ssl_check_expiry(ssl_now());
 	return TRUE;
 }
 

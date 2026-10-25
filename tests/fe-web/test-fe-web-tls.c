@@ -21,6 +21,9 @@
 
 #include "fe-web-test.h"
 
+#include <irssi/src/core/settings.h>
+#include <irssi/src/core/signals.h>
+
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
@@ -714,8 +717,69 @@ static void test_renewal_said(void)
 	g_assert_false(fe_web_ssl_check_expiry(time(NULL)));
 	g_assert_true(fe_web_ssl_check_expiry(time(NULL) + 10 * 86400L));
 	out = fe_web_fuzz_take_printed();
-	g_assert_nonnull(strstr(out, "fe-web makes a new one when it starts"));
+	g_assert_nonnull(strstr(out, "fe-web makes a new one when the server starts again"));
 	g_free(out);
+	reset();
+}
+
+/* the server is on (TRUE) or off through the setting, as /SET does */
+static void set_enabled(gboolean on)
+{
+	settings_set_bool("fe_web_enabled", on);
+	signal_emit("setup changed", 0);
+	fe_web_fuzz_iterate(20);
+}
+
+/* What the warning advises - /SET fe_web_enabled OFF, then ON - renews a
+ * certificate that came within FE_WEB_CERT_RENEW_DAYS of its end while
+ * the server ran (the context made at the first start used to stay) */
+static void test_renewed_by_server_restart(void)
+{
+	char *base = test_tmpdir(), *sock = g_build_filename(base, "fe-web.sock", NULL);
+	char *old, *out, *fp;
+
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS + 5);
+	old = read_file(cert_path);
+	fe_web_fuzz_real_tls_prepare(TRUE);
+	settings_set_str("fe_web_socket", sock);
+	set_enabled(TRUE);
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "listening on unix:"));
+	g_assert_null(strstr(out, "made a new key"));
+	g_free(out);
+	g_assert_true(file_is(cert_path, old));
+
+	/* ten days on: in the last 30 */
+	fe_web_ssl_set_clock_offset(10 * 86400L);
+	g_assert_true(fe_web_ssl_check_expiry(time(NULL) + 10 * 86400L));
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "/SET fe_web_enabled OFF, then ON"));
+	g_free(out);
+	set_enabled(FALSE);
+	set_enabled(TRUE);
+	out = fe_web_fuzz_take_printed();
+	g_assert_false(file_is(cert_path, old));
+	fp = cert_file_fingerprint();
+	g_assert_nonnull(strstr(out, "made a new key and certificate in place of the old ones"));
+	g_assert_nonnull(strstr(out, fp));
+	g_free(fp);
+	g_free(out);
+
+	/* after its end the warning says so */
+	g_assert_true(fe_web_ssl_check_expiry(time(NULL) + 900 * 86400L));
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "has expired"));
+	g_free(out);
+
+	set_enabled(FALSE);
+	fe_web_ssl_set_clock_offset(0);
+	fe_web_fuzz_real_tls_prepare(FALSE);
+	settings_set_str("fe_web_socket", "");
+	test_rmtree(base);
+	g_free(base);
+	g_free(sock);
+	g_free(old);
 	reset();
 }
 
@@ -731,6 +795,14 @@ int main(int argc, char **argv)
 	cert_path = g_build_filename(fe_web_fuzz_home(), "fe-web-cert.pem", NULL);
 	/* relative paths in the tests are in the irssi directory */
 	g_assert_cmpint(chdir(fe_web_fuzz_home()), ==, 0);
+	/* the setting's handler, as /SET runs it (fe_web_init() registers
+	   the settings the harness registered already) */
+	settings_remove("fe_web_enabled");
+	settings_remove("fe_web_port");
+	settings_remove("fe_web_bind");
+	settings_remove("fe_web_password");
+	settings_remove("fe_web_socket");
+	fe_web_init();
 
 	g_test_add_func("/fe-web/tls/made-at-first-start", test_made_at_first_start);
 	g_test_add_func("/fe-web/tls/reused-after-restart", test_reused_after_restart);
@@ -743,11 +815,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/handshake-with-pin", test_handshake_with_pin);
 	g_test_add_func("/fe-web/tls/rsa-pair-kept", test_rsa_pair_kept);
 	g_test_add_func("/fe-web/tls/renewal-said", test_renewal_said);
+	g_test_add_func("/fe-web/tls/renewed-by-server-restart", test_renewed_by_server_restart);
 	g_test_add_func("/fe-web/tls/old-pin-refused-after-new-key",
 	                test_old_pin_refused_after_new_key);
 
 	ret = g_test_run();
 	reset();
+	fe_web_deinit();
 	g_free(key_path);
 	g_free(cert_path);
 	return ret;

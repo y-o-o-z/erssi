@@ -163,6 +163,10 @@ void fe_web_fuzz_allow_commands(gboolean allow);
 /* Run the default main context for 'ms' milliseconds */
 void fe_web_fuzz_iterate(int ms);
 
+/* With TRUE the server start runs the real fe_web_ssl_prepare() (the key,
+ * the certificate and their renewal); FALSE: the stand-in, as by default */
+void fe_web_fuzz_real_tls_prepare(gboolean on);
+
 /* The port fe-web-server.c listens on (-1: none) */
 int fe_web_fuzz_listen_port(void);
 
