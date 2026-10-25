@@ -157,9 +157,9 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    own (STAGE, say, common in CI and deploy scripts) no longer makes
 	    it remove that directory, or drop another installer's lock, when
 	    it exits early, as an erssi --update with nothing new does
-	  - the source build asks for GLib 2.70 or newer, what the build now
-	    needs, and names the version it found: an older GLib used to
-	    pass the check and fail later in meson setup
+	  - the installer checks for the same GLib as the build (2.70, see
+	    below) and names the version it found: an older GLib used to
+	    pass its check and fail later in meson setup
 	  - man erssi works for an install in the home: beside
 	    ~/.local/bin/erssi the installer links
 	    ~/.local/share/man/man1/erssi.1 to the manual of the release in
