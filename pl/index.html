@@ -10,215 +10,312 @@
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta property="og:title" content="erssi Shellter Edition 2026.10.6">
 <meta property="og:description" content="Nowoczesne irssi, dostrojone do IRCnetu. Podpisane wydania, bez roota, jedna linia instalacji.">
-<meta property="og:image" content="https://y-o-o-z.github.io/erssi/images/shellter-dark-1400.png">
+<meta property="og:image" content="https://y-o-o-z.github.io/erssi/../images/shellter-dark-1400.png">
 <meta property="og:url" content="https://y-o-o-z.github.io/erssi/pl/">
 <link rel="alternate" hreflang="en" href="https://y-o-o-z.github.io/erssi/">
 <link rel="alternate" hreflang="pl" href="https://y-o-o-z.github.io/erssi/pl/">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
-<link rel="preload" href="../fonts/Literata-normal-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../fonts/Geist-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="../site.css">
 </head>
 <body>
-<a class="skip" href="#plan">Przejdź do treści</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/><path d="m16 4 2 2 3-3" /></symbol>
+  <symbol id="i-at" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-panels" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M16 4v16"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 1 10-10c0 3-2.5 4-4.5 4H15a2 2 0 0 0-1.5 3.3A2 2 0 0 1 12 22z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-socket" viewBox="0 0 24 24"><path d="M4 12h4l2-6 4 12 2-6h4"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></symbol>
+</svg>
+<a class="skip" href="#content">Przejdź do treści</a>
 
-<nav class="ls" aria-label="Sekcje">
+<header class="bar" data-bar>
   <div class="wrap">
-    <span class="cmd" aria-hidden="true"><span class="prompt-host">erssi</span><span class="prompt-sign">:</span><span class="prompt-path">~</span><span class="prompt-sign">$</span> ls -la</span>
-    <ol>
-      <li><a href="#plan"><span class="perm" aria-hidden="true">-rw-r--r--</span>.plan</a></li>
-      <li><a href="#install"><span class="perm" aria-hidden="true">-rwxr-xr-x</span>INSTALL</a></li>
-      <li><a href="#signatures"><span class="perm" aria-hidden="true">-r--r--r--</span>SIGNATURES</a></li>
-      <li><a href="#features"><span class="perm" aria-hidden="true">drwxr-xr-x</span>features/</a></li>
-      <li><a href="#shellter"><span class="perm" aria-hidden="true">srwxr-xr-x</span>#shellter</a></li>
-      <li><a href="#credits"><span class="perm" aria-hidden="true">-rw-r--r--</span>CREDITS</a></li>
-    </ol>
-    <span class="lang"><a href="../" hreflang="en" lang="en">LANG=en</a><a href="./" aria-current="page" hreflang="pl" lang="pl">LANG=pl</a></span>
-  </div>
-</nav>
-
-<header class="finger">
-  <div class="wrap">
-      <p class="term-cmd" aria-hidden="true"><span class="prompt-path">~</span> $ <span class="c">finger erssi</span></p>
-      <dl class="fields">
-        <div><dt>Login:</dt><dd>erssi</dd></div>
-        <div><dt>Nazwa:</dt><dd>erssi Shellter Edition</dd></div>
-        <div><dt>Wydanie:</dt><dd><span class="accent">2026.10.6</span> <span class="dim">z 25 października 2026</span></dd></div>
-        <div><dt>Oparte na:</dt><dd><span class="nw">erssi 1.3.1</span> · <span class="nw">irssi 1.4.5</span></dd></div>
-        <div><dt>Katalog:</dt><dd>~/.local/opt/erssi <span class="dim">(bez roota)</span></dd></div>
-        <div><dt>Ustawienia:</dt><dd>~/.erssi <span class="dim">(obok irssi)</span></dd></div>
-        <div><dt>Powłoka:</dt><dd>tmux new -s irc erssi</dd></div>
-        <div><dt>Binarki:</dt><dd><span class="nw">debian13-amd64</span> · <span class="nw">freebsd14-amd64</span></dd></div>
-        <div><dt>Podpis:</dt><dd><span class="nw">ED25519 hF7dvX7v…vN6jXEDAw</span></dd></div>
-        <div><dt>Poczta:</dt><dd><span class="dim">Brak poczty.</span> <a href="https://github.com/y-o-o-z/erssi/issues">Zgłoszenia</a></dd></div>
-      </dl>
-      <p class="plan-label" aria-hidden="true">Plan:</p>
-      <h1>erssi Shellter Edition: nowoczesne <span class="n">irssi</span>, dostrojone do IRCnetu.</h1>
-      <p class="lede">To, co użytkownik IRCnetu ustawia ręcznie, jest już wbudowane. Pilnuje Twojego nicka, zbiera wzmianki, szyfruje to, co każesz, i aktualizuje się z podpisanych wydań. Bez roota, na Linuksie i FreeBSD.</p>
-      <div class="install">
-        <pre id="install-line"><span class="p" aria-hidden="true">$ </span>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
-        <button class="copy" type="button" data-copy="install-line" aria-label="Skopiuj polecenie instalacji">kopiuj</button>
-      </div>
-      <p class="after"><span data-status aria-live="polite">Instaluje do ~/.local/opt/erssi i tworzy dowiązanie ~/.local/bin/erssi.</span> <a href="#install">Co robi</a> · <a href="#signatures">Jak to sprawdzić</a></p>
+    <a class="brand" href="./" aria-label="erssi Shellter Edition, strona główna">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#f59e0b"/><path d="M9 11l6 5-6 5" fill="none" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 22h7" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round"/></svg>
+      <span>erssi <small>Shellter Edition</small></span>
+    </a>
+    <nav class="nav" aria-label="Sekcje">
+      <a href="#features">Funkcje</a>
+      <a href="#install">Instalacja</a>
+      <a href="#verify">Bezpieczeństwo</a>
+      <a href="#new">Co nowego</a>
+    </nav>
+    <div class="right">
+      <span class="lang"><a href="../" hreflang="en" lang="en">EN</a><a href="./" aria-current="page" hreflang="pl" lang="pl">PL</a></span>
+      <a class="btn gh" href="https://github.com/y-o-o-z/erssi"><svg class="icon"><use href="#i-github"/></svg><span>GitHub</span></a>
+    </div>
   </div>
 </header>
 
 <main id="content">
-  <figure class="shot wrap">
-    <div class="frame" tabindex="0" role="group" aria-label="Zrzut ekranu erssi, na wąskim ekranie przewija się w bok">
-      <picture>
-        <source media="(max-width: 640px) and (prefers-color-scheme: light)" type="image/webp" srcset="../images/shellter-phone-light.webp" width="1073" height="2226">
-        <source media="(max-width: 640px)" type="image/webp" srcset="../images/shellter-phone-dark.webp" width="1073" height="2226">
-        <source media="(prefers-color-scheme: light)" type="image/webp" srcset="../images/shellter-light-1400.webp 1400w, ../images/shellter-light-2716.webp 2716w" sizes="(min-width: 1240px) 1192px, 100vw">
-        <source type="image/webp" srcset="../images/shellter-dark-1400.webp 1400w, ../images/shellter-dark-2716.webp 2716w" sizes="(min-width: 1240px) 1192px, 100vw">
-        <img src="../images/shellter-dark-1400.png" width="1400" height="660"
-             alt="erssi 2026.10.6 na #shellter w IRCnecie. Po lewej lista okien: Notices, IRCnet, #shellter, Mentions. Pośrodku yooz (yooz@ircnet.pl) i kofany (kofany@irc.al) wchodzą na kanał i dostają opa od saint, potem ludzie na kanale rozmawiają po angielsku o wydaniu: tuvok pyta, czy 2026.10.6 już jest, yooz odpowiada, że jest podpisane i na GitHubie, kofany mówi, że --uninstall usuwa tylko to, co zainstalował instalator, saint, że bajty sterujące są rysowane jako znak zapytania, jacos, że SHA256SUMS.sig się zgadza. Po prawej lista nicków według rangi: opy kofany, saint, yooz; voice amiantos, jacos, shellter, tuvok, zuy; potem reszta.">
-      </picture>
-    </div>
-    <figcaption>
-      <span>==&gt; #shellter w IRCnecie, erssi 2026.10.6, motyw shellter (shellter-light w jasnym systemie) &lt;==</span>
-      <span>Prawdziwe erssi i prawdziwe nicki z #shellter; ich wypowiedzi napisano na potrzeby tej strony.</span>
-    </figcaption>
-  </figure>
-
-  <section class="file" id="plan" aria-labelledby="h-plan">
+  <section class="hero">
     <div class="wrap">
-      <h2 id="h-plan"><span class="head" aria-hidden="true">==&gt; <b>~erssi/.plan</b> &lt;==</span><span class="t">Co zmienia 2026.10.6</span></h2>
-      <p class="intro">Poprawki po pełnym przeglądzie kodu, każda z testem, który przed poprawką nie przechodził. Wydane 25 października 2026, gdy CI przeszło 6 z 6, a paczki zostały zbudowane i przetestowane na Debianie 13 i FreeBSD 14.</p>
-      <ul class="changes">
-        <li><span class="area">ekran</span><p>Nic z sieci nie wyśle już znaków sterujących do Twojego terminala, na żadnym typie terminala: C0, DEL i C1 są rysowane jako <code>?</code>, więc nazwa kanału nie zmieni Ci schowka ani tytułu okna. Raport o fokusie podzielony na dwie części przez wolne łącze ssh jest nadal czytany jako jeden.</p></li>
-        <li><span class="area">instalacja</span><p><code>--uninstall</code> usuwa tylko to, co zainstalował instalator; biblioteki, nagłówki i strony man innych programów w tym samym katalogu zostają, a instalator wymienia, co zostawił. Blokadę po przerwanym instalatorze albo po restarcie przejmuje bezpiecznie. <code>man erssi</code> działa przy instalacji w katalogu domowym.</p></li>
-        <li><span class="area">fe-web</span><p>Nowe połączenia są ograniczane dla każdego nadawcy, zanim zacznie się TLS. Lista nicków w kliencie webowym idzie za serwerem, więc <code>/ignore</code> nie zostawia duchów. Tekst wysyłany do przeglądarki jest zawsze poprawnym UTF&#8209;8 i respektuje <code>/recode</code>. Nowe certyfikaty dostają losowy numer seryjny, rozszerzenia, których oczekują przeglądarki, i ważność 825 dni.</p></li>
-        <li><span class="area">e2e</span><p>Prośby o klucz mają limit na nadawcę, keyring jest trzymany w pamięci zamiast czytany od nowa przy każdym notice od obcego, a zwolniony tekst jawny jest czyszczony. Notatki o bezpieczeństwie mówią teraz wprost, że serwer może zgubić albo przestawić części długiej wiadomości.</p></li>
-        <li><span class="area">rdzeń</span><p><code>/upgrade</code> sprawdza, czy da się zapisać plik sesji, zanim cokolwiek przekaże, a nieudane <code>/upgrade</code> niczego nie wysyła dwa razy i zostawia Twoje okna. Keepnick nie wypisuje już dwukrotnie odpowiedzi MONITOR.</p></li>
-        <li><span class="area">podgląd obrazków</span><p>Podgląd idzie razem ze swoją linią po <code>/clear</code>, pobierany plik pozostaje plikiem <code>.part</code>, dopóki nie jest kompletny, obrazki stron (og:image) są poprawnie odnajdywane, a pobieranie nie spowalnia już pisania.</p></li>
-        <li><span class="area">budowa</span><p>Własna strona podręcznika, erssi(1). Minimalna wersja GLib jest podana zgodnie z prawdą (2.70), a dekoder obrazków ma cel do fuzzingu.</p></li>
+      <h1>Nowoczesne irssi, dostrojone do <em>IRCnetu</em>.</h1>
+      <p class="sub">erssi Shellter Edition pilnuje Twojego nicka, zbiera wzmianki, szyfruje to, co każesz, i aktualizuje się z podpisanych wydań. Bez roota.</p>
+      <div class="cmd">
+        <pre id="install-line"><span class="p" aria-hidden="true">$ </span>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
+        <button class="copy" type="button" data-copy="install-line"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg><span data-label>Kopiuj</span></button>
+      </div>
+      <div class="actions">
+        <a class="btn btn-primary" href="#install">Jak zainstalować <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Wydanie 2026.10.6</a>
+      </div>
+      <ul class="facts">
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Podpisane wydania</li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Bez roota, instaluje się w katalogu domowym</li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Binarki dla Debiana 13 i FreeBSD 14</li>
       </ul>
-      <p class="more"><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Informacje o wydaniu 2026.10.6</a> · <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Wszystkie zmiany od 2026.10.0</a> <span>(po angielsku)</span></p>
+      <p class="sr" data-status aria-live="polite"></p>
     </div>
   </section>
 
-  <section class="file" id="install" aria-labelledby="h-install">
+  <figure class="shot">
+    <div class="window">
+      <div class="titlebar" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="t">erssi — #shellter — IRCnet</span></div>
+      <picture>
+        <source media="(max-width: 640px) and (prefers-color-scheme: light)" type="image/webp" srcset="../images/shellter-phone-light.webp" width="1073" height="2271">
+        <source media="(max-width: 640px)" type="image/webp" srcset="../images/shellter-phone-dark.webp" width="1073" height="2271">
+        <source media="(prefers-color-scheme: light)" type="image/webp" srcset="../images/shellter-light-1400.webp 1400w, ../images/shellter-light-2716.webp 2716w" sizes="(min-width: 1320px) 1280px, 100vw">
+        <source type="image/webp" srcset="../images/shellter-dark-1400.webp 1400w, ../images/shellter-dark-2716.webp 2716w" sizes="(min-width: 1320px) 1280px, 100vw">
+        <img src="../images/shellter-dark-1400.png" width="1400" height="660"
+             alt="erssi 2026.10.6 na #shellter w IRCnecie. Po lewej lista okien: Notices, IRCnet, #shellter, Mentions. Pośrodku yooz (yooz@ircnet.pl) i kofany (kofany@irc.al) wchodzą na kanał i dostają opa od oper, potem ludzie na kanale rozmawiają po angielsku o wydaniu: zuy pyta, czy 2026.10.6 już jest, yooz odpowiada, że jest podpisane i na GitHubie, kofany mówi, że --uninstall usuwa teraz tylko to, co zainstalował instalator, saint, że bajty sterujące są rysowane jako znak zapytania, jacos, że SHA256SUMS.sig się zgadza. Po prawej lista nicków według rangi: opy kofany, oper, yooz; voice amiantos, jacos, shellter, zuy; potem reszta.">
+      </picture>
+    </div>
+    <figcaption>erssi 2026.10.6 na #shellter, z prawdziwymi nickami z kanału. Ich wypowiedzi napisano na potrzeby tego obrazka.</figcaption>
+  </figure>
+
+  <section class="section" id="features" aria-labelledby="h-features">
     <div class="wrap">
-      <h2 id="h-install"><span class="head" aria-hidden="true">==&gt; <b>~erssi/INSTALL</b> &lt;==</span><span class="t">Jedna linia na Twoim koncie shellowym</span></h2>
-      <p class="intro">Polecenie z góry tej strony. Tak wygląda to, co wypisuje na Debianie 13; w Twoim katalogu domowym nic się nie zmienia, dopóki wszystkie sprawdzenia nie przejdą.</p>
-<pre class="transcript"><span class="k">$ curl -fsSL …/shellter-install.sh | sh</span>
-  [1/5] Checking the system  <span class="ok">✓</span> debian13-amd64 · perl 5.40.1
-  [2/5] Choosing the release <span class="ok">✓</span> shellter-v2026.10.6
-  [3/5] Downloading          <span class="ok">✓</span> erssi-2026.10.6-debian13-amd64.tar.xz · signed · sha256 verified
-  [4/5] Checking the package <span class="ok">✓</span> bdf44f57 · commit recorded · libraries present
-  [5/5] Installing           <span class="ok">✓</span> ~/.local/opt/erssi · releases/2026.10.6
-<span class="d">  start     ~/.local/bin/erssi   (inside tmux, so it keeps running when you log out)</span></pre>
-      <div class="cols">
-        <div>
-          <table class="opts">
-            <caption class="sr">Co robi instalator na danym systemie</caption>
-            <tbody>
-              <tr><th scope="row">debian13 · freebsd14</th><td>Instaluje gotową binarkę wydania (amd64), gdy podpis jego SHA256SUMS, suma kontrolna i manifest się zgadzają. Trwa to kilka sekund.</td></tr>
-              <tr><th scope="row">inne systemy</th><td>Buduje najnowsze podpisane wydanie ze źródeł i uruchamia testy. Potrzebuje GLib 2.70 lub nowszego; brakujące pakiety wymienia razem z poleceniem dla administratora.</td></tr>
-              <tr><th scope="row">--rollback</th><td>Wydania leżą obok siebie, a <code>current</code> jednym krokiem wraca do poprzedniego.</td></tr>
-              <tr><th scope="row">--uninstall</th><td>Usuwa tylko to, co zainstalował instalator, i nigdy nie rusza <code>~/.erssi</code>.</td></tr>
-            </tbody>
-          </table>
-          <p class="more"><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md">Wszystkie opcje i to, co instalator sprawdza</a> <span>(po angielsku)</span></p>
+      <div class="section-head">
+        <h2 id="h-features">To, co użytkownik IRCnetu dopisywałby skryptami</h2>
+        <p>Wszystko, co daje erssi, zostaje: panele boczne, obsługa myszy, 24-bitowe kolory, podgląd obrazków, frontend webowy i skrypty Perla z irssi. Ta edycja dodaje resztę, a każde polecenie ma swoją stronę w <code>/help</code>.</p>
+      </div>
+      <div class="grid">
+        <article class="tile wide">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>Szyfrowanie end-to-end, wbudowane</h3>
+          <p>RPE2E wbudowane i zgodne protokołem z repartee oraz jego skryptami dla WeeChata i irssi: XChaCha20-Poly1305 z osobnym kluczem dla każdego nadawcy, dawanymi tylko osobom, które zaakceptujesz. Wiadomość, której nie da się odczytać, nigdy nie znika. Chroni to, co piszesz, nie to, kto z kim rozmawia, i nie ma forward secrecy.</p>
+          <div class="sample" aria-label="Polecenia">
+            <div><b>/e2e on</b> <span class="a">→</span> szyfruj ten kanał albo query</div>
+            <div><b>/e2e accept zuy</b> <span class="a">→</span> daj swój klucz tylko osobom, które akceptujesz</div>
+          </div>
+        </article>
+        <article class="tile tall">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-panels"/></svg>Panele boczne na swoim miejscu</h3>
+          <p>Twoje okna po lewej, nicki kanału według rangi po prawej. Zapisane układy wracają po restarcie dokładnie takie, jakie były.</p>
+          <picture class="crop nicks">
+            <source media="(prefers-color-scheme: light)" srcset="../images/nicklist-light.webp">
+            <img src="../images/nicklist-dark.webp" width="241" height="949" loading="lazy" alt="Lista nicków #shellter w erssi według rangi: opy kofany, oper i yooz na bursztynowo, voice amiantos, jacos, shellter i zuy na niebiesko, potem reszta.">
+          </picture>
+        </article>
+        <article class="tile">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Nick zostaje przy Tobie</h3>
+          <p><code>/keepnick</code> odbiera go w chwili, gdy się zwolni: przez MONITOR, jeśli serwer go oferuje, w przeciwnym razie przez ISON.</p>
+        </article>
+        <article class="tile">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-at"/></svg>Wzmianki w jednym miejscu</h3>
+          <p>Prywatne wiadomości, notice od ludzi i podświetlenia w jednym oknie i w logu, z powiadomieniem na pulpicie przez terminal, także w tmuksie.</p>
+        </article>
+        <article class="tile wide">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-palette"/></svg>Jedna kolumna dla każdej linii</h3>
+          <p>Motyw <code>shellter</code> ustawia wiadomości, zdarzenia i odpowiedzi pod jednym separatorem, w kolorach shellter.me; <code>shellter-light</code> dla jasnych terminali.</p>
+          <div class="themes">
+            <figure><figcaption>shellter</figcaption><img src="../images/theme-dark.webp" width="1266" height="186" loading="lazy" alt="Te same linie w motywie shellter: oper daje +o yooz, kofany wchodzi na kanał, oper daje +o kofany, zuy pyta, czy 2026.10.6 już jest."></figure>
+            <figure><figcaption>shellter-light</figcaption><img src="../images/theme-light.webp" width="1266" height="186" loading="lazy" alt="Te same linie w motywie shellter-light."></figure>
+          </div>
+        </article>
+        <article class="tile">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Przeszukuj logi</h3>
+          <p><code>/search</code> szuka w logach kanału albo wszystkich sieci w osobnym procesie, więc erssi działa dalej.</p>
+        </article>
+      </div>
+      <p class="note">Pełna lista: <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/features.md">features.md</a> (po angielsku).</p>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="h-phone">
+    <div class="wrap split">
+      <div>
+        <div class="section-head">
+          <h2 id="h-phone">Twoja sesja, także na telefonie</h2>
+          <p>erssi działa w tmuksie na Twoim koncie shellowym. Do tej samej sesji dostaniesz się z wąskiego okna ssh albo z przeglądarki.</p>
         </div>
-        <ol class="steps">
-          <li><h3>Uruchamiaj w tmuksie</h3><p>Sesja przetrwa wylogowanie. Przy pierwszym starcie erssi pyta o sieć, nick i motyw, a potem się łączy.</p><pre>tmux new -s irc erssi</pre></li>
-          <li><h3>Aktualizuj, gdy wyjdzie nowe wydanie</h3><pre>erssi --check-update   <span class="d"># czy jest nowsze wydanie?</span>
-erssi --update         <span class="d"># zainstaluj je</span></pre></li>
-          <li><h3>Potem /upgrade w działającym erssi</h3><p>Wczytuje nową wersję i zostawia Twoje okna i kanały. Połączeń przez TLS nie da się przekazać nowemu procesowi, więc łączą się jeden raz od nowa.</p></li>
-        </ol>
+        <ul class="checks">
+          <li><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg><span><b>Czytelne w wąskim terminalu.</b> Długie linie się zawijają i zostają pod separatorem, nawet przy 56 kolumnach.</span></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-socket"/></svg><span><b>Klient webowy, gdy jest potrzebny.</b> fe-web udostępnia sesję klientowi takiemu jak <a href="https://github.com/kofany/nexus">NexusIRC</a>; lista nicków w przeglądarce zgadza się z serwerem.</span></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span><b>Tylko Ty możesz się do niego dostać.</b> Na współdzielonym serwerze fe-web słucha na gnieździe uniksowym, do którego dostęp ma tylko Twoje konto.</span></li>
+        </ul>
+      </div>
+      <div class="phone phone-visual">
+        <div class="screen">
+          <div class="notch" aria-hidden="true"><i></i></div>
+          <picture>
+            <source media="(prefers-color-scheme: light)" type="image/webp" srcset="../images/shellter-phone-light.webp">
+            <img src="../images/shellter-phone-dark.webp" width="1073" height="2271" loading="lazy"
+                 alt="Ta sama rozmowa z #shellter w erssi na 56 kolumnach, bez paneli bocznych, jak na telefonie przez ssh: każda wiadomość zawija się pod separatorem.">
+          </picture>
+        </div>
       </div>
     </div>
   </section>
 
-  <section class="file" id="signatures" aria-labelledby="h-sig">
+  <section class="section install-band" id="install" aria-labelledby="h-install">
     <div class="wrap">
-      <h2 id="h-sig"><span class="head" aria-hidden="true">==&gt; <b>~erssi/SIGNATURES</b> &lt;==</span><span class="t">Każde wydanie da się sprawdzić</span></h2>
-      <p class="intro">Instalacja jedną linią ufa skryptowi, który pobiera z GitHuba. Ten skrypt zawiera klucz wydań i commit każdego wydania, i nie zainstaluje niczego, co się z nimi nie zgadza. Sześć faktów o 2026.10.6, z których każdy możesz sprawdzić sam:</p>
-      <dl class="readouts">
-        <div class="readout"><dt>tag</dt><dd>shellter-v2026.10.6 <span class="ok">podpisany</span><small>commit bdf44f572</small></dd></div>
-        <div class="readout"><dt>klucz wydań</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw<small>utils/allowed_signers w repozytorium</small></dd></div>
-        <div class="readout"><dt>SHA256SUMS.sig</dt><dd><span class="ok">poprawny podpis</span><small>przestrzeń nazw erssi-release</small></dd></div>
-        <div class="readout"><dt>debian13-amd64</dt><dd title="ce2330cfbcacf901ab962546168609a0e482bc5c03e6e2e1d0b2b56b680e8e4d">ce2330cf…b680e8e4d<small>sha256 · 172 testy przeszły przy budowie</small></dd></div>
-        <div class="readout"><dt>freebsd14-amd64</dt><dd title="49161cd13d0de05eac09caae7ebfb39e38886b6d8fc3a1c1be67a01cc696438a">49161cd1…cc696438a<small>sha256 · 168 testów przeszło przy budowie</small></dd></div>
-        <div class="readout"><dt>CI</dt><dd><span class="ok">6 / 6</span><small>build · shellcheck · installer · e2e-live · sanitizers · fuzz</small></dd></div>
-      </dl>
-      <div class="cols">
-        <ol class="custody" aria-label="Od taga do Twojego serwera">
-          <li><div><b>podpisany tag</b> <span>shellter-v2026.10.6 → bdf44f572</span></div></li>
-          <li><div><b>CI na commicie taga</b> <span>sześć zadań, w tym sanitizery i fuzzing</span></div></li>
-          <li><div><b>paczki zbudowane z taga</b> <span>Debian 13 na hoście, FreeBSD 14 w maszynie wirtualnej, w obu pełny zestaw testów</span></div></li>
-          <li><div><b>podpisane SHA256SUMS</b> <span>kluczem wydań, przestrzeń nazw erssi-release</span></div></li>
-          <li><div><b>przypięte w instalatorze</b> <span>shellter-install.sh zna commit każdego wydania</span></div></li>
-          <li><div><b>Twój serwer</b> <span>erssi --update sprawdza to wszystko, zanim cokolwiek zmieni</span></div></li>
-        </ol>
-        <div class="verify">
-          <h3>Sprawdź tag ręcznie</h3>
-          <p>W klonie repozytorium, z wyłączonym gpg, żeby liczył się tylko ten klucz SSH:</p>
+      <div class="section-head">
+        <h2 id="h-install">Instalacja jedną linią, aktualizacja dwiema</h2>
+        <p>Uruchom to na swoim koncie shellowym. erssi trafia do <code>~/.local/opt/erssi</code>, a ustawienia trzyma w <code>~/.erssi</code>, więc działa obok irssi.</p>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <h3>1. Uruchom instalator</h3>
+          <p>Sprawdza system, podpis wydania i paczkę, zanim cokolwiek w Twoim katalogu domowym się zmieni.</p>
+          <pre>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
+        </div>
+        <div class="step">
+          <h3>2. Uruchamiaj w tmuksie</h3>
+          <p>Sesja przetrwa wylogowanie. Przy pierwszym starcie erssi pyta o sieć, nick i motyw, a potem się łączy.</p>
+          <pre>tmux new -s irc erssi</pre>
+        </div>
+        <div class="step">
+          <h3>3. Aktualizuj, gdy wyjdzie wydanie</h3>
+          <p>Potem <code>/upgrade</code> w działającym erssi zachowuje okna; połączenia TLS zostaną raz nawiązane od nowa.</p>
+          <pre>erssi --check-update
+erssi --update</pre>
+        </div>
+      </div>
+      <div class="platforms">
+        <div class="platform">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Debian 13 i FreeBSD 14, amd64</h3>
+          <p>Gotowa binarka w kilka sekund, instalowana tylko wtedy, gdy podpis SHA256SUMS, suma kontrolna i manifest się zgadzają. Poprzednie wydanie zostaje dla <code>--rollback</code>.</p>
+        </div>
+        <div class="platform">
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>Inne systemy Linux i FreeBSD</h3>
+          <p>Budowa z najnowszego podpisanego wydania, z testami, w około dwie minuty. Potrzebny GLib 2.70 lub nowszy; brakujące pakiety instalator wymienia dla administratora.</p>
+        </div>
+      </div>
+      <p class="more"><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md">Wszystkie opcje, <code>--uninstall</code> i to, co instalator sprawdza</a> (po angielsku)</p>
+    </div>
+  </section>
+
+  <section class="section" id="verify" aria-labelledby="h-verify">
+    <div class="wrap split">
+      <div class="verify">
+        <div class="section-head">
+          <h2 id="h-verify">Każde wydanie da się sprawdzić</h2>
+          <p>Instalator zawiera klucz wydań i commit każdego wydania, i nie zainstaluje niczego, co się z nimi nie zgadza. To samo możesz sprawdzić ręcznie.</p>
+        </div>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
     verify-tag shellter-v2026.10.6</pre>
-          <p>Musi zgłosić poprawny podpis z odciskiem podanym wyżej. Porównaj ten odcisk z takim, który masz z innego źródła, na przykład pytając na #shellter. Kroki dla paczki opisuje <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#checking-a-binary-package-yourself">install.md</a> (po angielsku).</p>
-        </div>
+        <p>Uruchom to w klonie repozytorium; gpg jest wyłączony, żeby liczył się tylko klucz SSH. Musi zgłosić poprawny podpis z odciskiem podanym obok. Porównaj go z takim, który masz z innego źródła, na przykład pytając na #shellter.</p>
+        <p>Części, które rozmawiają z siecią, są przeglądane, fuzzowane i testowane pod sanitizerami. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Co jest chronione, a co nie</a> (po angielsku).</p>
+      </div>
+      <div class="release" aria-label="Wydanie 2026.10.6">
+        <header><b>shellter-v2026.10.6</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
+        <dl>
+          <div><dt>Commit</dt><dd>bdf44f572</dd></div>
+          <div><dt>Klucz wydań</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
+          <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>poprawny podpis, przestrzeń nazw erssi-release</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="ce2330cfbcacf901ab962546168609a0e482bc5c03e6e2e1d0b2b56b680e8e4d">sha256 ce2330cf…b680e8e4d</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="49161cd13d0de05eac09caae7ebfb39e38886b6d8fc3a1c1be67a01cc696438a">sha256 49161cd1…cc696438a</dd></div>
+          <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 z 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
+        </dl>
       </div>
     </div>
   </section>
 
-  <section class="file" id="features" aria-labelledby="h-feat">
+  <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
-      <h2 id="h-feat"><span class="head" aria-hidden="true">==&gt; <b>~erssi/features/</b> &lt;==</span><span class="t">To, co użytkownik IRCnetu dopisywałby skryptami</span></h2>
-      <p class="intro">Wszystko, co daje erssi, zostaje: panele boczne, obsługa myszy, 24-bitowe kolory, podgląd obrazków, frontend webowy i skrypty Perla z irssi. Ta edycja dodaje resztę, a każde polecenie ma swoją stronę w <code>/help</code>.</p>
-      <ul class="inventory">
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">keepnick</span><span class="what"><b>Twój nick, pilnowany.</b> <code>/keepnick</code> odbiera go w chwili, gdy się zwolni: przez MONITOR, jeśli serwer go oferuje, w przeciwnym razie przez ISON, a od razu, gdy posiadacz wyjdzie albo zmieni nick na wspólnym kanale.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">e2e</span><span class="what"><b>Szyfrowanie end-to-end.</b> RPE2E wbudowane i zgodne na łączu z repartee oraz jego skryptami dla WeeChata i irssi: XChaCha20-Poly1305 z kluczami każdego nadawcy, dawanymi tylko osobom, które zaakceptujesz. Chroni to, co piszesz, nie to, kto z kim i kiedy rozmawia, i nie ma forward secrecy.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">mentions</span><span class="what"><b>Wzmianki w jednym miejscu.</b> Prywatne wiadomości, notice od ludzi i podświetlenia w jednym oknie i w logu, który czytasz tylko Ty, z powiadomieniem na pulpicie przez terminal, także w tmuksie.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">search</span><span class="what"><b>Przeszukuj logi.</b> <code>/search</code> szuka w logach kanału, na którym jesteś, albo z <code>-all</code> we wszystkich sieciach, w osobnym procesie, więc erssi działa dalej.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">layout</span><span class="what"><b>Okna zostają na miejscu.</b> Panele boczne z Twoimi oknami i nickami kanału według rangi, każdy rząd podzielonych okien z własną listą nicków i układy, które po restarcie wracają dokładnie tak, jak je zapisano.</span></li>
-        <li><span class="perm">-rw-r--r--</span><span class="name">shellter.theme</span><span class="what"><b>Jedna kolumna dla każdej linii.</b> Wiadomości, zdarzenia, odpowiedzi serwera i WHOIS mają jedną kolumnę i jeden separator, jak na obrazku wyżej; <code>shellter-light</code> robi to samo w jasnych terminalach.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">fe-web</span><span class="what"><b>Przeglądarka, gdy jest potrzebna.</b> Ta sama sesja w kliencie webowym, takim jak <a href="https://github.com/kofany/nexus">NexusIRC</a>. Na współdzielonym serwerze słucha na gnieździe uniksowym, które możesz otworzyć tylko Ty.</span></li>
-        <li><span class="perm">-rwxr-xr-x</span><span class="name">scripts</span><span class="what"><b>Twoje skrypty irssi.</b> Skrypty Perla z irssi działają bez zmian, a te, które wymagają irssi 1.4.5 lub nowszego, się ładują. W zestawie jest <code>trackbar.pl</code>.</span></li>
+      <div class="section-head">
+        <h2 id="h-new">Nowości w 2026.10.6</h2>
+        <p>Wydane 25 października 2026: poprawki po pełnym przeglądzie wersji 2026.10.5.</p>
+      </div>
+      <ul class="changes">
+        <li><span class="tag">terminal</span><p><b>Nic nie trafia do terminala na surowo.</b> Znaki sterujące z sieci są rysowane jako <code>?</code> na każdym typie terminala, więc nazwa kanału nie zmieni Ci schowka ani tytułu okna.</p></li>
+        <li><span class="tag">instalacja</span><p><b><code>--uninstall</code> usuwa tylko swoje pliki.</b> Biblioteki i strony man innych programów w tym samym katalogu zostają, a instalator wymienia, co zostawił.</p></li>
+        <li><span class="tag">fe-web</span><p><b>Frontend webowy, który wytrzymuje obciążenie.</b> Zbyt wiele nowych połączeń z jednego adresu jest zamykanych, zanim zacznie się TLS; nowe certyfikaty dostają losowy numer seryjny, rozszerzenia, których oczekują przeglądarki, i 825 dni ważności.</p></li>
+        <li><span class="tag">e2e</span><p><b>Stabilniejsze szyfrowanie.</b> Prośby o klucz mają limit na nadawcę, keyring jest trzymany w pamięci, a zwolniony tekst jawny jest czyszczony.</p></li>
+        <li><span class="tag">rdzeń</span><p><b>Bezpieczniejsze <code>/upgrade</code>.</b> Najpierw sprawdza, czy da się zapisać plik sesji, a nieudane <code>/upgrade</code> niczego nie wysyła dwa razy.</p></li>
+        <li><span class="tag">dokumentacja</span><p><b><code>man erssi</code>.</b> Własna strona podręcznika, podlinkowana także przy instalacji w katalogu domowym.</p></li>
       </ul>
-      <p class="more"><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/features.md">Pełna lista</a> · <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Notatki o bezpieczeństwie</a> <span>(po angielsku)</span></p>
-    </div>
-  </section>
-
-  <section class="file" id="shellter" aria-labelledby="h-chan">
-    <div class="wrap">
-      <h2 id="h-chan"><span class="head" aria-hidden="true">==&gt; <b>/names #shellter</b> &lt;==</span><span class="t">Zapytaj na #shellter</span></h2>
-      <div class="cols">
-        <div class="join prose">
-          <p>Pytania, błędy i pomysły zgłaszaj na kanale w IRCnecie albo w <a href="https://github.com/y-o-o-z/erssi/issues">systemie zgłoszeń</a>. Z erssi:</p>
-<pre>/connect IRCnet
-/join #shellter</pre>
-          <p>Kanał należy do <a href="https://shellter.me">shellter.me</a>, pubniksa na FreeBSD, który daje każdemu kontu powłokę, 150 MB na ZFS, trzy adresy IPv6 i miejsce na stronę w domenie shltr.eu. erssi czuje się tam jak w domu.</p>
-        </div>
-        <div class="names" aria-label="Osoby na #shellter">
-          <p class="count"><b>42</b> nicki · opy <b>3</b> · voice <b>6</b> · zwykłe <b>33</b></p>
-          <ul>
-            <li class="op">@kofany</li><li class="op">@saint</li><li class="op">@yooz</li>
-            <li class="v">+amiantos</li><li class="v">+jacos</li><li class="v">+jacoss</li><li class="v">+shellter</li><li class="v">+tuvok</li><li class="v">+zuy</li>
-            <li>Admin_</li><li>Atari</li><li>BB_</li><li>Bro</li><li>Carlin0</li><li>ck</li><li>eemil</li><li>EmperoR</li><li>erssi_user</li><li>gemini</li><li>grafi</li><li>HaKaN</li><li>iubdan</li><li>JoJoJo</li><li>Keeper</li><li>kleku</li><li>Mentalista</li><li>muscle</li><li>nofearek9</li><li>Ruusu</li><li>rzuF</li><li>say</li><li>SK</li><li>sparco_</li><li>ST4R</li><li>t0iska</li><li>tad</li><li>themace</li><li>tortoro</li><li>torzech</li><li>Wee</li><li>wilhart</li><li>zedomega</li>
-          </ul>
-          <p class="stamp">stan w IRCnecie z 25 października 2026</p>
-        </div>
+      <div class="after-list">
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Informacje o wydaniu</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Wszystkie zmiany od 2026.10.0</a>
       </div>
     </div>
   </section>
 
-  <section class="file credits" id="credits" aria-labelledby="h-cred">
+  <section class="section" aria-labelledby="h-join">
     <div class="wrap">
-      <h2 id="h-cred"><span class="head" aria-hidden="true">==&gt; <b>~erssi/CREDITS</b> &lt;==</span><span class="t">Zbudowane na erssi i irssi</span></h2>
-      <p>erssi to nowoczesne irssi autorstwa Jerzego „kofany” Dąbrowskiego i zespołu <a href="https://github.com/erssi-org/erssi">erssi-org</a>, na rdzeniu <a href="https://irssi.org">irssi</a>. Szyfrowanie end-to-end idzie za RPE2E z <a href="https://github.com/outragedevs/repartee">repartee</a>. Shellter Edition tworzy zespół Shellter z <a href="https://shellter.me">shellter.me</a>, od którego motyw bierze kolory.</p>
-      <p>Wolne oprogramowanie na licencji GNU General Public License w wersji 2 lub późniejszej. <a href="https://github.com/y-o-o-z/erssi">Kod źródłowy</a> jest na GitHubie, a <a href="https://github.com/y-o-o-z/erssi/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> opisuje, jak przesłać zmianę.</p>
+      <div class="cta">
+        <div>
+          <h2 id="h-join">Pytania? Zapytaj na #shellter</h2>
+          <p>Kanał <a href="https://shellter.me">shellter.me</a> w IRCnecie, gdzie powstaje Shellter Edition. Błędy i pomysły możesz też zgłaszać w systemie zgłoszeń.</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://github.com/y-o-o-z/erssi/issues">Zgłoś problem</a>
+            <a class="btn" href="https://shellter.me">shellter.me</a>
+          </div>
+        </div>
+<pre><span class="c"># w erssi</span>
+/connect IRCnet
+/join #shellter</pre>
+      </div>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <span class="ring"><a href="https://irssi.org">← irssi.org</a><a href="https://shellter.me">shellter.me</a><a href="https://github.com/erssi-org/erssi">erssi-org →</a></span>
-    <span>erssi Shellter Edition 2026.10.6 · GPL-2.0-or-later · <a href="https://github.com/y-o-o-z/erssi">github.com/y-o-o-z/erssi</a></span>
+    <div class="foot">
+      <div>
+        <a class="brand" href="./" aria-label="erssi Shellter Edition, strona główna">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#f59e0b"/><path d="M9 11l6 5-6 5" fill="none" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 22h7" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round"/></svg>
+          <span>erssi <small>Shellter Edition</small></span>
+        </a>
+        <p>erssi to nowoczesne irssi autorstwa Jerzego „kofany” Dąbrowskiego i zespołu erssi-org, na rdzeniu irssi. Szyfrowanie end-to-end korzysta z RPE2E z repartee. Shellter Edition tworzy zespół Shellter z shellter.me.</p>
+      </div>
+      <div>
+        <p class="fh">Projekt</p>
+        <ul>
+          <li><a href="https://github.com/y-o-o-z/erssi">Kod źródłowy</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/releases">Wydania</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">NEWS</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/issues">Zgłoszenia</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="fh">Dokumentacja</p>
+        <ul>
+          <li><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md">Instalacja</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/configuration.md">Konfiguracja</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Bezpieczeństwo</a></li>
+          <li><a href="https://github.com/y-o-o-z/erssi/blob/main/CONTRIBUTING.md">Współtworzenie</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="fh">Zbudowane na</p>
+        <ul>
+          <li><a href="https://github.com/erssi-org/erssi">erssi</a></li>
+          <li><a href="https://irssi.org">irssi</a></li>
+          <li><a href="https://github.com/outragedevs/repartee">repartee</a></li>
+          <li><a href="https://shellter.me">shellter.me</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <span>erssi Shellter Edition 2026.10.6 · GPL-2.0-or-later</span>
+      <span><a href="../" hreflang="en" lang="en">English</a> · <a href="./" aria-current="page">Polski</a></span>
+    </div>
   </div>
 </footer>
 

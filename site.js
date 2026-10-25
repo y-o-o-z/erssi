@@ -1,29 +1,27 @@
-// Copy buttons and the ls listing that follows the file you are reading.
+// Copy buttons and the bar's border once the page scrolls.
 // The page reads the same without any of this.
 (function () {
   "use strict";
-  var lang = document.documentElement.lang === "pl" ? "pl" : "en";
-  var said = {
-    en: { done: "copied", copied: "copied: paste it into your shell", failed: "select the line and copy it by hand" },
-    pl: { done: "skopiowano", copied: "skopiowano: wklej w powłoce", failed: "zaznacz linię i skopiuj ją ręcznie" }
-  }[lang];
+  var pl = document.documentElement.lang === "pl";
+  var said = pl
+    ? { done: "Skopiowano", ok: "Polecenie skopiowane: wklej je w powłoce.", failed: "Zaznacz polecenie i skopiuj je ręcznie." }
+    : { done: "Copied", ok: "Command copied: paste it into your shell.", failed: "Select the command and copy it by hand." };
+  var status = document.querySelector("[data-status]");
 
   document.querySelectorAll("button[data-copy]").forEach(function (button) {
-    var label = button.textContent;
-    var status = document.querySelector("[data-status]");
-    var before = status ? status.textContent : "";
+    var label = button.querySelector("[data-label]");
+    var before = label ? label.textContent : "";
     button.addEventListener("click", function () {
       var src = document.getElementById(button.getAttribute("data-copy"));
       var text = src.textContent.replace(/^\$\s*/, "").trim();
       var done = function (ok) {
-        button.textContent = ok ? said.done : label;
-        if (ok) button.setAttribute("data-done", "");
-        if (status) status.textContent = ok ? said.copied : said.failed;
+        if (ok && label) { label.textContent = said.done; button.setAttribute("data-done", ""); }
+        if (status) status.textContent = ok ? said.ok : said.failed;
+        if (!ok) { src.focus && src.focus(); }
         setTimeout(function () {
-          button.textContent = label;
+          if (label) label.textContent = before;
           button.removeAttribute("data-done");
-          if (status) status.textContent = before;
-        }, 2600);
+        }, 2200);
       };
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
@@ -33,19 +31,10 @@
     });
   });
 
-  var links = Array.prototype.slice.call(document.querySelectorAll(".ls ol a"));
-  if (!("IntersectionObserver" in window) || !links.length) return;
-  var byId = {};
-  links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
-  var visible = {};
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
-    var current = null;
-    document.querySelectorAll("section.file").forEach(function (s) {
-      if (!current && visible[s.id]) current = s.id;
-    });
-    links.forEach(function (a) { a.removeAttribute("aria-current"); });
-    if (current && byId[current]) byId[current].setAttribute("aria-current", "true");
-  }, { rootMargin: "-35% 0px -55% 0px" });
-  document.querySelectorAll("section.file").forEach(function (s) { io.observe(s); });
+  var bar = document.querySelector("[data-bar]");
+  if (bar) {
+    var onScroll = function () { bar.classList.toggle("scrolled", window.scrollY > 4); };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+  }
 })();
