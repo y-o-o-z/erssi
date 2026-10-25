@@ -104,10 +104,10 @@
         <article class="tile wide">
           <h3><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>Szyfrowanie end-to-end, wbudowane</h3>
           <p>RPE2E wbudowane i zgodne protokołem z repartee oraz jego skryptami dla WeeChata i irssi: XChaCha20-Poly1305 z osobnym kluczem dla każdego nadawcy, dawanymi tylko osobom, które zaakceptujesz. Wiadomość, której nie da się odczytać, nigdy nie znika. Chroni to, co piszesz, nie to, kto z kim rozmawia, i nie ma forward secrecy.</p>
-          <div class="sample" aria-label="Polecenia">
-            <div><b>/e2e on</b> <span class="a">→</span> szyfruj ten kanał albo query</div>
-            <div><b>/e2e accept zuy</b> <span class="a">→</span> daj swój klucz tylko osobom, które akceptujesz</div>
-          </div>
+          <figure class="crop e2e">
+            <img src="../images/e2e-query.webp" width="1400" height="802" loading="lazy" alt="Prawdziwa rozmowa w erssi między yooz i kofany: pierwszej zaszyfrowanej wiadomości nie da się odczytać i erssi prosi o klucz, kofany zostaje zaakceptowany przez /e2e accept, potem każda linia jest czytelna, a pasek statusu pokazuje E2E.">
+            <figcaption>Prawdziwa wymiana: pierwsza wiadomość prosi o klucz, jedno /e2e accept, potem wszystko jest czytelne.</figcaption>
+          </figure>
         </article>
         <article class="tile tall">
           <h3><svg class="icon" aria-hidden="true"><use href="#i-panels"/></svg>Panele boczne na swoim miejscu</h3>

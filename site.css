@@ -348,3 +348,7 @@ footer { border-top: 1px solid var(--border); padding: 56px 0 40px; color: var(-
 .tile > h3 { display: flex; align-items: center; gap: 10px; }
 .tile > h3 .icon { color: var(--amber-text); width: 22px; height: 22px; }
 .tile.tall .crop.nicks { margin-top: 6px; }
+.crop.e2e { margin: 8px 0 0; }
+.crop.e2e img { display: block; width: 100%; height: auto; border-radius: var(--r-sm); border: 1px solid var(--border); background: #0b0d10; }
+.crop.e2e figcaption { color: var(--faint); font-size: 0.875rem; margin-top: 8px; }
+

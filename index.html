@@ -104,10 +104,10 @@
         <article class="tile wide">
           <h3><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>End-to-end encryption, built in</h3>
           <p>RPE2E natively, wire-compatible with repartee and its WeeChat and irssi scripts: XChaCha20-Poly1305 with per-sender keys, given only to people you accept. A message that cannot be read is never hidden. It protects what you say, not who talks to whom, and it has no forward secrecy.</p>
-          <div class="sample" aria-label="Commands">
-            <div><b>/e2e on</b> <span class="a">→</span> encrypt this channel or query</div>
-            <div><b>/e2e accept zuy</b> <span class="a">→</span> give your key only to people you accept</div>
-          </div>
+          <figure class="crop e2e">
+            <img src="images/e2e-query.webp" width="1400" height="802" loading="lazy" alt="A real erssi query between yooz and kofany: the first encrypted message cannot be read and asks for the key, kofany is accepted with /e2e accept, then every line is read and the status bar says E2E.">
+            <figcaption>A real exchange: the first message asks for the key, one /e2e accept, then everything is read.</figcaption>
+          </figure>
         </article>
         <article class="tile tall">
           <h3><svg class="icon" aria-hidden="true"><use href="#i-panels"/></svg>Side panels that stay put</h3>
