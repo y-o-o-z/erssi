@@ -794,7 +794,9 @@ install_man('docs/irssi.1')
 # Tests run with HOME in the build directory: the default configuration
 # logs to ~/.erssi/logs, and a test must never write into the real home of
 # whoever builds erssi.
-# test_env_vars: the same as a dictionary, for tests that add their own
+# test_env_vars: the same as a dictionary, for tests that add their own.
+# Every shared variable goes into test_env_vars, never test_env.set():
+# the tests built from the dictionary (the e2e parts) would not get it.
 test_env_vars = {'HOME' : meson.build_root() / 'test-home'}
 test_env = environment(test_env_vars)
 # the fe-web fuzz corpus holds leak reproducers: under AddressSanitizer they
