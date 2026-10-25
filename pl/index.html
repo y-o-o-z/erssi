@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 13 i FreeBSD 14, gdzie indziej budowa ze źródeł. Wydanie 2026.10.6.">
+<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 13 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.10.6.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -73,7 +73,7 @@
       <ul class="facts">
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Podpisane wydania</li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Bez roota, instaluje się w katalogu domowym</li>
-        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Binarki dla Debiana 13 i FreeBSD 14</li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Binarki dla Debiana 13 oraz FreeBSD 14 i 15</li>
       </ul>
       <p class="sr" data-status aria-live="polite"></p>
     </div>
@@ -194,7 +194,7 @@ erssi --update</pre>
       </div>
       <div class="platforms">
         <div class="platform">
-          <h3><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Debian 13 i FreeBSD 14, amd64</h3>
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Debian 13, FreeBSD 14 i 15, amd64</h3>
           <p>Gotowa binarka w kilka sekund, instalowana tylko wtedy, gdy podpis SHA256SUMS, suma kontrolna i manifest się zgadzają. Poprzednie wydanie zostaje dla <code>--rollback</code>.</p>
         </div>
         <div class="platform">
@@ -228,6 +228,7 @@ erssi --update</pre>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>poprawny podpis, przestrzeń nazw erssi-release</dd></div>
           <div><dt>debian13-amd64</dt><dd title="ce2330cfbcacf901ab962546168609a0e482bc5c03e6e2e1d0b2b56b680e8e4d">sha256 ce2330cf…b680e8e4d</dd></div>
           <div><dt>freebsd14-amd64</dt><dd title="49161cd13d0de05eac09caae7ebfb39e38886b6d8fc3a1c1be67a01cc696438a">sha256 49161cd1…cc696438a</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="849f403479e30bf18938090ac5d252c70d67fcd5326c0bb6249cc0d0347133c2">sha256 849f4034…0347133c2</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 z 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
