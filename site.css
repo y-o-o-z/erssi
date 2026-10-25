@@ -184,10 +184,6 @@ p { margin: 0; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: 26px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
 }
-.tile .ico {
-  width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
-  background: var(--amber-wash); color: var(--amber-text); margin-bottom: 6px;
-}
 .tile h3 { font-size: 1.1875rem; letter-spacing: -0.015em; }
 .tile p { color: var(--muted); font-size: 0.9875rem; line-height: 1.6; }
 .tile.wide { grid-column: span 2; }
@@ -224,7 +220,6 @@ p { margin: 0; }
 .install-band code { background: rgba(11, 13, 16, 0.08); border-color: rgba(11, 13, 16, 0.18); color: var(--amber-ink); }
 .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; counter-reset: s; }
 .step { background: #0b0d10; color: #e6edf3; border-radius: var(--r); padding: 26px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.step .n { font: 500 0.8125rem/1 var(--mono); color: #f59e0b; }
 .step h3 { font-size: 1.1875rem; }
 .step p { color: #a3adb8; font-size: 0.9875rem; }
 .step pre {
