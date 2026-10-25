@@ -60,7 +60,12 @@
     The certificate and its key are made
     the first time the server starts and kept in ~/.erssi/fe-web-cert.pem
     and ~/.erssi/fe-web-key.pem (mode 0600); a key that other users can
-    read, or that is not yours, is replaced with a new one. A symbolic
+    read, or that is not yours, is replaced with a new one. A new
+    certificate is valid for 825 days; in its last 30 days erssi warns
+    once a day, and the next start of the server makes a new pair. A
+    replaced pair is always said, with the new certificate's SHA-256
+    fingerprint: a web client that pinned the old one must pin that.
+    A symbolic
     link, a directory or anything else that is not a regular file in
     place of either is neither used nor replaced: the server does not
     start and says which file it is; remove it, then /SET fe_web_enabled
