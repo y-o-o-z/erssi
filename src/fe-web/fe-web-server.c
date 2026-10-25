@@ -1278,7 +1278,9 @@ static gboolean tls_wait_step(gpointer data)
 		client->recv_tag = i_input_add(net_sendbuffer_handle(client->handle), I_INPUT_READ,
 		                               (GInputFunction) client_input, client);
 	}
-	tls_wait_tag = 0;
+	/* nobody waits: the timer (if this is it) ends */
+	if (tls_wait_tag != 0 && data == &tls_wait_tag)
+		tls_wait_tag = 0;
 	return FALSE;
 }
 
@@ -1391,7 +1393,12 @@ static void sig_listen(void)
 		if (accept_limit == NULL)
 			accept_limit = fe_web_accept_limit_new();
 		if (shared) {
-			tls_wait = !fe_web_accept_shared_token(accept_limit,
+			/* behind the ones already waiting, oldest first: a
+			   newcomer taking the token that just came would let a
+			   stream of them starve a queued connection until the
+			   pending limit closes it */
+			tls_wait = !g_queue_is_empty(&tls_waiting) ||
+			           !fe_web_accept_shared_token(accept_limit,
 			                                       g_get_monotonic_time());
 		} else if (!fe_web_accept_allow(accept_limit, peer_key,
 		                                login_pacing != NULL &&
@@ -1477,8 +1484,10 @@ static void sig_listen(void)
 	if (tls_wait) {
 		client->recv_tag = -1;
 		g_queue_push_tail(&tls_waiting, client);
-		if (tls_wait_tag == 0)
-			tls_wait_tag = g_timeout_add(FE_WEB_TLS_WAIT_STEP, tls_wait_step, NULL);
+		/* a token that is there already goes out now, to the oldest */
+		if (tls_wait_step(NULL) && tls_wait_tag == 0)
+			tls_wait_tag = g_timeout_add(FE_WEB_TLS_WAIT_STEP, tls_wait_step,
+			                             &tls_wait_tag);
 	} else {
 		client->recv_tag = i_input_add(handle, I_INPUT_READ,
 		                               (GInputFunction) client_input, client);

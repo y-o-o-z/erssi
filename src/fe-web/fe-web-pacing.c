@@ -504,10 +504,10 @@ gboolean fe_web_accept_shared_token(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us)
 	return TRUE;
 }
 
-void fe_web_accept_shared_drain(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us)
+void fe_web_accept_shared_set(FE_WEB_ACCEPT_LIMIT *limit, double tokens, gint64 now_us)
 {
 	shared_refill(limit, now_us);
-	limit->shared_tokens = 0;
+	limit->shared_tokens = tokens;
 }
 
 char *fe_web_peer_key_ip(const IPADDR *ip)

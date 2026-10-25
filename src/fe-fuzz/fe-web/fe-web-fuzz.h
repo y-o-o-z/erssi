@@ -165,6 +165,8 @@ void fe_web_fuzz_iterate(int ms);
 
 /* No handshake token of the shared key left now (fe-web-pacing.h) */
 void fe_web_fuzz_spend_shared_tokens(void);
+/* Exactly this many of them now */
+void fe_web_fuzz_set_shared_tokens(double tokens);
 /* How many connections wait for a handshake token */
 guint fe_web_fuzz_tls_waiting(void);
 

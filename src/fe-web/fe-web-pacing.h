@@ -133,8 +133,8 @@ gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gbool
 /* A TLS handshake of the shared key may start at now_us (monotonic):
  * TRUE takes a token; FALSE, the connection waits (fe-web-server.c) */
 gboolean fe_web_accept_shared_token(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us);
-/* for the tests: no token left at now_us */
-void fe_web_accept_shared_drain(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us);
+/* for the tests: exactly this many tokens at now_us */
+void fe_web_accept_shared_set(FE_WEB_ACCEPT_LIMIT *limit, double tokens, gint64 now_us);
 
 /* The login queue: at most this many clients that did not log in yet */
 #define FE_WEB_MAX_PENDING 8 /* moved from fe-web-server.c */
