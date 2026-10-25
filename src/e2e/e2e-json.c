@@ -642,9 +642,17 @@ gboolean e2e_json_truthy(const E2E_JSON *node)
 	}
 }
 
+static guint64 changes;
+
+guint64 e2e_json_changes(void)
+{
+	return changes;
+}
+
 void e2e_json_set(E2E_JSON *obj, const char *key, E2E_JSON *value)
 {
 	g_return_if_fail(obj != NULL && obj->type == E2E_JSON_OBJECT);
+	changes++;
 	g_hash_table_replace(obj->object, key_new(key), value);
 }
 
@@ -662,6 +670,7 @@ gboolean e2e_json_remove(E2E_JSON *obj, const char *key)
 {
 	if (obj == NULL || obj->type != E2E_JSON_OBJECT)
 		return FALSE;
+	changes++;
 	return g_hash_table_remove(obj->object, key);
 }
 
@@ -705,5 +714,14 @@ guint e2e_json_size(const E2E_JSON *node)
 void e2e_json_array_add(E2E_JSON *array, E2E_JSON *value)
 {
 	g_return_if_fail(array != NULL && array->type == E2E_JSON_ARRAY);
+	changes++;
 	g_ptr_array_add(array->array, value);
+}
+
+void e2e_json_array_remove(E2E_JSON *array, guint index)
+{
+	g_return_if_fail(array != NULL && array->type == E2E_JSON_ARRAY &&
+	                 index < array->array->len);
+	changes++;
+	g_ptr_array_remove_index(array->array, index);
 }

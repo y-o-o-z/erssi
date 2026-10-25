@@ -51,7 +51,9 @@
  nick becomes ours, before it read our MONITOR -) are not printed; the
  user's own MONITOR targets (seen in what is sent) still are, and our
  MONITOR - never removes one of them. The user's MONITOR C, or MONITOR -
- of the nick, empties our entry too: it is sent again right after.
+ of the nick, empties our entry too: it is sent again right after. Only
+ irssi's own print of a reply is changed: a script that handles the
+ MONITOR numerics gets them whole, as without keepnick.
 
  A manual /NICK away from the kept nick (server->last_nick, set by /NICK)
  pauses keeping on that network until the nick is ours again or /KEEPNICK
@@ -107,6 +109,7 @@ static GSList *keepnick_scripts; /* PERL_SCRIPT_REC of the script keepnick */
 static gboolean script_announced; /* "the script is loaded" was said */
 static IRC_SERVER_REC *regaining;
 static gboolean sending_own;	/* our own MONITOR line is being sent */
+static const char *own_full_reply; /* the 734 being dispatched is about our nick */
 static guint update_tag, script_tag;
 static int check_time;
 
@@ -892,18 +895,31 @@ static gboolean monitor_ours(KEEPNICK_SERVER_REC *st, const char *target)
 	       nickcmp(st->server, target, st->unmonitored) == 0;
 }
 
-/* 730/731: our targets are taken out of the list (`found' says if the
-   monitored nick was in it), the rest (the user's own targets too) is
-   printed as an unknown numeric would be */
-static void monitor_reply(IRC_SERVER_REC *server, const char *numeric, const char *data,
-                          const char *nick, const char *address, gboolean *found)
+/* A MONITOR reply line ("730 <me> :<targets>", 731, 734) of server:
+   its numeric (730, 731 or 734), 0 for any other line; *data is set to
+   what follows the numeric */
+static int monitor_numeric(const char *line, const char **data)
 {
-	KEEPNICK_SERVER_REC *st = state_get(server, FALSE);
-	char *params, *me, *list, **targets, **tmp, *line;
+	int numeric;
+
+	if (strncmp(line, "73", 2) != 0 || (line[2] != '0' && line[2] != '1' && line[2] != '4') ||
+	    (line[3] != ' ' && line[3] != '\0'))
+		return 0;
+	numeric = 730 + (line[2] - '0');
+	for (line += 3; *line == ' '; line++)
+		;
+	*data = line;
+	return numeric;
+}
+
+/* 730/731: the list without our targets (the user's own ones stay);
+   `found' says if the monitored nick was in it */
+static char *monitor_rest(KEEPNICK_SERVER_REC *st, const char *list, gboolean *found)
+{
+	char **targets, **tmp;
 	GString *rest;
 
 	*found = FALSE;
-	params = event_get_params(data, 2, &me, &list);
 	rest = g_string_new(NULL);
 	targets = g_strsplit(list, ",", -1);
 	for (tmp = targets; *tmp != NULL; tmp++) {
@@ -913,71 +929,117 @@ static void monitor_reply(IRC_SERVER_REC *server, const char *numeric, const cha
 			*bang = '\0';
 		/* the monitored nick counts also when the user monitors it,
 		   it is printed then */
-		if (st != NULL && st->monitored != NULL && nickcmp(server, name, st->monitored) == 0)
+		if (st->monitored != NULL && nickcmp(st->server, name, st->monitored) == 0)
 			*found = TRUE;
-		if ((st == NULL || !monitor_ours(st, name)) && **tmp != '\0')
+		if (!monitor_ours(st, name) && **tmp != '\0')
 			g_string_append_printf(rest, "%s%s", rest->len > 0 ? "," : "", *tmp);
 		g_free(name);
 	}
 	g_strfreev(targets);
+	return g_string_free(rest, FALSE);
+}
 
-	if (rest->len > 0) {
-		line = g_strdup_printf("%s %s :%s", numeric, me, rest->str);
-		signal_emit("default event", 4, server, line, nick, address);
-		g_free(line);
-	}
-	g_string_free(rest, TRUE);
+/* 734 (the list is full) for the nick we asked to monitor */
+static gboolean monitor_full_ours(KEEPNICK_SERVER_REC *st, const char *data)
+{
+	char *params, *targets, **list, **tmp;
+	gboolean ours = FALSE;
+
+	if (st->monitored == NULL)
+		return FALSE;
+	params = event_get_params(data, 3, NULL, NULL, &targets);
+	list = g_strsplit(targets, ",", -1);
+	for (tmp = list; *tmp != NULL && !ours; tmp++)
+		ours = nickcmp(st->server, *tmp, st->monitored) == 0;
+	g_strfreev(list);
 	g_free(params);
+	return ours;
 }
 
-static void sig_event_730(IRC_SERVER_REC *server, const char *data, const char *nick,
-                          const char *address)
+/* The MONITOR replies are read here, before the line is dispatched, and
+   keepnick binds no "event 730/731/734": irssi prints a numeric no one
+   handles through "default event", and a script that handles one (a
+   MONITOR notify script) prints it itself. Bound to the event, keepnick
+   made irssi think it was handled and printed it again on its own, so a
+   script's line came twice, on every server even without a kept nick. */
+static void sig_server_event(IRC_SERVER_REC *server, const char *line, const char *nick,
+                             const char *address)
 {
-	KEEPNICK_SERVER_REC *st = state_get(server, FALSE);
+	KEEPNICK_SERVER_REC *st;
+	const char *data;
+	char *params, *list, *rest;
 	gboolean found;
+	int numeric;
 
-	monitor_reply(server, "730", data, nick, address, &found);
-	if (found)
+	/* a stale one, when a handler stopped the last line */
+	own_full_reply = NULL;
+	if (!IS_IRC_SERVER(server) || (st = state_get(server, FALSE)) == NULL ||
+	    (numeric = monitor_numeric(line, &data)) == 0)
+		return;
+	if (numeric == 734) {
+		if (!monitor_full_ours(st, data))
+			return;
+		/* no room in the list: ISON from now on */
+		g_free(st->monitored);
+		st->monitored = NULL;
+		st->monitor_failed = TRUE;
+		/* not printed: sig_default_event() knows the line (the state
+		   cannot tell any more, the nick is no longer monitored) */
+		own_full_reply = line;
+		keepnick_update(server, TRUE);
+		return;
+	}
+	params = event_get_params(data, 2, NULL, &list);
+	rest = monitor_rest(st, list, &found);
+	g_free(rest);
+	g_free(params);
+	if (!found)
+		return;
+	if (numeric == 730) {
 		st->offline = FALSE;
-}
-
-static void sig_event_731(IRC_SERVER_REC *server, const char *data, const char *nick,
-                          const char *address)
-{
-	KEEPNICK_SERVER_REC *st = state_get(server, FALSE);
-	gboolean found;
-
-	monitor_reply(server, "731", data, nick, address, &found);
-	if (found) {
+	} else {
 		st->offline = TRUE;
 		attempt(server);
 	}
 }
 
-static void sig_event_734(IRC_SERVER_REC *server, const char *data, const char *nick,
-                          const char *address)
+/* the line has been dispatched */
+static void sig_server_event_done(void)
 {
-	KEEPNICK_SERVER_REC *st = state_get(server, FALSE);
-	char *params, *targets, **list, **tmp, *line;
-	gboolean ours = FALSE;
+	own_full_reply = NULL;
+}
 
-	params = event_get_params(data, 3, NULL, NULL, &targets);
-	list = g_strsplit(targets, ",", -1);
-	for (tmp = list; *tmp != NULL && !ours; tmp++)
-		ours = st != NULL && st->monitored != NULL && nickcmp(server, *tmp, st->monitored) == 0;
-	g_strfreev(list);
-	g_free(params);
-	if (!ours) {
-		line = g_strconcat("734 ", data, NULL);
-		signal_emit("default event", 4, server, line, nick, address);
-		g_free(line);
+/* irssi prints a reply no handler took: the targets that are ours are
+   taken out (nothing is printed when none is left). Replies a script
+   handles never get here: what it does with them is its own. */
+static void sig_default_event(IRC_SERVER_REC *server, const char *line, const char *nick,
+                              const char *address)
+{
+	KEEPNICK_SERVER_REC *st;
+	const char *data;
+	char *params, *me, *list, *rest, *changed;
+	gboolean found;
+	int numeric;
+
+	if (!IS_IRC_SERVER(server) || (st = state_get(server, FALSE)) == NULL ||
+	    (numeric = monitor_numeric(line, &data)) == 0)
+		return;
+	if (numeric == 734) {
+		if (line == own_full_reply)
+			signal_stop();
 		return;
 	}
-	/* no room in the list: ISON from now on */
-	g_free(st->monitored);
-	st->monitored = NULL;
-	st->monitor_failed = TRUE;
-	keepnick_update(server, TRUE);
+	params = event_get_params(data, 2, &me, &list);
+	rest = monitor_rest(st, list, &found);
+	if (*rest == '\0') {
+		signal_stop();
+	} else if (strcmp(rest, list) != 0) {
+		changed = g_strdup_printf("%d %s :%s", numeric, me, rest);
+		signal_continue(4, server, changed, nick, address);
+		g_free(changed);
+	}
+	g_free(rest);
+	g_free(params);
 }
 
 /* ---- /UPGRADE ---- */
@@ -1152,9 +1214,9 @@ void irc_keepnick_init(void)
 	signal_add("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
 	signal_add("event nick", (SIGNAL_FUNC) sig_event_nick);
 	signal_add("event quit", (SIGNAL_FUNC) sig_event_quit);
-	signal_add("event 730", (SIGNAL_FUNC) sig_event_730);
-	signal_add("event 731", (SIGNAL_FUNC) sig_event_731);
-	signal_add("event 734", (SIGNAL_FUNC) sig_event_734);
+	signal_add_first("server event", (SIGNAL_FUNC) sig_server_event);
+	signal_add_last("server event", (SIGNAL_FUNC) sig_server_event_done);
+	signal_add_first("default event", (SIGNAL_FUNC) sig_default_event);
 	signal_add("redir keepnick builtin ison", (SIGNAL_FUNC) sig_redir_ison);
 	signal_add("redir keepnick builtin nick", (SIGNAL_FUNC) sig_redir_nick);
 	signal_add("redir keepnick builtin busy", (SIGNAL_FUNC) sig_redir_busy);
@@ -1188,9 +1250,9 @@ void irc_keepnick_deinit(void)
 	signal_remove("server outgoing modify", (SIGNAL_FUNC) sig_server_outgoing);
 	signal_remove("event nick", (SIGNAL_FUNC) sig_event_nick);
 	signal_remove("event quit", (SIGNAL_FUNC) sig_event_quit);
-	signal_remove("event 730", (SIGNAL_FUNC) sig_event_730);
-	signal_remove("event 731", (SIGNAL_FUNC) sig_event_731);
-	signal_remove("event 734", (SIGNAL_FUNC) sig_event_734);
+	signal_remove("server event", (SIGNAL_FUNC) sig_server_event);
+	signal_remove("server event", (SIGNAL_FUNC) sig_server_event_done);
+	signal_remove("default event", (SIGNAL_FUNC) sig_default_event);
 	signal_remove("redir keepnick builtin ison", (SIGNAL_FUNC) sig_redir_ison);
 	signal_remove("redir keepnick builtin nick", (SIGNAL_FUNC) sig_redir_nick);
 	signal_remove("redir keepnick builtin busy", (SIGNAL_FUNC) sig_redir_busy);

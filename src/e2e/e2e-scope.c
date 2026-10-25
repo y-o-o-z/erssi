@@ -660,14 +660,23 @@ char *e2e_ctx_display(const char *ctx)
 
 /* ---- legacy rows ---- */
 
+const char *e2e_row_key_bar(const char *key)
+{
+	const char *bar = strchr(key, '|'), *at = strchr(key, '@'), *after;
+
+	if (bar != NULL && at != NULL && bar < at && (after = strchr(at, '|')) != NULL)
+		return after;
+	return bar;
+}
+
 static gboolean is_object(const E2E_JSON *node)
 {
 	return node != NULL && node->type == E2E_JSON_OBJECT;
 }
 
 /* key is the "<handle>|<ctx>" key of row: the handle is the row's
-   "handle" member when it has one, else everything before the first '|'
-   (a handle holds no '|'; the convention of /e2e list and the export) */
+   "handle" member when it has one, else everything before
+   e2e_row_key_bar() (the convention of /e2e list and the export) */
 static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
 {
 	const char *handle = e2e_json_get_string(row, "handle");
@@ -678,14 +687,30 @@ static gboolean key_ends_with_ctx(const char *key, const E2E_JSON *row, const ch
 		hl = strlen(handle);
 		return strncmp(key, handle, hl) == 0 && key[hl] == '|' && strcmp(key + hl + 1, ctx) == 0;
 	}
-	bar = strchr(key, '|');
+	bar = e2e_row_key_bar(key);
 	return bar != NULL && strcmp(bar + 1, ctx) == 0;
+}
+
+/* s is one handle ident@host, by the rule of e2e_row_key_bar(): an
+   ident may hold '|', never '@', so no '|' follows the first '@' (a
+   handle without '@' holds no '|'). "|@" is taken as the start of a
+   query context ("@<handle>"), not as an ident ending in '|' */
+static gboolean whole_handle(const char *s)
+{
+	const char *at = strchr(s, '@');
+
+	return strchr(at != NULL ? at : s, '|') == NULL && strstr(s, "|@") == NULL;
 }
 
 /* key is the "<ctx>|<handle>" key of row, or "<ctx>" alone (a request
    sent without a handle): the handle is the row's "handle" member when it
    has one; without one the row's "channel" member names the context, and
-   only when it has neither, everything after the last '|' is the handle */
+   only when it has neither, everything after the last '|' is the handle.
+   Not whole_handle() here: "#a|b|u@h" may be "#a" with the handle b|u@h
+   or "#a|b" with u@h - channel names hold '|' as idents may - and such a
+   row taken for "#a" would block or move "#a" for a row of "#a|b". The
+   rows the module writes have the members; an old one whose handle's
+   ident holds '|' is left where it is (it is never used for "#a") */
 static gboolean key_starts_with_ctx(const char *key, const E2E_JSON *row, const char *ctx)
 {
 	const char *handle = e2e_json_get_string(row, "handle");
@@ -950,7 +975,7 @@ static guint move_trust_changes(E2E_JSON *kr, const char *wire, const char *scop
 		}
 		*found = TRUE;
 		if (dup) {
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 			continue;
 		}
 		e2e_json_set_string(row, "channel", scoped);
@@ -1020,8 +1045,9 @@ static void own_ctxs_of(const E2E_JSON *kr, const char *peer, GHashTable *out)
 		    strchr(k + pl + 1, E2E_SCOPE_SEP) != NULL)
 			continue;
 		/* the peer's own row: its "handle" member says so; without one
-		   the rest must be one "@<own>" ("bob@h|@z|@me" is "bob@h|@z"'s) */
-		if (handle != NULL ? strcmp(handle, peer) == 0 : strchr(k + pl + 1, '|') == NULL)
+		   the rest must be one "@<own>", by whole_handle() ("bob@h|@z|@me"
+		   is "bob@h|@z"'s; "bob@h|@a|b@me" is bob@h's, own a|b@me) */
+		if (handle != NULL ? strcmp(handle, peer) == 0 : whole_handle(k + pl + 2))
 			g_hash_table_add(out, g_strdup(k + pl + 1));
 	}
 	g_ptr_array_unref(keys);

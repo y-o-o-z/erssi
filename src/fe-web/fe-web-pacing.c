@@ -373,6 +373,112 @@ static gboolean ip_v4(const IPADDR *ip, struct in_addr *v4)
 	return ip_mapped_v4(ip, v4);
 }
 
+/* ---- new connections per peer ---- */
+
+typedef struct {
+	time_t start;	/* of the window */
+	guint count;	/* connections in it */
+} ACCEPT_COUNT;
+
+struct _FE_WEB_ACCEPT_LIMIT {
+	GHashTable *peers;	/* peer -> ACCEPT_COUNT */
+	ACCEPT_COUNT shared;	/* the shared or unknown key */
+	ACCEPT_COUNT all;	/* every connection counted here */
+};
+
+FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void)
+{
+	FE_WEB_ACCEPT_LIMIT *limit = g_new0(FE_WEB_ACCEPT_LIMIT, 1);
+
+	limit->peers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	return limit;
+}
+
+void fe_web_accept_limit_free(FE_WEB_ACCEPT_LIMIT *limit)
+{
+	if (limit == NULL)
+		return;
+	g_hash_table_destroy(limit->peers);
+	g_free(limit);
+}
+
+static gboolean accept_window_over(const ACCEPT_COUNT *c, time_t now, int window)
+{
+	return now < c->start || now - c->start >= window;
+}
+
+/* the count of c in its window of `window' seconds is below burst */
+static gboolean accept_room(ACCEPT_COUNT *c, time_t now, guint burst, int window)
+{
+	if (accept_window_over(c, now, window)) {
+		c->start = now;
+		c->count = 0;
+	}
+	return c->count < burst;
+}
+
+/* the table is full: what is over goes, else the peer counted longest
+ * ago among those still under the limit - a peer at its limit is never
+ * forgotten, or an attacker cycling through more addresses than the
+ * table holds would find each of them fresh again. FALSE: every peer is
+ * at its limit, the newcomer finds no room (the ceiling of all
+ * connections bounds what that costs). */
+static gboolean accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
+{
+	GHashTableIter iter;
+	gpointer key, value, oldest = NULL;
+	time_t oldest_start = 0;
+
+	g_hash_table_iter_init(&iter, limit->peers);
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		const ACCEPT_COUNT *c = value;
+
+		if (accept_window_over(c, now, FE_WEB_ACCEPT_WINDOW))
+			g_hash_table_iter_remove(&iter);
+		else if (c->count < FE_WEB_ACCEPT_BURST &&
+		         (oldest == NULL || c->start < oldest_start)) {
+			oldest = key;
+			oldest_start = c->start;
+		}
+	}
+	if (g_hash_table_size(limit->peers) < FE_WEB_ACCEPT_MAX_PEERS)
+		return TRUE;
+	if (oldest == NULL)
+		return FALSE;
+	g_hash_table_remove(limit->peers, oldest);
+	return TRUE;
+}
+
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gboolean shared,
+                             time_t now)
+{
+	ACCEPT_COUNT *c;
+
+	if (!accept_room(&limit->all, now, FE_WEB_ACCEPT_ALL_PER_SEC, 1))
+		return FALSE;
+	if (shared) {
+		if (!accept_room(&limit->shared, now, FE_WEB_ACCEPT_SHARED_PER_SEC, 1))
+			return FALSE;
+		limit->shared.count++;
+		limit->all.count++;
+		return TRUE;
+	}
+	c = g_hash_table_lookup(limit->peers, peer);
+	if (c == NULL) {
+		if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS &&
+		    !accept_make_room(limit, now))
+			return FALSE;
+		c = g_new0(ACCEPT_COUNT, 1);
+		c->start = now;
+		g_hash_table_insert(limit->peers, g_strdup(peer), c);
+	}
+	if (!accept_room(c, now, FE_WEB_ACCEPT_BURST, FE_WEB_ACCEPT_WINDOW))
+		return FALSE;
+	c->count++;
+	limit->all.count++;
+	return TRUE;
+}
+
 char *fe_web_peer_key_ip(const IPADDR *ip)
 {
 	char host[INET6_ADDRSTRLEN];
@@ -1250,6 +1356,28 @@ static int tcp_peer_diag_uid(const TCP_PEER *c, uid_t unmapped, time_t now, uid_
 }
 #endif
 
+gboolean fe_web_tcp_peer_alive(int fd)
+{
+	struct sockaddr_storage peer;
+	socklen_t len = sizeof(peer);
+
+	/* reset (Linux still hands such a connection to accept()) */
+	if (getpeername(fd, (struct sockaddr *) &peer, &len) < 0)
+		return FALSE;
+#ifdef __linux__
+	{
+		struct tcp_info info;
+		socklen_t ilen = sizeof(info);
+
+		/* closed by the peer already (CLOSE_WAIT after its FIN) */
+		if (getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &ilen) == 0 &&
+		    info.tcpi_state != TCP_ESTABLISHED)
+			return FALSE;
+	}
+#endif
+	return TRUE;
+}
+
 int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *uid)
 {
 #ifdef __linux__
@@ -1281,9 +1409,12 @@ int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *u
 		return 0;
 	return tcp_peer_proc_uid(&c, "/proc/net", unmapped, uid);
 #else
-	/* The BSDs and macOS have no /proc/net; their socket tables
-	 * (net.inet.tcp.pcblist) are for root only, so the peer stays its
-	 * address */
+	/* The BSDs and macOS have no /proc/net and no sock_diag, so the peer
+	 * stays its address: every local user is the one "ip:loopback", the
+	 * owner too (said at startup, and in /HELP FE_WEB). Their socket
+	 * tables (net.inet.tcp.pcblist, whose entries carry the owner's uid,
+	 * readable by others where security.bsd.see_other_uids is 1) could
+	 * tell; reading them is not done here, it is untested there. */
 	(void) fd;
 	(void) budget;
 	(void) now;

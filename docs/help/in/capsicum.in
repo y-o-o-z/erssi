@@ -38,7 +38,11 @@
           config,
         - /SEARCH is not available,
         - servers can be reached only on the ports from
-          capsicum_port_min to capsicum_port_max.
+          capsicum_port_min to capsicum_port_max,
+        - erssi waits while the helper looks up a server name: with a
+          slow or broken DNS server it does not react (nor answer the
+          pings of its other connections) until the lookup ends. A
+          server given by its IP address needs no lookup.
 
     The default config writes autolog files to ~/.erssi/logs and the
     Mentions log to ~/.erssi/logs/mentions.log. With the default

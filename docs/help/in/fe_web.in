@@ -46,19 +46,37 @@
             NexusIRC sends it. A URL can end up in the logs of proxies, so
             the header is the better way.
 
-    Connections always use TLS (wss://) with a self-signed certificate,
-    and the messages are additionally encrypted with AES-256-GCM using a
-    key derived from fe_web_password. The certificate and its key are made
+    Connections always use TLS (wss://) with a self-signed certificate.
+    TLS is what protects them: have the web client pin that certificate,
+    and do not let anything you do not trust end the TLS connection in
+    between. The messages are also encrypted with AES-256-GCM, with a key
+    derived from fe_web_password, but that layer protects nothing TLS
+    does not: the client sends the password inside the same TLS
+    connection, so whoever can read it (a man in the middle of a client
+    that does not check the certificate, a TLS proxy or tunnel) has the
+    key too; the key is the same for every session and both directions,
+    and messages from a client are accepted without it as well.
+
+    The certificate and its key are made
     the first time the server starts and kept in ~/.erssi/fe-web-cert.pem
     and ~/.erssi/fe-web-key.pem (mode 0600); a key that other users can
-    read, or that is not yours, is replaced with a new one. A symbolic
+    read, or that is not yours, is replaced with a new one. A new
+    certificate is valid for 825 days; in its last 30 days erssi warns
+    once a day, and the next start of the server makes a new pair. A
+    replaced pair is always said, with the new certificate's SHA-256
+    fingerprint: a web client that pinned the old one must pin that.
+    A symbolic
     link, a directory or anything else that is not a regular file in
     place of either is neither used nor replaced: the server does not
     start and says which file it is; remove it, then /SET fe_web_enabled
     ON again (or restart). Nothing is written while fe_web_enabled is OFF.
 
     Keep fe_web_bind on 127.0.0.1 and put the web client behind a TLS proxy
-    or tunnel if it has to be reached from elsewhere.
+    or tunnel if it has to be reached from elsewhere. Every client behind
+    it then comes from the proxy's uid: a proxy running as you is never
+    limited or paced (it must sign its users in itself), one running as
+    another user makes all its clients one peer, with one count of new
+    connections and wrong passwords for all of them.
 
     On a shared shell box every local user can connect to a port on
     127.0.0.1. A Unix socket can be reached by you alone: the socket file
@@ -66,6 +84,23 @@
     processes of other users are refused as well. TLS and the password
     work on it exactly as on TCP; the web client connects to the socket
     path and checks the certificate for the name localhost.
+
+    A peer may open at most 8 new connections in 10 seconds, and all
+    peers together at most 200 a second: each costs erssi a TLS
+    handshake before any password is read, and those beyond are closed
+    before it. A connection its peer already reset or closed is closed
+    at once. After 5 wrong passwords from one peer, that peer gets one
+    check every 2 seconds. On the socket, and on Linux also on a loopback
+    port, a peer is a user whose uid erssi can find; your own connections
+    are never limited or slowed down then. When the uid cannot be found -
+    always on the BSDs and macOS, on Linux when the kernel does not tell
+    and the lookups of the moment are used up - every local user, you as
+    well, is the one peer "loopback". Its new connections are held only
+    to 50 a second, so another user cannot keep yours out with a few,
+    but a user who keeps up that rate costs erssi up to 50 handshakes a
+    second and closes your pending connections; their wrong passwords
+    slow down your logins. There fe_web_socket is the only setting that
+    keeps the users of a shared box apart.
 
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not

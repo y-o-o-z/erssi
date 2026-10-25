@@ -77,6 +77,11 @@ static char *find_conversion(const SERVER_REC *server, const char *target)
 	return conv;
 }
 
+const char *recode_find_charset(const SERVER_REC *server, const char *target)
+{
+	return find_conversion(server, target);
+}
+
 static int str_is_ascii(const char *str)
 {
 	int i;

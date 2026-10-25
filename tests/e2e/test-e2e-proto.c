@@ -7831,125 +7831,206 @@ static void test_request_expiry(void)
 	peer_free(&b);
 }
 
+/* one sender gets E2E_HANDSHAKE_SENDER_MAX KEYREQs per 10 s whatever
+ * context it names (each context had its own allowance, so a stranger
+ * naming a new one in every NOTICE made the keyring be read for each);
+ * its KEYRSPs and REKEYs - a burst of answers across many shared
+ * channels - count apart, with more room; other senders are not held
+ * back */
+static void test_handshake_sender_budget(void)
+{
+	GHashTable *budgets = e2e_stamps_new();
+	int i;
+
+	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX; i++)
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
+	/* a reply burst over more channels than the KEYREQ budget */
+	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX_REPLY; i++)
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYRSP, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_KEYRSP, "net\x1fx@y"));
+	for (i = 0; i < E2E_HANDSHAKE_SENDER_MAX_REPLY; i++)
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_REKEY, "net\x1fx@y"));
+	g_assert_false(e2e_handshake_sender_allow(budgets, E2E_HS_REKEY, "net\x1fx@y"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fz@y"));
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "other\x1fx@y"));
+	fake_now += E2E_KEYREQ_INBOUND_MIN_INTERVAL;
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1fx@y"));
+	/* many senders: the old ones go */
+	for (i = 0; i < 1000; i++) {
+		char *who = g_strdup_printf("net\x1fu%d@h", i);
+
+		g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, who));
+		g_free(who);
+	}
+	fake_now += E2E_KEYREQ_INBOUND_MIN_INTERVAL;
+	g_assert_true(e2e_handshake_sender_allow(budgets, E2E_HS_KEYREQ, "net\x1flast@h"));
+	g_assert_cmpuint(g_hash_table_size(budgets), <=, 2);
+	g_hash_table_destroy(budgets);
+}
+
+/* an ident may hold '|' (some servers let it through): a row key
+   "a|b@h|#c" is the handle a|b@h in #c, not the handle "a" in the query
+   "b@h|#c" - which made a real acceptance count for nothing and the row
+   look damaged (a key rotation and a misleading warning) */
+static void test_pipe_in_ident(void)
+{
+	E2E_JSON *kr = e2e_keyring_new(), *row = e2e_json_new(E2E_JSON_OBJECT);
+	GPtrArray *found;
+
+	g_assert_cmpstr(e2e_row_key_bar("a|b@h|#c"), ==, "|#c");
+	g_assert_cmpstr(e2e_row_key_bar("u@h|#c|d"), ==, "|#c|d");
+	g_assert_cmpstr(e2e_row_key_bar("u@h|#c@d"), ==, "|#c@d");
+	g_assert_cmpstr(e2e_row_key_bar("a|b@h|@a|b@h"), ==, "|@a|b@h");
+	g_assert_cmpstr(e2e_row_key_bar("host|@a@b"), ==, "|@a@b");
+	g_assert_null(e2e_row_key_bar("a@b"));
+
+	e2e_json_set_string(row, "fp", "00ff");
+	e2e_json_set(e2e_json_object_member(kr, "accepted"), "a|b@h|#c", row);
+	e2e_json_set(e2e_json_object_member(kr, "accepted"), "a|b@h|@a|b@h", e2e_json_copy(row));
+	g_assert_true(e2e_fingerprint_accepted(kr, "00ff"));
+	found = e2e_rotate_for_damaged(kr, NULL);
+	g_assert_cmpuint(found->len, ==, 0);
+	g_ptr_array_unref(found);
+	g_assert_null(e2e_json_get(row, E2E_DAMAGED_MEMBER));
+	e2e_json_free(kr);
+}
+
+/* E2E_TEST_PART (meson.build sets it) runs a part of the tests in this
+   process: "proto" the /e2e/proto/ ones, "other" the rest; unset, all of
+   them. About 17 s under ASan in one process ran into meson's time limit
+   on a loaded runner; each half is its own test there. */
+static void add_func(const char *path, GTestFunc func)
+{
+	const char *part = g_getenv("E2E_TEST_PART");
+	gboolean proto = g_str_has_prefix(path, "/e2e/proto/");
+
+	if (part == NULL || *part == '\0' ||
+	    (strcmp(part, "proto") == 0 && proto) || (strcmp(part, "other") == 0 && !proto))
+		g_test_add_func(path, func);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
 	e2e_now = fixed_now;
 
-	g_test_add_func("/e2e/proto/identity", test_identity);
-	g_test_add_func("/e2e/proto/handshake-normal", test_handshake_normal_mode);
-	g_test_add_func("/e2e/proto/handshake-modes", test_handshake_modes);
-	g_test_add_func("/e2e/proto/trust-changes", test_trust_changes);
-	g_test_add_func("/e2e/proto/hidden-messages", test_hidden_messages);
-	g_test_add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
-	g_test_add_func("/e2e/proto/reverify", test_reverify);
-	g_test_add_func("/e2e/proto/reverify-move-onto-rows", test_reverify_move_onto_rows);
-	g_test_add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
-	g_test_add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
-	g_test_add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
-	g_test_add_func("/e2e/proto/replay", test_replay);
-	g_test_add_func("/e2e/proto/replay-flood", test_replay_flood);
-	g_test_add_func("/e2e/proto/replay-partitions", test_replay_partitions);
-	g_test_add_func("/e2e/proto/replay-file", test_replay_file);
-	g_test_add_func("/e2e/proto/dm-view", test_dm_view);
-	g_test_add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
-	g_test_add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
-	g_test_add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
-	g_test_add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
-	g_test_add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
-	g_test_add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
-	g_test_add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
-	g_test_add_func("/e2e/proto/inbound-budget", test_inbound_budget);
-	g_test_add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
-	g_test_add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
-	g_test_add_func("/e2e/proto/keyrsp-and-rotation", test_keyrsp_and_rotation);
-	g_test_add_func("/e2e/proto/request-expiry", test_request_expiry);
-	g_test_add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
-	g_test_add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
-	g_test_add_func("/e2e/proto/gate", test_gate);
-	g_test_add_func("/e2e/proto/gate-dry", test_gate_dry);
-	g_test_add_func("/e2e/proto/accept-foreign-dm", test_accept_foreign_dm);
-	g_test_add_func("/e2e/proto/damaged-dm-rows", test_damaged_dm_rows);
-	g_test_add_func("/e2e/proto/damaged-dm-auto-rotation", test_damaged_dm_auto_rotation);
-	g_test_add_func("/e2e/proto/incoming", test_incoming);
-	g_test_add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
-	g_test_add_func("/e2e/proto/export-import", test_export_import);
-	g_test_add_func("/e2e/proto/keyrsp-is-no-acceptance", test_keyrsp_is_no_acceptance);
-	g_test_add_func("/e2e/proto/rekey-needs-session", test_rekey_needs_session);
-	g_test_add_func("/e2e/proto/multiline-buffer", test_multiline_buffer);
-	g_test_add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
-	g_test_add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
-	g_test_add_func("/e2e/proto/control-characters", test_control_characters);
-	g_test_add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
-	g_test_add_func("/e2e/proto/rekey-replay", test_rekey_replay);
-	g_test_add_func("/e2e/proto/limits", test_limits);
-	g_test_add_func("/e2e/proto/robustness", test_robustness);
-	g_test_add_func("/e2e/proto/unresolved-nick", test_unresolved_nick);
-	g_test_add_func("/e2e/proto/rekey-replay-after-many", test_rekey_replay_after_many);
-	g_test_add_func("/e2e/proto/growth-from-wires", test_growth_from_wires);
-	g_test_add_func("/e2e/proto/rekey-to-accepted-only", test_rekey_to_accepted_only);
-	g_test_add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
-	g_test_add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
-	g_test_add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
-	g_test_add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
-	g_test_add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);
-	g_test_add_func("/e2e/scope/inbound-keyreq-stored-scoped", test_scope_inbound_keyreq);
-	g_test_add_func("/e2e/scope/dm-sender-rule-bare", test_scope_dm_sender_rule);
-	g_test_add_func("/e2e/scope/loops-on-net", test_scope_loops_on_net);
-	g_test_add_func("/e2e/scope/rekey-dm-config", test_scope_rekey_dm_config);
-	g_test_add_func("/e2e/scope/prune-per-network", test_scope_prune_per_network);
-	g_test_add_func("/e2e/scope/prune-confused-handle", test_scope_prune_confused_handle);
-	g_test_add_func("/e2e/scope/prune-global-cap", test_scope_prune_global_cap);
-	g_test_add_func("/e2e/scope/prune-handle-member", test_scope_prune_handle_member);
-	g_test_add_func("/e2e/scope/prune-global-fair", test_scope_prune_global_fair);
-	g_test_add_func("/e2e/legacy/import-keeps-members", test_legacy_import_keeps_members);
-	g_test_add_func("/e2e/legacy/dm-sessions-follow", test_legacy_dm_sessions_follow);
-	g_test_add_func("/e2e/legacy/mixed-own-rows", test_legacy_mixed_own_rows);
-	g_test_add_func("/e2e/legacy/mixed-keyrsp", test_legacy_mixed_keyrsp);
-	g_test_add_func("/e2e/legacy/mixed-alt-reading", test_legacy_mixed_alt_reading);
-	g_test_add_func("/e2e/legacy/pending-notice-key", test_legacy_pending_notice_key);
-	g_test_add_func("/e2e/legacy/mixed-keyreq", test_legacy_mixed_keyreq);
-	g_test_add_func("/e2e/regress/n1-flood-around-b", test_regress_flood_around_b);
-	g_test_add_func("/e2e/regress/n1-fair-share", test_regress_fair_share);
-	g_test_add_func("/e2e/regress/n2-export-import", test_regress_export_import);
-	g_test_add_func("/e2e/regress/n3a-second-network", test_regress_second_network);
-	g_test_add_func("/e2e/regress/n3b-inbound-never-adopts", test_regress_inbound_never_adopts);
-	g_test_add_func("/e2e/regress/n3c-replay-across-adoption", test_regress_replay_across_adoption);
-	g_test_add_func("/e2e/regress/cross-network-stranger", test_regress_cross_network_stranger);
-	g_test_add_func("/e2e/legacy/dm-reciprocal-in-place", test_legacy_dm_reciprocal_in_place);
-	g_test_add_func("/e2e/legacy/stranger-does-not-adopt", test_legacy_stranger_does_not_adopt);
-	g_test_add_func("/e2e/legacy/adopted-dm-elsewhere", test_legacy_adopted_dm_elsewhere);
-	g_test_add_func("/e2e/legacy/blocked-decrypt-paths", test_legacy_blocked_decrypt_paths);
-	g_test_add_func("/e2e/scope/separator-in-name", test_scope_separator_in_name);
-	g_test_add_func("/e2e/legacy/single-network-adopts", test_legacy_single_network);
-	g_test_add_func("/e2e/legacy/multi-network-refuses", test_legacy_multi_network);
-	g_test_add_func("/e2e/legacy/scoped-wins", test_legacy_scoped_wins);
-	g_test_add_func("/e2e/casemap/gate-unicode-refuses", test_casemap_gate_unicode_refuses);
-	g_test_add_func("/e2e/casemap/ascii-brackets-pass", test_casemap_ascii_brackets_pass);
-	g_test_add_func("/e2e/casemap/other-network-ignored", test_casemap_other_network_ignored);
-	g_test_add_func("/e2e/casemap/not-utf8-refused", test_casemap_not_utf8_refused);
-	g_test_add_func("/e2e/casemap/decrypt-folded-target", test_casemap_decrypt_folded_target);
-	g_test_add_func("/e2e/casemap/superset", test_casemap_superset);
-	g_test_add_func("/e2e/casemap/dm-nick", test_casemap_dm_nick);
-	g_test_add_func("/e2e/casemap/decrypt-marked", test_casemap_decrypt_marked);
-	g_test_add_func("/e2e/casemap/latin1-bytes", test_casemap_latin1_bytes);
-	g_test_add_func("/e2e/casemap/unknown-codepage", test_casemap_unknown_codepage);
-	g_test_add_func("/e2e/casemap/before-005", test_casemap_before_005);
-	g_test_add_func("/e2e/casemap/r-e11-channels-only", test_casemap_r_e11_channels_only);
-	g_test_add_func("/e2e/casemap/off-exact", test_casemap_off_exact);
-	g_test_add_func("/e2e/casemap/unassigned", test_casemap_unassigned);
-	g_test_add_func("/e2e/casemap/guard-bare-rows", test_casemap_guard_bare_rows);
-	g_test_add_func("/e2e/casemap/ircnet-short-name", test_casemap_ircnet_short_name);
-	g_test_add_func("/e2e/casemap/list-dm-pieces", test_casemap_list_dm_pieces);
-	g_test_add_func("/e2e/casemap/list-dm-bypass", test_casemap_list_dm_bypass);
-	g_test_add_func("/e2e/casemap/list-bare-nick", test_casemap_list_bare_nick);
-	g_test_add_func("/e2e/casemap/single-bare-nick", test_casemap_single_bare_nick);
-	g_test_add_func("/e2e/casemap/script-single-nick", test_casemap_script_single_nick);
-	g_test_add_func("/e2e/casemap/script-nonascii-cache", test_casemap_script_nonascii_cache);
-	g_test_add_func("/e2e/casemap/blocked-folded-peer", test_casemap_blocked_folded_peer);
-	g_test_add_func("/e2e/casemap/script-dm-moved", test_casemap_script_dm_moved);
-	g_test_add_func("/e2e/proto/cache-tie-order", test_cache_tie_order);
-	g_test_add_func("/e2e/casemap/script-cache-tie", test_casemap_script_cache_tie);
+	add_func("/e2e/proto/identity", test_identity);
+	add_func("/e2e/proto/handshake-normal", test_handshake_normal_mode);
+	add_func("/e2e/proto/handshake-modes", test_handshake_modes);
+	add_func("/e2e/proto/trust-changes", test_trust_changes);
+	add_func("/e2e/proto/hidden-messages", test_hidden_messages);
+	add_func("/e2e/proto/trust-change-notices", test_trust_change_notices);
+	add_func("/e2e/proto/reverify", test_reverify);
+	add_func("/e2e/proto/reverify-move-onto-rows", test_reverify_move_onto_rows);
+	add_func("/e2e/proto/stop-giving-key", test_stop_giving_key);
+	add_func("/e2e/scope/gate-relabeled", test_gate_relabeled);
+	add_func("/e2e/proto/bot-bypass-setting", test_bot_bypass_setting);
+	add_func("/e2e/proto/replay", test_replay);
+	add_func("/e2e/proto/replay-flood", test_replay_flood);
+	add_func("/e2e/proto/replay-partitions", test_replay_partitions);
+	add_func("/e2e/proto/replay-file", test_replay_file);
+	add_func("/e2e/proto/dm-view", test_dm_view);
+	add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);
+	add_func("/e2e/proto/rekey-lost-and-late", test_rekey_lost_and_late);
+	add_func("/e2e/proto/raw-lines-gated", test_raw_lines_gated);
+	add_func("/e2e/proto/reverify-mixed-changes", test_reverify_mixed_changes);
+	add_func("/e2e/proto/auto-keyreq-limits", test_auto_keyreq_limits);
+	add_func("/e2e/proto/accept-dm-leaves-no-row", test_accept_dm_leaves_no_row);
+	add_func("/e2e/proto/reverify-nick-rules", test_reverify_nick_rules);
+	add_func("/e2e/proto/inbound-budget", test_inbound_budget);
+	add_func("/e2e/proto/user-started-confirms", test_user_started_confirms);
+	add_func("/e2e/proto/migrate-confirmed", test_migrate_confirmed);
+	add_func("/e2e/proto/keyrsp-and-rotation", test_keyrsp_and_rotation);
+	add_func("/e2e/proto/request-expiry", test_request_expiry);
+	add_func("/e2e/proto/export-seen-rekeys", test_export_seen_rekeys);
+	add_func("/e2e/proto/rpe2e-messages", test_rpe2e_messages);
+	add_func("/e2e/proto/gate", test_gate);
+	add_func("/e2e/proto/gate-dry", test_gate_dry);
+	add_func("/e2e/proto/accept-foreign-dm", test_accept_foreign_dm);
+	add_func("/e2e/proto/damaged-dm-rows", test_damaged_dm_rows);
+	add_func("/e2e/proto/damaged-dm-auto-rotation", test_damaged_dm_auto_rotation);
+	add_func("/e2e/proto/incoming", test_incoming);
+	add_func("/e2e/proto/stamps-and-glob", test_stamps_and_glob);
+	add_func("/e2e/proto/export-import", test_export_import);
+	add_func("/e2e/proto/keyrsp-is-no-acceptance", test_keyrsp_is_no_acceptance);
+	add_func("/e2e/proto/rekey-needs-session", test_rekey_needs_session);
+	add_func("/e2e/proto/multiline-buffer", test_multiline_buffer);
+	add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
+	add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
+	add_func("/e2e/proto/control-characters", test_control_characters);
+	add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
+	add_func("/e2e/proto/rekey-replay", test_rekey_replay);
+	add_func("/e2e/proto/limits", test_limits);
+	add_func("/e2e/proto/robustness", test_robustness);
+	add_func("/e2e/proto/unresolved-nick", test_unresolved_nick);
+	add_func("/e2e/proto/rekey-replay-after-many", test_rekey_replay_after_many);
+	add_func("/e2e/proto/growth-from-wires", test_growth_from_wires);
+	add_func("/e2e/proto/rekey-to-accepted-only", test_rekey_to_accepted_only);
+	add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
+	add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
+	add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
+	add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
+	add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);
+	add_func("/e2e/scope/inbound-keyreq-stored-scoped", test_scope_inbound_keyreq);
+	add_func("/e2e/scope/dm-sender-rule-bare", test_scope_dm_sender_rule);
+	add_func("/e2e/scope/loops-on-net", test_scope_loops_on_net);
+	add_func("/e2e/scope/rekey-dm-config", test_scope_rekey_dm_config);
+	add_func("/e2e/scope/prune-per-network", test_scope_prune_per_network);
+	add_func("/e2e/scope/prune-confused-handle", test_scope_prune_confused_handle);
+	add_func("/e2e/scope/prune-global-cap", test_scope_prune_global_cap);
+	add_func("/e2e/scope/prune-handle-member", test_scope_prune_handle_member);
+	add_func("/e2e/scope/prune-global-fair", test_scope_prune_global_fair);
+	add_func("/e2e/legacy/import-keeps-members", test_legacy_import_keeps_members);
+	add_func("/e2e/legacy/dm-sessions-follow", test_legacy_dm_sessions_follow);
+	add_func("/e2e/legacy/mixed-own-rows", test_legacy_mixed_own_rows);
+	add_func("/e2e/legacy/mixed-keyrsp", test_legacy_mixed_keyrsp);
+	add_func("/e2e/legacy/mixed-alt-reading", test_legacy_mixed_alt_reading);
+	add_func("/e2e/legacy/pending-notice-key", test_legacy_pending_notice_key);
+	add_func("/e2e/legacy/mixed-keyreq", test_legacy_mixed_keyreq);
+	add_func("/e2e/regress/n1-flood-around-b", test_regress_flood_around_b);
+	add_func("/e2e/regress/n1-fair-share", test_regress_fair_share);
+	add_func("/e2e/regress/n2-export-import", test_regress_export_import);
+	add_func("/e2e/regress/n3a-second-network", test_regress_second_network);
+	add_func("/e2e/regress/n3b-inbound-never-adopts", test_regress_inbound_never_adopts);
+	add_func("/e2e/regress/n3c-replay-across-adoption", test_regress_replay_across_adoption);
+	add_func("/e2e/regress/cross-network-stranger", test_regress_cross_network_stranger);
+	add_func("/e2e/legacy/dm-reciprocal-in-place", test_legacy_dm_reciprocal_in_place);
+	add_func("/e2e/legacy/stranger-does-not-adopt", test_legacy_stranger_does_not_adopt);
+	add_func("/e2e/legacy/adopted-dm-elsewhere", test_legacy_adopted_dm_elsewhere);
+	add_func("/e2e/legacy/blocked-decrypt-paths", test_legacy_blocked_decrypt_paths);
+	add_func("/e2e/scope/separator-in-name", test_scope_separator_in_name);
+	add_func("/e2e/legacy/single-network-adopts", test_legacy_single_network);
+	add_func("/e2e/legacy/multi-network-refuses", test_legacy_multi_network);
+	add_func("/e2e/legacy/scoped-wins", test_legacy_scoped_wins);
+	add_func("/e2e/casemap/gate-unicode-refuses", test_casemap_gate_unicode_refuses);
+	add_func("/e2e/casemap/ascii-brackets-pass", test_casemap_ascii_brackets_pass);
+	add_func("/e2e/casemap/other-network-ignored", test_casemap_other_network_ignored);
+	add_func("/e2e/casemap/not-utf8-refused", test_casemap_not_utf8_refused);
+	add_func("/e2e/casemap/decrypt-folded-target", test_casemap_decrypt_folded_target);
+	add_func("/e2e/casemap/superset", test_casemap_superset);
+	add_func("/e2e/casemap/dm-nick", test_casemap_dm_nick);
+	add_func("/e2e/casemap/decrypt-marked", test_casemap_decrypt_marked);
+	add_func("/e2e/casemap/latin1-bytes", test_casemap_latin1_bytes);
+	add_func("/e2e/casemap/unknown-codepage", test_casemap_unknown_codepage);
+	add_func("/e2e/casemap/before-005", test_casemap_before_005);
+	add_func("/e2e/casemap/r-e11-channels-only", test_casemap_r_e11_channels_only);
+	add_func("/e2e/casemap/off-exact", test_casemap_off_exact);
+	add_func("/e2e/casemap/unassigned", test_casemap_unassigned);
+	add_func("/e2e/casemap/guard-bare-rows", test_casemap_guard_bare_rows);
+	add_func("/e2e/casemap/ircnet-short-name", test_casemap_ircnet_short_name);
+	add_func("/e2e/casemap/list-dm-pieces", test_casemap_list_dm_pieces);
+	add_func("/e2e/casemap/list-dm-bypass", test_casemap_list_dm_bypass);
+	add_func("/e2e/casemap/list-bare-nick", test_casemap_list_bare_nick);
+	add_func("/e2e/casemap/single-bare-nick", test_casemap_single_bare_nick);
+	add_func("/e2e/casemap/script-single-nick", test_casemap_script_single_nick);
+	add_func("/e2e/casemap/script-nonascii-cache", test_casemap_script_nonascii_cache);
+	add_func("/e2e/casemap/blocked-folded-peer", test_casemap_blocked_folded_peer);
+	add_func("/e2e/casemap/script-dm-moved", test_casemap_script_dm_moved);
+	add_func("/e2e/proto/cache-tie-order", test_cache_tie_order);
+	add_func("/e2e/casemap/script-cache-tie", test_casemap_script_cache_tie);
+	add_func("/e2e/proto/pipe-in-ident", test_pipe_in_ident);
+	add_func("/e2e/proto/handshake-sender-budget", test_handshake_sender_budget);
 
 	return g_test_run();
 }

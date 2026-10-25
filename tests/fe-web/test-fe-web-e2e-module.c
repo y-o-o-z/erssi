@@ -47,12 +47,6 @@ gboolean e2e_script_loaded(void)
 	return stub_script;
 }
 
-gboolean e2e_same_file(const struct stat *a, const struct stat *b)
-{
-	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
-	       a->st_mtime == b->st_mtime;
-}
-
 void e2e_server_net(SERVER_REC *server, E2E_NET *net)
 {
 	e2e_net_init(net, NULL, server->tag, NULL, TRUE);

@@ -315,10 +315,10 @@ guint e2e_drop_damaged_dm(E2E_JSON *kr, const char *ctx, const char *handle, gbo
 	return n;
 }
 
-/* a key "<handle>|<c>" of store: handle and c (a handle holds no '|') */
+/* a key "<handle>|<c>" of store: handle and c (e2e_row_key_bar) */
 static gboolean split_pipe(const char *key, char **handle, char **c)
 {
-	const char *bar = strchr(key, '|');
+	const char *bar = e2e_row_key_bar(key);
 
 	if (bar == NULL || bar == key || bar[1] == '\0')
 		return FALSE;
@@ -478,7 +478,7 @@ static char *oldest_member(const E2E_JSON *obj, const char *field)
 /* the waiting request key / row is on net (always without one). The
    handle is the sender's ident@host, which may hold '|' and 0x1F: the
    context is the row's "channel" member (we wrote it), else what follows
-   the row's "handle" member, else what follows the first '|' */
+   the row's "handle" member, else what follows e2e_row_key_bar() */
 static const char *pending_row_ctx(const char *key, const E2E_JSON *row)
 {
 	const char *channel = e2e_json_get_string(row, "channel");
@@ -490,7 +490,7 @@ static const char *pending_row_ctx(const char *key, const E2E_JSON *row)
 		return channel;
 	if (handle != NULL && strncmp(key, handle, hl = strlen(handle)) == 0 && key[hl] == '|')
 		return key + hl + 1;
-	bar = strchr(key, '|');
+	bar = e2e_row_key_bar(key);
 	return bar != NULL ? bar + 1 : key;
 }
 
@@ -789,18 +789,33 @@ GHashTable *e2e_stamps_new(void)
 	return g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 }
 
+/* the entry under the key "" (no key of a stamp is empty) holds when the
+   map was pruned last. Every value starts with its gint64 time. */
+static void stamps_prune(GHashTable *stamps, gint64 now, int interval)
+{
+	GHashTableIter iter;
+	gpointer key, value;
+	gint64 *pruned;
+
+	if (g_hash_table_size(stamps) <= 256)
+		return;
+	pruned = g_hash_table_lookup(stamps, "");
+	if (pruned != NULL && *pruned == now)
+		return;
+	g_hash_table_iter_init(&iter, stamps);
+	while (g_hash_table_iter_next(&iter, &key, &value))
+		if (*(const char *) key != '\0' && now - *(gint64 *) value >= interval)
+			g_hash_table_iter_remove(&iter);
+	pruned = g_new(gint64, 1);
+	*pruned = now;
+	g_hash_table_replace(stamps, g_strdup(""), pruned);
+}
+
 gboolean e2e_stamp_allow(GHashTable *stamps, const char *key, int interval)
 {
 	gint64 now = e2e_now(), *stamp;
-	GHashTableIter iter;
-	gpointer value;
 
-	if (g_hash_table_size(stamps) > 256) {
-		g_hash_table_iter_init(&iter, stamps);
-		while (g_hash_table_iter_next(&iter, NULL, &value))
-			if (now - *(gint64 *) value >= interval)
-				g_hash_table_iter_remove(&iter);
-	}
+	stamps_prune(stamps, now, interval);
 	stamp = g_hash_table_lookup(stamps, key);
 	if (stamp != NULL && now - *stamp < interval)
 		return FALSE;
@@ -1026,14 +1041,14 @@ static void record_pending_trust_change(E2E_JSON *kr, const char *handle, const 
 			if (kept == NULL && g_strcmp0(e2e_json_get_string(row, "new_fp"), new_fp) == 0 &&
 			    e2e_json_get(row, "session_sk") != NULL)
 				kept = e2e_json_copy(e2e_json_get(row, "session_sk"));
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		} else {
 			i++;
 		}
 	}
 	/* bounded: anyone can make these with a forwarded request */
 	while (list->array->len >= E2E_MAX_TRUST_CHANGES)
-		g_ptr_array_remove_index(list->array, 0);
+		e2e_json_array_remove(list, 0);
 	row = e2e_json_new(E2E_JSON_OBJECT);
 	e2e_json_set_string(row, "handle", handle);
 	e2e_json_set_string(row, "channel", ctx);
@@ -1179,7 +1194,7 @@ static void drop_trust_rows(E2E_JSON *kr, const char *handle, const char *change
 		if (g_strcmp0(e2e_json_get_string(row, "handle"), handle) == 0 &&
 		    (change == NULL || g_strcmp0(e2e_json_get_string(row, "change"), change) == 0) &&
 		    (fp == NULL || g_strcmp0(e2e_json_get_string(row, "new_fp"), fp) == 0))
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		else
 			i++;
 	}
@@ -2440,6 +2455,38 @@ gboolean e2e_handshake_allow(GHashTable *stamps, E2E_HS_TYPE type, const char *s
 	return ok;
 }
 
+typedef struct {
+	gint64 start;	/* first, as in a stamp: stamps_prune() reads it */
+	guint count;
+} HANDSHAKE_BUDGET;
+
+gboolean e2e_handshake_sender_allow(GHashTable *budgets, E2E_HS_TYPE type, const char *sender)
+{
+	static const char *const names[] = { "", "KEYREQ", "KEYRSP", "REKEY" };
+	gint64 now = e2e_now();
+	guint max = type == E2E_HS_KEYREQ ? E2E_HANDSHAKE_SENDER_MAX : E2E_HANDSHAKE_SENDER_MAX_REPLY;
+	HANDSHAKE_BUDGET *b;
+	char *key;
+
+	/* "" is where stamps_prune() keeps its time */
+	g_return_val_if_fail(*sender != '\0', FALSE);
+	stamps_prune(budgets, now, E2E_KEYREQ_INBOUND_MIN_INTERVAL);
+	key = g_strconcat(names[type <= E2E_HS_REKEY ? type : 0], "|", sender, NULL);
+	b = g_hash_table_lookup(budgets, key);
+	if (b == NULL || now - b->start >= E2E_KEYREQ_INBOUND_MIN_INTERVAL) {
+		b = g_new(HANDSHAKE_BUDGET, 1);
+		b->start = now;
+		b->count = 0;
+		g_hash_table_replace(budgets, key, b);
+	} else {
+		g_free(key);
+	}
+	if (b->count >= max)
+		return FALSE;
+	b->count++;
+	return TRUE;
+}
+
 /* ---- trust decisions of the user ---- */
 
 E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *handle,
@@ -3684,15 +3731,15 @@ static char *in_ctx(const E2E_JSON *kr, const E2E_IN_PARAMS *p, const char *wire
 }
 
 /* in the incoming row key "<handle>|<ctx>" of handle (the row's "handle"
-   member, else everything up to the first '|'), the ctx; NULL for a row
-   of another handle */
+   member, else everything up to e2e_row_key_bar()), the ctx; NULL for a
+   row of another handle */
 static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const char *handle)
 {
 	const char *h = e2e_json_get_string(row, "handle");
 	gsize len;
 
 	if (h == NULL) {
-		const char *bar = strchr(key, '|');
+		const char *bar = e2e_row_key_bar(key);
 
 		len = bar != NULL ? (gsize) (bar - key) : strlen(key);
 	} else {
@@ -4586,7 +4633,7 @@ E2E_JSON *e2e_keyring_export(const E2E_JSON *kr)
 	keys = e2e_json_keys(src);
 	for (i = 0; i < keys->len; i++) {
 		const char *key = g_ptr_array_index(keys, i);
-		const char *bar = strchr(key, '|');
+		const char *bar = e2e_row_key_bar(key);
 		char *handle = bar != NULL ? g_strndup(key, bar - key) : g_strdup(key);
 
 		row = row_with(e2e_json_get(src, key), "handle", handle, "channel",
@@ -4875,7 +4922,7 @@ static E2E_JSON *scoped_view(const E2E_JSON *kr)
 		const char *c = e2e_json_get_string(g_ptr_array_index(list->array, i), "channel");
 
 		if (c == NULL || strchr(c, E2E_SCOPE_SEP) == NULL)
-			g_ptr_array_remove_index(list->array, i);
+			e2e_json_array_remove(list, i);
 		else
 			i++;
 	}

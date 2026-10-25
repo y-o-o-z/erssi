@@ -541,6 +541,8 @@ void fe_web_fuzz_reset_login_state(void)
 {
 	if (login_pacing != NULL)
 		fe_web_pacing_reset(login_pacing);
+	fe_web_accept_limit_free(accept_limit);
+	accept_limit = NULL;
 	paced_logged = 0;
 	paced_unlogged = 0;
 	memset(&proc_budget, 0, sizeof(proc_budget));

@@ -113,3 +113,27 @@ test('test-scram test', test_test_scram,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# /UPGRADE with a session file that cannot be written, and keepnick next to
+# a script that handles the MONITOR numerics. Leak detection is off as in
+# test-sasl-upgrade: irssi core state is not freed on deinit.
+foreach name : ['upgrade-session', 'keepnick-monitor']
+  exe = executable('test-' + name,
+    files('test-' + name + '.c'),
+    link_with : [
+      libconfig_a,
+      libcore_a,
+      libirc_core_a,
+    ],
+    c_args : [
+      '-D' + 'PACKAGE_STRING' + '="' + 'irc/core' + '"',
+    ],
+    include_directories : rootinc,
+    implicit_include_directories : false,
+    dependencies : dep
+  )
+  test('test-' + name + ' test', exe,
+    env : environment({'HOME': meson.build_root() / 'test-home', 'ASAN_OPTIONS': 'detect_leaks=0:abort_on_error=1'}),
+    args : ['--tap'],
+    protocol : 'tap')
+endforeach

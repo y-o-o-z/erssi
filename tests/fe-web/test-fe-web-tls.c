@@ -21,6 +21,7 @@
 
 #include "fe-web-test.h"
 
+#include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
@@ -100,6 +101,76 @@ static void assert_no_temporary_files(void)
 	g_dir_close(dir);
 }
 
+/* the type and size of the key in fe-web-key.pem */
+static int key_type(void)
+{
+	FILE *f = fopen(key_path, "r");
+	EVP_PKEY *pkey;
+	int type;
+
+	g_assert_nonnull(f);
+	pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(pkey);
+	type = EVP_PKEY_base_id(pkey);
+	EVP_PKEY_free(pkey);
+	return type;
+}
+
+static int key_bits(void)
+{
+	FILE *f = fopen(key_path, "r");
+	EVP_PKEY *pkey;
+	int bits;
+
+	g_assert_nonnull(f);
+	pkey = PEM_read_PrivateKey(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(pkey);
+	bits = EVP_PKEY_bits(pkey);
+	EVP_PKEY_free(pkey);
+	return bits;
+}
+
+/* the certificate in fe-web-cert.pem (to be freed) */
+static X509 *read_cert(void)
+{
+	FILE *f = fopen(cert_path, "r");
+	X509 *x509;
+
+	g_assert_nonnull(f);
+	x509 = PEM_read_X509(f, NULL, NULL, NULL);
+	fclose(f);
+	g_assert_nonnull(x509);
+	return x509;
+}
+
+/* a new certificate: a random serial of at least 64 bits, for a TLS
+ * server only (no CA, digitalSignature, serverAuth), the names, at most
+ * 825 days */
+static void assert_new_cert(X509 *x509)
+{
+	BIGNUM *serial = ASN1_INTEGER_to_BN(X509_get0_serialNumber(x509), NULL);
+	int days = 0, secs = 0;
+	GENERAL_NAMES *names;
+
+	g_assert_nonnull(serial);
+	g_assert_cmpint(BN_num_bits(serial), >=, 64);
+	BN_free(serial);
+	g_assert_true((X509_get_extension_flags(x509) & EXFLAG_BCONS) != 0);
+	g_assert_true((X509_get_extension_flags(x509) & EXFLAG_CA) == 0);
+	g_assert_cmpuint(X509_get_key_usage(x509), ==, KU_DIGITAL_SIGNATURE);
+	g_assert_true((X509_get_extended_key_usage(x509) & XKU_SSL_SERVER) != 0);
+	names = X509_get_ext_d2i(x509, NID_subject_alt_name, NULL, NULL);
+	g_assert_nonnull(names);
+	g_assert_cmpint(sk_GENERAL_NAME_num(names), ==, 3);
+	GENERAL_NAMES_free(names);
+	g_assert_true(ASN1_TIME_diff(&days, &secs, X509_get0_notBefore(x509),
+	                             X509_get0_notAfter(x509)));
+	g_assert_cmpint(days, <=, 825);
+	g_assert_cmpint(days, >, 800);
+}
+
 static void test_made_at_first_start(void)
 {
 	char *out;
@@ -112,9 +183,31 @@ static void test_made_at_first_start(void)
 	g_assert_true(g_file_test(cert_path, G_FILE_TEST_IS_REGULAR));
 	assert_no_temporary_files();
 	g_assert_cmpint(SSL_CTX_get_min_proto_version(fe_web_ssl_ctx), ==, TLS1_2_VERSION);
+#ifdef SSL_OP_CLEANSE_PLAINTEXT
+	/* a refused login's request is not left in OpenSSL's buffer */
+	g_assert_true((SSL_CTX_get_options(fe_web_ssl_ctx) & SSL_OP_CLEANSE_PLAINTEXT) != 0);
+#endif
 	out = fe_web_fuzz_take_printed();
 	g_assert_cmpstr(out, ==, "");
 	g_free(out);
+	/* ECDSA P-256: every handshake signs with it before any password */
+	g_assert_cmpint(key_type(), ==, EVP_PKEY_EC);
+	g_assert_cmpint(key_bits(), ==, 256);
+	{
+		X509 *first = read_cert(), *second;
+
+		assert_new_cert(first);
+		/* a pair made again gets another serial */
+		reset();
+		g_assert_true(fe_web_ssl_prepare());
+		second = read_cert();
+		assert_new_cert(second);
+		g_assert_cmpint(ASN1_INTEGER_cmp(X509_get0_serialNumber(first),
+		                                 X509_get0_serialNumber(second)), !=, 0);
+		X509_free(first);
+		X509_free(second);
+		g_free(fe_web_fuzz_take_printed());
+	}
 	/* prepared once: a second call changes nothing */
 	g_assert_true(fe_web_ssl_prepare());
 }
@@ -479,6 +572,153 @@ static void test_old_pin_refused_after_new_key(void)
 	g_free(fe_web_fuzz_take_printed());
 }
 
+/* a pair of an older version (RSA) is still used, and a client pinned to
+ * it still connects */
+static void test_rsa_pair_kept(void)
+{
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+	EVP_PKEY *pkey = NULL;
+	X509 *x509 = X509_new();
+	X509_NAME *name;
+	X509V3_CTX v3ctx;
+	X509_EXTENSION *ext;
+	FILE *f;
+	char *cert, *out;
+	TLS_PAIR p;
+
+	reset();
+	g_assert_true(EVP_PKEY_keygen_init(ctx) > 0);
+	g_assert_true(EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) > 0);
+	g_assert_true(EVP_PKEY_keygen(ctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(ctx);
+	X509_set_version(x509, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x509), 7);
+	X509_gmtime_adj(X509_get_notBefore(x509), 0);
+	X509_gmtime_adj(X509_get_notAfter(x509), 86400L * 365);
+	X509_set_pubkey(x509, pkey);
+	name = X509_get_subject_name(x509);
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char *) "old", -1, -1, 0);
+	X509_set_issuer_name(x509, name);
+	X509V3_set_ctx_nodb(&v3ctx);
+	X509V3_set_ctx(&v3ctx, x509, x509, NULL, NULL, 0);
+	ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name, "IP:127.0.0.1,DNS:localhost");
+	X509_add_ext(x509, ext, -1);
+	X509_EXTENSION_free(ext);
+	g_assert_true(X509_sign(x509, pkey, EVP_sha256()) > 0);
+	f = fopen(key_path, "w");
+	g_assert_nonnull(f);
+	g_assert_cmpint(fchmod(fileno(f), 0600), ==, 0);
+	g_assert_true(PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL));
+	fclose(f);
+	f = fopen(cert_path, "w");
+	g_assert_nonnull(f);
+	g_assert_true(PEM_write_X509(f, x509));
+	fclose(f);
+	EVP_PKEY_free(pkey);
+	X509_free(x509);
+	cert = read_file(cert_path);
+
+	out = restart();
+	g_assert_cmpstr(out, ==, "");
+	g_free(out);
+	g_assert_true(file_is(cert_path, cert));
+	g_assert_cmpint(key_type(), ==, EVP_PKEY_RSA);
+	pair_new(&p, cert_path, "127.0.0.1");
+	if (!pair_handshake(&p))
+		g_error("no handshake with the RSA pair");
+	g_assert_cmpint(SSL_get_verify_result(p.ssl), ==, X509_V_OK);
+	pair_free(&p);
+	g_free(cert);
+	g_free(fe_web_fuzz_take_printed());
+}
+
+/* a stored pair (P-256) whose certificate ends in 'days' */
+static void write_pair(int days)
+{
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	EVP_PKEY *pkey = NULL;
+	X509 *x509 = X509_new();
+	FILE *f;
+
+	g_assert_true(EVP_PKEY_keygen_init(ctx) > 0);
+	g_assert_true(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1) > 0);
+	g_assert_true(EVP_PKEY_keygen(ctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(ctx);
+	X509_set_version(x509, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x509), 9);
+	X509_gmtime_adj(X509_get_notBefore(x509), -86400L);
+	X509_gmtime_adj(X509_get_notAfter(x509), 86400L * days);
+	X509_set_pubkey(x509, pkey);
+	X509_NAME_add_entry_by_txt(X509_get_subject_name(x509), "CN", MBSTRING_ASC,
+	                           (unsigned char *) "old", -1, -1, 0);
+	X509_set_issuer_name(x509, X509_get_subject_name(x509));
+	g_assert_true(X509_sign(x509, pkey, EVP_sha256()) > 0);
+	f = fopen(key_path, "w");
+	g_assert_nonnull(f);
+	g_assert_cmpint(fchmod(fileno(f), 0600), ==, 0);
+	g_assert_true(PEM_write_PrivateKey(f, pkey, NULL, NULL, 0, NULL, NULL));
+	fclose(f);
+	f = fopen(cert_path, "w");
+	g_assert_nonnull(f);
+	g_assert_true(PEM_write_X509(f, x509));
+	fclose(f);
+	EVP_PKEY_free(pkey);
+	X509_free(x509);
+}
+
+/* the SHA-256 of fe-web-cert.pem as "AB:CD:..." (to be freed) */
+static char *cert_file_fingerprint(void)
+{
+	X509 *x509 = read_cert();
+	unsigned char md[EVP_MAX_MD_SIZE];
+	unsigned int len = 0, i;
+	GString *str = g_string_new(NULL);
+
+	g_assert_true(X509_digest(x509, EVP_sha256(), md, &len));
+	for (i = 0; i < len; i++)
+		g_string_append_printf(str, "%s%02X", i > 0 ? ":" : "", md[i]);
+	X509_free(x509);
+	return g_string_free(str, FALSE);
+}
+
+/* A stored certificate that ends within FE_WEB_CERT_RENEW_DAYS is
+ * replaced at the start, and that is said with the new fingerprint (the
+ * clients that pinned the old one fail from now on); one with more time
+ * left is kept, and the daily look warns in the last days */
+static void test_renewal_said(void)
+{
+	char *old, *out, *fp;
+
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS - 5);
+	old = read_file(cert_path);
+	out = restart();
+	g_assert_false(file_is(cert_path, old));
+	fp = cert_file_fingerprint();
+	g_assert_nonnull(strstr(out, "made a new key and certificate in place of the old ones"));
+	g_assert_nonnull(strstr(out, fp));
+	g_free(fp);
+	g_free(out);
+	g_free(old);
+
+	/* kept: more than FE_WEB_CERT_RENEW_DAYS left, nothing said */
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS + 5);
+	old = read_file(cert_path);
+	out = restart();
+	g_assert_true(file_is(cert_path, old));
+	g_assert_cmpstr(out, ==, "");
+	g_free(out);
+	g_free(old);
+	/* while running: quiet now, a warning in the last days */
+	g_assert_false(fe_web_ssl_check_expiry(time(NULL)));
+	g_assert_true(fe_web_ssl_check_expiry(time(NULL) + 10 * 86400L));
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "fe-web makes a new one when it starts"));
+	g_free(out);
+	reset();
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -501,6 +741,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/damaged-files-replaced", test_damaged_files_replaced);
 	g_test_add_func("/fe-web/tls/save-failure", test_save_failure);
 	g_test_add_func("/fe-web/tls/handshake-with-pin", test_handshake_with_pin);
+	g_test_add_func("/fe-web/tls/rsa-pair-kept", test_rsa_pair_kept);
+	g_test_add_func("/fe-web/tls/renewal-said", test_renewal_said);
 	g_test_add_func("/fe-web/tls/old-pin-refused-after-new-key",
 	                test_old_pin_refused_after_new_key);
 

@@ -35,6 +35,8 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
 
 static GIOChannel *listen_channel = NULL;
 static int listen_port = -1;
@@ -62,7 +64,6 @@ static gboolean econnrefused_means_no_listener = FALSE;
 /* Limits for clients that have not logged in yet: one password guess per
  * connection, a few KB of request and a few seconds to send it. */
 #define FE_WEB_MAX_CLIENTS 16
-#define FE_WEB_MAX_REQUEST 16384
 #define FE_WEB_HANDSHAKE_TIMEOUT 10
 static guint relisten_tag = 0;
 static time_t refused_logged = 0;
@@ -83,6 +84,8 @@ static time_t refused_logged = 0;
  * and has its own sign-in does. */
 static FE_WEB_PACING *login_pacing = NULL;
 static char *own_peer_key = NULL;
+/* new connections per peer, before their TLS handshake (fe-web-pacing.h) */
+static FE_WEB_ACCEPT_LIMIT *accept_limit = NULL;
 /* the pacing notice is printed once a minute at most, the peers paced in
  * between are counted */
 static time_t paced_logged = 0;
@@ -465,10 +468,9 @@ static int fe_web_verify_password(const char *data)
 	/* Verify password: compare digests, in time independent of where
 	 * the first difference is */
 	if (password != NULL) {
-		char *want, *got;
-		unsigned char diff = 0;
+		unsigned char want[EVP_MAX_MD_SIZE], got[EVP_MAX_MD_SIZE];
+		unsigned int want_len_md = 0, got_len_md = 0;
 		gsize want_len = strlen(configured_password);
-		int i;
 
 		/* a header cannot carry whitespace at the end of the password
 		 * (see above): such a password is compared without it */
@@ -476,16 +478,21 @@ static int fe_web_verify_password(const char *data)
 		       (configured_password[want_len - 1] == ' ' ||
 		        configured_password[want_len - 1] == '\t'))
 			want_len--;
-		want = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
-		                                   (const guchar *) configured_password, want_len);
-		got = g_compute_checksum_for_string(G_CHECKSUM_SHA256, password, -1);
-		for (i = 0; want[i] != '\0'; i++)
-			diff |= want[i] ^ got[i];
-		result = diff == 0;
-		memset(password, 0, strlen(password));
+		/* EVP_Digest() into the stack, compared in constant time and
+		 * cleansed: g_compute_checksum_*() freed a GChecksum whose block
+		 * buffer still held the hashed password (and each guess) */
+		result = EVP_Digest(configured_password, want_len, want, &want_len_md,
+		                    EVP_sha256(), NULL) == 1 &&
+		         EVP_Digest(password, strlen(password), got, &got_len_md,
+		                    EVP_sha256(), NULL) == 1 &&
+		         want_len_md == got_len_md &&
+		         CRYPTO_memcmp(want, got, want_len_md) == 0;
+		/* OPENSSL_cleanse(): a memset() right before free() may be
+		 * dropped by the compiler */
+		OPENSSL_cleanse(password, strlen(password));
+		OPENSSL_cleanse(want, sizeof(want));
+		OPENSSL_cleanse(got, sizeof(got));
 		g_free(password);
-		g_free(want);
-		g_free(got);
 	}
 
 	return result;
@@ -1029,7 +1036,7 @@ static void client_input(WEB_CLIENT_REC *client)
 
 static void client_input_once(WEB_CLIENT_REC *client)
 {
-	guchar buffer[8192];
+	guchar buffer[FE_WEB_READ_SIZE];
 	int ret;
 	GIOChannel *channel;
 
@@ -1085,8 +1092,10 @@ static void client_input_once(WEB_CLIENT_REC *client)
 		return;
 	}
 
-	/* Append to input buffer */
+	/* Append to input buffer; the read itself is wiped from the stack
+	 * (the upgrade request holds the password) */
 	g_byte_array_append(client->input_buffer, buffer, ret);
+	OPENSSL_cleanse(buffer, ret);
 
 	/* Handle handshake first */
 	if (!client->handshake_done) {
@@ -1106,12 +1115,15 @@ static void client_input_once(WEB_CLIENT_REC *client)
 			request = g_strndup((const char *) data, request_len);
 			ret = fe_web_handle_handshake(client, request);
 			/* the password is in there */
-			memset(request, 0, strlen(request));
+			OPENSSL_cleanse(request, strlen(request));
 			g_free(request);
 		}
 		if (ret < 0 || (ret == 0 && client->input_buffer->len > FE_WEB_MAX_REQUEST)) {
 			/* wrong password (after the 401 or 429 is written), failed
-			 * write or an endless request */
+			 * write or an endless request; the request is not kept
+			 * while the answer lingers */
+			OPENSSL_cleanse(client->input_buffer->data, client->input_buffer->len);
+			g_byte_array_set_size(client->input_buffer, 0);
 			fe_web_close_client_flushed(client);
 			return;
 		}
@@ -1138,7 +1150,7 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 			/* the request is done with; what came after it are
 			 * frames */
-			memset(client->input_buffer->data, 0, request_len);
+			OPENSSL_cleanse(client->input_buffer->data, request_len);
 			g_byte_array_remove_range(client->input_buffer, 0, request_len);
 			if (client->input_buffer->len > 0 && !client->closing &&
 			    !client->output_failed)
@@ -1303,6 +1315,17 @@ static void sig_listen(void)
 
 		net_ip2host(&ip, host);
 		addr = g_strdup_printf("%s:%d", host, port);
+		/* A connection its peer reset or closed before it was taken
+		 * is closed here, before TLS: its uid can no longer be found,
+		 * so it would count as the shared loopback peer, and a TLS
+		 * handshake (a signature) would still read what it sent - a
+		 * free handshake for each connect, outside every limit */
+		if (!fe_web_tcp_peer_alive(g_io_channel_unix_get_fd(handle))) {
+			log_refused_addr(addr, "closed by its peer before it was taken");
+			g_free(addr);
+			net_disconnect(handle);
+			return;
+		}
 		/* Every user of the machine can reach a loopback port, and
 		 * all of them have the same address there: on Linux the
 		 * peer counts as the uid of its socket (sock_diag, or
@@ -1315,6 +1338,31 @@ static void sig_listen(void)
 		} else {
 			peer_key = fe_web_peer_key_ip(&ip);
 			peer_shared = fe_web_ip_is_loopback(&ip);
+		}
+	}
+
+	if (own_peer_key == NULL)
+		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
+	/* A TLS handshake costs a signature before any password is read: a
+	 * loop of new connections is refused before it, not only made to
+	 * close its older ones (fe-web-pacing.h). A peer that is one party
+	 * (an address that is not loopback, a known uid) has its own count.
+	 * A key many users share (ip:loopback: always on the BSDs, on Linux
+	 * when the kernel cannot tell the uid) or "uid:unknown" may be the
+	 * owner too: it gets a ceiling high enough that no other local user
+	 * can keep the owner out with it, which still bounds the CPU. The
+	 * owner's own connections are never counted. */
+	if (strcmp(peer_key, own_peer_key) != 0) {
+		gboolean shared = peer_shared || strcmp(peer_key, "uid:unknown") == 0;
+
+		if (accept_limit == NULL)
+			accept_limit = fe_web_accept_limit_new();
+		if (!fe_web_accept_allow(accept_limit, peer_key, shared, time(NULL))) {
+			log_refused_addr(addr, "too many new connections");
+			g_free(addr);
+			g_free(peer_key);
+			net_disconnect(handle);
+			return;
 		}
 	}
 
@@ -1334,8 +1382,6 @@ static void sig_listen(void)
 		 * connections while anyone else is waiting; a trusted peer
 		 * keeps only its oldest pending one, and its lingering
 		 * connections go first (fe_web_pending_victim()). */
-		if (own_peer_key == NULL)
-			own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 		victim = fe_web_pending_victim(web_clients, FE_WEB_MAX_PENDING, own_peer_key,
 		                               login_pacing);
 		if (victim != NULL) {
@@ -1834,11 +1880,13 @@ static void server_listen_unix(const char *value)
 	listen_tag = i_input_add(listen_channel, I_INPUT_READ,
 	                         (GInputFunction) sig_listen, NULL);
 
+	/* the AES-256-GCM layer is not named as protection: its key comes
+	   from fe_web_password, which the client sends inside the same TLS
+	   connection (/HELP FE_WEB) */
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server listening on unix:%s (SSL + AES-256-GCM)", path);
+	          "fe-web: WebSocket server listening on unix:%s (TLS)", path);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled, "
-	          "socket 0600, only your own processes");
+	          "fe-web: Security: TLS, socket 0600, only your own processes");
 }
 
 /* Start the server; TRUE when it listens (also when it already did) */
@@ -1925,10 +1973,20 @@ gboolean fe_web_server_init(void)
 	                         (GInputFunction) sig_listen, NULL);
 
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: WebSocket server listening on wss://%s:%d (SSL + AES-256-GCM)",
+	          "fe-web: WebSocket server listening on wss://%s:%d (TLS)",
 	          bind_addr, port);
 	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: Security: SSL/TLS enabled, Application-level encryption enabled");
+	          "fe-web: Security: TLS with the certificate in ~/.erssi/fe-web-cert.pem: "
+	          "a web client that pins it cannot be fooled by another listener");
+#ifndef __linux__
+	/* fe_web_tcp_peer_uid() cannot tell local users apart here: every
+	   one of them, the owner too, is the peer "ip:loopback" */
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web: on this system every local user connecting to the port is one "
+	          "peer, you too: their wrong passwords slow down your logins, and their "
+	          "pending connections can close yours. On a shared box use /SET "
+	          "fe_web_socket (a Unix socket only you can reach)");
+#endif
 	return TRUE;
 }
 
@@ -1972,6 +2030,8 @@ void fe_web_server_deinit(void)
 
 	fe_web_pacing_free(login_pacing);
 	login_pacing = NULL;
+	fe_web_accept_limit_free(accept_limit);
+	accept_limit = NULL;
 	g_free(own_peer_key);
 	own_peer_key = NULL;
 

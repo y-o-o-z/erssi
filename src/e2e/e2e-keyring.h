@@ -37,6 +37,8 @@
 
 #include "e2e-json.h"
 
+#include <sys/stat.h>
+
 #define E2E_LOST_HINT "E2E state is LOST: nothing is sent to any channel or query and nothing is saved until you run /e2e reset (a new keyring and identity; E2E is then off everywhere until /e2e on)"
 
 typedef enum {
@@ -58,9 +60,37 @@ E2E_JSON *e2e_keyring_parse_checked(const char *data, size_t len, E2E_LOAD_STATU
 E2E_JSON *e2e_keyring_load(const char *path, char **notice);
 /* the same with the status: E2E_LOAD_LOST once the file was moved aside */
 E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, char **notice);
+/* the same file at two looks (stat: device, inode, size, mtime, ctime) */
+gboolean e2e_same_file(const struct stat *a, const struct stat *b);
+
+/* The keyring as it was last read from (or written to) its file, kept
+   while the file is the same (e2e_same_file(), on an lstat): any write,
+   rename, chmod or chown of it changes one of those. A load then copies
+   it instead of reading and parsing the whole file again - which every
+   handshake NOTICE and encrypted line from anyone used to cost. */
+typedef struct {
+	E2E_JSON *kr;		/* NULL: nothing kept */
+	struct stat st;
+	guint reads;		/* how many times the file was read (tests) */
+} E2E_KEYRING_CACHE;
+
+/* e2e_keyring_load_status() through the cache: a copy of the kept
+   keyring while the file is unchanged (E2E_LOAD_OK, no notice) */
+E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
+                                 E2E_LOAD_STATUS *status, char **notice);
+/* kr was just written: kept as the file's content, written being the
+   file as e2e_keyring_save_stat() wrote it */
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const E2E_JSON *kr,
+                             const struct stat *written);
+/* forgets (and wipes) what is kept */
+void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache);
+
 /* keyring.json is missing because a corrupt one was moved aside */
 gboolean e2e_keyring_lost(const char *path);
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error);
+/* the same; *written: the new file's fstat after the rename */
+gboolean e2e_keyring_save_stat(const char *path, const E2E_JSON *kr, struct stat *written,
+                               char **error);
 /* /e2e reset: kr becomes the keyring while there is none (E2E_LOAD_LOST) */
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error);
 /* canonical text, to compare before / after */
@@ -80,6 +110,11 @@ char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *le
    path, the directory fsync'ed; what names the file in *error */
 gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
                                const char *what, char **error);
+/* the same; *written (when not NULL): fstat of the new file after the
+   rename, from its still open descriptor - zeroed when that fstat (or
+   the close) failed after the file was in place, which is still TRUE */
+gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t len,
+                                    const char *what, struct stat *written, char **error);
 /* a new file, 0600, never over an existing file or through a symlink */
 gboolean e2e_write_new_file(const char *path, const char *data, size_t len, char **error);
 

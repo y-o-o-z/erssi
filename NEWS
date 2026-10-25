@@ -3,6 +3,79 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 
 	Fixes from a full review of 2026.10.5.
 
+	+ Core
+	  - /UPGRADE goes ahead only when the session file can be written:
+	    with a full disk or quota, or a directory erssi cannot write to,
+	    it says why and keeps its connections (before, they were all
+	    lost and the new process started with no session); only when the
+	    final write is what fails, the TLS connections, already quit for
+	    the upgrade, connect again
+	  - a script that handles the MONITOR replies (730/731) no longer
+	    sees them printed a second time by erssi; the built-in keepnick
+	    hides only its own targets from erssi's own print of them
+	  - with credentials in the old external file, reading the
+	    networks (at start, /RELOAD) no longer leaks their settings
+	  - /HELP CAPSICUM says that in capability mode erssi waits while a
+	    server name is looked up (a slow DNS server holds it)
+
+	+ End-to-end encryption
+	  - docs/shellter/security.md says that the server can drop whole
+	    messages or parts of a long one, or reorder them, unnoticed
+	  - the keyring is read from disk again only when the file changed,
+	    and a handshake that changed nothing writes nothing: a stranger's
+	    handshake NOTICE costs a fraction of what it did with a large
+	    keyring. One sender's requests are limited to 16 in 10 seconds
+	    whatever context they name (its answers and new keys to 64)
+	  - a peer whose ident holds '|' is no longer taken for a damaged
+	    entry (which skipped its acceptance and rotated the key), and
+	    /e2e export and /e2e list show its address and channel right
+	  - the plaintext pieces of a long message are wiped before they are
+	    freed
+
+	+ Web frontend (fe-web)
+	  - a key fe-web makes for TLS is ECDSA P-256: a handshake, which
+	    anyone who reaches the port can start, costs about an 18th of
+	    one with the RSA key of older versions (still used until its
+	    certificate is renewed)
+	  - a new certificate has a random serial (a reused serial is what
+	    Firefox refuses after a new pair), says it is for a TLS server
+	    (serverAuth, keyUsage digitalSignature, no CA) and is valid for
+	    825 days. A stored one is kept; to get a new one, remove
+	    ~/.erssi/fe-web-key.pem and ~/.erssi/fe-web-cert.pem: the next
+	    start makes a new pair (pin it again in the web client)
+	  - a stored certificate ending within 30 days is replaced when
+	    fe-web starts, and a replaced pair is said with the new
+	    certificate's SHA-256 fingerprint; while erssi runs, a daily look
+	    warns in those 30 days
+	  - a remote address, or another local user known by uid, may open
+	    at most 8 new connections in 10 seconds, and all of them together
+	    200 a second; more are closed before their TLS handshake. Your
+	    own uid is not counted. A loopback peer whose uid is not known
+	    (the BSDs, or Linux without an answer from the kernel), which
+	    every local user then shares, is held to 50 a second. A
+	    connection its peer already reset or closed is closed at once
+	  - the web client's nicklists lose a nick that quits only in the
+	    channels it was in, not in every channel, and joins, parts,
+	    kicks, quits and nick changes reach them also when they are
+	    hidden (/IGNORE, netsplit hiding)
+	  - text the server sends in another charset (a WHOIS realname in
+	    ISO-8859-2) reaches web clients as valid UTF-8: WHOIS text is
+	    read in the charset /RECODE gives the network or nick, else in
+	    recode_fallback
+	  - the startup notices, /FE_WEB STATUS and /HELP FE_WEB no longer
+	    present the AES-256-GCM layer over the messages as protection:
+	    its key comes from the password, which travels inside the same
+	    TLS connection
+	  - /HELP FE_WEB explains the login and connection limits, what
+	    they mean behind a proxy, and that on the BSDs and macOS every
+	    local user is one peer on a loopback port, so fe_web_socket is
+	    what keeps users apart there; fe-web says so when it listens on
+	    TCP on those systems
+	  - the copies of a login's password that fe-web and its libraries
+	    keep (the read buffers, OpenSSL's record buffer, a refused
+	    request, the digests of the password and the guess) are wiped;
+	    the configured password itself stays in the settings
+
 	+ Screen
 	  - no control character from the network reaches the terminal any
 	    more, on any terminal type: the side panels drew the low byte of

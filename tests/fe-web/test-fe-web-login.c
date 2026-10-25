@@ -27,6 +27,11 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#ifdef __linux__
+#include <linux/netlink.h>
+#include <linux/sock_diag.h>
+#include <linux/inet_diag.h>
+#endif
 
 #define TEST_PASSWORD FE_WEB_FUZZ_PASSWORD
 #define T 1000
@@ -480,10 +485,11 @@ static void test_tcp_dual_stack_key_is_uid(void)
 	assert_loopback_key("::", AF_INET, "127.0.0.1", "ip:loopback");
 }
 
-/* A loopback peer whose uid is not known (it closed before fe-web took
- * the connection, so its socket is no longer ESTABLISHED) counts as its
- * address, which other users share - never as some uid */
-static void test_tcp_unknown_uid_key_is_address(void)
+/* A loopback peer that closed before fe-web took the connection (its
+ * socket is no longer ESTABLISHED, so its uid cannot be found) is closed
+ * at accept, before TLS - it used to count as the shared key, where its
+ * handshakes were not limited */
+static void test_tcp_closed_peer_closed_at_accept(void)
 {
 	struct sockaddr_in sa;
 	WEB_CLIENT_REC *c;
@@ -510,10 +516,22 @@ static void test_tcp_unknown_uid_key_is_address(void)
 		if (web_clients == NULL)
 			g_usleep(1000);
 	}
+#ifdef __linux__
+	{
+		char *printed = fe_web_fuzz_take_printed();
+
+		(void) c;
+		g_assert_null(web_clients);
+		g_assert_nonnull(strstr(printed, "closed by its peer before it was taken"));
+		g_free(printed);
+	}
+#else
+	/* without TCP_INFO a FIN is not seen at accept: the shared key */
 	g_assert_cmpuint(g_slist_length(web_clients), ==, 1);
 	c = web_clients->data;
 	g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
 	g_assert_true(c->peer_shared);
+#endif
 	fe_web_server_deinit();
 	g_free(fe_web_fuzz_take_printed());
 }
@@ -884,6 +902,180 @@ static void test_client_limit_at_login(void)
 	g_free(fe_web_fuzz_take_printed());
 }
 
+#ifdef __linux__
+/* sock_diag answering every request with the connection of another user
+ * (uid getuid() + 1): a peer that is one party, and not the owner */
+static gssize diag_other_uid(const void *req, gsize req_len, void *reply, gsize size)
+{
+	struct nlmsghdr h, rh;
+	struct inet_diag_req_v2 q;
+	struct inet_diag_msg d;
+
+	g_assert_cmpuint(req_len, ==, NLMSG_LENGTH(sizeof(q)));
+	g_assert_cmpuint(size, >=, NLMSG_LENGTH(sizeof(d)));
+	memcpy(&h, req, sizeof(h));
+	memcpy(&q, (const guchar *) req + NLMSG_HDRLEN, sizeof(q));
+	memset(&rh, 0, sizeof(rh));
+	memset(&d, 0, sizeof(d));
+	rh.nlmsg_len = NLMSG_LENGTH(sizeof(d));
+	rh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
+	rh.nlmsg_seq = h.nlmsg_seq;
+	d.idiag_family = q.sdiag_family;
+	d.idiag_state = 1; /* ESTABLISHED */
+	d.idiag_uid = getuid() + 1;
+	d.id = q.id;
+	memset(reply, 0, NLMSG_ALIGN(rh.nlmsg_len));
+	memcpy(reply, &rh, sizeof(rh));
+	memcpy((guchar *) reply + NLMSG_HDRLEN, &d, sizeof(d));
+	return NLMSG_ALIGN(rh.nlmsg_len);
+}
+
+/* closes fd's client and waits until fe-web let it go */
+static void close_and_wait(int fd)
+{
+	guint before = g_slist_length(web_clients);
+	int n;
+
+	close(fd);
+	for (n = 0; n < 200 && g_slist_length(web_clients) == before; n++)
+		fe_web_fuzz_iterate(5);
+	g_assert_cmpuint(g_slist_length(web_clients), ==, before - 1);
+}
+
+/* A connection fe-web closes at accept: never a web client */
+static void assert_refused_at_accept(void)
+{
+	struct sockaddr_in sa;
+	char buf[64], *printed;
+	guint before = g_slist_length(web_clients);
+	int fd, n;
+
+	g_free(fe_web_fuzz_take_printed());
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	g_assert_cmpint(fd, >=, 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	g_assert_cmpint(connect(fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	g_assert_cmpint(fcntl(fd, F_SETFL, O_NONBLOCK), ==, 0);
+	for (n = 0; n < 200 && read(fd, buf, sizeof(buf)) != 0; n++)
+		fe_web_fuzz_iterate(5);
+	g_assert_cmpint(n, <, 200);
+	g_assert_cmpuint(g_slist_length(web_clients), ==, before);
+	printed = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(printed, "too many new connections"));
+	g_free(printed);
+	close(fd);
+}
+
+/* A loop of new connections from a peer that is one party (here another
+ * user, known by uid) is refused before its TLS handshake (a signature
+ * each, before any password): FE_WEB_ACCEPT_BURST per FE_WEB_ACCEPT_WINDOW
+ * seconds. The owner's are not counted. */
+static void test_tcp_accept_rate_limited(void)
+{
+	char *other = g_strdup_printf("uid:%lu", (unsigned long) getuid() + 1);
+	int fds[FE_WEB_ACCEPT_BURST];
+	int i;
+
+	setup();
+	tcp_listen();
+	/* the owner, known by its uid: never counted */
+	for (i = 0; i < FE_WEB_ACCEPT_BURST + 2; i++) {
+		int fd;
+
+		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, own);
+		close_and_wait(fd);
+	}
+	fe_web_sock_diag_set_func(diag_other_uid);
+	for (i = 0; i < FE_WEB_ACCEPT_BURST; i++)
+		g_assert_cmpstr(connect_from("127.0.0.1", &fds[i])->peer_key, ==, other);
+	assert_refused_at_accept();
+	/* the next window */
+	close_and_wait(fds[0]);
+	fe_web_fuzz_set_clock(T + FE_WEB_ACCEPT_WINDOW);
+	g_assert_cmpstr(connect_from("127.0.0.1", &fds[0])->peer_key, ==, other);
+	for (i = 0; i < FE_WEB_ACCEPT_BURST; i++)
+		close(fds[i]);
+	fe_web_sock_diag_set_func(NULL);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+	g_free(other);
+}
+
+/* The shared key ip:loopback (sock_diag gives no answer and the /proc
+ * budget is spent: the owner looks like everyone else) is not held to 8
+ * per 10 s: bare connects of another local user must not keep the
+ * owner's next connection out. It has a ceiling a second, for the CPU. */
+static void test_tcp_accept_shared_not_limited(void)
+{
+	char *printed;
+	int i, fd;
+
+	setup();
+	tcp_listen();
+	fe_web_sock_diag_set_func(diag_fails);
+	for (i = 0; i < 3 * FE_WEB_ACCEPT_BURST; i++) {
+		fe_web_fuzz_spend_proc_budget();
+		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
+		close_and_wait(fd);
+	}
+	/* "the owner" now, from the same key */
+	fe_web_fuzz_spend_proc_budget();
+	g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "too many new connections"));
+	g_free(printed);
+	close_and_wait(fd);
+	/* the ceiling (fe-web's clock stands still) */
+	for (i = 3 * FE_WEB_ACCEPT_BURST + 1; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++) {
+		fe_web_fuzz_spend_proc_budget();
+		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
+		close_and_wait(fd);
+	}
+	fe_web_fuzz_spend_proc_budget();
+	assert_refused_at_accept();
+	fe_web_sock_diag_set_func(NULL);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
+#endif
+
+/* A connection reset by its peer before fe-web took it (connect, a
+ * ClientHello's worth of bytes, a close with SO_LINGER 0) is closed at
+ * accept, before TLS: no web client, never the shared key */
+static void test_tcp_reset_closed_at_accept(void)
+{
+	struct sockaddr_in sa;
+	struct linger lg = { 1, 0 };
+	char *printed;
+	int fd, i;
+
+	setup();
+	tcp_listen();
+	g_free(fe_web_fuzz_take_printed());
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	g_assert_cmpint(fd, >=, 0);
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	g_assert_cmpint(connect(fd, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	g_assert_cmpint(write(fd, "\x16\x03\x01\x00\x10hello", 10), ==, 10);
+	g_assert_cmpint(setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg)), ==, 0);
+	close(fd);
+	g_usleep(20000);
+	for (i = 0; i < 20; i++)
+		fe_web_fuzz_iterate(5);
+	g_assert_null(web_clients);
+	printed = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(printed, "closed by its peer before it was taken"));
+	g_free(printed);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -915,8 +1107,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/tcp-loopback-key-is-uid", test_tcp_loopback_key_is_uid);
 	g_test_add_func("/fe-web/login/tcp6-loopback-key-is-uid", test_tcp6_loopback_key_is_uid);
 	g_test_add_func("/fe-web/login/tcp-dual-stack-key-is-uid", test_tcp_dual_stack_key_is_uid);
-	g_test_add_func("/fe-web/login/tcp-unknown-uid-key-is-address",
-	                test_tcp_unknown_uid_key_is_address);
+	g_test_add_func("/fe-web/login/tcp-closed-peer-closed-at-accept",
+	                test_tcp_closed_peer_closed_at_accept);
 	g_test_add_func("/fe-web/login/shared-loopback-hint", test_shared_loopback_hint);
 	g_test_add_func("/fe-web/login/no-hint-unless-shared", test_no_hint_unless_shared);
 	g_test_add_func("/fe-web/login/shared-hint-once-a-minute", test_shared_hint_once_a_minute);
@@ -925,9 +1117,13 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/tcp-sock-diag-backoff", test_tcp_sock_diag_backoff);
 	g_test_add_func("/fe-web/login/tcp-full-queue-keeps-owner",
 	                test_tcp_full_queue_keeps_owner);
+	g_test_add_func("/fe-web/login/tcp-accept-rate-limited", test_tcp_accept_rate_limited);
+	g_test_add_func("/fe-web/login/tcp-accept-shared-not-limited",
+	                test_tcp_accept_shared_not_limited);
 #endif
 	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
 	                test_tcp_loopback_sources_share_key);
+	g_test_add_func("/fe-web/login/tcp-reset-closed-at-accept", test_tcp_reset_closed_at_accept);
 	g_test_add_func("/fe-web/login/tcp-send-buffer-no-warning",
 	                test_tcp_send_buffer_no_warning);
 

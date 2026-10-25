@@ -198,6 +198,10 @@ void fe_web_send_to_all_clients(WEB_MESSAGE_REC *msg);
 
 /* JSON utilities */
 char *fe_web_message_to_json(WEB_MESSAGE_REC *msg);
+/* str as UTF-8: as it is when it is, else read in the charset /RECODE
+ * gives target on server (either may be NULL), else in recode_fallback;
+ * bytes no charset reads become U+FFFD. To be freed. */
+char *fe_web_utf8_in(const SERVER_REC *server, const char *target, const char *str);
 char *fe_web_escape_json(const char *str);
 char *fe_web_generate_message_id(void);
 
@@ -248,6 +252,13 @@ gboolean fe_web_e2e_json_valid(const char *json);
 
 /* WebSocket protocol (RFC 6455) */
 char *fe_web_websocket_compute_accept(const char *client_key);
+/* the longest upgrade request (the login, headers included), and how
+ * much one read of a client takes: the input buffer of a new client
+ * holds both without a reallocation, which would leave a copy of the
+ * password behind (fe-web-client.c) */
+#define FE_WEB_MAX_REQUEST 16384
+#define FE_WEB_READ_SIZE 8192
+
 /* Largest WebSocket frame accepted from a client, and the largest
  * message (the frames of a fragmented one together) */
 #define FE_WEB_MAX_FRAME (16 * 1024 * 1024)

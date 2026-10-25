@@ -363,6 +363,60 @@ E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, cha
 	return kr;
 }
 
+gboolean e2e_same_file(const struct stat *a, const struct stat *b)
+{
+	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
+	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
+void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache)
+{
+	e2e_json_free(cache->kr);
+	cache->kr = NULL;
+}
+
+/* kept only when the file is the same before and after the read (a
+   writer that replaced it meanwhile is read again next time), and older
+   than the current second: a write in place within one tick of the
+   file system's clock could leave size and times as they were (as the
+   status bar's and fe-web's caches do) */
+E2E_JSON *e2e_keyring_cache_load(E2E_KEYRING_CACHE *cache, const char *path,
+                                 E2E_LOAD_STATUS *status, char **notice)
+{
+	struct stat before, after;
+	gboolean have = lstat(path, &before) == 0 && S_ISREG(before.st_mode);
+	E2E_JSON *kr;
+
+	if (have && cache->kr != NULL && e2e_same_file(&before, &cache->st) &&
+	    before.st_mode == cache->st.st_mode && before.st_uid == cache->st.st_uid) {
+		*status = E2E_LOAD_OK;
+		*notice = NULL;
+		return e2e_json_copy(cache->kr);
+	}
+	e2e_keyring_cache_clear(cache);
+	cache->reads++;
+	kr = e2e_keyring_load_status(path, status, notice);
+	if (have && *status == E2E_LOAD_OK && lstat(path, &after) == 0 &&
+	    e2e_same_file(&before, &after) && before.st_mode == after.st_mode &&
+	    before.st_uid == after.st_uid && after.st_mtim.tv_sec < time(NULL)) {
+		cache->kr = e2e_json_copy(kr);
+		cache->st = after;
+	}
+	return kr;
+}
+
+void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const E2E_JSON *kr,
+                             const struct stat *written)
+{
+	e2e_keyring_cache_clear(cache);
+	/* no stamp (e2e_write_file_atomic_stat() zeroed it): read again */
+	if (written->st_ino == 0 && written->st_dev == 0)
+		return;
+	cache->kr = e2e_json_copy(kr);
+	cache->st = *written;
+}
+
 static gboolean write_all(int fd, const char *data, size_t len)
 {
 	ssize_t n;
@@ -418,11 +472,12 @@ static gboolean write_new(const char *path, const char *data, size_t len, int *e
 	return TRUE;
 }
 
-gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
-                               const char *what, char **error)
+gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t len,
+                                    const char *what, struct stat *written, char **error)
 {
 	char *tmp;
 	int fd, saved;
+	gboolean ok;
 
 	tmp = g_strdup_printf("%s.tmp.%ld.%ld", path, (long) getpid(), (long) time(NULL));
 	fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -438,18 +493,29 @@ gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
 		close(fd);
 		goto fail;
 	}
-	if (close(fd) != 0) {
-		saved = errno;
-		goto fail;
-	}
 	/* rename replaces whatever is at path (a symlink too), never follows it */
 	if (rename(tmp, path) != 0) {
 		saved = errno;
+		close(fd);
 		unlink(tmp);
 		*error = g_strdup_printf("cannot replace %s: %s", what, g_strerror(saved));
 		g_free(tmp);
 		return FALSE;
 	}
+	/* the file we wrote as the rename left it, from its own descriptor:
+	   a later lstat() of path could already see another writer's file.
+	   The file is in place now (and was fsync'ed): an fstat() or close()
+	   that fails here only costs the stamp - *written is zeroed, which
+	   no file matches - never a save reported failed that happened */
+	ok = written == NULL || fstat(fd, written) == 0;
+	if (!ok)
+		g_debug("%s written, but its fstat failed: %s", what, g_strerror(errno));
+	if (close(fd) != 0) {
+		g_debug("%s written, but its close failed: %s", what, g_strerror(errno));
+		ok = FALSE;
+	}
+	if (!ok && written != NULL)
+		memset(written, 0, sizeof(*written));
 	fsync_dir(path);
 	g_free(tmp);
 	return TRUE;
@@ -461,8 +527,14 @@ fail:
 	return FALSE;
 }
 
+gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
+                               const char *what, char **error)
+{
+	return e2e_write_file_atomic_stat(path, data, len, what, NULL, error);
+}
+
 static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
-                              char **error)
+                              struct stat *written, char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
@@ -494,7 +566,7 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 	data = e2e_json_encode(kr, FALSE);
 	len = strlen(data);
-	ok = e2e_write_file_atomic(path, data, len, "keyring", error);
+	ok = e2e_write_file_atomic_stat(path, data, len, "keyring", written, error);
 	e2e_wipe(data, len);
 	g_free(data);
 	return ok;
@@ -502,12 +574,18 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 
 gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error)
 {
-	return keyring_write(path, kr, FALSE, error);
+	return keyring_write(path, kr, FALSE, NULL, error);
+}
+
+gboolean e2e_keyring_save_stat(const char *path, const E2E_JSON *kr, struct stat *written,
+                               char **error)
+{
+	return keyring_write(path, kr, FALSE, written, error);
 }
 
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error)
 {
-	return keyring_write(path, kr, TRUE, error);
+	return keyring_write(path, kr, TRUE, NULL, error);
 }
 
 char *e2e_keyring_snapshot(const E2E_JSON *kr)

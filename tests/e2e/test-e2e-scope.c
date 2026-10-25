@@ -461,6 +461,11 @@ static void test_casefold_ex(void)
 
 #define RANDOM_SEED       0x52504532u
 #define RANDOM_ITERATIONS 100000
+/* the two sweeps (100000 random names, every code point) take about 50 s
+   under ASan: in parts, each its own process (E2E_TEST_PART), so that no
+   one process holds that much work - on a loaded runner the whole of it
+   ran into meson's time limit */
+#define SWEEP_PARTS 4
 
 /* a code point from pools that stress normalisation and case folding */
 static gunichar random_code_point(GRand *rand)
@@ -624,13 +629,15 @@ static char *server_image(int model, const char *s)
    idempotent, drops every invisible character, folds every variant of a
    name (rfc1459-equal ones among them) to the same string, and every name
    a server model takes as the same */
-static void test_casefold_random(void)
+static void test_casefold_random(gconstpointer data)
 {
-	GRand *rand = g_rand_new_with_seed(RANDOM_SEED);
+	int part = GPOINTER_TO_INT(data);
+	GRand *rand = g_rand_new_with_seed(RANDOM_SEED + part);
 	GString *name = g_string_new(NULL);
 	int i, n, model;
 
-	for (i = 0; i < RANDOM_ITERATIONS; i++) {
+	for (i = part * (RANDOM_ITERATIONS / SWEEP_PARTS);
+	     i < (part + 1) * (RANDOM_ITERATIONS / SWEEP_PARTS); i++) {
 		char *once, *twice, *variant, *vfold;
 		const char *p;
 
@@ -710,19 +717,35 @@ static void test_casefold_ascii(void)
 	g_rand_free(rand);
 }
 
-/* every code point: the superset fold is idempotent and equates a letter
-   with its upper and lower case, U+0130 and U+0131 too */
-static void test_casefold_all_code_points(void)
+/* Planes 4 to 13 hold no assigned code point yet, and no default
+   ignorable one: 655360 code points down the same path of the fold, about
+   60% of the sweep's time. Their unassigned code points are taken at each
+   plane's ends and every 61st between; any that a newer GLib knows as
+   assigned is taken too. */
+static gboolean sampled_out(gunichar u)
 {
-	gunichar u, variants[2];
+	gunichar off = u & 0xffff;
+
+	return u >= 0x40000 && u < 0xe0000 && off >= 0x100 && off < 0xff00 && off % 61 != 0 &&
+	       g_unichar_type(u) == G_UNICODE_UNASSIGNED;
+}
+
+/* every code point (but those of sampled_out()): the superset fold is
+   idempotent and equates a letter with its upper and lower case, U+0130
+   and U+0131 too. In SWEEP_PARTS parts of the range */
+static void test_casefold_all_code_points(gconstpointer data)
+{
+	int part = GPOINTER_TO_INT(data);
+	gunichar u, variants[2], span = (0x110000 - 0x80 + SWEEP_PARTS - 1) / SWEEP_PARTS;
+	gunichar first = 0x80 + part * span, end = MIN(first + span, 0x110000);
 	char buf[8], vbuf[8];
 	const char *p;
 	int len, k;
 
-	for (u = 0x80; u <= 0x10ffff; u++) {
+	for (u = first; u < end; u++) {
 		char *once, *twice;
 
-		if (!g_unichar_validate(u))
+		if (!g_unichar_validate(u) || sampled_out(u))
 			continue;
 		len = g_unichar_to_utf8(u, buf);
 		buf[len] = '\0';
@@ -1184,6 +1207,14 @@ static void test_adopt_peer_sessions_own_only(void)
 	/* the other handle's own rows go with it */
 	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h|@z"), ==, 1);
 	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|@z|IRCnet\x1f@me@x"));
+	e2e_json_free(kr);
+
+	/* our own ident holds '|' (some servers allow it): "@a|b@x" is one
+	   query context, bob's */
+	kr = e2e_json_new(E2E_JSON_OBJECT);
+	put_row(kr, "incoming", "bob@h|@a|b@x");
+	g_assert_cmpuint(e2e_adopt_legacy_peer_sessions(kr, "IRCnet", "bob@h"), ==, 1);
+	g_assert_nonnull(e2e_json_get(e2e_json_get(kr, "incoming"), "bob@h|IRCnet\x1f@a|b@x"));
 	e2e_json_free(kr);
 }
 
@@ -2059,39 +2090,82 @@ static void test_regress_has_scoped_incoming(void)
 	e2e_json_free(kr);
 }
 
+/* E2E_TEST_PART (meson.build sets it) runs a part of the tests in this
+   process: "main" all but the sweeps, "sweep-<n>" part n of each sweep;
+   unset, all of them */
+static gboolean in_part(const char *path)
+{
+	const char *part = g_getenv("E2E_TEST_PART");
+	gboolean sweep = g_str_has_prefix(path, "/e2e/scope/sweep/");
+	char *suffix;
+	gboolean ok;
+
+	if (part == NULL || *part == '\0')
+		return TRUE;
+	if (strcmp(part, "main") == 0)
+		return !sweep;
+	if (!sweep || !g_str_has_prefix(part, "sweep-"))
+		return FALSE;
+	suffix = g_strconcat("/", part + 6, NULL);
+	ok = g_str_has_suffix(path, suffix);
+	g_free(suffix);
+	return ok;
+}
+
+static void add_func(const char *path, GTestFunc func)
+{
+	if (in_part(path))
+		g_test_add_func(path, func);
+}
+
+static void add_data_func(const char *path, gconstpointer data, GTestDataFunc func)
+{
+	if (in_part(path))
+		g_test_add_data_func(path, data, func);
+}
+
 int main(int argc, char **argv)
 {
+	int part;
+
 	g_test_init(&argc, &argv, NULL);
 
-	g_test_add_func("/e2e/scope/casemap-parse", test_casemap_parse);
-	g_test_add_func("/e2e/scope/casefold", test_casefold);
-	g_test_add_func("/e2e/scope/casefold-ignorables", test_casefold_ignorables);
-	g_test_add_func("/e2e/scope/casefold-ex", test_casefold_ex);
-	g_test_add_func("/e2e/scope/casefold-narrow", test_casefold_narrow);
-	g_test_add_func("/e2e/scope/casefold-random", test_casefold_random);
-	g_test_add_func("/e2e/scope/casefold-ascii", test_casefold_ascii);
-	g_test_add_func("/e2e/scope/casefold-all-code-points", test_casefold_all_code_points);
-	g_test_add_func("/e2e/scope/contexts", test_contexts);
-	g_test_add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
-	g_test_add_func("/e2e/scope/ctx-lookup", test_ctx_lookup);
-	g_test_add_func("/e2e/scope/ctx-resolve", test_ctx_resolve);
-	g_test_add_func("/e2e/scope/adopt-peer-sessions-own-only", test_adopt_peer_sessions_own_only);
-	g_test_add_func("/e2e/scope/ctx-adopted-elsewhere", test_ctx_adopted_elsewhere);
-	g_test_add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
-	g_test_add_func("/e2e/legacy/adopt-explicit", test_legacy_adopt_explicit);
-	g_test_add_func("/e2e/legacy/adopt-query", test_legacy_adopt_query);
-	g_test_add_func("/e2e/legacy/has-scoped", test_legacy_has_scoped);
-	g_test_add_func("/e2e/legacy/autotrust-old-rule", test_legacy_autotrust_old_rule);
-	g_test_add_func("/e2e/legacy/script-guard", test_legacy_script_guard);
-	g_test_add_func("/e2e/legacy/script-guard-nested", test_legacy_script_guard_nested);
-	g_test_add_func("/e2e/legacy/script-guard-multi", test_legacy_script_guard_multi);
-	g_test_add_func("/e2e/legacy/script-guard-lost", test_legacy_script_guard_lost);
-	g_test_add_func("/e2e/regress/t3-refused-until-adopt", test_regress_refused_until_adopt);
-	g_test_add_func("/e2e/regress/t3-adopt-b-keeps-a", test_regress_adopt_b_keeps_a);
-	g_test_add_func("/e2e/regress/t3-no-change-outcomes", test_regress_no_change_outcomes);
-	g_test_add_func("/e2e/regress/t3-autotrust-scope", test_regress_autotrust_scope);
-	g_test_add_func("/e2e/regress/t3-r-e19-premise", test_regress_r_e19_premise);
-	g_test_add_func("/e2e/regress/t3-has-scoped-incoming", test_regress_has_scoped_incoming);
+	add_func("/e2e/scope/casemap-parse", test_casemap_parse);
+	add_func("/e2e/scope/casefold", test_casefold);
+	add_func("/e2e/scope/casefold-ignorables", test_casefold_ignorables);
+	add_func("/e2e/scope/casefold-ex", test_casefold_ex);
+	add_func("/e2e/scope/casefold-narrow", test_casefold_narrow);
+	add_func("/e2e/scope/casefold-ascii", test_casefold_ascii);
+	for (part = 0; part < SWEEP_PARTS; part++) {
+		char *path = g_strdup_printf("/e2e/scope/sweep/random/%d", part);
+
+		add_data_func(path, GINT_TO_POINTER(part), test_casefold_random);
+		g_free(path);
+		path = g_strdup_printf("/e2e/scope/sweep/code-points/%d", part);
+		add_data_func(path, GINT_TO_POINTER(part), test_casefold_all_code_points);
+		g_free(path);
+	}
+	add_func("/e2e/scope/contexts", test_contexts);
+	add_func("/e2e/scope/json-roundtrip", test_json_roundtrip);
+	add_func("/e2e/scope/ctx-lookup", test_ctx_lookup);
+	add_func("/e2e/scope/ctx-resolve", test_ctx_resolve);
+	add_func("/e2e/scope/adopt-peer-sessions-own-only", test_adopt_peer_sessions_own_only);
+	add_func("/e2e/scope/ctx-adopted-elsewhere", test_ctx_adopted_elsewhere);
+	add_func("/e2e/scope/adopt-legacy", test_adopt_legacy);
+	add_func("/e2e/legacy/adopt-explicit", test_legacy_adopt_explicit);
+	add_func("/e2e/legacy/adopt-query", test_legacy_adopt_query);
+	add_func("/e2e/legacy/has-scoped", test_legacy_has_scoped);
+	add_func("/e2e/legacy/autotrust-old-rule", test_legacy_autotrust_old_rule);
+	add_func("/e2e/legacy/script-guard", test_legacy_script_guard);
+	add_func("/e2e/legacy/script-guard-nested", test_legacy_script_guard_nested);
+	add_func("/e2e/legacy/script-guard-multi", test_legacy_script_guard_multi);
+	add_func("/e2e/legacy/script-guard-lost", test_legacy_script_guard_lost);
+	add_func("/e2e/regress/t3-refused-until-adopt", test_regress_refused_until_adopt);
+	add_func("/e2e/regress/t3-adopt-b-keeps-a", test_regress_adopt_b_keeps_a);
+	add_func("/e2e/regress/t3-no-change-outcomes", test_regress_no_change_outcomes);
+	add_func("/e2e/regress/t3-autotrust-scope", test_regress_autotrust_scope);
+	add_func("/e2e/regress/t3-r-e19-premise", test_regress_r_e19_premise);
+	add_func("/e2e/regress/t3-has-scoped-incoming", test_regress_has_scoped_incoming);
 
 	return g_test_run();
 }

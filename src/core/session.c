@@ -56,11 +56,109 @@ void session_upgrade(void)
 		session_args[0], g_strerror(errno));
 }
 
+/* the servers "session save" wrote; /UPGRADE lets them go only once the
+   file is written (release_later), any other "session save" at its end */
+static GSList *saved_servers;
+static gboolean release_later;
+
+/* /UPGRADE could not write the session file: erssi goes on as it was.
+   `saved': it failed after the save, which quit the TLS connections */
+static void upgrade_refused(const char *path, const char *reason, gboolean saved)
+{
+	char *str;
+
+	str = g_strdup_printf("/UPGRADE not done: cannot write %s (%s). %s; "
+	                      "free some space or fix the directory, then run "
+	                      "/UPGRADE again", path, reason,
+	                      saved ? "The connections stay, except those over TLS: "
+	                              "they were quit for the upgrade and connect again" :
+	                              "Nothing was closed");
+	signal_emit("gui dialog", 2, "error", str);
+	g_free(str);
+}
+
+/* about as many bytes as the session file of these servers takes, with
+   room to spare */
+static gsize session_size_estimate(void)
+{
+	GSList *tmp, *chan;
+	gsize size = 4096;
+
+	for (tmp = servers; tmp != NULL; tmp = tmp->next) {
+		SERVER_REC *server = tmp->data;
+
+		size += 8192;
+		for (chan = server->channels; chan != NULL; chan = chan->next) {
+			CHANNEL_REC *channel = chan->data;
+
+			size += 2048;
+			if (channel->nicks != NULL)
+				size += 256 * g_hash_table_size(channel->nicks);
+		}
+	}
+	return size;
+}
+
+/* Before anything is saved, a file of about the session's size is
+   written where the session goes. Saving lets connections go (TLS ones
+   are quit), so a full disk, a quota or a read-only directory has to be
+   found first: the new process would start with no session, and every
+   connection would be lost. */
+static gboolean session_probe(const char *path, char **error)
+{
+	CONFIG_REC *probe;
+	char *padding;
+	gsize size;
+	gboolean ok;
+
+	size = session_size_estimate();
+	padding = g_malloc(size + 1);
+	memset(padding, 'x', size);
+	padding[size] = '\0';
+	probe = config_open(NULL, 0600);
+	config_node_set_str(probe, probe->mainnode, "probe", padding);
+	g_free(padding);
+	ok = config_write(probe, path, 0600) == 0;
+	if (!ok)
+		*error = g_strdup(config_last_error(probe) != NULL ?
+		                  config_last_error(probe) : "write failed");
+	config_close(probe);
+	unlink(path);
+	return ok;
+}
+
+/* the session is on disk: the servers saved in it are let go, the new
+   process takes over their sockets */
+static void session_release_servers(void)
+{
+	GSList *list = saved_servers;
+
+	saved_servers = NULL;
+	while (list != NULL) {
+		SERVER_REC *server = list->data;
+
+		list = g_slist_delete_link(list, list);
+		if (g_slist_find(servers, server) == NULL || server->handle == NULL) {
+			server_unref(server);
+			continue;
+		}
+		/* fake the server disconnection */
+		g_io_channel_unref(net_sendbuffer_handle(server->handle));
+		net_sendbuffer_destroy(server->handle, FALSE);
+		server->handle = NULL;
+
+		server->connection_lost = TRUE;
+		server->no_reconnect = TRUE;
+		server_disconnect(server);
+		server_unref(server);
+	}
+}
+
 /* SYNTAX: UPGRADE [<irssi binary path>] */
 static void cmd_upgrade(const char *data)
 {
 	CONFIG_REC *session;
-	char *session_file, *str, *name;
+	char *session_file, *str, *name, *error = NULL;
 	char *binary;
 
 	if (*data == '\0')
@@ -77,12 +175,37 @@ static void cmd_upgrade(const char *data)
 
 	/* save the session */
         session_file = g_strdup_printf("%s/session", get_irssi_dir());
-	session = config_open(session_file, 0600);
-        unlink(session_file);
+	/* an old session file is worth nothing; removed first, a symbolic
+	   link there is dropped, not written through (config_write()
+	   follows it), as before the probe */
+	unlink(session_file);
+	if (!session_probe(session_file, &error)) {
+		upgrade_refused(session_file, error, FALSE);
+		g_free(error);
+		g_free(binary);
+		g_free(session_file);
+		return;
+	}
+	session = config_open(NULL, 0600);
 
+	release_later = TRUE;
 	signal_emit("session save", 1, session);
-        config_write(session, NULL, -1);
+	release_later = FALSE;
+	/* written whole, or the connections stay with this process (a TLS
+	   one was quit while saving and reconnects) */
+	if (config_write(session, session_file, -1) != 0) {
+		upgrade_refused(session_file, config_last_error(session) != NULL ?
+		                config_last_error(session) : "write failed", TRUE);
+		config_close(session);
+		unlink(session_file);
+		g_slist_free_full(saved_servers, (GDestroyNotify) server_unref);
+		saved_servers = NULL;
+		g_free(binary);
+		g_free(session_file);
+		return;
+	}
         config_close(session);
+	session_release_servers();
 
 	/* data may contain some other program as well, like
 	   /UPGRADE /usr/bin/screen irssi */
@@ -180,14 +303,9 @@ static void session_save_server(SERVER_REC *server, CONFIG_REC *config,
 
 	signal_emit("session save server", 3, server, config, node);
 
-	/* fake the server disconnection */
-	g_io_channel_unref(net_sendbuffer_handle(server->handle));
-	net_sendbuffer_destroy(server->handle, FALSE);
-	server->handle = NULL;
-
-	server->connection_lost = TRUE;
-        server->no_reconnect = TRUE;
-        server_disconnect(server);
+	/* let go by session_release_servers() once the file is written */
+	server_ref(server);
+	saved_servers = g_slist_append(saved_servers, server);
 }
 
 static void session_restore_channel_nicks(CHANNEL_REC *channel,
@@ -300,13 +418,21 @@ static void session_restore_server(CONFIG_NODE *node)
 static void sig_session_save(CONFIG_REC *config)
 {
 	CONFIG_NODE *node;
-	GSList *tmp;
+	GSList *tmp, *list;
         GString *str;
 
-        /* save servers */
+        /* save servers: a copy of the list, a handler may change it */
 	node = config_node_traverse(config, "(servers", TRUE);
-	while (servers != NULL)
-		session_save_server(servers->data, config, node);
+	list = g_slist_copy(servers);
+	for (tmp = list; tmp != NULL; tmp = tmp->next) {
+		SERVER_REC *server = tmp->data;
+
+		if (g_slist_find(servers, server) != NULL && server->handle != NULL)
+			session_save_server(server, config, node);
+	}
+	g_slist_free(list);
+	if (!release_later)
+		session_release_servers();
 
 	/* save pids */
         str = g_string_new(NULL);

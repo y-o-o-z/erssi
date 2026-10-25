@@ -166,7 +166,8 @@ static void cmd_fe_web_status(const char *data, IRC_SERVER_REC *server)
 	printtext(server, NULL, MSGLEVEL_CLIENTNOTICE,
 	          "fe-web: Currently connected clients: %d", count);
 	printtext(server, NULL, MSGLEVEL_CLIENTNOTICE,
-	          "fe-web: Security: SSL/TLS (wss://) + AES-256-GCM encryption (always enabled)");
+	          "fe-web: Security: TLS (wss://); the AES-256-GCM layer on the messages adds "
+	          "nothing to it (/HELP FE_WEB)");
 
 	for (tmp = web_clients; tmp != NULL; tmp = tmp->next) {
 		WEB_CLIENT_REC *client = tmp->data;

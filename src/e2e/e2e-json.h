@@ -75,5 +75,12 @@ E2E_JSON *e2e_json_object_member(E2E_JSON *obj, const char *key);
 GPtrArray *e2e_json_keys(const E2E_JSON *obj);
 guint e2e_json_size(const E2E_JSON *node);
 void e2e_json_array_add(E2E_JSON *array, E2E_JSON *value);
+/* frees the element at index */
+void e2e_json_array_remove(E2E_JSON *array, guint index);
+
+/* A count of the changes made through the setters above (set, remove,
+   array add/remove), in any document: equal before and after some code
+   means it changed nothing. Members are changed only through them. */
+guint64 e2e_json_changes(void);
 
 #endif

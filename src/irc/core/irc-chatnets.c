@@ -40,6 +40,15 @@ static void sig_chatnet_read(IRC_CHATNET_REC *rec, CONFIG_NODE *node)
 	if (!IS_IRC_CHATNET(rec))
 		return;
 
+	/* a second read of the same record replaces the values: nothing
+	   leaks */
+	g_free(rec->usermode);
+	g_free(rec->alternate_nick);
+	g_free(rec->sasl_mechanism);
+	g_free(rec->sasl_username);
+	g_free(rec->sasl_password);
+	g_free(rec->keepnick);
+
 	value = config_node_get_str(node, "usermode", NULL);
 	rec->usermode = (value != NULL && *value != '\0') ? g_strdup(value) : NULL;
 

@@ -25,6 +25,7 @@
 #include <irssi/src/fe-ansi/sidepanels-render.h>
 #include <stdio.h>
 #include <string.h>
+#include <openssl/crypto.h>
 
 /* Create new client record */
 WEB_CLIENT_REC *fe_web_client_create(int fd, const char *addr)
@@ -48,7 +49,10 @@ WEB_CLIENT_REC *fe_web_client_create(int fd, const char *addr)
 	client->recv_tag = -1;
 	client->send_tag = -1;
 	client->output_buffer = g_byte_array_new();
-	client->input_buffer = g_byte_array_new();
+	/* room for the longest upgrade request and one read past it: the
+	 * request, which holds the password, is never moved by a
+	 * reallocation that would leave a copy behind */
+	client->input_buffer = g_byte_array_sized_new(FE_WEB_MAX_REQUEST + FE_WEB_READ_SIZE);
 	client->messages_sent = 0;
 	client->messages_received = 0;
 	client->pending_requests = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -87,6 +91,9 @@ void fe_web_client_destroy(WEB_CLIENT_REC *client)
 		g_byte_array_free(client->fragments, TRUE);
 	}
 	if (client->input_buffer != NULL) {
+		/* a request that never finished the login (a timeout, a
+		 * closed connection) still holds its password */
+		OPENSSL_cleanse(client->input_buffer->data, client->input_buffer->len);
 		g_byte_array_free(client->input_buffer, TRUE);
 	}
 

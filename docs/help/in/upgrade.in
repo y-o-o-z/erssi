@@ -13,6 +13,14 @@
     Upgrades to a new version without disconnecting from non-SSL servers; please
     bear in mind that it does not download or compile a new version.
 
+    The state of the connections goes to the file session in the erssi
+    directory, which the new process reads. When it cannot be written (a
+    full disk or quota, a directory erssi cannot write to), nothing is
+    upgraded: erssi says why and goes on with its connections. Found
+    before the save, as it usually is, nothing was closed; found only by
+    the write at the end, the connections over TLS have already been quit
+    for the upgrade and connect again.
+
 %9Examples:%9
 
     /UPGRADE

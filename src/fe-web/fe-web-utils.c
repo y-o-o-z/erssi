@@ -16,6 +16,8 @@
 
 #include <irssi/src/core/net-sendbuffer.h>
 #include <irssi/src/core/levels.h>
+#include <irssi/src/core/settings.h>
+#include <irssi/src/core/recode.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,15 +46,50 @@ char *fe_web_generate_message_id(void)
  * - Special JSON characters: " \
  * - Control characters (< 32): \b \f \n \r \t and others as \uXXXX
  * - UTF-8 multi-byte sequences (> 127) are passed through unchanged
+ * The result is always valid UTF-8 (see below).
  */
+char *fe_web_utf8_in(const SERVER_REC *server, const char *target, const char *str)
+{
+	const char *charset;
+	char *valid = NULL;
+
+	if (str == NULL)
+		return NULL;
+	if (g_utf8_validate(str, -1, NULL))
+		return g_strdup(str);
+	/* as irssi's recode_in() picks it - the /RECODE entry of the target
+	 * or the network, else recode_fallback - but always to UTF-8,
+	 * whatever term_charset is */
+	charset = recode_find_charset(server, target);
+	if (charset == NULL || *charset == '\0')
+		charset = settings_get_str("recode_fallback");
+	if (charset != NULL && *charset != '\0')
+		valid = g_convert(str, -1, "UTF-8", charset, NULL, NULL, NULL);
+	if (valid == NULL || !g_utf8_validate(valid, -1, NULL)) {
+		g_free(valid);
+		valid = g_utf8_make_valid(str, -1);
+	}
+	return valid;
+}
+
 char *fe_web_escape_json(const char *str)
 {
 	GString *result;
 	const unsigned char *p;
+	char *valid = NULL;
 
 	if (str == NULL) {
 		return g_strdup("");
 	}
+
+	/* JSON is UTF-8 (RFC 8259), and a strict decoder in a web client
+	 * refuses the whole message for one bad byte. Fields that come raw
+	 * from the server are made UTF-8 where they are read, with the
+	 * charset /RECODE gives their server and target
+	 * (fe_web_utf8_in()); this is the backstop for any other, without
+	 * a server or target known here. */
+	if (!g_utf8_validate(str, -1, NULL))
+		str = valid = fe_web_utf8_in(NULL, NULL, str);
 
 	result = g_string_new("");
 
@@ -93,6 +130,7 @@ char *fe_web_escape_json(const char *str)
 		}
 	}
 
+	g_free(valid);
 	return g_string_free(result, FALSE);
 }
 

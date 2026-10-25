@@ -25,8 +25,19 @@ Built for a shared shell box.
   every local user is the one peer 127.0.0.1, so use the socket
   (`fe_web_socket`) on a shared box.
 - **Limits** — 16 KB and 10 seconds to log in, with a separate limit for
-  connections still logging in; at most 16 clients; messages of at most
-  16 MB, also when fragmented (in at most 4096 frames).
+  connections still logging in; at most 8 new connections per peer in 10
+  seconds and 200 a second from all peers together, refused before their
+  TLS handshake - a peer being a remote address or a local uid other than
+  yours (yours are not counted); a connection its peer already reset or
+  closed is closed at accept. A loopback peer whose uid is not known
+  (every local user then, you too) is held only to 50 a second, so nobody
+  can keep you out with it; that leaves a local user able to cost erssi
+  up to 50 handshakes a second (about 1% of a core with ECDSA) and to
+  close your pending connections, which only fe_web_socket prevents;
+  at most 16 clients; messages of at most 16 MB, also when fragmented (in
+  at most 4096 frames). A key fe-web makes is ECDSA P-256, whose
+  handshake costs a fraction of the RSA key of older versions (still used
+  while its certificate is valid).
 - **WebSocket rules** — a frame that breaks RFC 6455 closes the
   connection with the status the RFC gives: unmasked frames, reserved
   bits, unknown opcodes, a continuation of nothing, a message started
@@ -58,12 +69,17 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 
 - **Protected** — the text of PRIVMSGs and actions (`/me`) in a channel or
   query with E2E on, against the server and the other users: nobody
-  without the keys can read it or change it unnoticed. Once you have
+  without the keys can read it or change the text of a line unnoticed
+  (but see below: lines and parts can go missing). Once you have
   verified a person's key (`/e2e verify`, compared over another channel),
   the keys you get from them are really theirs.
 - **Not protected** — NOTICEs, CTCPs other than ACTION, and bot commands
   while `e2e_bot_bypass` is on (sent in clear text); nicks, addresses,
   channel names, who talks to whom, when, and how long the messages are;
+  that every message arrives, and in order: the server can drop whole
+  messages, drop some parts of a long one (each part is shown on its
+  own, nothing says one is missing) or reorder messages, as long as each
+  arrives within 5 minutes of its timestamp;
   which of a channel's readers wrote a line (a sender's key there is
   shared with everyone they let read, so one of them, with the server's
   help, could pass a line off as the sender's); everything on your own

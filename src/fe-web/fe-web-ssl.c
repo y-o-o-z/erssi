@@ -13,6 +13,7 @@
 #include <irssi/src/core/levels.h>
 #include <irssi/src/core/safe-file.h>
 
+#include <openssl/ec.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -20,6 +21,7 @@
 #include <openssl/evp.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/crypto.h>
 #include <sys/socket.h>
 #include <fcntl.h>
@@ -36,40 +38,33 @@ SSL_CTX *fe_web_ssl_ctx = NULL;
 static X509 *server_cert = NULL;
 static EVP_PKEY *server_key = NULL;
 
-/* Generate RSA key pair (2048-bit) using modern OpenSSL 3.0 API */
-static EVP_PKEY *generate_rsa_key(void)
+/* Generate an ECDSA key on P-256. Every TLS handshake signs with the key
+ * in the main loop before any password is checked, so its cost is what an
+ * unauthenticated flood of handshakes costs: a P-256 signature is about 18
+ * times cheaper than an RSA-2048 one. A stored key of another type (RSA,
+ * made by older versions) is still used as long as its certificate is. */
+static EVP_PKEY *generate_key(void)
 {
 	EVP_PKEY *pkey = NULL;
 	EVP_PKEY_CTX *ctx;
 
-	/* Create context for RSA key generation */
-	ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
+	ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
 	if (!ctx) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: Failed to create EVP_PKEY_CTX");
 		return NULL;
 	}
-
-	/* Initialize key generation */
-	if (EVP_PKEY_keygen_init(ctx) <= 0) {
+	if (EVP_PKEY_keygen_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, NID_X9_62_prime256v1) <= 0 ||
+	    EVP_PKEY_CTX_set_ec_param_enc(ctx, OPENSSL_EC_NAMED_CURVE) <= 0) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
 		          "fe-web-ssl: Failed to initialize key generation");
 		EVP_PKEY_CTX_free(ctx);
 		return NULL;
 	}
-
-	/* Set RSA key size to 2048 bits */
-	if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) <= 0) {
-		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to set key size");
-		EVP_PKEY_CTX_free(ctx);
-		return NULL;
-	}
-
-	/* Generate the key */
 	if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to generate RSA key");
+		          "fe-web-ssl: Failed to generate the key");
 		EVP_PKEY_CTX_free(ctx);
 		return NULL;
 	}
@@ -95,15 +90,37 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	/* Set version to X509v3 */
 	X509_set_version(x509, 2);
 
-	/* Set serial number */
-	serial = ASN1_INTEGER_new();
-	ASN1_INTEGER_set(serial, 1);
-	X509_set_serialNumber(x509, serial);
-	ASN1_INTEGER_free(serial);
+	/* A random 127-bit serial: with the same issuer and subject every
+	 * time, serial 1 for each new pair made Firefox refuse the next one
+	 * (SEC_ERROR_REUSED_ISSUER_AND_SERIAL, no override) once the user
+	 * had an exception for an earlier one */
+	{
+		unsigned char bytes[16];
+		BIGNUM *bn;
 
-	/* Valid for 10 years */
+		if (RAND_bytes(bytes, sizeof(bytes)) != 1) {
+			printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+			          "fe-web-ssl: No random bytes for the certificate serial");
+			X509_free(x509);
+			return NULL;
+		}
+		bytes[0] &= 0x7f;	/* positive */
+		bytes[0] |= 0x40;	/* and never short */
+		bn = BN_bin2bn(bytes, sizeof(bytes), NULL);
+		serial = bn != NULL ? BN_to_ASN1_INTEGER(bn, NULL) : NULL;
+		BN_free(bn);
+		if (serial == NULL || !X509_set_serialNumber(x509, serial)) {
+			ASN1_INTEGER_free(serial);
+			X509_free(x509);
+			return NULL;
+		}
+		ASN1_INTEGER_free(serial);
+	}
+
+	/* 825 days: Apple's limit for TLS server certificates (iOS 13,
+	 * macOS 10.15), trusted or not; renewed a day before it ends */
 	X509_gmtime_adj(X509_get_notBefore(x509), 0);
-	X509_gmtime_adj(X509_get_notAfter(x509), 315360000L); /* 10 years */
+	X509_gmtime_adj(X509_get_notAfter(x509), 825L * 86400);
 
 	/* Set public key */
 	X509_set_pubkey(x509, pkey);
@@ -119,17 +136,35 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	X509_set_issuer_name(x509, name);
 
 	/* Names a client checks when it pins this certificate (the web
-	 * client connects to 127.0.0.1) */
+	 * client connects to 127.0.0.1), and what the certificate is for: a
+	 * TLS server, no CA - Safari and iOS refuse a server certificate
+	 * without serverAuth */
 	{
+		static const struct {
+			int nid;
+			const char *value;
+		} exts[] = {
+			{ NID_basic_constraints, "critical,CA:FALSE" },
+			{ NID_key_usage, "critical,digitalSignature" },
+			{ NID_ext_key_usage, "serverAuth" },
+			{ NID_subject_alt_name, "IP:127.0.0.1,IP:::1,DNS:localhost" },
+		};
 		X509V3_CTX v3ctx;
 		X509_EXTENSION *ext;
+		gsize i;
 
 		X509V3_set_ctx_nodb(&v3ctx);
 		X509V3_set_ctx(&v3ctx, x509, x509, NULL, NULL, 0);
-		ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name,
-		                          "IP:127.0.0.1,IP:::1,DNS:localhost");
-		if (ext != NULL) {
-			X509_add_ext(x509, ext, -1);
+		for (i = 0; i < G_N_ELEMENTS(exts); i++) {
+			ext = X509V3_EXT_conf_nid(NULL, &v3ctx, exts[i].nid,
+			                          (char *) exts[i].value);
+			if (ext == NULL || !X509_add_ext(x509, ext, -1)) {
+				X509_EXTENSION_free(ext);
+				printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+				          "fe-web-ssl: Failed to add a certificate extension");
+				X509_free(x509);
+				return NULL;
+			}
 			X509_EXTENSION_free(ext);
 		}
 	}
@@ -143,6 +178,21 @@ static X509 *generate_self_signed_cert(EVP_PKEY *pkey)
 	}
 
 	return x509;
+}
+
+/* "AB:CD:..." of the certificate's SHA-256, to be freed */
+static char *cert_fingerprint(X509 *x509)
+{
+	unsigned char md[EVP_MAX_MD_SIZE];
+	unsigned int len = 0, i;
+	GString *str;
+
+	if (!X509_digest(x509, EVP_sha256(), md, &len))
+		return g_strdup("?");
+	str = g_string_new(NULL);
+	for (i = 0; i < len; i++)
+		g_string_append_printf(str, "%s%02X", i > 0 ? ":" : "", md[i]);
+	return g_string_free(str, FALSE);
 }
 
 /* The key and certificate are kept in the irssi directory, so the
@@ -176,8 +226,14 @@ static gboolean refused_in_place(const char *path)
 	return TRUE;
 }
 
+/* a stored key or certificate was there when a new pair was made */
+static gboolean pair_replaced;
+/* the daily look at the certificate's end */
+static guint expiry_tag;
+
 /* 1: the stored pair is used; 0: a new pair is to be made (missing,
- * damaged, expiring, a key others could read); -1: a file in the way */
+ * damaged, ending within FE_WEB_CERT_RENEW_DAYS, a key others could
+ * read); -1: a file in the way */
 static int load_key_and_cert(void)
 {
 	char *key_path, *cert_path;
@@ -194,6 +250,8 @@ static int load_key_and_cert(void)
 	/* both are looked at, so both are said */
 	key_refused = refused_in_place(key_path);
 	cert_refused = refused_in_place(cert_path);
+	pair_replaced = g_file_test(key_path, G_FILE_TEST_EXISTS) ||
+	                g_file_test(cert_path, G_FILE_TEST_EXISTS);
 	if (key_refused || cert_refused) {
 		g_free(key_path);
 		g_free(cert_path);
@@ -227,9 +285,9 @@ static int load_key_and_cert(void)
 	g_free(key_path);
 	g_free(cert_path);
 
-	/* unusable (missing, damaged, other key, expiring within a day):
-	 * a new pair is generated */
-	tomorrow = time(NULL) + 86400;
+	/* unusable (missing, damaged, other key, ending soon): a new pair
+	 * is generated - said, with its fingerprint, when one was there */
+	tomorrow = time(NULL) + FE_WEB_CERT_RENEW_DAYS * 86400;
 	if (pkey == NULL || x509 == NULL || !X509_check_private_key(x509, pkey) ||
 	    X509_cmp_time(X509_get0_notAfter(x509), &tomorrow) <= 0) {
 		EVP_PKEY_free(pkey);
@@ -297,6 +355,42 @@ void fe_web_ssl_init(void)
 
 /* The TLS context with the stored (or a new) key and certificate; made once,
  * at the first server start. Returns TRUE when TLS can be used. */
+gboolean fe_web_ssl_check_expiry(time_t now)
+{
+	const ASN1_TIME *end;
+	int days = 0, secs = 0;
+	char *fp;
+
+	if (server_cert == NULL)
+		return FALSE;
+	end = X509_get0_notAfter(server_cert);
+	{
+		ASN1_TIME *at = ASN1_TIME_set(NULL, now);
+
+		if (at == NULL || !ASN1_TIME_diff(&days, &secs, at, end)) {
+			ASN1_TIME_free(at);
+			return FALSE;
+		}
+		ASN1_TIME_free(at);
+	}
+	if (days >= FE_WEB_CERT_RENEW_DAYS)
+		return FALSE;
+	fp = cert_fingerprint(server_cert);
+	printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+	          "fe-web-ssl: the certificate (SHA-256 %s) ends in %d days; fe-web "
+	          "makes a new one when it starts (/SET fe_web_enabled OFF, then ON, "
+	          "or a restart) - web clients must pin that one then",
+	          fp, days > 0 ? days : 0);
+	g_free(fp);
+	return TRUE;
+}
+
+static gboolean expiry_check(gpointer data)
+{
+	fe_web_ssl_check_expiry(time(NULL));
+	return TRUE;
+}
+
 int fe_web_ssl_prepare(void)
 {
 	if (fe_web_ssl_ctx != NULL)
@@ -311,11 +405,11 @@ int fe_web_ssl_prepare(void)
 		break;
 	}
 
-	/* Generate RSA key */
-	server_key = generate_rsa_key();
+	/* Generate the key */
+	server_key = generate_key();
 	if (!server_key) {
 		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
-		          "fe-web-ssl: Failed to generate RSA key - SSL disabled");
+		          "fe-web-ssl: Failed to generate a key - SSL disabled");
 		return FALSE;
 	}
 
@@ -329,6 +423,17 @@ int fe_web_ssl_prepare(void)
 		return FALSE;
 	}
 	save_key_and_cert();
+	/* a client that pinned the old certificate is refused from now on,
+	   with no hint why: said here */
+	if (pair_replaced) {
+		char *fp = cert_fingerprint(server_cert);
+
+		printtext(NULL, NULL, MSGLEVEL_CLIENTNOTICE,
+		          "fe-web-ssl: made a new key and certificate in place of the old "
+		          "ones - web clients that pinned the old certificate must pin "
+		          "this one: SHA-256 %s", fp);
+		g_free(fp);
+	}
 
 have_cert:
 	/* Create SSL context */
@@ -342,6 +447,13 @@ have_cert:
 		server_key = NULL;
 		return FALSE;
 	}
+
+#ifdef SSL_OP_CLEANSE_PLAINTEXT
+	/* OpenSSL 3: decrypted records are wiped from its read buffer once
+	 * read - the login request (the password) of a refused connection
+	 * stayed there until SSL_free() */
+	SSL_CTX_set_options(fe_web_ssl_ctx, SSL_OP_CLEANSE_PLAINTEXT);
+#endif
 
 	/* Enforce TLS 1.2 minimum (required by modern clients like cloudflared) */
 	if (!SSL_CTX_set_min_proto_version(fe_web_ssl_ctx, TLS1_2_VERSION)) {
@@ -400,12 +512,21 @@ have_cert:
 		server_key = NULL;
 		return FALSE;
 	}
+	/* an erssi that runs for years outlives its certificate: a look a
+	   day, a warning in the last FE_WEB_CERT_RENEW_DAYS */
+	if (expiry_tag == 0)
+		expiry_tag = g_timeout_add_seconds(86400, expiry_check, NULL);
+	fe_web_ssl_check_expiry(time(NULL));
 	return TRUE;
 }
 
 /* Cleanup SSL subsystem */
 void fe_web_ssl_deinit(void)
 {
+	if (expiry_tag != 0) {
+		g_source_remove(expiry_tag);
+		expiry_tag = 0;
+	}
 	if (fe_web_ssl_ctx) {
 		SSL_CTX_free(fe_web_ssl_ctx);
 		fe_web_ssl_ctx = NULL;

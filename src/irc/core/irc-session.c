@@ -130,24 +130,39 @@ static int session_has_channels(CONFIG_NODE *node)
 static void sig_session_save_server(IRC_SERVER_REC *server, CONFIG_REC *config,
 				    CONFIG_NODE *node)
 {
-        GSList *tmp;
+        GSList *tmp, *next;
 	CONFIG_NODE *isupport;
+	int pairs, later, pair;
 	struct _isupport_data isupport_data;
 	int tls_disconnect;
 
 	if (!IS_IRC_SERVER(server))
 		return;
 
-        /* send all non-redirected commands to server immediately */
-	for (tmp = server->cmdqueue; tmp != NULL; tmp = tmp->next->next) {
-		const char *cmd = tmp->data;
-                void *redirect = tmp->next->data;
+        /* send all non-redirected commands to server immediately. A sent
+	   one leaves the queue: when /UPGRADE then fails, the connection
+	   stays with this process, and its flood queue would send it again */
+	pairs = g_slist_length(server->cmdqueue) / 2;
+	later = MIN(server->cmdlater, pairs);
+	for (tmp = server->cmdqueue, pair = 0; tmp != NULL; tmp = next, pair++) {
+		GSList *link = tmp->next;
+		char *cmd = tmp->data;
 
-		if (redirect == NULL) {
-			if (net_sendbuffer_send(server->handle, cmd,
-						strlen(cmd)) == -1)
-				break;
-		}
+		next = link->next;
+		if (link->data != NULL)
+			continue;
+		if (net_sendbuffer_send(server->handle, cmd, strlen(cmd)) == -1)
+			break;
+		server->cmdqueue = g_slist_delete_link(server->cmdqueue, link);
+		server->cmdqueue = g_slist_delete_link(server->cmdqueue, tmp);
+		g_free(cmd);
+		if (server->cmdcount > 0)
+			server->cmdcount--;
+		/* one of the commands queued for later, at the end: they are
+		   fewer now - a stale count let new commands go out ahead of
+		   a queued redirected one */
+		if (pair >= pairs - later && server->cmdlater > 0)
+			server->cmdlater--;
 	}
 	/* we cannot upgrade TLS (yet?) */
 	tls_disconnect = server->connrec->use_tls || server->connrec->starttls;
