@@ -18,7 +18,12 @@ who live on IRCnet: a polished default theme, help for every command, a
 built-in Mentions window, end-to-end encryption, a signed installer that
 also updates, and a security review of the parts that face the network.
 
-![erssi Shellter Edition 2026.10.4 in #shellter, shellter theme, yooz and kofany answering questions about the release: the window list on the left, the channel with the topic, the join summary line, messages under one separator, the nick list with ranks on the right, and the statusbar](docs/images/erssi-shellter.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/erssi-shellter-light.png">
+  <img src="docs/images/erssi-shellter.png" alt="erssi Shellter Edition 2026.10.6 in #shellter on IRCnet, shellter theme: the window list on the left; in the middle yooz (yooz@ircnet.pl) and kofany (kofany@irc.al) join and get op, then people on the channel talk about the release under one separator; the nick list by rank on the right; the statusbar below">
+</picture>
+
+<sub>A real erssi with the real nicks of #shellter; the lines they say were written for the picture.</sub>
 
 ## Install
 
@@ -54,7 +59,8 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
   `--ref` is built unverified, with a warning. How to check the script and
   a package first, and what each mode verifies:
   [What the installer verifies](docs/shellter/install.md#what-the-installer-verifies).
-- Works on Linux and FreeBSD. Options: `--prefix`, `--ref`, `--src`,
+- Works on Linux and FreeBSD; a build from source needs GLib 2.70 or
+  newer. Options: `--prefix`, `--ref`, `--src`,
   `--no-test`, `--clean`, `--yes`, `--binary`/`--source`, `--keep`,
   `--dry-run`, `--rollback`, `--uninstall`.
 - erssi keeps its configuration in `~/.erssi/`, so it runs side by side
@@ -71,19 +77,18 @@ erssi --check-update     # is a newer release available?
 erssi --update           # install it
 ```
 
-`--update` takes the newest release on GitHub that carries a valid
-signature by the release key of the installed copy and is a newer version
-(the rules of the 2026.10.3 installer: from 2026.10.2 or older, run the
-install command once instead to get them) and installs it into the same
-prefix: from its package where there is one for your system (checked as
-above, and its commit must be the one of the signed tag), otherwise built
-and tested from source. An erssi 2026.10.3 or older builds 2026.10.4 from
-source this once; from 2026.10.4 on, updates use the packages. `/upgrade`
-then loads the new version in a running erssi, keeping your windows and
-channels. Connections over plain text stay up; those over TLS cannot be
-handed to the new process, so they reconnect once ("[TLS] Client
-upgrade"). Coming from 1.3.9 or older (no `--update`): run the install
-command again; your `~/.erssi/config` is kept and the Shellter look stays.
+`--update` takes the newest release on GitHub that is newer than yours and
+carries a valid signature by the release key of the installed copy, and
+installs it into the same prefix: from its package where there is one for
+your system (checked as above, and its commit must be the one of the
+signed tag), otherwise built and tested from source. `/upgrade` then loads
+the new version in a running erssi and keeps your windows and channels.
+Connections over plain text stay up; those over TLS cannot be handed to the
+new process, so they reconnect once ("[TLS] Client upgrade").
+
+From 2026.10.2 or older, and from 1.3.9 or older (which have no
+`--update`), run the install command once instead; your `~/.erssi/config`
+is kept and the Shellter look stays.
 
 Details (signature check by hand, rollback, themes and `startup` updated
 like system config files, what changes when upgrading from 1.3.x):
@@ -100,28 +105,36 @@ like system config files, what changes when upgrading from 1.3.x):
 ## What this edition adds
 
 Every command has a page in `/help`. The full lists:
-[docs/shellter/features.md](docs/shellter/features.md).
+[docs/shellter/features.md](docs/shellter/features.md); what each release
+changed: [NEWS](NEWS).
 
-**Ready-made binaries** (new in 2026.10.4)
+**New in 2026.10.6**
+
+- **Nothing reaches your terminal raw** — control characters from the network (C0, DEL, C1) are drawn as `?` on every terminal type, so a channel or nick name cannot set your clipboard or window title.
+- **`--uninstall` removes only its own files** — libraries, headers and man pages of other software in the same prefix stay, and the installer names what it left.
+- **A web frontend that holds under load** — new connections are limited before TLS starts, and the web nick list follows the server.
+- **`man erssi`** — a manual page of its own, linked for an install in your home.
+
+**Ready-made binaries**
 
 - **Installed in seconds** — on Debian 13 and FreeBSD 14 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
 - **Checked before anything changes** — the signature on `SHA256SUMS`, the package's checksum and its manifest must all match, or nothing is installed.
 - **Releases side by side** — each release in its own directory, `current` switched in one step, `--rollback` to the previous one.
 
-**Encryption you can rely on** (new in 2026.10.3)
+**Encryption you can rely on**
 
 - **Nothing disappears** — an encrypted message that cannot be read leaves a line in its place that says why and what to run; a known key from a new address gets a warning with the exact `/e2e reverify` command.
-- **Plain text is marked** — a line in an encrypted channel or query that came in unencrypted shows `[plain]` (since 2026.10.4 also one under the peer's nick from another address or under your own nick); bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
+- **Plain text is marked** — a line in an encrypted channel or query that came in unencrypted shows `[plain]`, also one under the peer's nick from another address or under your own nick; bot-style lines are encrypted too unless you turn `e2e_bot_bypass` on.
 - **Tested against repartee** — `meson test` includes live tests against repartee and `rpe2e.pl` (run when they are installed), covering key changes, a reset and a flood of key requests.
 
-**Nicks, networks and windows** (new in 2026.10.1 and 2026.10.2)
+**Nicks, networks and windows**
 
 - **Keepnick built in** — `/keepnick` takes your nick back as soon as it is free (MONITOR or ISON). `/help keepnick`.
 - **Side panels for split windows** — every row of split windows gets its own part of the nick list.
 - **Layouts that come back as saved** — after `/layout save` or `/save` every window returns to its place.
 - **One connection per network** — `/connect IRCnet` while connected switches to its window.
 
-**Mentions, notifications and search** (new in 2026.10.0)
+**Mentions, notifications and search**
 
 - **Mentions window** — private messages, notices from people and hilights in one window, with a log. `/help mentions`.
 - **Desktop notifications** — through the terminal, also inside tmux. `/help term_notify`.
@@ -187,11 +200,12 @@ Details and moving from `rpe2e.pl`:
 The network-facing parts were reviewed, fuzzed and tested under
 sanitizers.
 
-- **Web frontend (fe-web)** — the password in a header (the URL form NexusIRC sends still works); wrong passwords paced per peer; limits on login, clients and frames.
+- **Terminal output** — every C0, DEL and C1 control character that comes from the network is drawn as `?`, on UTF-8, 8-bit and Big5 terminals.
+- **Web frontend (fe-web)** — the password in a header (the URL form NexusIRC sends still works); wrong passwords paced per peer; new connections limited before TLS; limits on login, clients and frames; password copies wiped from memory.
 - **Image preview** — http and https only, public addresses only, a hard size limit.
 - **Configuration** — `~/.erssi/config` is written readable only by you.
 - **Hardened build** — PIE, stack protector, stack clash protection, `FORTIFY_SOURCE=2`, full RELRO.
-- **Fuzzing** — what fe-web reads from the network is fuzzed with libFuzzer under ASan and UBSan.
+- **Fuzzing** — what fe-web and the E2E module read from the network, irssi's own parsers and the image decoder are fuzzed with libFuzzer under ASan and UBSan; every `meson test` replays their seed corpora.
 - **Credential encryption** — switched off; `/help credential` explains why.
 
 Details: [docs/shellter/security.md](docs/shellter/security.md).
