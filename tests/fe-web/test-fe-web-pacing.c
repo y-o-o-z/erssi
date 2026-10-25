@@ -2621,10 +2621,10 @@ static void test_live_not_tcp(void)
 }
 
 /* new connections: FE_WEB_ACCEPT_BURST per peer and window, then the
- * next window; a clock that goes back starts anew; the shared key gets
- * FE_WEB_ACCEPT_SHARED_PER_SEC a second; all of them together
- * FE_WEB_ACCEPT_ALL_PER_SEC a second; a full table forgets what is over,
- * else the oldest peer still under its limit - never one at its limit */
+ * next window; a clock that goes back starts anew; all of them together
+ * FE_WEB_ACCEPT_ALL_PER_SEC a second, but not a peer that logged in
+ * before (trusted); a full table forgets what is over, else the oldest
+ * peer still under its limit - never one at its limit */
 static void test_accept_limit(void)
 {
 	FE_WEB_ACCEPT_LIMIT *limit = fe_web_accept_limit_new();
@@ -2638,12 +2638,6 @@ static void test_accept_limit(void)
 	g_assert_true(fe_web_accept_allow(limit, "ip:b", FALSE, 100));
 	g_assert_true(fe_web_accept_allow(limit, "ip:a", FALSE, 100 + FE_WEB_ACCEPT_WINDOW));
 	g_assert_true(fe_web_accept_allow(limit, "ip:a", FALSE, 50));
-
-	/* the shared key: a high ceiling a second, not a count of 8 */
-	for (i = 0; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++)
-		g_assert_true(fe_web_accept_allow(limit, "ip:loopback", TRUE, 300));
-	g_assert_false(fe_web_accept_allow(limit, "ip:loopback", TRUE, 300));
-	g_assert_true(fe_web_accept_allow(limit, "ip:loopback", TRUE, 301));
 	fe_web_accept_limit_free(limit);
 
 	/* all together, whatever the number of addresses */
@@ -2654,7 +2648,11 @@ static void test_accept_limit(void)
 			g_assert_true(fe_web_accept_allow(limit, key, FALSE, 400));
 	}
 	g_assert_false(fe_web_accept_allow(limit, "ip:fresh", FALSE, 400));
-	g_assert_false(fe_web_accept_allow(limit, "ip:loopback", TRUE, 400));
+	/* a peer that logged in before (the owner's phone) gets in, held
+	   only by its own count */
+	for (j = 0; j < FE_WEB_ACCEPT_BURST; j++)
+		g_assert_true(fe_web_accept_allow(limit, "ip:phone", TRUE, 400));
+	g_assert_false(fe_web_accept_allow(limit, "ip:phone", TRUE, 400));
 	g_assert_true(fe_web_accept_allow(limit, "ip:fresh", FALSE, 401));
 	fe_web_accept_limit_free(limit);
 
@@ -2676,6 +2674,35 @@ static void test_accept_limit(void)
 	fe_web_accept_limit_free(limit);
 }
 
+/* the shared key's handshakes: a token bucket of
+ * FE_WEB_ACCEPT_SHARED_PER_SEC a second, not a calendar second - 50 at
+ * once, then one every 20 ms, never more than 50 saved up; a clock that
+ * goes back refills nothing */
+static void test_accept_shared_tokens(void)
+{
+	FE_WEB_ACCEPT_LIMIT *limit = fe_web_accept_limit_new();
+	gint64 t = 1000 * G_USEC_PER_SEC;
+	int i;
+
+	for (i = 0; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++)
+		g_assert_true(fe_web_accept_shared_token(limit, t));
+	g_assert_false(fe_web_accept_shared_token(limit, t));
+	/* a new second is no new allowance of 50 */
+	t += G_USEC_PER_SEC / FE_WEB_ACCEPT_SHARED_PER_SEC / 2;
+	g_assert_false(fe_web_accept_shared_token(limit, t));
+	t += G_USEC_PER_SEC / FE_WEB_ACCEPT_SHARED_PER_SEC / 2;
+	g_assert_true(fe_web_accept_shared_token(limit, t));
+	g_assert_false(fe_web_accept_shared_token(limit, t));
+	/* back in time: nothing */
+	g_assert_false(fe_web_accept_shared_token(limit, t - G_USEC_PER_SEC));
+	/* a long pause saves up at most a second's worth */
+	t += 100 * G_USEC_PER_SEC;
+	for (i = 0; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++)
+		g_assert_true(fe_web_accept_shared_token(limit, t));
+	g_assert_false(fe_web_accept_shared_token(limit, t));
+	fe_web_accept_limit_free(limit);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -2684,6 +2711,7 @@ int main(int argc, char **argv)
 	                test_five_failures_then_interval);
 	g_test_add_func("/fe-web/pacing/window-expires", test_window_expires);
 	g_test_add_func("/fe-web/pacing/accept-limit", test_accept_limit);
+	g_test_add_func("/fe-web/pacing/accept-shared-tokens", test_accept_shared_tokens);
 	g_test_add_func("/fe-web/pacing/window-counts-from-last-failure",
 	                test_window_counts_from_last_failure);
 	g_test_add_func("/fe-web/pacing/paced-failures-extend-window",

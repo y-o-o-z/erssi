@@ -33,6 +33,8 @@ int fe_web_ssl_prepare(void);
 /* the warning, when the certificate ends within FE_WEB_CERT_RENEW_DAYS of
  * now; TRUE when given */
 gboolean fe_web_ssl_check_expiry(time_t now);
+/* for the tests: the expiry checks run this many seconds ahead */
+void fe_web_ssl_set_clock_offset(time_t offset);
 
 /* Cleanup SSL subsystem */
 void fe_web_ssl_deinit(void);

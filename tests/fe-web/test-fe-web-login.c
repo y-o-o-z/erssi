@@ -1005,13 +1005,18 @@ static void test_tcp_accept_rate_limited(void)
 }
 
 /* The shared key ip:loopback (sock_diag gives no answer and the /proc
- * budget is spent: the owner looks like everyone else) is not held to 8
- * per 10 s: bare connects of another local user must not keep the
- * owner's next connection out. It has a ceiling a second, for the CPU. */
+ * budget is spent: the owner looks like everyone else) is never refused
+ * at accept - bare connects of another local user must not keep the
+ * owner's next connection out. Over its ceiling a connection waits for a
+ * handshake token instead: not closed, its handshake comes later, and
+ * the waiting ones stay within the pending limit. */
 static void test_tcp_accept_shared_not_limited(void)
 {
-	char *printed;
-	int i, fd;
+	struct sockaddr_in sa;
+	WEB_CLIENT_REC *c;
+	char *printed, *request, buf[512];
+	int i, fd, n, fds[3 * FE_WEB_MAX_PENDING];
+	gssize got = 0;
 
 	setup();
 	tcp_listen();
@@ -1021,23 +1026,55 @@ static void test_tcp_accept_shared_not_limited(void)
 		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
 		close_and_wait(fd);
 	}
-	/* "the owner" now, from the same key */
-	fe_web_fuzz_spend_proc_budget();
-	g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
 	printed = fe_web_fuzz_take_printed();
 	g_assert_null(strstr(printed, "too many new connections"));
 	g_free(printed);
-	close_and_wait(fd);
-	/* the ceiling (fe-web's clock stands still) */
-	for (i = 3 * FE_WEB_ACCEPT_BURST + 1; i < FE_WEB_ACCEPT_SHARED_PER_SEC; i++) {
-		fe_web_fuzz_spend_proc_budget();
-		g_assert_cmpstr(connect_from("127.0.0.1", &fd)->peer_key, ==, "ip:loopback");
-		close_and_wait(fd);
-	}
+
+	/* over the ceiling: kept, waiting for its handshake */
+	fe_web_fuzz_spend_shared_tokens();
 	fe_web_fuzz_spend_proc_budget();
-	assert_refused_at_accept();
+	c = connect_from("127.0.0.1", &fd);
+	g_assert_cmpstr(c->peer_key, ==, "ip:loopback");
+	g_assert_cmpint(c->recv_tag, ==, -1);
+	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), ==, 1);
+	request = test_request(FE_WEB_FUZZ_PASSWORD);
+	g_assert_cmpint(write(fd, request, strlen(request)), ==, (int) strlen(request));
+	g_free(request);
+	/* a token comes within FE_WEB_TLS_WAIT_STEP or so: then the login */
+	g_assert_cmpint(fcntl(fd, F_SETFL, O_NONBLOCK), ==, 0);
+	for (n = 0; n < 200 && got <= 0; n++) {
+		fe_web_fuzz_iterate(5);
+		got = read(fd, buf, sizeof(buf) - 1);
+	}
+	g_assert_cmpint(got, >, 0);
+	buf[got] = '\0';
+	g_assert_true(g_str_has_prefix(buf, "HTTP/1.1 101"));
+	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), ==, 0);
+	g_assert_true(c->authenticated);
+
+	/* a flood of them: what waits stays within the pending limit */
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	for (i = 0; i < (int) G_N_ELEMENTS(fds); i++) {
+		fe_web_fuzz_spend_shared_tokens();
+		fe_web_fuzz_spend_proc_budget();
+		fds[i] = socket(AF_INET, SOCK_STREAM, 0);
+		g_assert_cmpint(fds[i], >=, 0);
+		g_assert_cmpint(connect(fds[i], (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+		for (n = 0; n < 20; n++)
+			g_main_context_iteration(NULL, FALSE);
+		g_assert_cmpuint(fe_web_fuzz_tls_waiting(), <=, FE_WEB_MAX_PENDING);
+		g_assert_cmpuint(g_slist_length(web_clients), <=, FE_WEB_MAX_PENDING + 1);
+	}
+	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), >, 0);
+	for (i = 0; i < (int) G_N_ELEMENTS(fds); i++)
+		close(fds[i]);
+	close(fd);
 	fe_web_sock_diag_set_func(NULL);
 	fe_web_server_deinit();
+	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), ==, 0);
 	g_free(fe_web_fuzz_take_printed());
 }
 #endif

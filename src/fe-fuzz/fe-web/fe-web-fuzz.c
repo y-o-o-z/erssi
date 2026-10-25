@@ -856,9 +856,30 @@ int fe_web_fuzz_listen_port(void)
 
 /* The stand-ins */
 
+/* with real_tls_prepare the server start makes the real TLS context
+ * (fe_web_fuzz_real_tls_prepare()); connections still use the stand-in */
+static gboolean real_tls_prepare;
+
+void fe_web_fuzz_spend_shared_tokens(void)
+{
+	if (accept_limit == NULL)
+		accept_limit = fe_web_accept_limit_new();
+	fe_web_accept_shared_drain(accept_limit, g_get_monotonic_time());
+}
+
+guint fe_web_fuzz_tls_waiting(void)
+{
+	return g_queue_get_length(&tls_waiting);
+}
+
+void fe_web_fuzz_real_tls_prepare(gboolean on)
+{
+	real_tls_prepare = on;
+}
+
 static int fe_web_fuzz_ssl_prepare(void)
 {
-	return TRUE;
+	return real_tls_prepare ? fe_web_ssl_prepare() : TRUE;
 }
 
 static FE_WEB_SSL_CHANNEL *fe_web_fuzz_ssl_channel_create(GIOChannel *plain_channel)

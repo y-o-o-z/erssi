@@ -382,8 +382,11 @@ typedef struct {
 
 struct _FE_WEB_ACCEPT_LIMIT {
 	GHashTable *peers;	/* peer -> ACCEPT_COUNT */
-	ACCEPT_COUNT shared;	/* the shared or unknown key */
 	ACCEPT_COUNT all;	/* every connection counted here */
+	/* the shared or unknown key: a token bucket of TLS handshakes */
+	double shared_tokens;
+	gint64 shared_at;	/* monotonic us of the last refill */
+	gboolean shared_started;
 };
 
 FE_WEB_ACCEPT_LIMIT *fe_web_accept_limit_new(void)
@@ -449,20 +452,15 @@ static gboolean accept_make_room(FE_WEB_ACCEPT_LIMIT *limit, time_t now)
 	return TRUE;
 }
 
-gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gboolean shared,
+gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gboolean trusted,
                              time_t now)
 {
 	ACCEPT_COUNT *c;
 
-	if (!accept_room(&limit->all, now, FE_WEB_ACCEPT_ALL_PER_SEC, 1))
+	/* a peer that logged in before (a phone) is never held by what
+	   many other addresses spent */
+	if (!trusted && !accept_room(&limit->all, now, FE_WEB_ACCEPT_ALL_PER_SEC, 1))
 		return FALSE;
-	if (shared) {
-		if (!accept_room(&limit->shared, now, FE_WEB_ACCEPT_SHARED_PER_SEC, 1))
-			return FALSE;
-		limit->shared.count++;
-		limit->all.count++;
-		return TRUE;
-	}
 	c = g_hash_table_lookup(limit->peers, peer);
 	if (c == NULL) {
 		if (g_hash_table_size(limit->peers) >= FE_WEB_ACCEPT_MAX_PEERS &&
@@ -475,8 +473,41 @@ gboolean fe_web_accept_allow(FE_WEB_ACCEPT_LIMIT *limit, const char *peer, gbool
 	if (!accept_room(c, now, FE_WEB_ACCEPT_BURST, FE_WEB_ACCEPT_WINDOW))
 		return FALSE;
 	c->count++;
-	limit->all.count++;
+	if (!trusted)
+		limit->all.count++;
 	return TRUE;
+}
+
+static void shared_refill(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us)
+{
+	if (!limit->shared_started) {
+		limit->shared_started = TRUE;
+		limit->shared_tokens = FE_WEB_ACCEPT_SHARED_PER_SEC;
+		limit->shared_at = now_us;
+		return;
+	}
+	/* a clock that goes back: from now on */
+	if (now_us > limit->shared_at)
+		limit->shared_tokens += (double) (now_us - limit->shared_at) *
+		                        FE_WEB_ACCEPT_SHARED_PER_SEC / G_USEC_PER_SEC;
+	if (limit->shared_tokens > FE_WEB_ACCEPT_SHARED_PER_SEC)
+		limit->shared_tokens = FE_WEB_ACCEPT_SHARED_PER_SEC;
+	limit->shared_at = now_us;
+}
+
+gboolean fe_web_accept_shared_token(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us)
+{
+	shared_refill(limit, now_us);
+	if (limit->shared_tokens < 1)
+		return FALSE;
+	limit->shared_tokens -= 1;
+	return TRUE;
+}
+
+void fe_web_accept_shared_drain(FE_WEB_ACCEPT_LIMIT *limit, gint64 now_us)
+{
+	shared_refill(limit, now_us);
+	limit->shared_tokens = 0;
 }
 
 char *fe_web_peer_key_ip(const IPADDR *ip)

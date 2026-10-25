@@ -377,6 +377,17 @@ static void sig_message_irc_own_action(IRC_SERVER_REC *server, const char *msg, 
 	fe_web_message_free(web_msg);
 }
 
+/* nick is ours, as the server compares nicks (rfc1459 case: [ and {
+ * are the same), so a JOIN or NICK echoed in another case is ours too -
+ * the same answer in every handler */
+static gboolean is_own_nick(IRC_SERVER_REC *server, const char *nick)
+{
+	if (nick == NULL || server->nick == NULL)
+		return FALSE;
+	return server->nick_comp_func != NULL ? server->nick_comp_func(nick, server->nick) == 0 :
+	                                        g_ascii_strcasecmp(nick, server->nick) == 0;
+}
+
 /* Signal: "message join" */
 static void sig_message_join(IRC_SERVER_REC *server, const char *channel, const char *nick,
                              const char *address, const char *account, const char *realname)
@@ -416,7 +427,7 @@ static void sig_message_join(IRC_SERVER_REC *server, const char *channel, const 
 	   sig_event_join(), which /IGNORE JOINS and netjoin hiding cannot
 	   stop */
 	chanrec = irc_channel_find(server, channel);
-	if (chanrec != NULL && g_strcmp0(nick, server->nick) == 0) {
+	if (chanrec != NULL && is_own_nick(server, nick)) {
 		fe_web_send_nicklist_update(server, chanrec, nick, "add");
 	}
 }
@@ -521,7 +532,7 @@ static void sig_event_join(IRC_SERVER_REC *server, const char *data, const char 
 	IRC_CHANNEL_REC *chanrec;
 
 	if (server == NULL || data == NULL || nick == NULL ||
-	    g_ascii_strcasecmp(nick, server->nick) == 0)
+	    is_own_nick(server, nick))
 		return;
 	params = event_get_params(data, 1, &channel);
 	/* ircd 2.x: "#chan\007o" is a join with a mode */
@@ -543,7 +554,7 @@ static void sig_event_nick(IRC_SERVER_REC *server, const char *data, const char 
 	GSList *tmp;
 
 	if (server == NULL || data == NULL || oldnick == NULL ||
-	    g_ascii_strcasecmp(oldnick, server->nick) == 0)
+	    is_own_nick(server, oldnick))
 		return;
 	params = event_get_params(data, 1, &newnick);
 	for (tmp = server->channels; *newnick != '\0' && tmp != NULL; tmp = tmp->next) {
