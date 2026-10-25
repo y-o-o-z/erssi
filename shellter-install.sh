@@ -563,7 +563,10 @@ safe_prefix() {
 lock_id() {   # "host boot pidns" of this installer
     if [ "$(uname -s 2>/dev/null)" = FreeBSD ]; then
         lb=-
-        case "$(sysctl -n security.jail.jailed 2>/dev/null)" in
+        # sysctl is in /sbin, which a user's PATH may lack (cron's is
+        # /usr/bin:/bin): without it every lock would count as unknown
+        sc=sysctl; have sysctl || sc=/sbin/sysctl
+        case "$("$sc" -n security.jail.jailed 2>/dev/null)" in
             0) lns=host ;; 1) lns=jail ;; *) lns=unknown ;;
         esac
     else
