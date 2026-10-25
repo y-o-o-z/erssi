@@ -111,7 +111,8 @@ char *e2e_read_regular_file(const char *path, gsize max, gboolean own, gsize *le
 gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
                                const char *what, char **error);
 /* the same; *written (when not NULL): fstat of the new file after the
-   rename, from its still open descriptor */
+   rename, from its still open descriptor - zeroed when that fstat (or
+   the close) failed after the file was in place, which is still TRUE */
 gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t len,
                                     const char *what, struct stat *written, char **error);
 /* a new file, 0600, never over an existing file or through a symlink */

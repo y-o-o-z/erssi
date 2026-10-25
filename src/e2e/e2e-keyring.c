@@ -410,6 +410,9 @@ void e2e_keyring_cache_saved(E2E_KEYRING_CACHE *cache, const E2E_JSON *kr,
                              const struct stat *written)
 {
 	e2e_keyring_cache_clear(cache);
+	/* no stamp (e2e_write_file_atomic_stat() zeroed it): read again */
+	if (written->st_ino == 0 && written->st_dev == 0)
+		return;
 	cache->kr = e2e_json_copy(kr);
 	cache->st = *written;
 }
@@ -500,14 +503,19 @@ gboolean e2e_write_file_atomic_stat(const char *path, const char *data, size_t l
 		return FALSE;
 	}
 	/* the file we wrote as the rename left it, from its own descriptor:
-	   a later lstat() of path could already see another writer's file */
+	   a later lstat() of path could already see another writer's file.
+	   The file is in place now (and was fsync'ed): an fstat() or close()
+	   that fails here only costs the stamp - *written is zeroed, which
+	   no file matches - never a save reported failed that happened */
 	ok = written == NULL || fstat(fd, written) == 0;
-	if (close(fd) != 0 || !ok) {
-		saved = errno;
-		*error = g_strdup_printf("cannot write %s: %s", what, g_strerror(saved));
-		g_free(tmp);
-		return FALSE;
+	if (!ok)
+		g_debug("%s written, but its fstat failed: %s", what, g_strerror(errno));
+	if (close(fd) != 0) {
+		g_debug("%s written, but its close failed: %s", what, g_strerror(errno));
+		ok = FALSE;
 	}
+	if (!ok && written != NULL)
+		memset(written, 0, sizeof(*written));
 	fsync_dir(path);
 	g_free(tmp);
 	return TRUE;

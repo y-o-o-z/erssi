@@ -1098,6 +1098,22 @@ static void test_cache(void)
 	e2e_json_free(kr);
 	g_assert_cmpuint(cache.reads, ==, 3);
 
+	/* a save whose stamp could not be taken: nothing kept, read again */
+	{
+		struct stat none;
+
+		memset(&none, 0, sizeof(none));
+		kr = e2e_keyring_new();
+		e2e_json_set_string(kr, "one", "3");
+		e2e_keyring_cache_saved(&cache, kr, &none);
+		e2e_json_free(kr);
+		g_assert_null(cache.kr);
+		kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+		g_assert_cmpstr(e2e_json_get_string(kr, "one"), ==, "3");
+		e2e_json_free(kr);
+		g_assert_cmpuint(cache.reads, ==, 4);
+	}
+
 	/* a chmod */
 	cache_age();
 	g_assert_cmpint(g_chmod(path, 0644), ==, 0);
@@ -1105,7 +1121,7 @@ static void test_cache(void)
 	e2e_json_free(kr);
 	g_free(notice);
 	notice = NULL;
-	g_assert_cmpuint(cache.reads, ==, 4);
+	g_assert_cmpuint(cache.reads, ==, 5);
 
 	/* gone: an empty keyring, not the copy */
 	g_assert_cmpint(g_unlink(path), ==, 0);
