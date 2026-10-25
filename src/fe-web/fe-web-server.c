@@ -1315,6 +1315,17 @@ static void sig_listen(void)
 
 		net_ip2host(&ip, host);
 		addr = g_strdup_printf("%s:%d", host, port);
+		/* A connection its peer reset or closed before it was taken
+		 * is closed here, before TLS: its uid can no longer be found,
+		 * so it would count as the shared loopback peer, and a TLS
+		 * handshake (a signature) would still read what it sent - a
+		 * free handshake for each connect, outside every limit */
+		if (!fe_web_tcp_peer_alive(g_io_channel_unix_get_fd(handle))) {
+			log_refused_addr(addr, "closed by its peer before it was taken");
+			g_free(addr);
+			net_disconnect(handle);
+			return;
+		}
 		/* Every user of the machine can reach a loopback port, and
 		 * all of them have the same address there: on Linux the
 		 * peer counts as the uid of its socket (sock_diag, or

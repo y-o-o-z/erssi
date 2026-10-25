@@ -199,6 +199,11 @@ gboolean fe_web_proc_budget_take(FE_WEB_PROC_BUDGET *budget, time_t now);
  * (NETLINK_SOCK_DIAG); when it gives no answer, /proc/net/tcp and tcp6
  * are read if 'budget' (NULL: no limit) allows it at 'now'. */
 int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *uid);
+/* the TCP connection is still there, its peer has not closed it: FALSE
+ * after a reset (getpeername() fails) and, on Linux, in any state but
+ * ESTABLISHED. Such a peer's uid cannot be found - it would count as the
+ * shared loopback peer - and its connection is of no use to anyone. */
+gboolean fe_web_tcp_peer_alive(int fd);
 
 #ifdef __linux__
 /* NETLINK_SOCK_DIAG, the parts tested on their own.

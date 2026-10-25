@@ -1334,6 +1334,28 @@ static int tcp_peer_diag_uid(const TCP_PEER *c, uid_t unmapped, time_t now, uid_
 }
 #endif
 
+gboolean fe_web_tcp_peer_alive(int fd)
+{
+	struct sockaddr_storage peer;
+	socklen_t len = sizeof(peer);
+
+	/* reset (Linux still hands such a connection to accept()) */
+	if (getpeername(fd, (struct sockaddr *) &peer, &len) < 0)
+		return FALSE;
+#ifdef __linux__
+	{
+		struct tcp_info info;
+		socklen_t ilen = sizeof(info);
+
+		/* closed by the peer already (CLOSE_WAIT after its FIN) */
+		if (getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &ilen) == 0 &&
+		    info.tcpi_state != TCP_ESTABLISHED)
+			return FALSE;
+	}
+#endif
+	return TRUE;
+}
+
 int fe_web_tcp_peer_uid(int fd, FE_WEB_PROC_BUDGET *budget, time_t now, uid_t *uid)
 {
 #ifdef __linux__
