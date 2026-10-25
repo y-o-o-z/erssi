@@ -920,19 +920,40 @@ prefix-lock)
 stale-lock)
     # a lock its installer left behind (kill -9, the OOM killer) is taken
     # over when that installer is gone: the lock names its pid, host, boot
-    # id and PID namespace, here those of a stand-in /proc
+    # id and PID namespace - on Linux those of a stand-in /proc, on
+    # FreeBSD no boot id and the jail state (the real sysctl) instead
     [ -n "$PS" ] || { echo "skip: no ps"; exit 77; }
     ln -s "$PS" "$W/bin/ps"
-    # find -mmin tells the age of a lock with nothing in it
+    # find -mmin tells the age of a .takeover with nothing in it
     FIND=$(printf '%s\n' "$BIN_TOOLS" | tr ' ' '\n' | sed -n 's|^find=||p')
     [ -n "$FIND" ] || { echo "skip: no find"; exit 77; }
     ln -s "$FIND" "$W/bin/find"
-    mkdir -p "$W/proc/sys/kernel/random" "$W/proc/self/ns"
-    echo 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 > "$W/proc/sys/kernel/random/boot_id"
-    ln -s 'pid:[4026531836]' "$W/proc/self/ns/pid"
-    SHELLTER_PROC=$W/proc; export SHELLTER_PROC
     host=$(uname -n)
-    me="$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]"
+    # (ns_msg is read by the eval of a check)
+    # shellcheck disable=SC2034
+    if [ "$(uname -s)" = FreeBSD ]; then
+        bsd=1
+        # this installer's own: no boot id, and the jail state of this box
+        # shellcheck disable=SC2016 # run by sh
+        me=$(SHELLTER_INSTALL_NO_MAIN=1 sh -c '. "$1"; lock_id' sh "$SRC/shellter-install.sh")
+        # (with sysctl out of PATH, as here and in cron: it must still
+        # read the jail state)
+        case "$me" in
+            "$host - host") ;;
+            "$host - jail") echo "skip: in a FreeBSD jail, where no lock is taken over"; exit 77 ;;
+            *) echo "FAIL $CASE: lock_id cannot tell this FreeBSD host: $me"; exit 1 ;;
+        esac
+        other_ns="$host - jail" ns_msg="a FreeBSD jail sees only its own processes" blank="- host"
+    else
+        bsd=0
+        mkdir -p "$W/proc/sys/kernel/random" "$W/proc/self/ns"
+        echo 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 > "$W/proc/sys/kernel/random/boot_id"
+        ln -s 'pid:[4026531836]' "$W/proc/self/ns/pid"
+        SHELLTER_PROC=$W/proc; export SHELLTER_PROC
+        me="$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]"
+        other_ns="$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]"
+        ns_msg="the lock was made in another PID namespace (a container or a sandbox)" blank="- -"
+    fi
     sh -c 'exit 0' & gone=$!
     wait "$gone"
     sleep 30 & alive=$!
@@ -948,29 +969,33 @@ stale-lock)
     run_install
     check "a lock of a running installer: refused" eval '[ "$RC" = 1 ] && grep -qF "another installer is using $S (if not, remove $S.lock)" "$W/out"'
     check "... kept" [ "$(cat "$S.lock/pid")" = "$alive $me" ]
-    printf '%s %s\n' "$gone" "elsewhere.example 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
+    printf '%s elsewhere.example %s\n' "$gone" "${me#"$host" }" > "$S.lock/pid"
     run_install
     check "a lock of another host: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made on elsewhere.example" "$W/out"'
-    printf '%s %s\n' "$gone" "$host 0e18b4ec-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]" > "$S.lock/pid"
+    printf '%s %s\n' "$gone" "$other_ns" > "$S.lock/pid"
     run_install
-    check "a lock of another PID namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "the lock was made in another PID namespace (a container or a sandbox)" "$W/out"'
+    check "a lock of another PID namespace (FreeBSD: a jail): refused" eval '[ "$RC" = 1 ] && grep -qF "$ns_msg" "$W/out"'
     check "... kept" [ -f "$S.lock/pid" ]
-    # an earlier boot (a reboot): taken over, even with a pid that runs
-    # now and another PID namespace - nothing of that boot still runs
-    printf '%s %s\n' "$alive" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]" > "$S.lock/pid"
-    run_install
-    check "a lock of an earlier boot: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
-    mkdir "$S.lock"
-    # this boot, a pid that runs: still refused
-    printf '%s %s\n' "$alive" "$me" > "$S.lock/pid"
-    run_install
-    check "... the same boot and a running pid: refused" eval '[ "$RC" = 1 ] && [ "$(cat "$S.lock/pid")" = "$alive $me" ]'
-    # an earlier boot, but this side cannot tell its own: refused
-    mv "$W/proc/sys/kernel/random/boot_id" "$W/boot_id.away"
-    printf '%s %s\n' "$gone" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
-    run_install
-    mv "$W/boot_id.away" "$W/proc/sys/kernel/random/boot_id"
-    check "... a boot id this side cannot read: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'
+    if [ "$bsd" = 0 ]; then
+        # an earlier boot (a reboot): taken over, even with a pid that
+        # runs now and another PID namespace - nothing of that boot runs
+        printf '%s %s\n' "$alive" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026532999]" > "$S.lock/pid"
+        run_install
+        check "a lock of an earlier boot: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock" "$S.lock.takeover"'
+        mkdir "$S.lock"
+        # this boot, a pid that runs: still refused
+        printf '%s %s\n' "$alive" "$me" > "$S.lock/pid"
+        run_install
+        check "... the same boot and a running pid: refused" eval '[ "$RC" = 1 ] && [ "$(cat "$S.lock/pid")" = "$alive $me" ]'
+        # an earlier boot, but this side cannot tell its own: refused
+        mv "$W/proc/sys/kernel/random/boot_id" "$W/boot_id.away"
+        printf '%s %s\n' "$gone" "$host 99999999-2aa1-42a6-a657-3866ca8a7031 pid:[4026531836]" > "$S.lock/pid"
+        run_install
+        mv "$W/boot_id.away" "$W/proc/sys/kernel/random/boot_id"
+        check "... a boot id this side cannot read: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'
+    else
+        pass "skip the boot id checks: FreeBSD has no boot id"
+    fi
     printf '%s %s\n' "$gone" "$host" > "$S.lock/pid"
     run_install
     check "a lock without boot id and namespace: refused" eval '[ "$RC" = 1 ] && grep -qF "made where this installer cannot tell whether its process still runs" "$W/out"'
@@ -1007,14 +1032,14 @@ stale-lock)
     run_install
     check "an old lock without a pid: refused too" eval '[ "$RC" = 1 ] && [ -d "$S.lock" ]'
     rm -rf "$S.lock"
-    # where neither side can tell boot or namespace (FreeBSD): the pid
-    # and host decide, as before
-    rm -rf "$W/proc/sys" "$W/proc/self/ns"
-    mkdir "$S.lock" && printf '%s %s - -\n' "$gone" "$host" > "$S.lock/pid"
+    # where neither side can tell the boot (FreeBSD), nor on Linux the
+    # namespace: the pid and host decide, as before
+    [ "$bsd" = 1 ] || rm -rf "$W/proc/sys" "$W/proc/self/ns"
+    mkdir "$S.lock" && printf '%s %s %s\n' "$gone" "$host" "$blank" > "$S.lock/pid"
     run_install
-    check "no boot id or namespace on either side: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock"'
+    check "no boot id (or namespace) on either side: taken over" eval '[ "$RC" = 0 ] && none_exist "$S.lock"'
     # --rollback and --uninstall take a stale prefix lock over as well
-    mkdir "$P/.install.lock" && printf '%s %s - -\n' "$gone" "$host" > "$P/.install.lock/pid"
+    mkdir "$P/.install.lock" && printf '%s %s %s\n' "$gone" "$host" "$blank" > "$P/.install.lock/pid"
     sh "$SRC/shellter-install.sh" --uninstall > "$W/out" 2>&1
     RC=$?
     check "--uninstall over a stale lock: done" eval '[ "$RC" = 0 ] && none_exist "$P/bin/erssi" "$P/.install.lock"'
