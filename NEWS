@@ -37,21 +37,27 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    anyone who reaches the port can start, costs about an 18th of
 	    one with the RSA key of older versions (still used until its
 	    certificate is renewed)
-	  - a new certificate has a random serial, says it is for a TLS
-	    server (serverAuth, no CA) and is valid for 825 days, which
-	    Firefox and Apple clients need. A stored one is kept: if Firefox
-	    says the serial was used before, or Safari or iOS refuse it,
-	    remove ~/.erssi/fe-web-key.pem and ~/.erssi/fe-web-cert.pem; the
-	    next start makes a new pair (pin it again in the web client)
+	  - a new certificate has a random serial (a reused serial is what
+	    Firefox refuses after a new pair), says it is for a TLS server
+	    (serverAuth, keyUsage digitalSignature, no CA) and is valid for
+	    825 days. A stored one is kept; to get a new one, remove
+	    ~/.erssi/fe-web-key.pem and ~/.erssi/fe-web-cert.pem: the next
+	    start makes a new pair (pin it again in the web client)
+	  - a stored certificate ending within 30 days is replaced when
+	    fe-web starts, and a replaced pair is said with the new
+	    certificate's SHA-256 fingerprint; while erssi runs, a daily look
+	    warns in those 30 days
 	  - a remote address, or another local user known by uid, may open
-	    at most 8 new connections in 10 seconds; more are closed before
-	    their TLS handshake. Your own uid is not counted, and neither is
-	    a loopback peer whose uid is not known (the BSDs, or Linux
-	    without an answer from the kernel), which every local user then
-	    shares
+	    at most 8 new connections in 10 seconds, and all of them together
+	    200 a second; more are closed before their TLS handshake. Your
+	    own uid is not counted. A loopback peer whose uid is not known
+	    (the BSDs, or Linux without an answer from the kernel), which
+	    every local user then shares, is held to 50 a second. A
+	    connection its peer already reset or closed is closed at once
 	  - the web client's nicklists lose a nick that quits only in the
-	    channels it was in, not in every channel, and also when the
-	    quit, part or kick is hidden (/IGNORE, netsplit hiding)
+	    channels it was in, not in every channel, and joins, parts,
+	    kicks, quits and nick changes reach them also when they are
+	    hidden (/IGNORE, netsplit hiding)
 	  - text the server sends in another charset (a WHOIS realname in
 	    ISO-8859-2) reaches web clients as valid UTF-8: WHOIS text is
 	    read in the charset /RECODE gives the network or nick, else in
