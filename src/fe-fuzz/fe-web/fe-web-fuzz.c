@@ -860,11 +860,16 @@ int fe_web_fuzz_listen_port(void)
  * (fe_web_fuzz_real_tls_prepare()); connections still use the stand-in */
 static gboolean real_tls_prepare;
 
-void fe_web_fuzz_spend_shared_tokens(void)
+void fe_web_fuzz_set_shared_tokens(double tokens)
 {
 	if (accept_limit == NULL)
 		accept_limit = fe_web_accept_limit_new();
-	fe_web_accept_shared_drain(accept_limit, g_get_monotonic_time());
+	fe_web_accept_shared_set(accept_limit, tokens, g_get_monotonic_time());
+}
+
+void fe_web_fuzz_spend_shared_tokens(void)
+{
+	fe_web_fuzz_set_shared_tokens(0);
 }
 
 guint fe_web_fuzz_tls_waiting(void)

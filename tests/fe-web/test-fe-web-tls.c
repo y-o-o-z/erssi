@@ -783,6 +783,46 @@ static void test_renewed_by_server_restart(void)
 	reset();
 }
 
+/* The renewal at a server restart cannot make a new pair (a directory
+ * in place of the key file): the old certificate, still valid, is served
+ * on, and the failure is said with when it is tried again */
+static void test_renewal_failure_keeps_old(void)
+{
+	char *base = test_tmpdir(), *sock = g_build_filename(base, "fe-web.sock", NULL);
+	char *out;
+
+	reset();
+	write_pair(FE_WEB_CERT_RENEW_DAYS + 5);
+	fe_web_fuzz_real_tls_prepare(TRUE);
+	settings_set_str("fe_web_socket", sock);
+	set_enabled(TRUE);
+	g_free(fe_web_fuzz_take_printed());
+	g_assert_nonnull(fe_web_ssl_ctx);
+
+	fe_web_ssl_set_clock_offset(10 * 86400L);
+	g_assert_cmpint(unlink(key_path), ==, 0);
+	g_assert_cmpint(mkdir(key_path, 0700), ==, 0);
+	set_enabled(FALSE);
+	set_enabled(TRUE);
+	out = fe_web_fuzz_take_printed();
+	g_assert_nonnull(strstr(out, "could not make a new key and certificate"));
+	g_assert_nonnull(strstr(out, "tried again when the server starts again"));
+	g_assert_nonnull(strstr(out, "listening on unix:"));
+	g_assert_nonnull(fe_web_ssl_ctx);
+	g_assert_true(fe_web_ssl_is_enabled());
+	g_free(out);
+
+	set_enabled(FALSE);
+	g_assert_cmpint(rmdir(key_path), ==, 0);
+	fe_web_ssl_set_clock_offset(0);
+	fe_web_fuzz_real_tls_prepare(FALSE);
+	settings_set_str("fe_web_socket", "");
+	test_rmtree(base);
+	g_free(base);
+	g_free(sock);
+	reset();
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -816,6 +856,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/tls/rsa-pair-kept", test_rsa_pair_kept);
 	g_test_add_func("/fe-web/tls/renewal-said", test_renewal_said);
 	g_test_add_func("/fe-web/tls/renewed-by-server-restart", test_renewed_by_server_restart);
+	g_test_add_func("/fe-web/tls/renewal-failure-keeps-old", test_renewal_failure_keeps_old);
 	g_test_add_func("/fe-web/tls/old-pin-refused-after-new-key",
 	                test_old_pin_refused_after_new_key);
 

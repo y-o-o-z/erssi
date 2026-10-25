@@ -97,11 +97,12 @@
     and the lookups of the moment are used up - every local user, you as
     well, is the one peer "loopback". Its connections are never refused
     for their number: their handshakes are spaced out to 50 a second, the
-    others wait among the connections still logging in. So another user
-    cannot lock you out by connecting, but can still slow down your
-    connections and close your pending ones; their wrong passwords slow
-    down your logins. There fe_web_socket is the only setting that keeps
-    the users of a shared box apart.
+    others wait among the connections still logging in, oldest first.
+    That bounds what they cost erssi, but another local user can still
+    delay your connection or, through the limit of connections still
+    logging in, close it while it waits, as in 2026.10.5; their wrong
+    passwords slow down your logins. There fe_web_socket is the only
+    setting that keeps the users of a shared box apart.
 
     The directory of the socket must be yours and writable by nobody else
     (a missing one is made with mode 0700), otherwise the server does not

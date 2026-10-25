@@ -424,22 +424,56 @@ static gboolean expiry_check(gpointer data)
  * certificate ends within FE_WEB_CERT_RENEW_DAYS (/SET fe_web_enabled OFF
  * then ON, which the warning advises, renews it). Returns TRUE when TLS
  * can be used. */
+static int prepare_context(void);
+
 int fe_web_ssl_prepare(void)
 {
-	if (fe_web_ssl_ctx != NULL) {
-		if (server_cert == NULL || !ends_soon(server_cert, ssl_now()))
-			return TRUE;
-		/* the server is stopped, no session loses its pin now; a
-		   connection still around keeps its own SSL, which holds a
-		   reference to this context */
-		SSL_CTX_free(fe_web_ssl_ctx);
-		fe_web_ssl_ctx = NULL;
-		X509_free(server_cert);
-		server_cert = NULL;
-		EVP_PKEY_free(server_key);
-		server_key = NULL;
-	}
+	SSL_CTX *old_ctx;
+	X509 *old_cert;
+	EVP_PKEY *old_key;
+	time_t now = ssl_now();
+	int ret;
 
+	if (fe_web_ssl_ctx == NULL)
+		return prepare_context();
+	if (server_cert == NULL || !ends_soon(server_cert, now))
+		return TRUE;
+	/* renewed: the server is stopped, no session loses its pin now; a
+	   connection still around keeps its own SSL, which holds a
+	   reference to the old context */
+	old_ctx = fe_web_ssl_ctx;
+	old_cert = server_cert;
+	old_key = server_key;
+	fe_web_ssl_ctx = NULL;
+	server_cert = NULL;
+	server_key = NULL;
+	ret = prepare_context();
+	if (!ret && X509_cmp_time(X509_get0_notAfter(old_cert), &now) > 0) {
+		/* no new pair (a file in the way, no key made): the old
+		   certificate is still valid, so it is still served */
+		char *fp = cert_fingerprint(old_cert);
+
+		fe_web_ssl_ctx = old_ctx;
+		server_cert = old_cert;
+		server_key = old_key;
+		printtext(NULL, NULL, MSGLEVEL_CLIENTERROR,
+		          "fe-web-ssl: could not make a new key and certificate (see "
+		          "above) - the old certificate (SHA-256 %s), which has not "
+		          "ended yet, is used; a new one is tried again when the server "
+		          "starts again (/SET fe_web_enabled OFF, then ON, or a restart)",
+		          fp);
+		g_free(fp);
+		return TRUE;
+	}
+	SSL_CTX_free(old_ctx);
+	X509_free(old_cert);
+	EVP_PKEY_free(old_key);
+	return ret;
+}
+
+/* the context with the stored key and certificate, or a new pair */
+static int prepare_context(void)
+{
 	switch (load_key_and_cert()) {
 	case 1:
 		goto have_cert;

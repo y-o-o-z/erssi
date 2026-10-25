@@ -1077,6 +1077,54 @@ static void test_tcp_accept_shared_not_limited(void)
 	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), ==, 0);
 	g_free(fe_web_fuzz_take_printed());
 }
+/* The shared key's connections get their handshake tokens oldest first:
+ * with one waiting, a newcomer that arrives just as a token has come
+ * waits behind it (it used to take that token, so a stream of them could
+ * keep the owner's queued connection waiting until the pending limit
+ * closed it) */
+static void test_tcp_shared_queue_order(void)
+{
+	struct sockaddr_in sa;
+	WEB_CLIENT_REC *a, *b;
+	int fda, fdb, n;
+
+	setup();
+	tcp_listen();
+	fe_web_sock_diag_set_func(diag_fails);
+	fe_web_fuzz_spend_shared_tokens();
+	fe_web_fuzz_spend_proc_budget();
+	a = connect_from("127.0.0.1", &fda);
+	g_assert_cmpstr(a->peer_key, ==, "ip:loopback");
+	g_assert_cmpint(a->recv_tag, ==, -1);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(fe_web_fuzz_listen_port());
+	g_assert_cmpint(inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr), ==, 1);
+	fdb = socket(AF_INET, SOCK_STREAM, 0);
+	g_assert_cmpint(fdb, >=, 0);
+	g_assert_cmpint(connect(fdb, (struct sockaddr *) &sa, sizeof(sa)), ==, 0);
+	/* one token has come when fe-web takes the newcomer */
+	g_usleep(5000);
+	fe_web_fuzz_spend_proc_budget();
+	fe_web_fuzz_set_shared_tokens(1);
+	for (n = 0; n < 200 && g_slist_length(web_clients) < 2; n++) {
+		g_main_context_iteration(NULL, FALSE);
+		if (g_slist_length(web_clients) < 2)
+			g_usleep(1000);
+	}
+	g_assert_cmpuint(g_slist_length(web_clients), ==, 2);
+	b = g_slist_last(web_clients)->data;
+	g_assert_true(b != a);
+	g_assert_cmpint(a->recv_tag, !=, -1);
+	g_assert_cmpint(b->recv_tag, ==, -1);
+	g_assert_cmpuint(fe_web_fuzz_tls_waiting(), ==, 1);
+	close(fda);
+	close(fdb);
+	fe_web_sock_diag_set_func(NULL);
+	fe_web_server_deinit();
+	g_free(fe_web_fuzz_take_printed());
+}
 #endif
 
 /* A connection reset by its peer before fe-web took it (connect, a
@@ -1157,6 +1205,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/tcp-accept-rate-limited", test_tcp_accept_rate_limited);
 	g_test_add_func("/fe-web/login/tcp-accept-shared-not-limited",
 	                test_tcp_accept_shared_not_limited);
+	g_test_add_func("/fe-web/login/tcp-shared-queue-order", test_tcp_shared_queue_order);
 #endif
 	g_test_add_func("/fe-web/login/tcp-loopback-sources-share-key",
 	                test_tcp_loopback_sources_share_key);
