@@ -15,6 +15,7 @@
 #include <irssi/src/lib-config/iconfig.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
+#include <irssi/src/irc/core/servers-redirect.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -209,6 +210,57 @@ static void test_refused_after_save_sends_once(void)
 	finish(server);
 }
 
+/* The queue mixed: commands sent at once, a NORMAL one waiting, a
+ * redirected WHOIS (not sent by the save, it keeps its redirect) and two
+ * MODEs queued for later. After the failed upgrade only the WHOIS is
+ * left, and the count of commands queued for later is 0: a new command
+ * waits behind the WHOIS instead of going out ahead of it. */
+static void test_refused_after_save_mixed_queue(void)
+{
+	SERVER_REC *server = connected_server();
+	IRC_SERVER_REC *irc = IRC_SERVER(server);
+	GString *got = g_string_new(NULL);
+	int i;
+
+	/* everything waits in the queue */
+	irc->max_cmds_at_once = 0;
+	irc->cmd_queue_speed = 60000;
+	for (i = 0; i < 3; i++) {
+		char *cmd = g_strdup_printf("PRIVMSG #x :a%d", i);
+
+		irc_send_cmd(irc, cmd);
+		g_free(cmd);
+	}
+	server_redirect_event(irc, "whois", 1, "bob", -1, NULL,
+	                      "event 318", "redir test whois end", NULL);
+	irc_send_cmd(irc, "WHOIS bob");
+	irc_send_cmd_later(irc, "MODE #x");
+	irc_send_cmd_later(irc, "MODE #y");
+	g_assert_cmpint(irc->cmdlater, ==, 2);
+	g_assert_cmpuint(g_slist_length(irc->cmdqueue), ==, 12);
+
+	block_while_saving = TRUE;
+	upgrade();
+	assert_kept(server);
+	peer_reads(got);
+	g_assert_nonnull(strstr(got->str, "MODE #y"));
+	g_assert_null(strstr(got->str, "WHOIS"));
+	/* left: the WHOIS and its redirect */
+	g_assert_cmpuint(g_slist_length(irc->cmdqueue), ==, 2);
+	g_assert_true(g_str_has_prefix(irc->cmdqueue->data, "WHOIS bob"));
+	g_assert_nonnull(irc->cmdqueue->next->data);
+	g_assert_cmpint(irc->cmdlater, ==, 0);
+	/* what comes next waits behind it, even with room to send at once */
+	irc->max_cmds_at_once = 5;
+	irc->wait_cmd = 0;
+	irc_send_cmd(irc, "PRIVMSG #x :new");
+	g_assert_cmpuint(g_slist_length(irc->cmdqueue), ==, 4);
+	g_assert_true(g_str_has_prefix(irc->cmdqueue->data, "WHOIS bob"));
+	g_assert_true(g_str_has_prefix(irc->cmdqueue->next->next->data, "PRIVMSG #x :new"));
+	g_string_free(got, TRUE);
+	finish(server);
+}
+
 /* a symbolic link where the session goes: dropped, its target untouched
  * (the probe wrote through it) */
 static void test_link_not_followed(void)
@@ -258,6 +310,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/upgrade/refused-after-save", test_refused_after_save);
 	g_test_add_func("/upgrade/refused-after-save-sends-once",
 	                test_refused_after_save_sends_once);
+	g_test_add_func("/upgrade/refused-after-save-mixed-queue",
+	                test_refused_after_save_mixed_queue);
 	g_test_add_func("/upgrade/link-not-followed", test_link_not_followed);
 	g_test_add_func("/upgrade/written", test_upgrade_written);
 
