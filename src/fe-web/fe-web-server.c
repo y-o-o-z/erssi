@@ -73,7 +73,8 @@ static time_t refused_logged = 0;
  * unchecked (429), until a minute passes without a wrong password
  * (fe-web-pacing.h). Not a full lockout, and per peer: fe-web usually
  * listens on a loopback port every user of a shared box can reach, and
- * none of them may keep the owner's web client out. The owner's own
+ * where the owner's uid is known (the Unix socket, Linux) none of them may
+ * keep the owner's web client out; on a shared key they can, as below. The owner's own
  * processes (own_peer_key) are never paced: they can read the password in
  * the config anyway. Both are made on the first login.
  *
@@ -1384,9 +1385,10 @@ static void sig_listen(void)
 	 * the kernel cannot tell the uid) or "uid:unknown" may be the owner
 	 * too: it is never refused here, its handshakes are only spaced out
 	 * (tls_waiting). That bounds the CPU; on such a system another local
-	 * user can still slow down or close the owner's pending connections,
-	 * which only fe_web_socket prevents. The owner's own connections are
-	 * never counted. */
+	 * user can still delay the owner's connection or, through the
+	 * pending limit, close it while it waits, as in 2026.10.5 - only
+	 * fe_web_socket avoids that. The owner's own connections are never
+	 * counted. */
 	if (strcmp(peer_key, own_peer_key) != 0) {
 		gboolean shared = peer_shared || strcmp(peer_key, "uid:unknown") == 0;
 

@@ -56,8 +56,10 @@ shellter-v2026.10.6 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    is not counted. A loopback peer whose uid is not known (the BSDs,
 	    or Linux without an answer from the kernel), which every local
 	    user then shares, is not refused: its handshakes are spaced out
-	    to 50 a second. A connection its peer already reset or closed is
-	    closed at once
+	    to 50 a second, oldest first. There another local user can still
+	    delay your connection or close it while it waits, as in
+	    2026.10.5; fe_web_socket avoids that. A connection its peer
+	    already reset or closed is closed at once
 	  - the web client's nicklists lose a nick that quits only in the
 	    channels it was in, not in every channel, and joins, parts,
 	    kicks, quits and nick changes reach them also when they are

@@ -20,10 +20,13 @@ Built for a shared shell box.
   loopback port on Linux), otherwise an address; your own uid is never
   paced, and a peer that logged in before is not held up by the wrong
   passwords of others.
-- **Nobody locks you out** — on the Unix socket, and on Linux also on
-  127.0.0.1, nobody else on the box can lock you out; elsewhere (FreeBSD)
-  every local user is the one peer 127.0.0.1, so use the socket
-  (`fe_web_socket`) on a shared box.
+- **Other users on the box** — on the Unix socket, and on Linux on
+  127.0.0.1 while the kernel tells erssi who connects, your connections
+  are told apart from everyone else's. Elsewhere (FreeBSD, macOS, Linux
+  without that answer) every local user is the one peer 127.0.0.1: another
+  user can still delay your connection or, through the limit of
+  connections still logging in, close it while it waits, as in
+  2026.10.5. Use the socket (`fe_web_socket`) on a shared box.
 - **Limits** — 16 KB and 10 seconds to log in, with a separate limit for
   connections still logging in; at most 8 new connections per peer in 10
   seconds and 200 a second from all peers together, refused before their
@@ -35,9 +38,9 @@ Built for a shared shell box.
   tell) is never refused for its number of connections: its handshakes
   are only spaced out, 50 a second, and the others wait among the
   connections still logging in. That bounds the CPU, but it does not keep
-  the users apart: there another local user can still slow down your
-  connections or close your pending ones - fe_web_socket (a Unix socket)
-  is what prevents that;
+  the users apart: there another local user can still delay your
+  connection or, through that limit, close it while it waits, as in
+  2026.10.5 - fe_web_socket (a Unix socket) avoids that;
   at most 16 clients; messages of at most 16 MB, also when fragmented (in
   at most 4096 frames). A key fe-web makes is ECDSA P-256, whose
   handshake costs a fraction of the RSA key of older versions (a stored

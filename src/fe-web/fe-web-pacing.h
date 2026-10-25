@@ -112,10 +112,11 @@ gboolean fe_web_pacing_is_trusted(FE_WEB_PACING *pacing, const char *peer);
  *   handshakes are spaced by a token bucket of FE_WEB_ACCEPT_SHARED_PER_SEC
  *   a second, and a connection without a token waits, among the
  *   connections still logging in (FE_WEB_MAX_PENDING, the oldest of the
- *   busiest peer closed for a new one). That bounds the CPU; it does not
- *   keep the users apart: on such a system another local user can still
- *   slow down or close the owner's pending connections, as before - only
- *   fe_web_socket (a Unix socket) keeps them apart.
+ *   busiest peer closed for a new one), oldest first. That bounds the
+ *   CPU; it does not keep the users apart: on such a system another local
+ *   user can still delay the owner's connection or, through the pending
+ *   limit, close it while it waits, as in 2026.10.5 - only fe_web_socket
+ *   (a Unix socket) avoids that.
  * A clock that goes back starts a new window (and refills nothing). */
 #define FE_WEB_ACCEPT_BURST 8
 #define FE_WEB_ACCEPT_WINDOW 10
