@@ -25,6 +25,7 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/irc/core/irc.h>
 #include <irssi/src/irc/core/irc-servers.h>
+#include <irssi/src/irc/core/irc-channels.h>
 
 #include <string.h>
 
@@ -328,6 +329,26 @@ static void test_adds_and_changes_when_ignored(void)
 	fe_web_fuzz_server_free(server);
 }
 
+/* our own JOIN echoed with the nick in another case is ours: one "add",
+ * from the own-join path (the server's case compare, in both handlers) */
+static void test_own_join_other_case(void)
+{
+	IRC_SERVER_REC *server = connected();
+	WEB_CLIENT_REC *c = client_new();
+	gsize mark;
+	char *heard;
+
+	mark = heard_len();
+	server_says(server, ":ME!u@example.net JOIN #c");
+	heard = heard_since(mark);
+	g_assert_nonnull(irc_channel_find(server, "#c"));
+	g_assert_cmpuint(count(heard, "\"task\":\"add\""), ==, 1);
+	g_free(heard);
+
+	fe_web_fuzz_client_free(c);
+	fe_web_fuzz_server_free(server);
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -340,6 +361,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/signals/removes-when-ignored", test_removes_when_ignored);
 	g_test_add_func("/fe-web/signals/adds-and-changes-when-ignored",
 	                test_adds_and_changes_when_ignored);
+	g_test_add_func("/fe-web/signals/own-join-other-case", test_own_join_other_case);
 	g_test_add_func("/fe-web/signals/json-is-utf8", test_json_is_utf8);
 	g_test_add_func("/fe-web/signals/json-follows-recode", test_json_follows_recode);
 
