@@ -287,6 +287,47 @@ static void test_removes_when_ignored(void)
 	fe_web_fuzz_server_free(server);
 }
 
+/* joins and nick changes reach the web client's nicklists also when
+ * their display signals are stopped (/IGNORE JOINS NICKS, netjoin
+ * hiding), once each when they are not */
+static void test_adds_and_changes_when_ignored(void)
+{
+	IRC_SERVER_REC *server = connected();
+	WEB_CLIENT_REC *c = client_new();
+	gsize mark;
+	char *heard;
+
+	join(server, "#a", "me bob");
+	join(server, "#b", "me bob");
+	/* not stopped: one add, one change per channel */
+	mark = heard_len();
+	server_says(server, ":carol!c@example.net JOIN #a");
+	server_says(server, ":bob!b@example.net NICK :bobby");
+	heard = heard_since(mark);
+	g_assert_cmpuint(count(heard, "\"type\":\"nicklist_update\""), ==, 3);
+	g_assert_cmpuint(count(heard, "\"task\":\"add\""), ==, 1);
+	g_assert_cmpuint(count(heard, "\"new_nick\":\"bobby\""), ==, 2);
+	g_free(heard);
+
+	signal_add_first("message join", (SIGNAL_FUNC) sig_stop);
+	signal_add_first("message nick", (SIGNAL_FUNC) sig_stop);
+	mark = heard_len();
+	server_says(server, ":dave!d@example.net JOIN #b");
+	server_says(server, ":bobby!b@example.net NICK :bob2");
+	heard = heard_since(mark);
+	signal_remove("message join", (SIGNAL_FUNC) sig_stop);
+	signal_remove("message nick", (SIGNAL_FUNC) sig_stop);
+	g_assert_cmpuint(count(heard, "\"type\":\"nicklist_update\""), ==, 3);
+	g_assert_nonnull(strstr(heard, "\"channel\":\"#b\",\"nick\":\"dave\""));
+	g_assert_cmpuint(count(heard, "\"new_nick\":\"bob2\""), ==, 2);
+	/* the display lines were stopped */
+	g_assert_null(strstr(heard, "\"type\":\"nick_change\""));
+	g_free(heard);
+
+	fe_web_fuzz_client_free(c);
+	fe_web_fuzz_server_free(server);
+}
+
 int main(int argc, char **argv)
 {
 	int ret;
@@ -297,6 +338,8 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/fe-web/signals/quit-removes-where-member", test_quit_removes_where_member);
 	g_test_add_func("/fe-web/signals/removes-when-ignored", test_removes_when_ignored);
+	g_test_add_func("/fe-web/signals/adds-and-changes-when-ignored",
+	                test_adds_and_changes_when_ignored);
 	g_test_add_func("/fe-web/signals/json-is-utf8", test_json_is_utf8);
 	g_test_add_func("/fe-web/signals/json-follows-recode", test_json_follows_recode);
 

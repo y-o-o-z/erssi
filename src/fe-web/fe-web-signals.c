@@ -412,9 +412,11 @@ static void sig_message_join(IRC_SERVER_REC *server, const char *channel, const 
 	fe_web_send_to_server_clients(server, web_msg);
 	fe_web_message_free(web_msg);
 
-	/* Send nicklist update (delta: add) after join */
+	/* Our own join: the nicklist delta of anyone else's is sent by
+	   sig_event_join(), which /IGNORE JOINS and netjoin hiding cannot
+	   stop */
 	chanrec = irc_channel_find(server, channel);
-	if (chanrec != NULL) {
+	if (chanrec != NULL && g_strcmp0(nick, server->nick) == 0) {
 		fe_web_send_nicklist_update(server, chanrec, nick, "add");
 	}
 }
@@ -507,6 +509,61 @@ static void sig_message_quit(IRC_SERVER_REC *server, const char *nick, const cha
 	fe_web_message_free(web_msg);
 
 	/* the nicklist deltas are sent by sig_event_quit() */
+}
+
+/* Someone else joins: the "add" from the server's event, which nothing
+ * stops ("message join" is stopped by /IGNORE JOINS, and by fe-netjoin
+ * for a netsplit's rejoins). It runs first, before the core adds the
+ * nick: sent unless the nick is there already. */
+static void sig_event_join(IRC_SERVER_REC *server, const char *data, const char *nick)
+{
+	char *params, *channel, *bell;
+	IRC_CHANNEL_REC *chanrec;
+
+	if (server == NULL || data == NULL || nick == NULL ||
+	    g_ascii_strcasecmp(nick, server->nick) == 0)
+		return;
+	params = event_get_params(data, 1, &channel);
+	/* ircd 2.x: "#chan\007o" is a join with a mode */
+	bell = strchr(channel, 7);
+	if (bell != NULL)
+		*bell = '\0';
+	chanrec = irc_channel_find(server, channel);
+	if (chanrec != NULL && nicklist_find(CHANNEL(chanrec), nick) == NULL)
+		fe_web_send_nicklist_update(server, chanrec, nick, "add");
+	g_free(params);
+}
+
+/* Someone else changes nick: the "change" deltas from the server's event
+ * ("message nick" is stopped by /IGNORE NICKS). First, before the core
+ * renames: the old nick is still in the lists. */
+static void sig_event_nick(IRC_SERVER_REC *server, const char *data, const char *oldnick)
+{
+	char *params, *newnick;
+	GSList *tmp;
+
+	if (server == NULL || data == NULL || oldnick == NULL ||
+	    g_ascii_strcasecmp(oldnick, server->nick) == 0)
+		return;
+	params = event_get_params(data, 1, &newnick);
+	for (tmp = server->channels; *newnick != '\0' && tmp != NULL; tmp = tmp->next) {
+		IRC_CHANNEL_REC *channel = tmp->data;
+		WEB_MESSAGE_REC *update_msg;
+
+		if (nicklist_find(CHANNEL(channel), oldnick) == NULL)
+			continue;
+		update_msg = fe_web_message_new(WEB_MSG_NICKLIST_UPDATE);
+		update_msg->id = fe_web_generate_message_id();
+		update_msg->server_tag = g_strdup(server->tag);
+		update_msg->target = g_strdup(channel->name);
+		update_msg->nick = g_strdup(oldnick);  /* Old nick */
+		update_msg->text = g_strdup("change"); /* task */
+		g_hash_table_insert(update_msg->extra_data, g_strdup("new_nick"),
+		                    g_strdup(newnick));
+		fe_web_send_to_server_clients(server, update_msg);
+		fe_web_message_free(update_msg);
+	}
+	g_free(params);
 }
 
 /* The nicklist deltas of a part, kick or quit come from the server's
@@ -762,7 +819,6 @@ static void sig_message_nick(IRC_SERVER_REC *server, const char *newnick, const 
                              const char *address)
 {
 	WEB_MESSAGE_REC *web_msg;
-	GSList *tmp;
 
 	if (server == NULL) {
 		return;
@@ -778,32 +834,7 @@ static void sig_message_nick(IRC_SERVER_REC *server, const char *newnick, const 
 	fe_web_send_to_server_clients(server, web_msg);
 	fe_web_message_free(web_msg);
 
-	/* Send nicklist_update (delta: change) for each channel the user is in */
-	for (tmp = server->channels; tmp != NULL; tmp = tmp->next) {
-		IRC_CHANNEL_REC *channel = tmp->data;
-		NICK_REC *nick_rec;
-
-		/* Check if the user is in this channel (using NEW nick, as irssi already renamed)
-		 */
-		nick_rec = nicklist_find(CHANNEL(channel), newnick);
-		if (nick_rec != NULL) {
-			WEB_MESSAGE_REC *update_msg;
-
-			update_msg = fe_web_message_new(WEB_MSG_NICKLIST_UPDATE);
-			update_msg->id = fe_web_generate_message_id();
-			update_msg->server_tag = g_strdup(server->tag);
-			update_msg->target = g_strdup(channel->name);
-			update_msg->nick = g_strdup(oldnick);  /* Old nick */
-			update_msg->text = g_strdup("change"); /* task */
-
-			/* Add new nick to extra_data */
-			g_hash_table_insert(update_msg->extra_data, g_strdup("new_nick"),
-			                    g_strdup(newnick));
-
-			fe_web_send_to_server_clients(server, update_msg);
-			fe_web_message_free(update_msg);
-		}
-	}
+	/* the nicklist deltas are sent by sig_event_nick() */
 }
 
 /* Signal: "message own_nick" - We changed our own nick */
@@ -1615,6 +1646,8 @@ void fe_web_signals_init(void)
 	signal_add("message part", (SIGNAL_FUNC) sig_message_part);
 	signal_add("message kick", (SIGNAL_FUNC) sig_message_kick);
 	signal_add("message quit", (SIGNAL_FUNC) sig_message_quit);
+	signal_add_first("event join", (SIGNAL_FUNC) sig_event_join);
+	signal_add_first("event nick", (SIGNAL_FUNC) sig_event_nick);
 	signal_add_first("event part", (SIGNAL_FUNC) sig_event_part);
 	signal_add_first("event kick", (SIGNAL_FUNC) sig_event_kick);
 	signal_add_first("event quit", (SIGNAL_FUNC) sig_event_quit);
@@ -1694,6 +1727,8 @@ void fe_web_signals_deinit(void)
 	signal_remove("message part", (SIGNAL_FUNC) sig_message_part);
 	signal_remove("message kick", (SIGNAL_FUNC) sig_message_kick);
 	signal_remove("message quit", (SIGNAL_FUNC) sig_message_quit);
+	signal_remove("event join", (SIGNAL_FUNC) sig_event_join);
+	signal_remove("event nick", (SIGNAL_FUNC) sig_event_nick);
 	signal_remove("event part", (SIGNAL_FUNC) sig_event_part);
 	signal_remove("event kick", (SIGNAL_FUNC) sig_event_kick);
 	signal_remove("event quit", (SIGNAL_FUNC) sig_event_quit);
