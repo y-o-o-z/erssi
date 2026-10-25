@@ -362,7 +362,7 @@ table.where td.t { font-family: var(--mono); font-size: 0.875rem; white-space: n
 
 <div class="frame">
   <header class="topic">
-    <p><a class="name" href="./">erssi Shellter Edition</a><span class="sep" aria-hidden="true">|</span>the modern irssi, tuned for IRCnet<span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi">GitHub</a><span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.5">Release notes</a></p>
+    <p><a class="name" href="./">erssi Shellter Edition</a><span class="sep" aria-hidden="true">|</span>the modern irssi, tuned for IRCnet<span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi">GitHub</a><span class="sep" aria-hidden="true">|</span><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes</a></p>
   </header>
 
   <div class="screen">
@@ -372,7 +372,7 @@ table.where td.t { font-family: var(--mono); font-size: 0.875rem; white-space: n
         <li><a href="#built-in"><span class="n">2</span> <span class="w">built in</span></a></li>
         <li><a href="#install"><span class="n">3</span> <span class="w">install</span></a></li>
         <li><a href="#verify"><span class="n">4</span> <span class="w">verify</span></a></li>
-        <li><a href="#new"><span class="n">5</span> <span class="w">2026.10.5</span></a></li>
+        <li><a href="#new"><span class="n">5</span> <span class="w">2026.10.6</span></a></li>
         <li><a href="#credits"><span class="n">6</span> <span class="w">credits</span></a></li>
       </ol>
     </nav>
@@ -508,16 +508,16 @@ erssi --update         <span class="c"># install it</span></pre>
         <p>To check a release tag by hand, in a clone of the repository (gpg is switched off so that only this SSH key counts):</p>
 <pre class="block">git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
     -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.5</pre>
+    verify-tag shellter-v2026.10.6</pre>
         <p>It must report a good signature with the fingerprint above, which you should compare with one you got another way.</p>
         <p>The parts that face the network, the web frontend and end-to-end encryption among them, are fuzzed with libFuzzer, and the test suite runs under AddressSanitizer and UndefinedBehaviorSanitizer. The build is hardened by default: PIE, stack protector, stack clash protection, full RELRO, <code>FORTIFY_SOURCE=2</code>. Found a security problem? <a href="https://github.com/y-o-o-z/erssi/blob/main/SECURITY.md">Report it privately</a>.</p>
       </section>
 
       <section id="new" aria-labelledby="h-new">
-        <h2 id="h-new">In 2026.10.5</h2>
-        <p>Reading the keyring or a <code>/e2e import</code> file reserves room for each string as long as that string, not for the rest of the file, so a large keyring no longer asks for hundreds of megabytes on a box with little memory.</p>
-        <p>2026.10.4 brought the ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before, and the answer to a full review of the code: files are opened safely everywhere, and a save that fails on a full disk keeps the old config.</p>
-        <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.5">Release notes for 2026.10.5</a><br><a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a></p>
+        <h2 id="h-new">In 2026.10.6</h2>
+        <p>The answer to another full review of the code. Nothing from the network can send control characters to your terminal any more, on any terminal type. <code>--uninstall</code> removes only what the installer put there, and other software in the same prefix stays. The web frontend limits a flood of new connections before TLS, keeps the web nick list in step with the server, and gives new certificates a random serial number and the extensions browsers expect. erssi has a manual page of its own, <code>man erssi</code>.</p>
+        <p>2026.10.4 brought the ready-made binaries for Debian 13 and FreeBSD 14, installed side by side with <code>--rollback</code> to the one before.</p>
+        <p><a href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes for 2026.10.6</a><br><a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a></p>
       </section>
 
       <section id="credits" aria-labelledby="h-credits">
@@ -530,7 +530,7 @@ erssi --update         <span class="c"># install it</span></pre>
 
   <footer class="status">
     <div class="bar">
-      <span class="v">2026.10.5</span>
+      <span class="v">2026.10.6</span>
       <a href="https://github.com/y-o-o-z/erssi">source</a>
       <a href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">NEWS</a>
       <a href="https://github.com/y-o-o-z/erssi/issues">issues</a>
