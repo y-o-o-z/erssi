@@ -44,7 +44,8 @@ Back to the [README](../../README.md).
 
 A release has a binary package for each supported platform, built from
 its signed tag by `utils/build-binary.sh` (POSIX sh) on that platform.
-The platforms are `debian13-amd64` and `freebsd14-amd64`.
+The platforms are `debian13-amd64`, `freebsd14-amd64` and
+`freebsd15-amd64`.
 
 ### What a package is
 
@@ -166,9 +167,9 @@ mmdebstrap --mode=unshare --variant=apt \
 The build runs as an ordinary user (`builder`), not as root. The chroot is
 thrown away at the end, and the tarball is copied out to `./out`.
 
-### FreeBSD 14
+### FreeBSD 14 and 15
 
-Build on a FreeBSD 14 host or VM, with packages from `pkg` (OpenSSL
+Build on a FreeBSD 14 or 15 host or VM (each makes its own package), with packages from `pkg` (OpenSSL
 from the base system):
 
 ```sh

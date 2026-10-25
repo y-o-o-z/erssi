@@ -150,7 +150,7 @@ loaded on demand (`/script load <name>`, or a symlink in
 - **Slow web clients** — output to a web client that reads slowly (a
   phone on mobile data, a large state dump) is queued in order instead of
   dropped; a client that never reads is disconnected at 32 MB.
-- **FreeBSD** — tested on FreeBSD 14.5: builds with the base system's
+- **FreeBSD** — tested on FreeBSD 14.5 and 15.1: builds with the base system's
   OpenSSL and passes the test suite; `/connect` works inside Capsicum
   capability mode (`/search` does not run there). See
   [install.md](install.md#freebsd).

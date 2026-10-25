@@ -33,7 +33,7 @@ One command, no root:
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-- **Debian 13 and FreeBSD 14 (amd64): a ready-made binary, in seconds.**
+- **Debian 13, FreeBSD 14 and FreeBSD 15 (amd64): a ready-made binary, in seconds.**
   The installer downloads the release's package and installs it only if
   the release's `SHA256SUMS` carries a valid signature by the release key,
   the package matches its checksum there, and its manifest names the
@@ -117,7 +117,7 @@ changed: [NEWS](NEWS).
 
 **Ready-made binaries**
 
-- **Installed in seconds** — on Debian 13 and FreeBSD 14 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
+- **Installed in seconds** — on Debian 13, FreeBSD 14 and FreeBSD 15 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
 - **Checked before anything changes** — the signature on `SHA256SUMS`, the package's checksum and its manifest must all match, or nothing is installed.
 - **Releases side by side** — each release in its own directory, `current` switched in one step, `--rollback` to the previous one.
 

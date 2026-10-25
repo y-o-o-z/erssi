@@ -20,7 +20,7 @@ One command, no root:
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-On Debian 13 and FreeBSD 14 (amd64) this installs the ready-made binary
+On Debian 13, FreeBSD 14 and FreeBSD 15 (amd64) this installs the ready-made binary
 of the newest release in seconds (see [Binary packages](#binary-packages)).
 Anywhere else, with `--source`, or when the binary cannot be used here, it
 builds the release from source, about two minutes on a shell box; for
@@ -50,8 +50,8 @@ Linux and FreeBSD.
 ## Binary packages
 
 A release can carry one package per platform:
-`erssi-<version>-<platform>.tar.xz` (platforms `debian13-amd64` and
-`freebsd14-amd64`), listed in the release's `SHA256SUMS`, which the release
+`erssi-<version>-<platform>.tar.xz` (platforms `debian13-amd64`,
+`freebsd14-amd64` and `freebsd15-amd64`), listed in the release's `SHA256SUMS`, which the release
 key signs (`SHA256SUMS.sig`). The installer tells the platform from
 `uname`, `/etc/os-release` (or `freebsd-version`) and `perl -e 'print $^V'`,
 downloads `SHA256SUMS`, `SHA256SUMS.sig` and the package with curl (fetch
