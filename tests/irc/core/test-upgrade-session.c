@@ -108,7 +108,13 @@ static void finish(SERVER_REC *server)
 
 static void upgrade(void)
 {
-	signal_emit("command upgrade", 3, "/bin/true", NULL, NULL);
+	/* any program that is there to be found: /UPGRADE refuses a
+	   missing one before it saves anything (FreeBSD has no /bin/true) */
+	char *binary = g_find_program_in_path("true");
+
+	g_assert_nonnull(binary);
+	signal_emit("command upgrade", 3, binary, NULL, NULL);
+	g_free(binary);
 }
 
 /* the connection is still erssi's: in the list, with its socket */
