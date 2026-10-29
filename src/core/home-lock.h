@@ -8,7 +8,10 @@
  * hold it. The descriptor is close-on-exec: /upgrade drops the lock for
  * the moment of the exec and the new process takes it again. The kernel
  * drops the lock when the process dies, so a file left by a killed erssi
- * locks nothing; the file is never removed. */
+ * locks nothing; the file is never removed. An erssi that starts while
+ * --restore holds the exclusive lock (the moment it swaps the home) waits
+ * for it, up to 2 s; still held then, it runs without the lock and says
+ * so once. */
 
 #define HOME_LOCK_FILE "erssi.lock"
 
@@ -17,6 +20,12 @@
  * file of the user's own in its place - or locked (a file system without
  * locks). Never waits. */
 int home_lock_take(const char *dir);
+
+/* home_lock_take() up to TRIES times, INTERVAL_MS apart, while another
+ * process holds an exclusive lock on the file (EWOULDBLOCK): --restore
+ * holds one for the moment it swaps the home. Any other failure ends at
+ * once. */
+int home_lock_take_wait(const char *dir, int tries, int interval_ms);
 
 void home_lock_init(void);
 void home_lock_deinit(void);
