@@ -172,6 +172,7 @@ nothing and asks you to install once more, which records the files.
 | `--source` | Always build from source, also on `erssi --update` (until `--binary`). |
 | `--binary-base <url\|dir>` | Where the packages are: a directory or URL holding `shellter-vX.Y.Z/` (default: the GitHub releases of `y-o-o-z/erssi`; another `--repo` has none unless given). |
 | `--keep N` | Old releases of a binary install kept besides the one in use (default 2, from 1 to 9999). |
+| `--porcelain` | With `--update --check`: print one line for a program instead of the steps (see [Update](#update)). |
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
 | `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
@@ -224,7 +225,8 @@ Capsicum capability mode works: `/capsicum enter`, or `/set capsicum on`
 and `/save` to enter it at every start, which
 [docs/capsicum.txt](../capsicum.txt) recommends. erssi can then open files
 only below `capsicum_irclogs_path` (`~/irclogs` by default), and `/save`
-and `/search` do not work; `/connect` works. The shipped config logs to
+and `/search` and the update notice (`update_check`) do not work;
+`/connect` works. The shipped config logs to
 `~/.erssi/logs`, so first `/set capsicum_irclogs_path ~/.erssi/logs` (and
 `/save`), or autolog and the Mentions log stop writing. `/help capsicum`
 has the details.
@@ -235,6 +237,31 @@ has the details.
 erssi --check-update     # is a newer release available?
 erssi --update           # install it
 ```
+
+`erssi --check-update` changes nothing. It asks GitHub for the list of
+release tags and downloads only the newest signed tag and the commit it
+names (and, when nothing is newer, those of the installed release, to see
+that its tag has not moved): about 10 KB, the files of the release are not
+downloaded. The signature is checked as for an update. erssi itself can
+run this check once a day and say when a new release is there:
+`/set update_check on` ([Update notice](configuration.md#update-notice)).
+
+For a program, the installer of the installed release answers in one line
+on stdout (the steps go to stderr):
+
+```sh
+sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --update --check --porcelain --prefix ~/.local/opt/erssi
+```
+
+| Line | Exit code | Meaning |
+|---|---|---|
+| `update <installed> <newest>` | 0 | A newer signed release is there. |
+| `current <installed>` | 0 | None newer. |
+| `error <reason>` | 1 | The check failed (no network, GitHub down, signatures cannot be checked here, the tag of the installed release moved). |
+| `unmanaged <reason>` | 3 | Another tool updates this erssi (`UPDATE_COMMAND` in the conf). |
+
+Wrong options exit with 2 and print nothing on stdout; an installer that
+is killed prints nothing either.
 
 `erssi --update` runs the installer shipped with the installed release: it
 takes the newest release on GitHub that carries a valid signature by the key

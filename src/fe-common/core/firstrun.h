@@ -15,13 +15,15 @@ typedef struct {
 } FIRSTRUN_NETWORK;
 
 /* What the user answered. chatnet NULL = no network (connect later). sasl_user and
- * sasl_pass are both set or both NULL. theme may be NULL (keep the current one). */
+ * sasl_pass are both set or both NULL. theme may be NULL (keep the current one).
+ * update_check: TRUE only after a "y" to the update check question. */
 typedef struct {
 	char *chatnet;
 	char *nick;
 	char *sasl_user;
 	char *sasl_pass;
 	char *theme;
+	gboolean update_check;
 } FIRSTRUN_ANSWERS;
 
 /* Returns a newly allocated line (g_free it; the caller wipes secrets), or NULL on
@@ -47,10 +49,13 @@ GPtrArray *firstrun_networks(CONFIG_REC *config);
  * password over plaintext or unverified TLS); an empty account, an empty password or
  * a control byte in the account (asked again) means no SASL. A DEFAULT_NICK or
  * DEFAULT_THEME that is not firstrun_printable() is taken as none (the answer is then NULL
- * when Enter keeps it). ANSWERS is initialised here. */
+ * when Enter keeps it). With OFFER_UPDATE_CHECK the last question is whether erssi
+ * checks daily for a new release (update_check); the default is no. ANSWERS is
+ * initialised here. */
 FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtrArray *networks,
                              char **themes, const char *default_nick,
-                             const char *default_theme, FIRSTRUN_ANSWERS *answers);
+                             const char *default_theme, gboolean offer_update_check,
+                             FIRSTRUN_ANSWERS *answers);
 
 /* If a chatnet is set: autoconnect = yes on its first server. If sasl_user is set:
  * sasl_mechanism = PLAIN, sasl_username and sasl_password in chatnets/<chatnet>.

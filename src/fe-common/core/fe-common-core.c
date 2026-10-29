@@ -50,6 +50,7 @@
 #include <irssi/src/fe-common/core/windows-layout.h>
 #include <irssi/src/fe-common/core/fe-recode.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
+#include <irssi/src/fe-common/core/update-check.h>
 
 #include <signal.h>
 
@@ -217,6 +218,7 @@ void fe_common_core_init(void)
 	hilight_text_init();
 	fe_ignore_messages_init();
 	fe_recode_init();
+	update_check_init();
 
 	settings_check();
 
@@ -263,6 +265,7 @@ void fe_common_core_deinit(void)
 	fe_messages_deinit();
 	fe_ignore_messages_deinit();
 	fe_recode_deinit();
+	update_check_deinit();
 
         theme_unregister();
 	themes_deinit();

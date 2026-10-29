@@ -585,6 +585,10 @@ class Erssi:
             "TERM": "xterm-256color",
             "ASAN_OPTIONS": f"detect_leaks=0:log_path={self.work}/asan-{self.name}",
             "UBSAN_OPTIONS": f"print_stacktrace=1:log_path={self.work}/ubsan-{self.name}",
+            # never the installer of an erssi installed on this machine
+            # (update_check, /UPDATE CHECK would contact GitHub): a test
+            # that wants one names its stand-in
+            "ERSSI_TEST_UPDATE_INSTALLER": str(self.work / "no-update-installer"),
         })
         env.update(self.extra_env)
         # the real HOME must never reach a child

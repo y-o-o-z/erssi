@@ -39,6 +39,7 @@
 #include <irssi/src/fe-common/core/fe-settings.h>
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <irssi/src/fe-common/core/themes.h>
+#include <irssi/src/fe-common/core/update-check.h>
 
 #include <irssi/src/fe-ansi/term.h>
 #include <irssi/src/fe-ansi/gui-entry.h>
@@ -533,7 +534,7 @@ static void firstrun_run_tty(void)
 	firstrun_ran = TRUE;
 	firstrun_set_abort_flag(&firstrun_signal);
 	result = firstrun_ask(stdout, firstrun_read_stdin, NULL, networks, themes,
-	                      settings_get_str("nick"), current_theme, &a);
+	                      settings_get_str("nick"), current_theme, update_check_possible(), &a);
 	firstrun_set_abort_flag(NULL);
 
 	for (i = 0; i < G_N_ELEMENTS(firstrun_signals); i++)
@@ -556,6 +557,8 @@ static void firstrun_run_tty(void)
 		firstrun_apply_config(mainconfig, &a);
 		if (a.nick != NULL)
 			settings_set_str("nick", a.nick);
+		if (a.update_check)
+			settings_set_bool("update_check", TRUE);
 		if (a.theme != NULL && g_strcmp0(a.theme, current_theme) != 0) {
 			settings_set_str("theme", a.theme);
 			themes_reload();

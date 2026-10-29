@@ -5,6 +5,7 @@ Back to the [README](../../README.md).
 - [First start](#first-start)
 - [Settings](#settings)
 - [tmux](#tmux)
+- [Update notice](#update-notice)
 - [Web client](#web-client)
 - [End-to-end encryption](#end-to-end-encryption)
 
@@ -16,7 +17,10 @@ the screen opens:
 1. a network (or none; the chosen one connects at every start),
 2. your nick,
 3. a SASL account, when that network has TLS with a verified certificate,
-4. the theme.
+4. the theme,
+5. whether erssi checks once a day for a new release (`update_check`,
+   see [Update notice](#update-notice); asked only when the installer
+   installed erssi, and Enter keeps it off).
 
 Enter keeps the default shown in brackets. The answers go to
 `~/.erssi/config` (mode 0600; a SASL password is stored there in plain
@@ -61,6 +65,52 @@ set -as terminal-features ',*:RGB'    # RGB colour
 set -g focus-events on                # for notifications
 set -g allow-passthrough on           # for notifications
 ```
+
+## Update notice
+
+erssi can tell you when a new signed release is out, so an erssi that
+lives in tmux for months does not stay on an old release. It is off by
+default, because it contacts GitHub:
+
+```
+/set update_check on                     # check once a day
+/update                                  # what the last check found
+/update check                            # check now
+/statusbar additem -after lag update info   # show [update 2026.11.1] while there is one
+```
+
+- **What runs** — the installer that was installed with erssi
+  (`shellter-install.sh --update --check --porcelain`, the same check as
+  `erssi --check-update`), in the background: erssi goes on while it runs,
+  one check runs at a time, one that takes longer than two minutes is
+  stopped. The installer finds the newest release tag with a valid
+  signature by the release key it carries, exactly as for an update
+  ([What the installer verifies](install.md#what-the-installer-verifies)),
+  and downloads only that tag and its commit, about 10 KB.
+- **When** — a minute after the start, then every 24 hours. The time of
+  the last check is kept in `~/.erssi/update-check.state` (mode 0600), so
+  a restart or `/upgrade` does not check again before the day is over;
+  several erssi with the same home share it.
+- **What it says** — one line, once for each new release, in the
+  window of client messages, the Notices window:
+  `erssi 2026.11.1 is available (signed). Update from a shell: erssi
+  --update, then /upgrade`. The shipped config marks no activity for
+  client messages, so the line is easy to miss from another window: the
+  `update` statusbar item shows the new version while there is one and
+  takes no space otherwise. It is not in the shipped statusbars; the
+  command above adds it. A failed
+  check (no network, GitHub down) is not shown; after three in a row, one
+  line says so, and `/update` shows why the last one failed. A release tag that moved to another commit is shown at
+  once: report it.
+- **What it does not do** — install anything. The update is made from a
+  shell (`erssi --update`), and `/upgrade` loads it.
+- **Where it does nothing** — an erssi that the installer did not install
+  (a distribution package, a build of your own: no `shellter-install.sh`
+  installed with it, or no `shellter-install.conf` in its prefix), one
+  that another user installed (a system install made by root: root
+  updates it), or one whose conf names another tool (`UPDATE_COMMAND`).
+  Turning the setting on says why. In Capsicum capability mode erssi cannot start programs, so
+  there is no check; `erssi --check-update` from a shell still works.
 
 ## Web client
 

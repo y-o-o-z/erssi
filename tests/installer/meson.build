@@ -23,7 +23,7 @@ foreach c : ['ascii', 'utf8',
     'venv-meson-only', 'venv-ninja-only', 'venv-no-ninja-wheel', 'venv-both',
     'stale-nexus',
     'release-signature', 'release-newest', 'release-pinned',
-    'update', 'update-same-version', 'update-branch', 'saved-settings', 'tests-run',
+    'update', 'update-porcelain', 'update-same-version', 'update-branch', 'saved-settings', 'tests-run',
     'binary-platform', 'binary-install', 'binary-refused', 'binary-switch',
     'binary-rollback-uninstall', 'uninstall-foreign', 'binary-interrupted', 'man-link', 'binary-dry-run', 'binary-update', 'binary-old-keygen', 'binary-fallback']
   test('installer ' + c, find_program('sh'),

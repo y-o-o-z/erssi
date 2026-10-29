@@ -90,6 +90,10 @@ the new version in a running erssi and keeps your windows and channels.
 Connections over plain text stay up; those over TLS cannot be handed to the
 new process, so they reconnect once ("[TLS] Client upgrade").
 
+In erssi, `/set update_check on` checks once a day in the background and
+says when a new signed release is out; it installs nothing
+([Update notice](docs/shellter/configuration.md#update-notice)).
+
 From 2026.10.2 or older, and from 1.3.9 or older (which have no
 `--update`), run the install command once instead; your `~/.erssi/config`
 is kept and the Shellter look stays.

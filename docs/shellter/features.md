@@ -150,6 +150,10 @@ loaded on demand (`/script load <name>`, or a symlink in
 - **Slow web clients** — output to a web client that reads slowly (a
   phone on mobile data, a large state dump) is queued in order instead of
   dropped; a client that never reads is disconnected at 32 MB.
+- **Update notice** — with `/set update_check on`, erssi asks its
+  installer once a day, in the background, whether a newer signed release
+  is out, and says so once per release and in the `update` statusbar
+  item; it installs nothing ([configuration.md](configuration.md#update-notice)).
 - **FreeBSD** — tested on FreeBSD 14.5 and 15.1: builds with the base system's
   OpenSSL and passes the test suite; `/connect` works inside Capsicum
   capability mode (`/search` does not run there). See

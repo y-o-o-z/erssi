@@ -125,6 +125,25 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 
 `/help e2e` has the same in full.
 
+## Update notice
+
+`update_check` (off by default) runs the installer installed with erssi,
+`<prefix>/share/irssi/shellter-install.sh --update --check --porcelain`,
+once a day. It is the check of `erssi --check-update`: the newest release
+tag counts only with a valid signature by the release key that installer
+carries ([What the installer verifies](install.md#what-the-installer-verifies));
+erssi does not look for releases itself. The check downloads a tag object
+and a commit, no code, and nothing is installed or run from them.
+
+The installer runs in a session of its own, with no terminal (stdin is
+`/dev/null`, git may not ask for a password), and is stopped with its
+children after two minutes. erssi keeps at most 64 KB of its output and
+takes only one line in the expected form, with version numbers made of
+digits and dots; anything else is an error. What erssi shows of an error
+is printable ASCII, at most 200 bytes. `~/.erssi/update-check.state`
+holds only times, version numbers and that reason; it is written as a
+whole (mode 0600) and read only when it is a regular file of your own.
+
 ## Configuration
 
 `~/.erssi/config` is written readable only by you, to a temporary file

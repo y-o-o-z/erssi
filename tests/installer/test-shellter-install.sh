@@ -495,6 +495,14 @@ run_update() {
     sh "$INSTALLER" --update --no-test --prefix "$W/p" "$@" > "$W/out" 2>&1 < /dev/null
     RC=$?
 }
+# --update --check --porcelain: stdout in $W/pout, stderr in $W/perr
+porc() {
+    sh "$INSTALLER" --update --check --porcelain --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
+    RC=$?
+}
+# $W/pout is the one line $1
+# shellcheck disable=SC2317 # called through check
+one_line() { [ "$(wc -l < "$W/pout")" -eq 1 ] && [ "$(cat "$W/pout")" = "$1" ]; }
 # fn SCRIPT ARGS...: SCRIPT (with ARGS as "$@") in a shell that has the
 # installer under test loaded, REPO the test repository; the output in
 # $W/fn.out and $W/fn.err, the code in RC
@@ -1894,6 +1902,20 @@ release-newest)
     ns 2026.10.2 "$c2"
     check "the installed one is the newest signed: code 0" [ "$RC" = 0 ]
     check "... nothing printed" [ ! -s "$W/fn.out" ]
+    # --check fetches the tag and its commit only (--filter=tree:0), from
+    # a server that has filters; the signature is checked on them
+    git -C "$W/repo" config uploadpack.allowFilter true
+    rm -rf "$W/st" && git init -q "$W/st" || exit 1
+    # shellcheck disable=SC2016 # run by fn
+    fn 'CHECK=1; fetch_ref "$1" "$2" && signed_tag "$1" "$2"' "$W/st" shellter-v2026.10.2
+    check "filtered fetch: signature verified" [ "$RC" = 0 ]
+    check "... only the tag and the commit fetched" \
+        [ "$(git -C "$W/st" cat-file --batch-all-objects --batch-check='%(objecttype)' 2>/dev/null | sort | tr '\n' ' ')" = "commit tag " ]
+    exported CHECK=1 FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
+    check "filtered fetch fails: code 3" [ "$RC" = 3 ]
+    exported CHECK=1 ns 2026.10.1 "$c1"
+    check "filtered: a newer signed release found" \
+        [ "$(cat "$W/fn.out")" = "shellter-v2026.10.2 $(git -C "$W/repo" rev-parse shellter-v2026.10.2)" ]
     # four unsigned newer releases are skipped, the fifth gives up
     for v in 4 5 6; do rtag "shellter-v2026.10.$v" "$c3" "$W/other"; done
     ns 2026.10.1 "$c1"
@@ -2000,6 +2022,77 @@ update)
     run_update
     check "on the recorded commit: updated" grep -q 'Updated: 2026.10.2 -> 2026.10.4' "$W/out"
     check "... signed and recorded" grep -q 'Downloading.*signed - commit recorded' "$W/out"
+    ;;
+update-porcelain)
+    # --update --check --porcelain: one line on stdout for a program
+    # (erssi's update_check), the steps on stderr; the check fetches the
+    # tag and its commit only (--filter=tree:0)
+    release_key
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c2"
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    # git that logs its arguments
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$TEST_W/git.log"\nif [ "${FAKE_FETCH_FAIL:-}" = 1 ]; then\n    for a in "$@"; do [ "$a" != fetch ] || { echo "fatal: unable to access the repository" >&2; exit 128; }; done\nfi\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+    porc
+    check "newer signed release: code 0" [ "$RC" = 0 ]
+    check "... the one line" one_line "update 2026.10.1 2026.10.2"
+    check "... the steps on stderr" grep -q 'Update available: 2026.10.1 -> 2026.10.2' "$W/perr"
+    check "... the tag fetched without its files" grep -q 'fetch -q --no-tags --depth 1 --filter=tree:0 erssi shellter-v2026.10.2$' "$W/git.log"
+    check "... nothing built" none_exist "$HOME/.local/src/erssi"
+    # up to date
+    release_prefix 2026.10.2 "$c2" shellter-v2026.10.2
+    porc
+    check "up to date: code 0" [ "$RC" = 0 ]
+    check "... the one line" one_line "current 2026.10.2"
+    # installed from a branch, the newest release not newer
+    release_prefix 2026.10.2 "$c1" main
+    porc
+    check "from a branch, nothing newer: current" one_line "current 2026.10.2"
+    # the download fails
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    exported FAKE_FETCH_FAIL=1 porc
+    check "download fails: code 1" [ "$RC" = 1 ]
+    check "... the one line" one_line "error cannot download shellter-v2026.10.2 from $W/repo"
+    check "... the message on stderr" grep -q 'nothing was changed; try again later' "$W/perr"
+    # the repository cannot be reached
+    mv "$W/repo" "$W/repo.away"
+    porc
+    mv "$W/repo.away" "$W/repo"
+    check "no repository: code 1" [ "$RC" = 1 ]
+    check "... the one line" one_line "error cannot reach $W/repo"
+    # the tag of the installed release moved: an error, not "current"
+    c3=$(release_commit 2026.10.2); rtag shellter-v2026.10.2 "$c3"
+    release_prefix 2026.10.2 "$c2" shellter-v2026.10.2
+    porc
+    check "installed release's tag moved: code 1" [ "$RC" = 1 ]
+    check "... the one line" \
+        one_line "error the release tag shellter-v2026.10.2 now points to a different commit than the installed one - report it"
+    rtag shellter-v2026.10.2 "$c2"
+    # signatures cannot be checked
+    rm -f "$W/bin/ssh-keygen"
+    porc
+    check "no ssh-keygen: code 1" [ "$RC" = 1 ]
+    check "... the one line" one_line "error signatures cannot be checked here (git 2.34+ and ssh-keygen are needed)"
+    ln -s "$KEYGEN" "$W/bin/ssh-keygen"
+    # no erssi in the prefix
+    rm "$W/p/bin/erssi"
+    porc
+    check "no erssi: code 1" [ "$RC" = 1 ]
+    check "... the one line" one_line "error no erssi in $W/p"
+    # another tool updates it
+    fake_prefix "$W/p" 2026.10.1
+    echo 'UPDATE_COMMAND=pkg upgrade erssi' >> "$W/p/share/irssi/shellter-install.conf"
+    porc
+    check "UPDATE_COMMAND: code 3" [ "$RC" = 3 ]
+    check "... the one line" one_line "unmanaged updated with: pkg upgrade erssi"
+    # only with --update --check
+    sh "$INSTALLER" --update --porcelain --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
+    RC=$?
+    check "without --check: code 2" [ "$RC" = 2 ]
+    check "... nothing on stdout" [ ! -s "$W/pout" ]
+    check "... said" grep -q -- '--porcelain goes with --update --check' "$W/perr"
     ;;
 update-same-version)
     # Release tags never move: a signed tag of the installed release that
