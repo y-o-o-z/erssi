@@ -164,6 +164,8 @@ def main():
         assert rc == 0, f"--restore: exit {rc}:\n{out}"
         want = archived(st["backup"])
         got = files(c.home)
+        # the lock the restore held while it swapped the home in
+        assert got.pop("erssi.lock", (None,))[0] == "f", "no erssi.lock in the restored home"
         assert sorted(got) == sorted(want), f"other files: {sorted(set(got) ^ set(want))}"
         for k, (kind, mode, data) in got.items():
             assert (kind, data) == want[k], f"{k} differs"

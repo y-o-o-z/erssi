@@ -500,11 +500,18 @@ home: one from 2026.11.0 on holds the lock on `erssi.lock` (checked with
 perl, `flock` or FreeBSD's `lockf`), and an older one is found in the
 process list (`ps`): an erssi process of yours whose `--home` is that
 home, or that has no `--home` and runs with a `HOME` whose `.erssi` it is
-(its `HOME` read from `/proc` on Linux, elsewhere taken to be yours). Limits: an erssi started between the
-check and the rename is not seen, an erssi of another user or in another
-PID namespace (a container) is not in the list, and one that names its
-home in another way (a relative `--home`, a link to it) counts as running
-when relative and is missed when a link. `--backup` works while erssi
+(its `HOME` read from `/proc` on Linux, elsewhere taken to be yours). The
+two renames run while `--restore` holds the exclusive lock of the old
+home's `erssi.lock` and of the new one's: an erssi from 2026.11.0 on that
+starts at that moment waits for it (up to 2 s; still locked then, it runs
+without the lock and says so), and one that started since the check
+makes the restore stop with nothing changed. Limits: an older erssi
+started between the check and the renames is not seen, an erssi of
+another user or in another PID namespace (a container) is not in the
+list, and one that names its home in another way (a relative `--home`, a
+link to it) counts as running when relative and is missed when a link.
+Without perl, `flock` or `lockf`, or on a file system without locks, the
+renames run without the locks, with a warning. `--backup` works while erssi
 runs; `/save` first if you changed settings since, as the backup takes
 the files as they are on the disk.
 

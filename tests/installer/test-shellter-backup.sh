@@ -234,7 +234,8 @@ round-trip)
     # the original without what a backup leaves out
     rm -rf "$E/image_cache" "$E/session" "$E/erssi.lock" "$E/sidepanels.log" "$E/logs/IRCnet"
     content "$E" > "$W/want"
-    content "$W/new/.erssi" > "$W/got"
+    # the lock file it held while it swapped the home stays there
+    content "$W/new/.erssi" | grep -v ' ./erssi.lock$' > "$W/got"
     check "the restored home has the same files, contents and links" cmp -s "$W/want" "$W/got"
     [ "$FAILED" = 0 ] || diff "$W/want" "$W/got"
     check "the home is 0700" [ "$(mode_of "$W/new/.erssi")" = "drwx------" ]
@@ -570,6 +571,50 @@ closed-dirs)
     mkdir "$W/tmpd"
     TMPDIR=$W/tmpd run --restore "$W/closed-bad.tar.gz" --dry-run
     check "a dry run leaves nothing in the temporary directory either" [ -z "$(find "$W/tmpd" ! -path "$W/tmpd")" ]
+    ;;
+
+swap-locked)
+    # the two renames run while the restore holds the exclusive lock of
+    # the old home's erssi.lock and of the new one's: a stand-in mv looks
+    command -v perl >/dev/null 2>&1 || { echo "skip: no perl"; exit 77; }
+    make_home "$E"
+    run --backup "$W/b.tar.gz"
+    REAL_MV=$(command -v mv)
+    mkdir "$W/shim3"
+    cat > "$W/shim3/mv" <<EOF3
+#!/bin/sh
+for a in "\$@"; do :; done
+src=""; for b in "\$@"; do [ "\$b" = "\$a" ] || src=\$b; done
+if [ -f "\$src/erssi.lock" ]; then
+    if "$(command -v perl)" -e 'open(my \$f, "<", \$ARGV[0]) or exit 2; flock(\$f, 5) and exit 1; exit 0' "\$src/erssi.lock"; then
+        echo "locked \$src" >> "$W/mv.log"
+    else
+        echo "free \$src" >> "$W/mv.log"
+    fi
+fi
+exec "$REAL_MV" "\$@"
+EOF3
+    chmod 755 "$W/shim3/mv"
+    PATH=$W/shim3:$PATH run --restore "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "restore over a home succeeds" [ "$RC" = 0 ]
+    check "the old home is moved aside while its lock is held" grep -q "^locked $E\$" "$W/mv.log"
+    check "the new home is moved in while its lock is held" grep -q "^locked .*/home\$" "$W/mv.log"
+    check "never without" sh -c "! grep -q '^free' '$W/mv.log'"
+    check "the lock file is in the new home" [ -f "$E/erssi.lock" ]
+    # the same with flock(1) where there is no perl
+    if command -v flock >/dev/null 2>&1; then
+        mkdir "$W/noperl"
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env flock uname basename dirname touch; do
+            p=$(command -v "$t") && ln -s "$p" "$W/noperl/$t"
+        done
+        : > "$W/mv.log"
+        PATH=$W/shim3:$W/shim:$W/noperl run --restore "$W/b.tar.gz"
+        if [ "$RC" != 0 ]; then show; fi
+        check "without perl, with flock(1): restore succeeds" [ "$RC" = 0 ]
+        check "and holds both locks for the renames" [ "$(grep -c '^locked' "$W/mv.log")" = 2 ]
+        check "never without them" sh -c "! grep -q '^free' '$W/mv.log'"
+    fi
     ;;
 
 self-check)

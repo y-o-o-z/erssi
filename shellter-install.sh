@@ -2130,6 +2130,52 @@ bk_check_archive() {
     return 0
 }
 
+# command... run while this restore holds the exclusive lock of every
+# file in $BK_LOCKS (one or two lock files): an erssi that starts on the
+# home meanwhile waits for it (erssi from 2026.11.0 on waits up to 2 s),
+# and one that holds its lock already makes it fail. Returns 75 when a
+# lock is held by another process, 76 when the locks cannot be taken
+# here (no tool, no locks on the file system), else what the tool says;
+# whether the command ran is for the command to tell.
+bk_with_locks() {
+    l1=${BK_LOCKS%%"$BK_NL"*} l2=""
+    case "$BK_LOCKS" in *"$BK_NL"*) l2=${BK_LOCKS#*"$BK_NL"} ;; esac
+    if have perl; then
+        rc=0
+        perl -e 'my @h; while (@ARGV && $ARGV[0] ne "--") { my $p = shift;
+                open(my $f, "+<", $p) or exit 76;
+                flock($f, 6) or exit(($!{EWOULDBLOCK} || $!{EAGAIN}) ? 75 : 76);
+                push @h, $f }
+            shift; system { $ARGV[0] } @ARGV; exit 0' "$l1" ${l2:+"$l2"} -- "$@" || rc=$?
+        return "$rc"
+    fi
+    if have flock; then
+        rc=0
+        if [ -n "$l2" ]; then flock -n -x -E 75 "$l1" flock -n -x -E 75 "$l2" "$@" || rc=$?
+        else flock -n -x -E 75 "$l1" "$@" || rc=$?; fi
+        return "$rc"
+    fi
+    if have lockf; then
+        rc=0
+        if [ -n "$l2" ]; then lockf -k -s -t 0 "$l1" lockf -k -s -t 0 "$l2" "$@" || rc=$?
+        else lockf -k -s -t 0 "$l1" "$@" || rc=$?; fi
+        return "$rc"
+    fi
+    return 76
+}
+# the two renames of a restore, as a script of its own (run under the
+# locks): $1 a marker path, then the home, where it goes aside (or
+# nothing) and the new home. It writes $1.ran first and its result to $1.rc
+# shellcheck disable=SC2016 # a script, run with sh -c
+BK_SWAP='m=$1 t=$2 a=$3 h=$4
+: > "$m.ran"
+if [ -n "$a" ] && ! mv "$t" "$a"; then echo aside > "$m.rc"; exit 0; fi
+if ! mv "$h" "$t"; then
+    if [ -n "$a" ] && ! mv "$a" "$t"; then echo stuck > "$m.rc"; exit 0; fi
+    echo place > "$m.rc"; exit 0
+fi
+echo ok > "$m.rc"'
+
 bk_fail() {   # message: nothing was changed
     die "$1 - nothing was changed"
 }
@@ -2358,6 +2404,7 @@ do_restore() {
         ASIDE=$T.before-restore-$(date +%Y%m%d-%H%M%S)
         i=1
         while [ -e "$ASIDE" ] || [ -L "$ASIDE" ]; do ASIDE=$T.before-restore-$(date +%Y%m%d-%H%M%S).$i; i=$((i + 1)); done
+        KEPT_TRY=$ASIDE
         done_ "no erssi runs on it"
     else
         ASIDE=""
@@ -2376,13 +2423,30 @@ do_restore() {
     fi
 
     step "Restoring"
+    # the renames under the exclusive locks of the old home's erssi.lock
+    # and of the new one's: an erssi that started since the check, or
+    # starts now, either holds the lock (refused) or waits for the swap
+    : > "$H/erssi.lock" || bk_fail "cannot create $(tilde "$H/erssi.lock")"
+    BK_LOCKS=$H/erssi.lock
     if [ -n "$ASIDE" ]; then
-        mv "$T" "$ASIDE" || bk_fail "cannot move $(tilde "$T") aside"
+        lk=$T/erssi.lock
+        if [ ! -e "$lk" ] && [ ! -L "$lk" ]; then : > "$lk" 2>/dev/null || true; fi
+        if [ -f "$lk" ] && [ ! -L "$lk" ]; then BK_LOCKS=$lk$BK_NL$BK_LOCKS; fi
     fi
-    if ! mv "$H" "$T"; then
-        [ -z "$ASIDE" ] || mv "$ASIDE" "$T" || die "cannot move the restored home into place, and the old one back: it is in $(tilde "$ASIDE")"
-        bk_fail "cannot move the restored home into place"
+    mk=$BK_WORK/swap
+    rc=0; bk_with_locks sh -c "$BK_SWAP" sh "$mk" "$T" "$ASIDE" "$H" || rc=$?
+    if [ ! -e "$mk.ran" ]; then
+        [ "$rc" != 75 ] || bk_fail "an erssi started on $(tilde "$T") meanwhile - /quit it first"
+        warn "the home could not be locked for the swap (no perl, flock or lockf, or no locks on this file system)"
+        sh -c "$BK_SWAP" sh "$mk" "$T" "$ASIDE" "$H" || true
     fi
+    case "$(cat "$mk.rc" 2>/dev/null)" in
+        ok) ;;
+        aside) bk_fail "cannot move $(tilde "$T") aside" ;;
+        place) bk_fail "cannot move the restored home into place" ;;
+        stuck) ASIDE=""; die "cannot move the restored home into place, and the old one back: it is in $(tilde "$KEPT_TRY")" ;;
+        *) die "the swap of the home did not run as it should: look at $(tilde "$T") and $(tilde "${ASIDE:-$T}")" ;;
+    esac
     rm -rf "$BK_NEW"; BK_NEW=""
     KEPT=$ASIDE ASIDE=""
     if [ -n "$KEPT" ]; then done_ "$(tilde "$T") $S_SEP the old one in $(tilde "$KEPT")"; else done_ "$(tilde "$T")"; fi
@@ -2422,6 +2486,8 @@ UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOC
 PREFIX="$HOME/.local/opt/erssi"
 SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
+BK_NL='
+' BK_LOCKS="" KEPT_TRY=""
 BK_FILE="" BK_HOME="" BK_LOGS=0 BK_ERSSI_V="" BK_CONFIG="" BK_DEPTH=0 BK_WORK="" BK_NEW="" BK_TMPF=""
 while [ $# -gt 0 ]; do
     case "$1" in
