@@ -80,6 +80,7 @@ The platforms are `debian13-amd64`, `freebsd14-amd64` and
   | `libc` | `glibc 2.41` or `freebsd 14.5` |
   | `libs` | `pkg-config --modversion` of the libraries built against: `glib-2.0=… openssl=… libotr=… libgcrypt=… libcurl=… chafa=… libutf8proc=…` (`?` for one pkg-config does not know; from 2026.11.0) |
   | `meson`, `ninja` | their versions (from 2026.11.0) |
+  | `strip`, `xz` | the first line of their `--version` (from 2026.11.0) |
   | `needed` | the shared libraries the binary and its modules need (sonames from `readelf -d`, space-separated, sorted) |
   | `perl_version` | `perl -e 'print $^V'` without the `v` (`5.40.1`) |
   | `platform` | `<os><major>-<arch>`: `os` is the `ID` of `/etc/os-release` or `freebsd`; `major` is from `VERSION_ID` or `freebsd-version -u`; `arch` is `amd64` (`x86_64`) or `arm64` (`aarch64`) |
@@ -201,11 +202,14 @@ builds TARBALL again on this machine and compares the two. It reads the
 tag and the platform from the package's `MANIFEST`, refuses a package
 of another platform, checks that the tag is signed by the release key,
 and runs the build of that tag's own `utils/build-binary.sh` (so an older
-release is built by the packager that made it). Exit 0 and `reproduced`
-when the sha256 is the same; exit 1 and `NOT reproduced` otherwise, with
-the entries only in one of them, the files that differ and the
-`MANIFEST` lines that differ. With `--keep-work` both unpacked trees stay
-in the work directory to compare.
+release is built by the packager that made it), with its full test
+suite. Exit 0 and `reproduced` when the sha256 is the same; exit 3 and
+`NOT reproduced` otherwise, with the entries only in one of them, the
+files that differ and the `MANIFEST` lines that differ; exit 1 when it
+refuses or the build fails (nothing was compared). With `--keep-work`
+both unpacked trees and the build's logs stay in the work directory.
+`--out` and `--sums` do not go with `--verify`. The tools it needs are
+those of a package build on that platform (below).
 
 Before a release's packages are signed, each is checked on a second,
 clean machine or chroot of its platform (for Debian and Ubuntu a new
