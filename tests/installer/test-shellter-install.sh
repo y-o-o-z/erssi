@@ -2045,6 +2045,23 @@ update-porcelain)
     check "... in the repository" grep -q "^$W/st/.git/" "$W/signers.log"
     check "... not in TMPDIR" no_grep "^$W/tmpd" "$W/signers.log"
     check "... removed" [ ! -e "$W/st/.git/erssi-allowed-signers" ]
+    # a newer tag that is unsigned, or signed by another key, through the
+    # filtered fetch: not an update
+    git -C "$W/repo" config uploadpack.allowFilter true
+    c5=$(release_commit 2026.10.5)
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -m shellter-v2026.10.5 shellter-v2026.10.5 "$c5"
+    c6=$(release_commit 2026.10.6); rtag shellter-v2026.10.6 "$c6" "$W/other"
+    release_prefix 2026.10.2 "$c2" shellter-v2026.10.2
+    rm -f "$W/git.log"
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$TEST_W/git.log"\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+    porc
+    check "unsigned and foreign-signed newer tags, filtered: current" one_line "current 2026.10.2"
+    check "... both fetched filtered" [ "$(grep -c 'fetch -q --no-tags --depth 1 --filter=tree:0 erssi shellter-v2026.10.[56]$' "$W/git.log")" = 2 ]
+    check "... both named" grep -q 'shellter-v2026.10.6 is not signed by the erssi Shellter release key' "$W/perr"
+    check "... and the unsigned one" grep -q 'shellter-v2026.10.5 is not signed by the erssi Shellter release key' "$W/perr"
+    git -C "$W/repo" tag -d shellter-v2026.10.5 shellter-v2026.10.6 > /dev/null
     # the download fails
     fetch_fails
     release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
