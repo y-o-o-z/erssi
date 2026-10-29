@@ -335,7 +335,22 @@ signed_tag() {
     fi
     rm -f "$signers"; return 1
 }
+# --check needs the tag object and its commit, not the files: a filter
+# (tree:0) leaves the trees and files out - about 2 KB instead of 3 MB
+# from GitHub; a server without filters sends everything, as without it.
+# The tag and the commit are checked as in a full fetch. A filter needs a
+# named remote marked as the promisor of the repository (the temporary
+# one of --check): git refuses one for a plain path.
 fetch_ref() {   # repository-dir ref
+    if [ "${CHECK:-0}" = 1 ]; then
+        git -C "$1" config core.repositoryformatversion 1 &&
+            git -C "$1" config extensions.partialClone erssi &&
+            git -C "$1" config remote.erssi.url "$REPO" &&
+            git -C "$1" config remote.erssi.promisor true &&
+            git -C "$1" config remote.erssi.partialclonefilter tree:0 || return
+        git -C "$1" -c advice.detachedHead=false fetch -q --no-tags --depth 1 --filter=tree:0 erssi "$2" >> "${LOG:-/dev/null}" 2>&1
+        return
+    fi
     git -C "$1" -c advice.detachedHead=false fetch -q --depth 1 -- "$REPO" "$2" >> "${LOG:-/dev/null}" 2>&1
 }
 # the newest shellter-vX.Y.Z on $REPO newer than $2 with a valid signature,

@@ -1852,6 +1852,20 @@ release-newest)
     ns 2026.10.2 "$c2"
     check "the installed one is the newest signed: code 0" [ "$RC" = 0 ]
     check "... nothing printed" [ ! -s "$W/fn.out" ]
+    # --check fetches the tag and its commit only (--filter=tree:0), from
+    # a server that has filters; the signature is checked on them
+    git -C "$W/repo" config uploadpack.allowFilter true
+    rm -rf "$W/st" && git init -q "$W/st" || exit 1
+    # shellcheck disable=SC2016 # run by fn
+    fn 'CHECK=1; fetch_ref "$1" "$2" && signed_tag "$1" "$2"' "$W/st" shellter-v2026.10.2
+    check "filtered fetch: signature verified" [ "$RC" = 0 ]
+    check "... only the tag and the commit fetched" \
+        [ "$(git -C "$W/st" cat-file --batch-all-objects --batch-check='%(objecttype)' 2>/dev/null | sort | tr '\n' ' ')" = "commit tag " ]
+    exported CHECK=1 FAKE_FETCH_FAIL=1 ns 2026.10.1 "$c1"
+    check "filtered fetch fails: code 3" [ "$RC" = 3 ]
+    exported CHECK=1 ns 2026.10.1 "$c1"
+    check "filtered: a newer signed release found" \
+        [ "$(cat "$W/fn.out")" = "shellter-v2026.10.2 $(git -C "$W/repo" rev-parse shellter-v2026.10.2)" ]
     # four unsigned newer releases are skipped, the fifth gives up
     for v in 4 5 6; do rtag "shellter-v2026.10.$v" "$c3" "$W/other"; done
     ns 2026.10.1 "$c1"
