@@ -91,8 +91,12 @@ typedef void (*UPDATE_JOB_FUNC)(const UPDATE_ANSWER *answer, const char *stderr_
 
 UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB_FUNC done,
                              void *data, GError **error);
-/* the process group stopped (SIGTERM, up to 2 s, then SIGKILL) and the
- * process reaped here; DONE is not called, the job is freed */
+/* the process group stopped (SIGTERM, up to 2 s, then SIGKILL) while
+ * its process is still there, and the process reaped here; DONE is not
+ * called, the job is freed. The job's process is reaped only by the job
+ * (waitpid on its pid, never a GLib child watch), and its group is sent
+ * a signal only while waitpid says it has not exited, so the number can
+ * never be another process's by then. */
 void update_job_cancel(UPDATE_JOB *job);
 /* the pid of the job's process (for the tests) */
 int update_job_pid(UPDATE_JOB *job);

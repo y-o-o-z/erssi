@@ -560,6 +560,58 @@ static void test_job_cancel(void)
 	g_free(child);
 }
 
+/* a job whose process has exited, but was not reaped yet: cancelling it
+   reaps it and sends its process group no signal - once reaped, its
+   number may belong to another process. A child it left behind in that
+   group lives on. */
+static void test_job_cancel_after_exit(void)
+{
+	char *child = g_build_filename(script_dir, "stray.pid", NULL);
+	char *got = g_build_filename(script_dir, "stray.term", NULL);
+	char *path, *body, *text = NULL;
+	const char *argv[3];
+	UPDATE_JOB *job;
+	RESULT r;
+	int pid, stray, i;
+
+	unlink(child);
+	unlink(got);
+	/* the child says when a signal reaches it */
+	body = g_strdup_printf("sh -c 'trap \"echo TERM > %s; exit\" TERM; sleep 300 & wait' "
+	                       "> /dev/null 2>&1 &\necho $! > '%s'\n",
+	                       got, child);
+	path = script("exits.sh", body);
+	argv[0] = "/bin/sh";
+	argv[1] = path;
+	argv[2] = NULL;
+	memset(&r, 0, sizeof(r));
+	job = update_job_start(argv, 60000, job_done, &r, NULL);
+	g_assert_nonnull(job);
+	pid = update_job_pid(job);
+	for (i = 0; i < 500 && !g_file_get_contents(child, &text, NULL, NULL); i++)
+		g_usleep(10000);
+	g_assert_nonnull(text);
+	stray = atoi(text);
+	g_free(text);
+	g_assert_cmpint(stray, >, 1);
+	/* the script has exited by now (no main loop ran: nothing reaped it) */
+	g_usleep(500000);
+	update_job_cancel(job);
+	g_assert_false(r.done);
+	assert_reaped(pid);
+	g_usleep(300000);
+	g_assert_false(g_file_test(got, G_FILE_TEST_EXISTS));
+	g_assert_cmpint(kill(stray, 0), ==, 0);
+	kill(-pid, SIGKILL); /* the stray and its sleep, the group still exists */
+	unlink(got);
+	g_free(got);
+	unlink(child);
+	unlink(path);
+	g_free(path);
+	g_free(body);
+	g_free(child);
+}
+
 static void test_job_spawn_fails(void)
 {
 	const char *argv[] = { "/nonexistent/sh", NULL };
@@ -594,6 +646,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/job_garbage", test_job_garbage);
 	g_test_add_func("/update_check/job_timeout", test_job_timeout);
 	g_test_add_func("/update_check/job_cancel", test_job_cancel);
+	g_test_add_func("/update_check/job_cancel_after_exit", test_job_cancel_after_exit);
 	g_test_add_func("/update_check/job_spawn_fails", test_job_spawn_fails);
 	ret = g_test_run();
 	return ret;

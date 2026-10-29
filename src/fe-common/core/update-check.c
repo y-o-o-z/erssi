@@ -290,9 +290,9 @@ char **update_check_conf_paths(const char *prefix)
 struct _UPDATE_JOB {
 	GPid pid;
 	int out_fd, err_fd;
-	guint out_tag, err_tag, child_tag, timeout_tag, kill_tag;
+	guint out_tag, err_tag, poll_tag, timeout_tag, kill_tag;
 	GString *out, *err;
-	gboolean exited, timed_out;
+	gboolean exited, lost, timed_out;
 	int status, timeout_ms;
 	UPDATE_JOB_FUNC done;
 	void *data;
@@ -323,8 +323,8 @@ static void job_free(UPDATE_JOB *job)
 		g_source_remove(job->out_tag);
 	if (job->err_tag != 0)
 		g_source_remove(job->err_tag);
-	if (job->child_tag != 0)
-		g_source_remove(job->child_tag);
+	if (job->poll_tag != 0)
+		g_source_remove(job->poll_tag);
 	if (job->timeout_tag != 0)
 		g_source_remove(job->timeout_tag);
 	if (job->kill_tag != 0)
@@ -342,10 +342,12 @@ static void job_finish(UPDATE_JOB *job)
 {
 	UPDATE_ANSWER answer;
 
-	if (job->timed_out) {
+	if (job->timed_out || job->lost) {
 		memset(&answer, 0, sizeof(answer));
 		answer.kind = UPDATE_ANSWER_ERROR;
-		answer.reason = g_strdup_printf("timed out after %d s", job->timeout_ms / 1000);
+		answer.reason = job->timed_out ?
+		                g_strdup_printf("timed out after %d s", job->timeout_ms / 1000) :
+		                g_strdup("the installer could not be waited for");
 	} else {
 		update_check_parse(job->out->str, job->out->len, job->status, &answer);
 	}
@@ -403,15 +405,45 @@ static gboolean job_err(gint fd, GIOCondition cond, gpointer data)
 	return G_SOURCE_REMOVE;
 }
 
-static void job_exited(GPid pid, gint status, gpointer data)
+/* The job's process is reaped here, by waitpid() on its own pid, and by
+   nobody else (no GLib child watch, whose worker may reap it before its
+   callback runs). A signal goes to its process group only after a
+   waitpid() said it is still there: its number, which is the group's,
+   cannot have been given to another process by then. TRUE once it is
+   reaped (or, with SIGCHLD ignored as in Capsicum mode, gone). */
+static gboolean job_reap(UPDATE_JOB *job)
+{
+	pid_t r;
+	int status;
+
+	if (job->exited)
+		return TRUE;
+	do
+		r = waitpid(job->pid, &status, WNOHANG);
+	while (r == -1 && errno == EINTR);
+	if (r == 0)
+		return FALSE;
+	job->exited = TRUE;
+	if (r == job->pid)
+		job->status = status;
+	else
+		job->lost = TRUE;
+	return TRUE;
+}
+
+static void job_signal(UPDATE_JOB *job, int sig)
+{
+	if (!job_reap(job))
+		kill(-job->pid, sig);
+}
+
+static gboolean job_poll(gpointer data)
 {
 	UPDATE_JOB *job = data;
 
-	(void) pid;
-	job->child_tag = 0;
-	job->exited = TRUE;
-	job->status = status;
-	/* reaped: its number may be reused, no signal goes to it any more */
+	if (!job_reap(job))
+		return G_SOURCE_CONTINUE;
+	job->poll_tag = 0;
 	if (job->kill_tag != 0) {
 		g_source_remove(job->kill_tag);
 		job->kill_tag = 0;
@@ -427,6 +459,7 @@ static void job_exited(GPid pid, gint status, gpointer data)
 	if (job->err_fd != -1)
 		job_read(&job->err_fd, job->err);
 	job_finish(job); /* closes what is still open */
+	return G_SOURCE_REMOVE;
 }
 
 static gboolean job_kill(gpointer data)
@@ -434,8 +467,7 @@ static gboolean job_kill(gpointer data)
 	UPDATE_JOB *job = data;
 
 	job->kill_tag = 0;
-	if (!job->exited)
-		kill(-job->pid, SIGKILL);
+	job_signal(job, SIGKILL);
 	return G_SOURCE_REMOVE;
 }
 
@@ -445,10 +477,9 @@ static gboolean job_timeout(gpointer data)
 
 	job->timeout_tag = 0;
 	job->timed_out = TRUE;
-	if (!job->exited) {
-		kill(-job->pid, SIGTERM);
+	job_signal(job, SIGTERM);
+	if (!job->exited)
 		job->kill_tag = g_timeout_add(UPDATE_CHECK_KILL_GRACE_MS, job_kill, job);
-	}
 	return G_SOURCE_REMOVE;
 }
 
@@ -508,7 +539,9 @@ UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB
 	g_unix_set_fd_nonblocking(job->err_fd, TRUE, NULL);
 	job->out_tag = g_unix_fd_add(job->out_fd, G_IO_IN | G_IO_HUP | G_IO_ERR, job_out, job);
 	job->err_tag = g_unix_fd_add(job->err_fd, G_IO_IN | G_IO_HUP | G_IO_ERR, job_err, job);
-	job->child_tag = g_child_watch_add(job->pid, job_exited, job);
+	/* a check runs a few seconds a day: polling waitpid() 10 times a
+	   second costs nothing then */
+	job->poll_tag = g_timeout_add(100, job_poll, job);
 	job->timeout_tag = g_timeout_add(timeout_ms, job_timeout, job);
 	return job;
 }
@@ -517,22 +550,14 @@ void update_job_cancel(UPDATE_JOB *job)
 {
 	int i, status;
 
-	if (job->child_tag != 0) {
-		/* not reaped yet: the number is still ours */
-		g_source_remove(job->child_tag);
-		job->child_tag = 0;
-		kill(-job->pid, SIGTERM);
-		/* the installer removes its temporary files on SIGTERM */
-		for (i = 0; i < 40; i++) {
-			if (waitpid(job->pid, &status, WNOHANG) != 0)
-				break;
-			g_usleep(50000);
-		}
-		if (i == 40) {
-			kill(-job->pid, SIGKILL);
-			while (waitpid(job->pid, &status, 0) == -1 && errno == EINTR)
-				;
-		}
+	/* the installer removes its temporary files on SIGTERM */
+	job_signal(job, SIGTERM);
+	for (i = 0; i < 40 && !job_reap(job); i++)
+		g_usleep(50000);
+	if (!job->exited) {
+		kill(-job->pid, SIGKILL); /* not reaped just above */
+		while (waitpid(job->pid, &status, 0) == -1 && errno == EINTR)
+			;
 	}
 	job_free(job);
 }
