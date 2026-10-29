@@ -62,7 +62,11 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
 - Works on Linux and FreeBSD; a build from source needs GLib 2.70 or
   newer. Options: `--prefix`, `--ref`, `--src`,
   `--no-test`, `--clean`, `--yes`, `--binary`/`--source`, `--keep`,
-  `--dry-run`, `--rollback`, `--uninstall`.
+  `--dry-run`, `--rollback`, `--uninstall`, `--backup`, `--restore`.
+- Moving to another box: `erssi --backup` puts your home (config,
+  scripts, E2E keyring, keys) into one private file, `erssi --restore FILE`
+  puts it back
+  ([details](docs/shellter/install.md#moving-to-another-box)).
 - erssi keeps its configuration in `~/.erssi/`, so it runs side by side
   with irssi. Start it inside tmux so the session survives logging out.
 

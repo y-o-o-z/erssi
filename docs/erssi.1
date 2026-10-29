@@ -8,6 +8,12 @@ erssi \- a modular IRC client for the terminal (erssi Shellter Edition)
 .br
 .B erssi
 \-\-update | \-\-check\-update | \-\-print\-prefix | \-v | \-?
+.br
+.B erssi
+[\-\-home=PATH] \-\-backup [FILE] [\-\-with\-logs] [\-\-dry\-run]
+.br
+.B erssi
+[\-\-home=PATH] \-\-restore=FILE [\-\-dry\-run]
 .SH DESCRIPTION
 .B erssi
 is a fullscreen Internet Relay Chat client for the terminal, a fork of
@@ -89,6 +95,52 @@ then loads the new version in a running erssi.
 only report whether a newer signed release is available; nothing is
 installed.
 .TP
+.BI "\-\-backup " [FILE]
+put the home
+.RB ( \-\-home ,
+.B ~/.erssi
+by default) into one new file,
+.I FILE
+(default
+.IR erssi-backup-YYYYMMDD-HHMMSS.tar.gz
+in the current directory), of mode 0600: the configuration, themes, the
+startup file, scripts and their autorun links, the end-to-end and OTR
+keys, the fe-web key and certificate, the credentials file and the
+Mentions log. The IRC logs in
+.I logs/
+are left out unless
+.B \-\-with\-logs
+is given, and so are the image cache, the /UPGRADE session, lock files and
+sockets. An existing
+.I FILE
+is never overwritten. The file holds private keys and passwords: keep it
+private.
+.TP
+.BI "\-\-restore=" FILE
+restore the home from a backup. Every entry is checked before anything is
+unpacked; the home is moved aside to
+.IR <home> .before-restore- <time>
+and the backup moved into its place. Refused while an erssi runs on the
+home. With
+.BR \-\-dry\-run ,
+only list what would be restored.
+.TP
+.B "\-\-with\-logs"
+with
+.BR \-\-backup :
+take the IRC logs in
+.I logs/
+too.
+.TP
+.B "\-\-dry\-run"
+with
+.B \-\-backup
+or
+.BR \-\-restore :
+say what would be done, change nothing.
+Both run the installer of this release,
+.IR <prefix> /share/irssi/shellter-install.sh .
+.TP
 .B "\-\-print\-prefix"
 print the installation prefix this erssi takes its modules, help, themes
 and scripts from, and exit. Used by the installer and the tests.
@@ -129,6 +181,10 @@ end-to-end encryption keyring
 .TP
 .I ~/.erssi/startup
 file containing a list of commands to execute on startup
+.TP
+.I ~/.erssi/erssi.lock
+locked by every erssi running on this home, for
+.B \-\-restore
 .SH SEE ALSO
 .BR irssi (1).
 erssi has a solid amount of documentation available: check /HELP, or the

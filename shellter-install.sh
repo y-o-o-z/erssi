@@ -6,6 +6,9 @@
 #                          [--no-test|--test] [--clean|--no-clean]
 #                          [--binary|--source] [--binary-base URL] [--keep N]
 #                          [--dry-run] [--rollback] [--uninstall]
+#   sh shellter-install.sh --backup [FILE] [--home DIR] [--with-logs]
+#   sh shellter-install.sh --restore FILE [--home DIR] [--dry-run]
+#   erssi --backup [FILE] / erssi --restore FILE (= the same, installed with erssi)
 #   erssi --update          (= this installer, installed with erssi: --update)
 #   erssi --check-update    (= --update --check)
 #
@@ -143,6 +146,19 @@ erssi Shellter Edition - install and update
   --rollback     switch a binary install back to the previous release
   --uninstall    remove what this installer put into the prefix, and
                  ~/.local/bin/erssi; anything else there and ~/.erssi stay
+
+  --backup [FILE]
+                 put the erssi home (config, themes, scripts, E2E keyring,
+                 keys, credentials) into FILE, a new .tar.gz (.tar.xz) of
+                 mode 0600 (default ./erssi-backup-YYYYMMDD-HHMMSS.tar.gz);
+                 it holds private keys and passwords: keep it private
+  --with-logs    with --backup: take the IRC logs in logs/ too (left out
+                 by default, but for the Mentions log)
+  --restore FILE restore the home from FILE: every entry is checked first,
+                 the home is moved aside (<home>.before-restore-<time>) and
+                 the backup moved into its place; refused while an erssi
+                 runs on the home. --dry-run lists what would be restored
+  --home DIR     the erssi home for --backup / --restore (default ~/.erssi)
 
 What is verified: a recorded release (the default) is built only if its
 tag is signed by the release key this script carries and points to the
@@ -1626,6 +1642,675 @@ do_uninstall() {
     exit 0
 }
 
+# ── backup and restore of the erssi home ─────────────────────────────
+# --backup [FILE] puts the home (--home, default ~/.erssi) into one tar
+# (gzip; xz for a FILE ending in .tar.xz or .txz) of the layout
+#   erssi-backup-YYYYMMDD-HHMMSS/MANIFEST
+#   erssi-backup-YYYYMMDD-HHMMSS/home/...
+# that holds regular files and directories only. A symbolic link of the
+# home that points to a file or directory of the home is not stored as a
+# link but as a line of the MANIFEST ("l<TAB>path<TAB>target", the target
+# relative, made of ../ first and names after, through no other link); one
+# that points out of the home is followed and stored as what it points to.
+# Left out: the image cache, the /upgrade session, lock files, sockets,
+# FIFOs and devices, and - without --with-logs - logs/ (except the
+# Mentions log, logs/mentions.log) and the debug logs.
+#
+# --restore FILE checks every entry before anything is unpacked (only
+# regular files and directories, all below the one top directory, no
+# absolute name and no ..), unpacks it into a new directory next to the
+# home, checks the tree against its MANIFEST, makes the links of the
+# MANIFEST after checking each, sets the modes (0700 directories, 0600
+# files, 0700 files that were executable) and only then moves the home
+# aside (<home>.before-restore-<time>) and the new one into its place, by
+# one rename each. It refuses while an erssi runs on the home: the
+# shared lock every erssi from 2026.11.0 on holds on <home>/erssi.lock,
+# and an erssi process of this user that names this home (an older erssi
+# holds no lock).
+
+BK_FORMAT=1
+
+bk_line() { printf '  %s\n' "$*"; }
+bk_size() {   # bytes -> "12 KB", "3.4 MB"
+    awk -v b="$1" 'BEGIN {
+        if (b < 1024) printf "%d bytes", b
+        else if (b < 1048576) printf "%d KB", (b + 1023) / 1024
+        else if (b < 1073741824) printf "%.1f MB", b / 1048576
+        else printf "%.1f GB", b / 1073741824 }'
+}
+bk_bytes() { wc -c < "$1" | tr -d ' '; }
+# a name the archive listings show as it is: no control character (a line
+# break would split the lists) and no backslash (GNU tar shows escapes)
+bk_name_ok() {
+    case "$1" in *[[:cntrl:]]*|*\\*) return 1 ;; esac
+    return 0
+}
+# dir target -> target relative to the home, as text (no link followed);
+# fails when it leaves the home, prints nothing for the home itself
+bk_norm() {
+    printf '%s\n' "$1/$2" | awk '{
+        n = split($0, c, "/"); k = 0
+        for (i = 1; i <= n; i++) {
+            if (c[i] == "" || c[i] == ".") continue
+            if (c[i] == "..") { if (k == 0) exit 1; k--; continue }
+            o[++k] = c[i]
+        }
+        s = ""; for (i = 1; i <= k; i++) s = s (i > 1 ? "/" : "") o[i]
+        print s }'
+}
+# from-dir to -> the link text from from-dir to to (both relative to the
+# home): ../ for each directory not in common, then the rest of to
+bk_rel() {
+    awk -v f="$1" -v t="$2" 'BEGIN {
+        n = split(f, a, "/"); m = split(t, b, "/")
+        i = 1; while (i <= n && i < m && a[i] == b[i]) i++
+        s = ""; for (j = i; j <= n; j++) s = s "../"
+        for (j = i; j <= m; j++) s = s b[j] (j < m ? "/" : "")
+        print s }'
+}
+bk_dir_of() { case "$1" in */*) printf '%s' "${1%/*}" ;; esac; }
+# 0 when no component of the home-relative path is a symbolic link
+bk_no_link_in() {
+    q="" rest=$1
+    while [ -n "$rest" ]; do
+        c=${rest%%/*}
+        case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+        q=${q:+$q/}$c
+        [ ! -L "$BK_ROOT/$q" ] || return 1
+    done
+    return 0
+}
+# what is left out by its place: image cache always, logs/ without
+# --with-logs (but the Mentions log)
+bk_excluded() {
+    case "$1" in
+        image_cache|image_cache/*) return 0 ;;
+        logs/mentions.log) return 1 ;;
+        logs/*) [ "$BK_LOGS" = 0 ] && return 0 ;;
+    esac
+    return 1
+}
+# what is left out by its name: 0 and the reason on stdout
+bk_skipped_name() {
+    case "$1" in
+        session) echo "the /upgrade session" ; return 0 ;;
+        *.lock) echo "a lock file"; return 0 ;;
+        sidepanels.log|image-preview-debug.log|resize-*.log)
+            [ "$BK_LOGS" = 1 ] || { echo "a debug log"; return 0; } ;;
+    esac
+    return 1
+}
+bk_note() { printf '%s\n' "$*" >> "$BK_WORK/notes"; }
+
+# a regular file of the home (or one a link out of it points to) at path p
+bk_add_file() {
+    [ -r "$BK_ROOT/$1" ] || die "cannot read $(tilde "$BK_ROOT/$1") - nothing was written"
+    sz=$(bk_bytes "$BK_ROOT/$1") || die "cannot read $(tilde "$BK_ROOT/$1") - nothing was written"
+    ln -s "$BK_ROOT/$1" "$BK_STAGE/$1" || die "cannot stage $1"
+    printf 'f\t%s\t%s\n' "$sz" "$1" >> "$BK_WORK/entries"
+}
+
+# the home-relative path p of one entry found below the home
+bk_entry() {
+    p=$1
+    bk_name_ok "$p" ||
+        die "cannot back up a name with a line break, another control character or a backslash: $(tilde "$BK_ROOT")/$p - rename it"
+    if bk_excluded "$p"; then return 0; fi
+    if why=$(bk_skipped_name "$p"); then
+        [ "$why" = "a lock file" ] || bk_note "left out: $p ($why)"
+        return 0
+    fi
+    f=$BK_ROOT/$p
+    if [ -L "$f" ]; then
+        t=$(readlink "$f") || t=""
+        if [ ! -e "$f" ]; then
+            bk_note "left out: $p (a link to ${t:-?} that leads nowhere)"
+            return 0
+        fi
+        r="" internal=0
+        case "$t" in
+            "$BK_ROOT"/*) r=${t#"$BK_ROOT"/}; internal=1 ;;
+            "$BK_PHYS"/*) r=${t#"$BK_PHYS"/}; internal=1 ;;
+            /*) ;;
+            *) if r=$(bk_norm "$(bk_dir_of "$p")" "$t") && [ -n "$r" ]; then internal=1; fi ;;
+        esac
+        if [ "$internal" = 0 ] && [ -d "$f" ]; then
+            # a directory of the home under another name
+            ph=$(cd -P "$f" 2>/dev/null && pwd) || ph=""
+            case "$ph" in "$BK_PHYS"/*) r=${ph#"$BK_PHYS"/}; internal=1 ;; esac
+            if [ "$ph" = "$BK_PHYS" ]; then bk_note "left out: $p (a link to the home itself)"; return 0; fi
+            case "$BK_PHYS" in "$ph"/*) bk_note "left out: $p (a link to a directory that holds the home)"; return 0 ;; esac
+        fi
+        if [ "$internal" = 1 ] && [ -n "$r" ] && bk_no_link_in "$r"; then
+            if bk_excluded "$r" || bk_skipped_name "$r" >/dev/null; then
+                bk_note "left out: $p (a link to $r, which is left out)"
+                return 0
+            fi
+            printf 'l\t%s\t%s\t%s\n' "$p" "$(bk_rel "$(bk_dir_of "$p")" "$r")" "$r" >> "$BK_WORK/links"
+            return 0
+        fi
+        # out of the home (or through another link): what it points to
+        if [ -d "$f" ]; then
+            ph=$(cd -P "$f" 2>/dev/null && pwd) || ph=""
+            if [ -z "$ph" ] || grep -qxF "$ph" "$BK_WORK/visited" 2>/dev/null; then
+                bk_note "left out: $p (a link to a directory already in the backup)"
+                return 0
+            fi
+            printf '%s\n' "$ph" >> "$BK_WORK/visited"
+            mkdir "$BK_STAGE/$p" || die "cannot stage $p"
+            printf 'd\t%s\n' "$p" >> "$BK_WORK/entries"
+            bk_note "followed: $p -> $t (stored as a directory)"
+            bk_walk "$p"
+        elif [ -f "$f" ]; then
+            bk_add_file "$p"
+            bk_note "followed: $p -> $t (stored as a file)"
+        else
+            bk_note "left out: $p (a link to something that is neither a file nor a directory)"
+        fi
+    elif [ -d "$f" ]; then
+        mkdir "$BK_STAGE/$p" || die "cannot stage $p"
+        printf 'd\t%s\n' "$p" >> "$BK_WORK/entries"
+    elif [ -f "$f" ]; then
+        bk_add_file "$p"
+    elif [ -S "$f" ]; then
+        : # a socket (fe_web_socket) belongs to the erssi that made it
+    else
+        bk_note "left out: $p (neither a file nor a directory)"
+    fi
+}
+
+# the entries below the home-relative directory $1 ("" for the home), in
+# a subshell of their own: a link out of the home recurses into it
+bk_walk() {
+    (
+        # a list of its own for each level: $$ is the same in every subshell
+        BK_DEPTH=$((BK_DEPTH + 1))
+        lst=$BK_WORK/list.$BK_DEPTH
+        d=$BK_ROOT${1:+/$1}
+        cd "$d" || die "cannot enter $(tilde "$d")"
+        # what is left out by its place is not even looked at (logs can be
+        # many files); logs/mentions.log is added on its own below
+        if [ -z "$1" ] && [ "$BK_LOGS" = 0 ]; then
+            find . \( -path ./image_cache -o -path ./logs \) -prune -o -print
+        elif [ -z "$1" ]; then
+            find . -path ./image_cache -prune -o -print
+        else
+            find . -print
+        fi > "$lst" || die "cannot list $(tilde "$d")"
+        while IFS= read -r x; do
+            [ "$x" != . ] || continue
+            x=${x#./}
+            bk_entry "${1:+$1/}$x"
+        done < "$lst"
+        rm -f "$lst"
+        if [ -z "$1" ] && [ "$BK_LOGS" = 0 ] && { [ -f logs/mentions.log ] || [ -L logs/mentions.log ]; }; then
+            if [ -d logs ] && [ ! -L logs ]; then
+                [ -d "$BK_STAGE/logs" ] || { mkdir "$BK_STAGE/logs"; printf 'd\t%s\n' logs >> "$BK_WORK/entries"; }
+                bk_entry logs/mentions.log
+            else
+                bk_note "left out: logs/mentions.log (logs is a link; --with-logs takes it)"
+            fi
+        fi
+    ) || exit 1
+}
+
+do_backup() {
+    umask 077
+    [ -d "$BK_HOME" ] || die "there is no erssi home $(tilde "$BK_HOME") to back up"
+    BK_ROOT=$(cd "$BK_HOME" && pwd) || die "cannot enter $(tilde "$BK_HOME")"
+    BK_PHYS=$(cd -P "$BK_HOME" && pwd) || die "cannot enter $(tilde "$BK_HOME")"
+    stamp=$(date +%Y%m%d-%H%M%S)
+    if [ -z "$BK_FILE" ]; then
+        dir=$(pwd -P)
+        case "$dir/" in "$BK_PHYS"/*) dir=$HOME ;; esac
+        [ -w "$dir" ] || dir=$HOME
+        BK_FILE=$dir/erssi-backup-$stamp.tar.gz
+    fi
+    case "$BK_FILE" in
+        *.tar.gz|*.tgz) BK_COMP=gzip ;;
+        *.tar.xz|*.txz) BK_COMP=xz; have xz || die "xz is not installed - use a FILE ending in .tar.gz" ;;
+        *) die "the backup file must end in .tar.gz (or .tar.xz): $BK_FILE" ;;
+    esac
+    have "$BK_COMP" || die "$BK_COMP is not installed"
+    case "$BK_FILE" in /*) ;; *) BK_FILE=$(pwd)/$BK_FILE ;; esac
+    if [ -e "$BK_FILE" ] || [ -L "$BK_FILE" ]; then
+        die "$(tilde "$BK_FILE") exists - refusing to overwrite it; name another file"
+    fi
+    fdir=$(bk_dir_of "$BK_FILE"); [ -n "$fdir" ] || fdir=/
+    fphys=$(cd -P "$fdir" 2>/dev/null && pwd) || die "there is no directory $fdir for the backup"
+    case "$fphys/" in
+        "$BK_PHYS"/*) die "the backup file would be inside the home it backs up - put it elsewhere, e.g. ~/erssi-backup-$stamp.tar.gz" ;;
+    esac
+
+    header "backup"
+    field "home" "$(tilde "$BK_ROOT")"
+    field "file" "$(tilde "$BK_FILE")"
+    [ -z "$BK_ERSSI_V" ] || field "erssi" "$BK_ERSSI_V"
+    printf '\n'
+
+    BK_WORK=$(mktemp -d "${TMPDIR:-/tmp}/erssi-backup.XXXXXX") || die "cannot create a temporary directory"
+    BK_TMPF=""
+    trap 'rm -rf "$BK_WORK"; [ -z "$BK_TMPF" ] || rm -f "$BK_TMPF"' EXIT
+    BK_TOP=erssi-backup-$stamp
+    BK_STAGE=$BK_WORK/$BK_TOP/home
+    mkdir -p "$BK_STAGE" || die "cannot create a temporary directory"
+    : > "$BK_WORK/entries"; : > "$BK_WORK/links"; : > "$BK_WORK/notes"
+    printf '%s\n' "$BK_PHYS" > "$BK_WORK/visited"
+
+    STEP=0 STEPS=2
+    step "Collecting"
+    bk_walk ""
+    # a link whose target did not make it into the backup is left out
+    : > "$BK_WORK/links.ok"
+    while IFS="$(printf '\t')" read -r k p t r; do
+        if [ -e "$BK_STAGE/$r" ] || [ -L "$BK_STAGE/$r" ]; then
+            printf 'l\t%s\t%s\n' "$p" "$t" >> "$BK_WORK/links.ok"
+        else
+            bk_note "left out: $p (a link to $r, which is not in the backup)"
+        fi
+    done < "$BK_WORK/links"
+    nf=$(awk -F '\t' '$1 == "f"' "$BK_WORK/entries" | wc -l | tr -d ' ')
+    nd=$(awk -F '\t' '$1 == "d"' "$BK_WORK/entries" | wc -l | tr -d ' ')
+    nl=$(wc -l < "$BK_WORK/links.ok" | tr -d ' ')
+    total=$(awk -F '\t' '$1 == "f" { s += $2 } END { printf "%d", s }' "$BK_WORK/entries")
+    # what is left out by its place, by size
+    logs_note=""
+    if [ "$BK_LOGS" = 0 ] && [ -d "$BK_ROOT/logs" ]; then
+        lk=$(du -sk "$BK_ROOT/logs" 2>/dev/null | awk '{print $1}') || lk=0
+        mk=0
+        [ ! -f "$BK_ROOT/logs/mentions.log" ] || mk=$(du -k "$BK_ROOT/logs/mentions.log" | awk '{print $1}')
+        lb=$(( (${lk:-0} - ${mk:-0}) * 1024 ))
+        [ "$lb" -ge 0 ] || lb=0
+        ln_=$(find "$BK_ROOT/logs/" -type f ! -path "$BK_ROOT/logs/mentions.log" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$ln_" -gt 0 ]; then
+            logs_note="IRC logs left out: logs/, $(bk_size "$lb") in $ln_ file(s) (--with-logs takes them)"
+        fi
+    fi
+    cache_note=""
+    if [ -d "$BK_ROOT/image_cache" ]; then
+        ck=$(du -sk "$BK_ROOT/image_cache" 2>/dev/null | awk '{print $1}') || ck=0
+        cache_note="left out: image_cache/, $(bk_size $((${ck:-0} * 1024))) (a cache, made again)"
+    fi
+    done_ "$nf files $S_SEP $(bk_size "$total")"
+    while IFS= read -r n; do warn "$n"; done < "$BK_WORK/notes"
+    [ -z "$logs_note" ] || warn "$logs_note"
+    [ -z "$cache_note" ] || warn "$cache_note"
+    if [ -n "$BK_CONFIG" ]; then
+        case "$BK_CONFIG" in
+            "$BK_ROOT"/*|"$BK_PHYS"/*) ;;
+            *) warn "--config $(tilde "$BK_CONFIG") is outside the home and not in the backup: copy it yourself" ;;
+        esac
+    fi
+
+    # the MANIFEST: what it is, where it came from, and every entry
+    {
+        printf 'erssi-backup %s\n' "$BK_FORMAT"
+        printf 'version %s\n' "${BK_ERSSI_V:-unknown}"
+        printf 'created %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+        printf 'home %s\n' "$(tilde "$BK_ROOT")"
+        if [ "$BK_LOGS" = 1 ]; then printf 'logs included\n'; else printf 'logs excluded\n'; fi
+        printf 'files %s\n' "$nf"
+        awk -F '\t' '$1 == "d"' "$BK_WORK/entries" | LC_ALL=C sort -t "$(printf '\t')" -k 2
+        awk -F '\t' '$1 == "f"' "$BK_WORK/entries" | LC_ALL=C sort -t "$(printf '\t')" -k 3
+        LC_ALL=C sort "$BK_WORK/links.ok"
+    } > "$BK_WORK/$BK_TOP/MANIFEST" || die "cannot write the MANIFEST"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        step "Writing"
+        skip_ "dry run"
+        printf '\n  Dry run - nothing was written. The backup would hold %s files, %s directories and %s links:\n\n' "$nf" "$nd" "$nl"
+        awk -F '\t' '$1 == "d" { print "    " $2 "/" } $1 == "f" { print "    " $3 } $1 == "l" { print "    " $2 " -> " $3 }' "$BK_WORK/$BK_TOP/MANIFEST"
+        printf '\n'
+        exit 0
+    fi
+
+    step "Writing"
+    # a new file of mode 0600 next to FILE, linked to FILE only once it is
+    # complete: FILE is never half written, never readable by others, and
+    # an existing one is never replaced (ln fails)
+    BK_TMPF=$(mktemp "$fphys/.erssi-backup.XXXXXX") || die "cannot create a file in $fdir"
+    chmod 600 "$BK_TMPF"
+    # tar -h stores what the staged links point to: the files of the home.
+    # One file under two names (a hard link, or two links to it) would be
+    # stored once and then as a hard link, which --restore refuses: those
+    # names get a copy of their own in the stage, and it is written again
+    for try in 1 2; do
+        rc=0
+        { (cd "$BK_WORK" && tar -c -h -f - "$BK_TOP") 2> "$BK_WORK/tar.err"; echo $? > "$BK_WORK/tar.rc"; } |
+            "$BK_COMP" -c > "$BK_TMPF" || rc=$?
+        trc=$(cat "$BK_WORK/tar.rc" 2>/dev/null) || trc=1
+        if [ "$trc" != 0 ] || [ "$rc" != 0 ]; then
+            sed 's/^/        /' "$BK_WORK/tar.err" >&2
+            die "writing the backup failed (a file changed or went away while it was read? run it again) - nothing was written"
+        fi
+        "$BK_COMP" -dc "$BK_TMPF" | tar -t -v -f - | awk '/^h/ {
+                i = index($0, " link to "); x = substr($0, 1, i - 1)
+                j = index(x, " '"$BK_TOP"'/home/"); if (i && j) print substr(x, j + length(" '"$BK_TOP"'/home/")) }' \
+            > "$BK_WORK/hard" || die "cannot read back $(tilde "$BK_TMPF")"
+        [ -s "$BK_WORK/hard" ] || break
+        [ "$try" = 1 ] || die "cannot store $(head -n 1 "$BK_WORK/hard") as a file of its own - nothing was written"
+        while IFS= read -r h; do
+            rm -f "$BK_STAGE/$h"
+            cp "$BK_ROOT/$h" "$BK_STAGE/$h" || die "cannot copy $(tilde "$BK_ROOT/$h")"
+        done < "$BK_WORK/hard"
+        : > "$BK_TMPF"
+    done
+    if ! ln "$BK_TMPF" "$BK_FILE" 2>/dev/null; then
+        if [ -e "$BK_FILE" ] || [ -L "$BK_FILE" ]; then
+            die "$(tilde "$BK_FILE") appeared meanwhile - refusing to overwrite it"
+        fi
+        # a file system without hard links
+        mv "$BK_TMPF" "$BK_FILE" || die "cannot write $(tilde "$BK_FILE")"
+    fi
+    rm -f "$BK_TMPF"; BK_TMPF=""
+    done_ "$(bk_size "$(bk_bytes "$BK_FILE")") $S_SEP $BK_COMP $S_SEP mode 0600"
+    printf '\n  %s%sKeep this file private.%s It holds your private keys and passwords: the\n' "$B" "$A" "$N"
+    printf '  E2E keyring, OTR and fe-web keys, and the passwords of your networks\n'
+    printf '  (config, .credentials). It is readable only by you - keep it so, and do\n'
+    printf '  not put it where others can read it.\n\n'
+    printf '  On the new box: erssi --restore %s\n\n' "$(basename "$BK_FILE")"
+    exit 0
+}
+
+# ── restore ──
+# 0 when the lock of an erssi is held on the home; 1 when not; 2 when no
+# tool here can tell
+bk_lock_held() {
+    lk=$1/erssi.lock
+    [ -f "$lk" ] && [ ! -L "$lk" ] || return 1
+    if have perl; then
+        # 6 = LOCK_EX | LOCK_NB
+        perl -e 'open(my $f, "+<", $ARGV[0]) or exit 2; exit(flock($f, 6) ? 1 : 0)' "$lk"
+        return
+    fi
+    if have flock; then
+        rc=0; flock -n -x -E 75 "$lk" true 2>/dev/null || rc=$?
+        case "$rc" in 0) return 1 ;; 75) return 0 ;; *) return 2 ;; esac
+    fi
+    if have lockf; then
+        rc=0; lockf -n -s -t 0 "$lk" true 2>/dev/null || rc=$?
+        case "$rc" in 0) return 1 ;; 75) return 0 ;; *) return 2 ;; esac
+    fi
+    return 2
+}
+# the pids of erssi processes of this user that use the home $1 (or $2,
+# $3: the same home named otherwise), one per line; also an erssi that
+# names its home in a way that cannot be compared (a relative --home). An
+# erssi without --home uses ~/.erssi of its own HOME: from its environment
+# where /proc shows it (Linux), otherwise taken to be this HOME
+bk_erssi_pids() {
+    have ps || return 0
+    me=$(id -u)
+    ps -A -o pid= -o uid= -o comm= > "$BK_WORK/ps" 2>/dev/null || return 1
+    while read -r pid uid comm; do
+        [ "$uid" = "$me" ] || continue
+        case "$comm" in erssi|*/erssi) ;; *) continue ;; esac
+        args=$(ps -p "$pid" -o args= 2>/dev/null) || continue
+        h=$(printf '%s\n' "$args" | awk '{
+            for (i = 2; i <= NF; i++) {
+                if ($i == "--home" && i < NF) { print $(i + 1); exit }
+                if (index($i, "--home=") == 1) { print substr($i, 8); exit }
+            } }')
+        if [ -z "$h" ]; then
+            ph=""
+            env=${SHELLTER_PROC:-/proc}/$pid/environ
+            [ ! -r "$env" ] || ph=$(tr '\000' '\n' < "$env" 2>/dev/null | sed -n 's/^HOME=//p' | head -n 1) || ph=""
+            h=${ph:-$HOME}/.erssi
+        fi
+        h=${h%/}
+        case "$h" in
+            "$1"|"$2"|"$3") printf '%s\n' "$pid" ;;
+            /*) ;;
+            *) printf '%s\n' "$pid" ;;
+        esac
+    done < "$BK_WORK/ps"
+}
+
+bk_fail() {   # message: nothing was changed
+    die "$1 - nothing was changed"
+}
+
+do_restore() {
+    umask 077
+    [ -f "$BK_FILE" ] || bk_fail "there is no backup file $BK_FILE"
+    [ -r "$BK_FILE" ] || bk_fail "cannot read $BK_FILE"
+    magic=$(od -An -tx1 -N6 "$BK_FILE" 2>/dev/null | tr -d ' \n') || magic=""
+    case "$magic" in
+        1f8b*) BK_COMP=gzip ;;
+        fd377a585a00) BK_COMP=xz ;;
+        *) bk_fail "$BK_FILE is not an erssi backup (not a .tar.gz or .tar.xz file)" ;;
+    esac
+    have "$BK_COMP" || bk_fail "$BK_COMP is not installed, it is needed to read $BK_FILE"
+
+    # the home: where a link there points (its directory stays a link)
+    T=${BK_HOME%/}
+    [ -n "$T" ] || bk_fail "--home / is no erssi home"
+    case "$T" in /*) ;; *) T=$(pwd)/$T ;; esac
+    BK_HOME_ABS=$T
+    if [ -L "$T" ]; then
+        [ -d "$T" ] || bk_fail "$(tilde "$T") is a link that leads to no directory"
+        T=$(cd -P "$T" && pwd) || bk_fail "cannot enter $(tilde "$BK_HOME")"
+        BK_LINKED=1
+    else
+        BK_LINKED=0
+    fi
+    if [ -e "$T" ] && [ ! -d "$T" ]; then bk_fail "$(tilde "$T") is not a directory"; fi
+    PARENT=$(bk_dir_of "$T"); [ -n "$PARENT" ] || PARENT=/
+    if [ "$ROOT" = 1 ] && [ -e "$PARENT" ] && [ "$(owner "$PARENT")" != 0 ]; then
+        bk_fail "as root, restore only into a home of root's ($(tilde "$PARENT") belongs to another user) - run it as that user"
+    fi
+
+    header "restore"
+    field "file" "$(tilde "$BK_FILE")"
+    field "home" "$(tilde "$T")"
+    printf '\n'
+    STEP=0 STEPS=4
+
+    step "Checking the archive"
+    BK_WORK=$(mktemp -d "${TMPDIR:-/tmp}/erssi-restore.XXXXXX") || bk_fail "cannot create a temporary directory"
+    BK_NEW="" ASIDE=""
+    # stopped between the two renames: the old home goes back
+    trap 'rm -rf "$BK_WORK"; [ -z "$BK_NEW" ] || rm -rf "$BK_NEW"
+        if [ -n "$ASIDE" ] && [ -d "$ASIDE" ] && [ ! -e "$T" ] && [ ! -L "$T" ]; then mv "$ASIDE" "$T"; fi' EXIT
+    "$BK_COMP" -t "$BK_FILE" 2> "$BK_WORK/err" ||
+        bk_fail "$BK_FILE is damaged or cut short ($BK_COMP -t: $(head -n 1 "$BK_WORK/err"))"
+    "$BK_COMP" -dc "$BK_FILE" | tar -t -f - > "$BK_WORK/names" 2> "$BK_WORK/err" ||
+        bk_fail "$BK_FILE is not a tar archive ($(head -n 1 "$BK_WORK/err"))"
+    "$BK_COMP" -dc "$BK_FILE" | tar -t -v -f - > "$BK_WORK/long" 2> "$BK_WORK/err" ||
+        bk_fail "$BK_FILE is not a tar archive ($(head -n 1 "$BK_WORK/err"))"
+    n=$(wc -l < "$BK_WORK/names" | tr -d ' ')
+    [ "$n" -gt 0 ] || bk_fail "$BK_FILE is empty"
+    [ "$n" -le 1000000 ] || bk_fail "$BK_FILE holds $n entries - too many for an erssi home"
+    # one line per entry in both lists (a name with a line break would
+    # make more), each a regular file or a directory: no symbolic or hard
+    # link, device or FIFO (first letter of the mode: l h c b p ...)
+    [ "$(wc -l < "$BK_WORK/long" | tr -d ' ')" = "$n" ] ||
+        bk_fail "$BK_FILE has names the archive lists cannot show - not an erssi backup"
+    bad=$(awk '{ c = substr($0, 1, 1) } c != "-" && c != "d" { print; exit }' "$BK_WORK/long")
+    [ -z "$bad" ] || bk_fail "$BK_FILE holds something other than files and directories ($bad) - not an erssi backup"
+    if grep -q -e ' link to ' -e ' -> ' "$BK_WORK/long"; then
+        bk_fail "$BK_FILE holds a link - not an erssi backup"
+    fi
+    # every name below one top directory erssi-backup-*, then MANIFEST or
+    # home/; no absolute name, no . or .. component, no backslash
+    BK_TOP=$(awk -F / 'NR == 1 { print $1 }' "$BK_WORK/names")
+    case "$BK_TOP" in
+        erssi-backup-*) case "$BK_TOP" in *[!A-Za-z0-9._-]*) BK_TOP="" ;; esac ;;
+        *) BK_TOP="" ;;
+    esac
+    [ -n "$BK_TOP" ] || bk_fail "$BK_FILE is not an erssi backup (no erssi-backup-* directory at its top)"
+    bad=$(awk -v t="$BK_TOP" '{
+            x = $0; sub(/\/$/, "", x)
+            if (x == t || x == t "/MANIFEST" || x == t "/home") next
+            if (index(x, t "/home/") != 1 || x ~ /(^|\/)\.\.?(\/|$)/ || x ~ /\/\// || index(x, "\\")) { print; exit }
+        }' "$BK_WORK/names")
+    [ -z "$bad" ] || bk_fail "$BK_FILE holds $bad: outside $BK_TOP/home/, absolute or with a .. - refusing it"
+    grep -qxF "$BK_TOP/MANIFEST" "$BK_WORK/names" || bk_fail "$BK_FILE has no $BK_TOP/MANIFEST - not an erssi backup"
+    # it must fit: the unpacked size against the free space next to the home
+    size=$("$BK_COMP" -dc "$BK_FILE" | wc -c | tr -d ' ')
+    if [ "$DRY_RUN" = 1 ]; then
+        where=$BK_WORK
+    else
+        where=$PARENT
+        mkdir -p "$PARENT" 2>/dev/null || bk_fail "cannot create $(tilde "$PARENT")"
+    fi
+    avail=$(df -P -k "$where" 2>/dev/null | awk 'NR == 2 { print $4 }') || avail=""
+    case "$avail" in
+        ''|*[!0-9]*) ;;
+        *) [ "$((size / 1024))" -lt "$avail" ] ||
+               bk_fail "$BK_FILE unpacks to $(bk_size "$size"), more than is free in $(tilde "$where") ($(bk_size $((avail * 1024))))" ;;
+    esac
+    done_ "$n entries $S_SEP $(bk_size "$size") $S_SEP files and directories only"
+
+    step "Unpacking"
+    if [ "$DRY_RUN" = 1 ]; then
+        BK_NEW=$BK_WORK/new
+        mkdir "$BK_NEW" || bk_fail "cannot create a temporary directory"
+    else
+        [ -w "$PARENT" ] || bk_fail "cannot write to $(tilde "$PARENT")"
+        # next to the home: on its file system, so it moves in with one rename
+        BK_NEW=$(mktemp -d "$PARENT/.erssi-restore.XXXXXX") || bk_fail "cannot create a directory in $(tilde "$PARENT")"
+    fi
+    # owners are the restoring user's, never those stored in the archive
+    "$BK_COMP" -dc "$BK_FILE" | (cd "$BK_NEW" && tar --no-same-owner -x -f -) 2> "$BK_WORK/err" ||
+        bk_fail "unpacking $BK_FILE failed ($(head -n 1 "$BK_WORK/err"))"
+    H=$BK_NEW/$BK_TOP/home
+    M=$BK_NEW/$BK_TOP/MANIFEST
+    # what was unpacked, checked again on the disk
+    [ -z "$(find "$BK_NEW" ! -type f ! -type d -print | head -n 1)" ] ||
+        bk_fail "$BK_FILE unpacked to something other than files and directories"
+    [ "$(find "$BK_NEW/." ! -name . -prune -print | wc -l | tr -d ' ')" = 1 ] ||
+        bk_fail "$BK_FILE unpacked to more than one directory"
+    [ -d "$H" ] || mkdir "$H"
+    [ -f "$M" ] || bk_fail "$BK_FILE has no MANIFEST - not an erssi backup"
+    [ "$(head -n 1 "$M")" = "erssi-backup $BK_FORMAT" ] || {
+        case "$(head -n 1 "$M")" in
+            "erssi-backup "[0-9]*) bk_fail "$BK_FILE is a backup of a newer format ($(head -n 1 "$M")) - restore it with a newer erssi" ;;
+        esac
+        bk_fail "$BK_FILE is not an erssi backup (its MANIFEST does not say so)"
+    }
+    mv_v=$(sed -n 's/^version //p' "$M" | head -n 1)
+    mv_d=$(sed -n 's/^created //p' "$M" | head -n 1)
+    mv_h=$(sed -n 's/^home //p' "$M" | head -n 1)
+    mv_l=$(sed -n 's/^logs //p' "$M" | head -n 1)
+    # the tree is what the MANIFEST lists, nothing more or less
+    (cd "$H" && find . -type f -print) | sed 's|^\./||' | LC_ALL=C sort > "$BK_WORK/got.f"
+    (cd "$H" && find . -type d ! -path . -print) | sed 's|^\./||' | LC_ALL=C sort > "$BK_WORK/got.d"
+    awk -F '\t' '$1 == "f" { print $3 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.f"
+    awk -F '\t' '$1 == "d" { print $2 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.d"
+    if ! cmp -s "$BK_WORK/got.f" "$BK_WORK/want.f" || ! cmp -s "$BK_WORK/got.d" "$BK_WORK/want.d"; then
+        bk_fail "the files in $BK_FILE are not those its MANIFEST lists (damaged, or not made by erssi --backup)"
+    fi
+    nf=$(wc -l < "$BK_WORK/want.f" | tr -d ' ')
+    # the links of the MANIFEST: each one new, in a directory of the tree,
+    # with a relative target of ../ first and names after (no . or .., no
+    # //) that stays in the tree and reaches a file or directory of it
+    # through directories only - checked before any link is made, so no
+    # link can lead through another
+    awk -F '\t' '$1 == "l"' "$M" > "$BK_WORK/links"
+    nl=0 BK_ROOT=$H
+    while IFS="$(printf '\t')" read -r k p t; do
+        nl=$((nl + 1))
+        bk_name_ok "$p$t" || bk_fail "the MANIFEST names a link with a control character"
+        case "/$p/" in *//*|*/./*|*/../*) bk_fail "the MANIFEST names a link at $p - refusing it" ;; esac
+        case "$t" in ''|/*) bk_fail "the MANIFEST has a link $p -> $t that is not relative - refusing it" ;; esac
+        rest=$t ups=0
+        while :; do case "$rest" in ../*) rest=${rest#../}; ups=$((ups + 1)) ;; *) break ;; esac; done
+        case "/$rest/" in *//*|*/./*|*/../*) bk_fail "the MANIFEST has a link $p -> $t with a . or .. after its names - refusing it" ;; esac
+        pd=$(bk_dir_of "$p")
+        depth=0; [ -z "$pd" ] || depth=$(printf '%s\n' "$pd" | awk -F / '{ print NF }')
+        [ "$ups" -le "$depth" ] || bk_fail "the MANIFEST has a link $p -> $t that leaves the home - refusing it"
+        r=$(bk_norm "$pd" "$t") || r=""
+        [ -n "$r" ] || bk_fail "the MANIFEST has a link $p -> $t that leaves the home - refusing it"
+        if [ -e "$H/$p" ] || [ -L "$H/$p" ]; then bk_fail "the MANIFEST has a link $p where the archive has a file"; fi
+        [ -z "$pd" ] || { [ -d "$H/$pd" ] && bk_no_link_in "$pd"; } ||
+            bk_fail "the MANIFEST has a link $p in no directory of the archive"
+        if { [ ! -f "$H/$r" ] && [ ! -d "$H/$r" ]; } || ! bk_no_link_in "$r"; then
+            bk_fail "the MANIFEST has a link $p -> $t to nothing in the archive - refusing it"
+        fi
+    done < "$BK_WORK/links"
+    # the modes: directories 0700, files 0600, executable ones 0700
+    chmod 700 "$H"
+    if ! find "$H" -type d -exec chmod 700 {} + ||
+            ! find "$H" -type f -perm -100 -exec chmod 700 {} + ||
+            ! find "$H" -type f ! -perm -100 -exec chmod 600 {} +; then
+        bk_fail "cannot set the modes in $(tilde "$BK_NEW")"
+    fi
+    while IFS="$(printf '\t')" read -r k p t; do
+        ln -s "$t" "$H/$p" || bk_fail "cannot make the link $p"
+    done < "$BK_WORK/links"
+    done_ "$nf files $S_SEP $nl links $S_SEP modes 0600/0700"
+    case "$mv_v" in ''|unknown) by="" ;; *) by=" by erssi $mv_v" ;; esac
+    [ -z "$mv_h" ] || warn "the backup of $mv_h, made$by on $mv_d"
+    [ "$mv_l" != excluded ] || warn "the backup has no IRC logs (made without --with-logs)"
+    if [ -n "$BK_ERSSI_V" ] && [ -n "$mv_v" ] && [ "$mv_v" != unknown ] && newer "$mv_v" "$BK_ERSSI_V"; then
+        warn "made by erssi $mv_v, newer than this erssi $BK_ERSSI_V: settings it does not know are kept but not used - update erssi (erssi --update)"
+    fi
+
+    step "Checking the home"
+    case "$HOME/" in "$T"/*) bk_fail "$(tilde "$T") is your home directory or holds it, not an erssi home" ;; esac
+    if [ -d "$T" ] && [ -n "$(ls -A "$T")" ] && [ ! -e "$T/config" ] && [ ! -e "$T/erssi.lock" ] &&
+            [ ! -e "$T/default-files.sha256" ] && [ ! -e "$T/startup" ]; then
+        bk_fail "$(tilde "$T") does not look like an erssi home (no config, startup or erssi.lock in it) - give the right --home"
+    fi
+    if [ -d "$T" ]; then
+        held=0; bk_lock_held "$T" || held=$?
+        [ "$held" != 0 ] || bk_fail "an erssi is running on $(tilde "$T") (it holds $(tilde "$T/erssi.lock")) - /quit it first"
+        # an erssi older than 2026.11.0 holds no lock: the process list
+        pslist=1
+        bk_erssi_pids "$T" "$BK_HOME_ABS" "$(tilde "$BK_HOME_ABS")" > "$BK_WORK/pids" || pslist=0
+        have ps || pslist=0
+        pids=$(tr '\n' ' ' < "$BK_WORK/pids")
+        pids=${pids% }
+        [ -z "$pids" ] || bk_fail "an erssi is running on $(tilde "$T") (pid $pids) - /quit it first"
+        if [ "$held" = 2 ] && [ "$pslist" = 0 ]; then
+            warn "cannot tell whether an erssi runs on $(tilde "$T") (no perl, flock or lockf, and no process list): make sure none does"
+        elif [ "$pslist" = 0 ]; then
+            warn "no process list here: an erssi older than 2026.11.0 running on $(tilde "$T") would not be noticed"
+        elif [ "$held" = 2 ]; then
+            warn "no perl, flock or lockf to check $(tilde "$T/erssi.lock"): only the process list was checked"
+        fi
+        ASIDE=$T.before-restore-$(date +%Y%m%d-%H%M%S)
+        i=1
+        while [ -e "$ASIDE" ] || [ -L "$ASIDE" ]; do ASIDE=$T.before-restore-$(date +%Y%m%d-%H%M%S).$i; i=$((i + 1)); done
+        done_ "no erssi runs on it"
+    else
+        ASIDE=""
+        done_ "a new home"
+    fi
+
+    if [ "$DRY_RUN" = 1 ]; then
+        step "Restoring"
+        skip_ "dry run"
+        printf '\n  Dry run - nothing was changed. The restore would:\n'
+        [ -z "$ASIDE" ] || printf '    move %s aside to %s\n' "$(tilde "$T")" "$(tilde "$ASIDE")"
+        printf '    put %s files and %s links into %s:\n\n' "$nf" "$nl" "$(tilde "$T")"
+        awk -F '\t' '$1 == "d" { print "    " $2 "/" } $1 == "f" { print "    " $3 } $1 == "l" { print "    " $2 " -> " $3 }' "$M"
+        printf '\n'
+        exit 0
+    fi
+
+    step "Restoring"
+    if [ -n "$ASIDE" ]; then
+        mv "$T" "$ASIDE" || bk_fail "cannot move $(tilde "$T") aside"
+    fi
+    if ! mv "$H" "$T"; then
+        [ -z "$ASIDE" ] || mv "$ASIDE" "$T" || die "cannot move the restored home into place, and the old one back: it is in $(tilde "$ASIDE")"
+        bk_fail "cannot move the restored home into place"
+    fi
+    rm -rf "$BK_NEW"; BK_NEW=""
+    KEPT=$ASIDE ASIDE=""
+    if [ -n "$KEPT" ]; then done_ "$(tilde "$T") $S_SEP the old one in $(tilde "$KEPT")"; else done_ "$(tilde "$T")"; fi
+    [ "$BK_LINKED" = 0 ] || warn "$(tilde "$BK_HOME") is a link: the home was restored where it points"
+    printf '\n  Restored %s files into %s.\n' "$nf" "$(tilde "$T")"
+    if [ -n "$KEPT" ]; then
+        printf '  The home before is in %s - it holds your old keys and passwords:\n' "$(tilde "$KEPT")"
+        printf '  remove it once erssi works (rm -rf %s).\n' "$(tilde "$KEPT")"
+    fi
+    printf '\n'
+    exit 0
+}
+
 # a --keep (or KEEP=) number without leading zeros, at most 9999; nothing
 # when it is not one. Longer numbers would pass as digits but fail every
 # [ -lt ] / [ -ge ] test as out of range (dash, FreeBSD sh), and the checks
@@ -1652,6 +2337,7 @@ UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOC
 PREFIX="$HOME/.local/opt/erssi"
 BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
+BK_FILE="" BK_HOME="" BK_LOGS=0 BK_ERSSI_V="" BK_CONFIG="" BK_DEPTH=0 BK_WORK="" BK_NEW="" BK_TMPF=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) optval "$1" "${2:-}" DIR; PREFIX=$2; shift 2 ;;
@@ -1672,6 +2358,15 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY_RUN=1; shift ;;
         --rollback) ACTION=rollback; shift ;;
         --uninstall) ACTION=uninstall; shift ;;
+        --backup)
+            ACTION=backup; shift
+            case "${1:-}" in ''|-*) ;; *) BK_FILE=$1; shift ;; esac ;;
+        --restore) optval "$1" "${2:-}" FILE; ACTION=restore; BK_FILE=$2; shift 2 ;;
+        --home) optval "$1" "${2:-}" DIR; BK_HOME=$2; shift 2 ;;
+        --with-logs) BK_LOGS=1; shift ;;
+        # from erssi --backup / --restore: its version and its --config
+        --erssi-version) optval "$1" "${2:-}" VERSION; BK_ERSSI_V=$2; shift 2 ;;
+        --config) optval "$1" "${2:-}" FILE; BK_CONFIG=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "shellter-install.sh: unknown option $1 (--help)" >&2; exit 2 ;;
     esac
@@ -1694,6 +2389,16 @@ esac
 if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
     echo "shellter-install.sh: --$ACTION goes with --prefix and --dry-run only (--help)" >&2; exit 2
 fi
+case "$ACTION" in
+    backup|restore) ;;
+    *)
+        if [ -n "$BK_HOME$BK_CONFIG" ] || [ "$BK_LOGS" = 1 ]; then
+            echo "shellter-install.sh: --home, --config and --with-logs go with --backup or --restore (--help)" >&2; exit 2
+        fi ;;
+esac
+[ "$ACTION" != restore ] || [ "$BK_LOGS" = 0 ] ||
+    { echo "shellter-install.sh: --with-logs goes with --backup: a restore takes what the backup holds (--help)" >&2; exit 2; }
+: "${BK_HOME:=$HOME/.erssi}"
 if [ -n "$KEEP" ]; then
     k=$(keep_value "$KEEP")
     [ -n "$k" ] || { echo "shellter-install.sh: --keep needs a number from 1 to 9999, e.g. --keep 2 (--help)" >&2; exit 2; }
@@ -1731,10 +2436,21 @@ if [ "$ROOT" = 1 ]; then
     # su without -, sudo -E: HOME of a user, whose files root would run
     [ "$(owner "$HOME")" = 0 ] ||
         die "running as root with the HOME of another user ($HOME) - use sudo -i or su - (root's own home), or run the installer as that user"
+    case "$ACTION" in backup|restore) ;; *)
     for d in "$PREFIX" "${SRC:-}"; do
         [ -z "$d" ] || [ ! -e "$d" ] || [ "$(owner "$d")" = 0 ] || die "$d belongs to another user - as root, use a directory of root's"
-    done
+    done ;;
+    esac
 fi
+# the home of erssi, not the prefix: nothing of the install is used but
+# the version of the installed erssi, for the MANIFEST and to compare
+case "$ACTION" in
+    backup|restore)
+        if [ -z "$BK_ERSSI_V" ] && [ -x "$PREFIX/bin/erssi" ]; then
+            BK_ERSSI_V=$("$PREFIX/bin/erssi" --version 2>/dev/null | awk '{print $2}') || BK_ERSSI_V=""
+        fi
+        if [ "$ACTION" = backup ]; then do_backup; else do_restore; fi ;;
+esac
 # the settings of the previous install, unless given again
 CONF="$PREFIX/share/irssi/shellter-install.conf"
 # what the source installs put into the prefix, for --uninstall

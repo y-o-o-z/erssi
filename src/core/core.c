@@ -45,6 +45,7 @@
 #include <irssi/src/core/commands.h>
 #include <irssi/src/core/credential.h>
 #include <irssi/src/core/expandos.h>
+#include <irssi/src/core/home-lock.h>
 #include <irssi/src/core/ignore.h>
 #include <irssi/src/core/log.h>
 #include <irssi/src/core/rawlog.h>
@@ -269,6 +270,8 @@ void core_init(void)
 	signal_add_first("irssi init finished", (SIGNAL_FUNC) sig_init_finished);
 
 	settings_init();
+	/* the home exists now (settings_init() makes it) */
+	home_lock_init();
 	commands_init();
 	credential_init();
 	nickmatch_cache_init();
@@ -357,6 +360,7 @@ void core_deinit(void)
 	nickmatch_cache_deinit();
 	commands_deinit();
 	credential_deinit();
+	home_lock_deinit();
 	settings_deinit();
 	signals_deinit();
 	net_disconnect_deinit();

@@ -60,3 +60,23 @@ test('test-config-write test', test_test_config_write,
   args : ['--tap'],
   protocol : 'tap',
   timeout : 30)
+
+# the lock every erssi holds on its home (shellter-install.sh --restore)
+test_test_home_lock = executable('test-home-lock',
+  files(
+    'test-home-lock.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+
+test('test-home-lock test', test_test_home_lock,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 30)
