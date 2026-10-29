@@ -355,8 +355,10 @@ signed_tag() {
     TAG_OBJ=$(git -C "$1" rev-parse --verify -q FETCH_HEAD) || return 1
     [ "$(git -C "$1" cat-file -t "$TAG_OBJ" 2>/dev/null)" = tag ] || return 1
     [ "$(git -C "$1" cat-file tag "$TAG_OBJ" | sed -n '1,/^$/s/^tag //p')" = "$2" ] || return 1
-    signers=$(mktemp)
-    printf '%s\n' "$RELEASE_SIGNER" > "$signers"
+    # in the repository, not in $TMPDIR: a check stopped by a signal
+    # leaves nothing behind once its temporary repository is removed
+    signers="$(git -C "$1" rev-parse --absolute-git-dir)/erssi-allowed-signers" || return 1
+    printf '%s\n' "$RELEASE_SIGNER" > "$signers" || return 1
     if git -C "$1" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" \
             -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
             verify-tag --raw "$TAG_OBJ" 2>&1 |
