@@ -2222,6 +2222,7 @@ do_restore() {
     # through directories only - checked before any link is made, so no
     # link can lead through another
     awk -F '\t' '$1 == "l"' "$M" > "$BK_WORK/links"
+    : > "$BK_WORK/link.paths"
     nl=0 BK_ROOT=$H
     while IFS="$(printf '\t')" read -r k p t; do
         nl=$((nl + 1))
@@ -2242,7 +2243,24 @@ do_restore() {
         if { [ ! -f "$H/$r" ] && [ ! -d "$H/$r" ]; } || ! bk_no_link_in "$r"; then
             bk_fail "the MANIFEST has a link $p -> $t to nothing in the archive - refusing it"
         fi
+        printf '%s\t%s\n' "$p" "$r" >> "$BK_WORK/link.paths"
     done < "$BK_WORK/links"
+    # each link once, and none in or through another: made one after the
+    # other, a second link of one name would be made inside the directory
+    # the first points to, and one below a link would be made where it
+    # points
+    if [ "$nl" -gt 0 ]; then
+        bad=$(awk -F '\t' '{ p[NR] = $1; r[NR] = $2; if (n[$1]++) { print $1; exit } }
+            END {
+                for (i = 1; i <= NR; i++) {
+                    m = split(p[i], c, "/"); x = ""
+                    for (j = 1; j < m; j++) { x = x (j > 1 ? "/" : "") c[j]; if (x in n) { print p[i]; exit } }
+                    m = split(r[i], c, "/"); x = ""
+                    for (j = 1; j <= m; j++) { x = x (j > 1 ? "/" : "") c[j]; if (x in n) { print p[i]; exit } }
+                }
+            }' "$BK_WORK/link.paths")
+        [ -z "$bad" ] || bk_fail "the MANIFEST names the link $bad twice, or inside or through another link - refusing it"
+    fi
     # the modes: directories 0700, files 0600, executable ones 0700
     chmod 700 "$H"
     if ! find "$H" -type d -exec chmod 700 {} + ||
@@ -2251,7 +2269,26 @@ do_restore() {
         bk_fail "cannot set the modes in $(tilde "$BK_NEW")"
     fi
     while IFS="$(printf '\t')" read -r k p t; do
+        if [ -e "$H/$p" ] || [ -L "$H/$p" ]; then bk_fail "the link $p is there already - refusing the archive"; fi
         ln -s "$t" "$H/$p" || bk_fail "cannot make the link $p"
+    done < "$BK_WORK/links"
+    # and once made: exactly these links, each where it was named and
+    # leading into the home
+    HP=$(cd -P "$H" && pwd -P) || bk_fail "cannot enter $(tilde "$H")"
+    [ "$(find "$H" -type l -print | wc -l | tr -d ' ')" = "$nl" ] ||
+        bk_fail "the links of the MANIFEST did not come out as named - refusing the archive"
+    while IFS="$(printf '\t')" read -r k p t; do
+        pd=$(bk_dir_of "$p") td=$(bk_dir_of "$t")
+        if [ -d "$H/$p" ]; then
+            ph=$(cd -P "$H/$p" 2>/dev/null && pwd -P) || ph=""
+        else
+            ph=$(cd -P "$H${pd:+/$pd}${td:+/$td}" 2>/dev/null && pwd -P) || ph=""
+        fi
+        case "$ph" in
+            "$HP"|"$HP"/*) [ -L "$H/$p" ] || ph="" ;;
+            *) ph="" ;;
+        esac
+        [ -n "$ph" ] || bk_fail "the link $p -> $t leads out of the home - refusing the archive"
     done < "$BK_WORK/links"
     done_ "$nf files $S_SEP $nl links $S_SEP modes 0600/0700"
     case "$mv_v" in ''|unknown) by="" ;; *) by=" by erssi $mv_v" ;; esac

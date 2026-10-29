@@ -150,6 +150,24 @@ with tarfile.open(out, "w:gz", format=tarfile.GNU_FORMAT) as t:
             manifest += "l\tscripts/x\t../config/..\n"
         if kind == "manifest-extra":
             manifest += "f\t1\tmissing\n"
+        # links of the MANIFEST that would lead out once made one after
+        # the other: a1/a2/a3/L made twice (the second ln follows the
+        # first into sub/), or a link below another link
+        if kind.startswith("links-"):
+            for d in ("a1", "a1/a2", "a1/a2/a3", "sub"):
+                add(t, top + "/home/" + d, type_=tarfile.DIRTYPE)
+                manifest += "d\t" + d + "\n"
+            add(t, top + "/home/f")
+            manifest += "f\t1\tf\n"
+            manifest = manifest.replace("files 1", "files 2")
+            manifest += {
+                "links-dup": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/a3/L\t../../../f\n",
+                "links-dup-same": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/a3/L\t../../../sub\n",
+                "links-dup-file-first": "l\ta1/a2/a3/L\t../../../f\nl\ta1/a2/a3/L\t../../../sub\n",
+                "links-below": "l\ta1/L\t../sub\nl\ta1/L/x\t../../f\n",
+                "links-through": "l\ta1/L\t../sub\nl\tM\ta1/L\n",
+                "links-fine": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/K\t../../f\n",
+            }[kind]
         add(t, top + "/MANIFEST", manifest.encode())
         if kind == "absolute":
             add(t, "/tmp/erssi-backup-test-absolute")
@@ -425,6 +443,27 @@ locale-hardlink)
     if [ "$RC" != 0 ]; then show; fi
     check "and it restores" [ "$RC" = 0 ]
     check "both names are files" sh -c "[ -f '$W/new/.erssi/config.hard' ] && [ -f '$W/new/.erssi/b.txt' ]"
+    ;;
+
+manifest-links)
+    make_home "$E"
+    tree "$E" > "$W/before"
+    for kind in links-dup links-dup-same links-dup-file-first links-below links-through; do
+        mkbad "$W/$kind.tar.gz" "$kind"
+        run --restore "$W/$kind.tar.gz"
+        echo "# $kind: $(grep error: "$W/out")"
+        check "$kind: refused" [ "$RC" != 0 ]
+        check "$kind: says nothing was changed" said "nothing was changed"
+        tree "$E" > "$W/after"
+        check "$kind: the home is as it was" cmp -s "$W/before" "$W/after"
+        check "$kind: nothing made next to the home" [ ! -e "$HOME/f" ] && [ ! -L "$HOME/f" ] && [ ! -e "$W/f" ]
+        check "$kind: no temporary directory left" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
+    done
+    mkbad "$W/fine.tar.gz" links-fine
+    run --restore "$W/fine.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "two links in one directory tree are made" [ "$RC" = 0 ]
+    check "each where it belongs" sh -c "[ -d '$W/new/.erssi/a1/a2/a3/L' ] && [ -f '$W/new/.erssi/a1/a2/K' ] && [ -z \"\$(find '$W/new/.erssi/sub' -type l)\" ]"
     ;;
 
 self-check)
