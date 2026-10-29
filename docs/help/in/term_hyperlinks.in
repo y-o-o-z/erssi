@@ -14,7 +14,9 @@
     bracket or quote that is not part of it) is left out. Characters that
     may not appear in a URI (non-ASCII letters, \ ^ ` { | }) are
     percent-encoded in the target; spaces and control characters end an
-    address, and an address longer than 2048 bytes stays plain text. An
+    address, and an address longer than 2048 bytes stays plain text. A
+    colour change ends an address too (the rest could be drawn in the
+    colour of the background); bold, underline and italic do not. An
     address that wraps over several lines is still one link.
 
     AUTO makes links only where that is known to be safe:
@@ -45,9 +47,17 @@
     /SET term_hyperlinks on
     /SET term_hyperlinks off
 
-    For tmux 3.4 or later, in ~/.tmux.conf:
+    For tmux 3.4 or later, in ~/.tmux.conf, name the TERM of each outer
+    terminal that shows links (tmux matches the TERM of the terminal a
+    client is attached from):
 
-        set -as terminal-features ',*:hyperlinks'
+        set -as terminal-features ',xterm-kitty:hyperlinks'
+        set -as terminal-features ',foot*:hyperlinks'
+
+    Do not use '*': tmux would then send the links to every client,
+    also to one attached from a console or a terminal that prints them.
+    erssi cannot see the outer terminal from inside tmux, so the choice of
+    those terminals is tmux's.
 
 %9See also:%9
 

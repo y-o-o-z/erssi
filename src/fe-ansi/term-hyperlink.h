@@ -17,6 +17,9 @@
 
 /* longer URIs (after percent-encoding) stay plain text */
 #define TERM_LINK_URI_MAX 2048
+/* the text view draws a character (a grapheme cluster) of fewer bytes
+ * whole, a longer one as its first code point */
+#define TERM_LINK_CLUSTER_MAX 16
 /* 'e' and 16 hex digits */
 #define TERM_LINK_ID_SIZE 18
 

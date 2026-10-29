@@ -95,8 +95,26 @@ static const SCAN_ROW SCAN[] = {
 	{ "https://example.org/%41", "https://example.org/%41" },
 	/* closing punctuation of other scripts */
 	{ "「https://example.org/x」", "https://example.org/x" },
-	/* format sequences in between are not part of the target */
+	/* format sequences in between are not part of the target; bold,
+	 * underline, italic and monospace do not end it */
 	{ "\004" "a" "https://exa\004" "cmple.org/\004" "e", "https://example.org/" },
+	{ "https://e\004" "b" "x\004" "f" "a\004" "i" "mple.org/", "https://example.org/" },
+	/* a colour change ends it: the rest could be drawn invisible, as
+	 * the user part of an address that goes elsewhere */
+	{ "https://paypal.example\004" "00" "@evil.example/login", "https://paypal.example" },
+	{ "https://paypal.example\004" "#" "\x21\x21\x22\x20" "\004" "#" "\x21\x21\x21\x21" "@evil.example/",
+	  "https://paypal.example" },
+	{ "https://paypal.example\004" ".!" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "1/" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "d" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "g" "@evil.example/", "https://paypal.example" },
+	/* a character the text view draws whole (under 16 bytes) is part of
+	 * it; a longer one the view draws as its first code point only, so
+	 * it ends the address (here x and 8 or 7 combining acute accents) */
+	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
+	  "https://example.org/a" },
+	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
+	  "https://example.org/ax%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81b" },
 	/* lines of one entry */
 	{ "https://a.example/\nhttps://b.example/", "https://a.example/ https://b.example/" },
 };
@@ -180,6 +198,34 @@ static void test_scan_evil(void)
 		g_assert_cmpuint(list->spans[0].end, ==, strlen("https://example.org/"));
 		term_link_list_free(list);
 	}
+}
+
+/* A long line (a paste, /exec, /cat) of closing brackets after an
+ * address: found in linear time. In a subprocess with a time limit, so
+ * a slow scan fails instead of hanging the suite. */
+static void test_scan_long_line(void)
+{
+	if (g_test_subprocess()) {
+		static const char *const TAILS[] = { ")", "]", "}", ".", "a)" };
+		guint t;
+
+		for (t = 0; t < G_N_ELEMENTS(TAILS); t++) {
+			GString *line = g_string_new("x https://example.org/");
+			TermLinkList *list;
+			int i;
+
+			for (i = 0; i < 100000; i++)
+				g_string_append(line, TAILS[t]);
+			list = term_link_scan(line->str, TERM_TYPE_UTF8);
+			/* trimmed to the address, or too long for a link */
+			g_assert_true(list == NULL || strcmp(list->spans[0].uri, "https://example.org/") == 0);
+			term_link_list_free(list);
+			g_string_free(line, TRUE);
+		}
+		return;
+	}
+	g_test_trap_subprocess(NULL, 10 * G_USEC_PER_SEC, 0);
+	g_test_trap_assert_passed();
 }
 
 static void test_encode_uri(void)
@@ -290,6 +336,11 @@ static const DETECT_ROW DETECT[] = {
 	{ "TERM=xterm-256color, TTY=/dev/pts/3, KITTY_WINDOW_ID=1", TRUE },
 	{ "TERM=cons25", FALSE },
 	{ "TERM=vt100", FALSE },
+	{ "TERM=vt220", FALSE },
+	{ "TERM=vt", FALSE },
+	/* TERM of VTE itself starts with "vt" too */
+	{ "TERM=vte-256color, VTE_VERSION=7600", TRUE },
+	{ "TERM=vte", FALSE },
 	{ "TERM=dumb", FALSE },
 	{ "", FALSE },
 	{ "TERM=xterm-256color, INSIDE_EMACS=29.1,eat", FALSE },
@@ -764,6 +815,36 @@ static void test_view_colour_and_evil(void)
 	term_close();
 }
 
+/* A sender colours the rest of an address like the background (mIRC
+ * colour 1 on 1): only what is visible before it is the link. */
+static void test_view_colour_ends_link(void)
+{
+	TEXT_BUFFER_VIEW_REC *view;
+	TERM_WINDOW *win;
+	LINE_REC *line;
+	char id[TERM_LINK_ID_SIZE], *opens, *expected;
+
+	term_open(80, 3);
+	term_use_hyperlinks = TRUE;
+	win = term_window_create(0, 0, 80, 3);
+	view = view_open(80, 3, FALSE);
+	textbuffer_view_set_window(view, win);
+	line = view_add(view, "https://paypal.example\00301,01@evil.example/login");
+	line_id(line, 0, id);
+	term_reset_output();
+	textbuffer_view_redraw(view);
+
+	opens = osc8_opens(term_output());
+	expected = g_strdup_printf("%s https://paypal.example\n", id);
+	g_assert_cmpstr(opens, ==, expected);
+	g_free(opens);
+	g_free(expected);
+
+	view_close(view);
+	term_window_destroy(win);
+	term_close();
+}
+
 /* What the side panels draw goes through term_add_unichar() after a
  * term_move(): never part of a link, also when a link was open. */
 static gboolean add_unichar(unichar chr, int width, int color, unsigned int fg24,
@@ -845,6 +926,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term-hyperlink/scan-offsets", test_scan_offsets);
 	g_test_add_func("/term-hyperlink/scan-8bit", test_scan_8bit);
 	g_test_add_func("/term-hyperlink/scan-evil", test_scan_evil);
+	g_test_add_func("/term-hyperlink/scan-long-line", test_scan_long_line);
 	g_test_add_func("/term-hyperlink/encode-uri", test_encode_uri);
 	g_test_add_func("/term-hyperlink/make-id", test_make_id);
 	g_test_add_func("/term-hyperlink/detect", test_detect);
@@ -854,6 +936,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term-hyperlink/view-partial", test_view_partial);
 	g_test_add_func("/term-hyperlink/view-full-width", test_view_full_width);
 	g_test_add_func("/term-hyperlink/view-colour-and-evil", test_view_colour_and_evil);
+	g_test_add_func("/term-hyperlink/view-colour-ends-link", test_view_colour_ends_link);
 	g_test_add_func("/term-hyperlink/side-panel-no-link", test_side_panel_no_link);
 	g_test_add_func("/term-hyperlink/setting", test_setting);
 

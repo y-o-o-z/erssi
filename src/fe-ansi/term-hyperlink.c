@@ -79,8 +79,21 @@ static gboolean cluster_is_ok(const unsigned char *p, const unsigned char *end)
 	return TRUE;
 }
 
+/* A format sequence that leaves the colours alone: the text after it
+ * looks like the text before it, so an address can go on through it. */
+static gboolean format_keeps_colours(unsigned char c)
+{
+	return c == FORMAT_STYLE_BOLD || c == FORMAT_STYLE_UNDERLINE ||
+	       c == FORMAT_STYLE_ITALIC || c == FORMAT_STYLE_MONOSPACE ||
+	       c == FORMAT_STYLE_BLINK || c == FORMAT_STYLE_INDENT;
+}
+
 /* The line as the text view walks it (view_line_draw()): format
- * sequences are skipped, each character is one unit. */
+ * sequences are skipped, each character is one unit. A sequence that
+ * changes a colour (also reverse and the defaults) is a break: the
+ * sender could draw the rest of an address in the background colour
+ * (or one next to it) and make a link whose target is not what anyone
+ * sees. */
 static GArray *line_units(const char *text, int charset)
 {
 	GArray *units = g_array_new(FALSE, FALSE, sizeof(UNIT));
@@ -96,6 +109,12 @@ static GArray *line_units(const char *text, int charset)
 			p++;
 			if (*p == '\0')
 				break;
+			if (!format_keeps_colours(*p)) {
+				u.start = u.end = p - 1 - base;
+				u.chr = 0;
+				u.brk = TRUE;
+				g_array_append_val(units, u);
+			}
 			if (*p == FORMAT_STYLE_INDENT)
 				p++;
 			else
@@ -109,7 +128,7 @@ static GArray *line_units(const char *text, int charset)
 			u.chr = *p;
 			u.brk = TRUE;
 			next = p + 1;
-		} else if (*p < 0x80) {
+		} else if (*p < 0x80 && charset != TERM_TYPE_UTF8) {
 			u.chr = *p;
 			next = p + 1;
 		} else if (charset != TERM_TYPE_UTF8) {
@@ -120,10 +139,13 @@ static GArray *line_units(const char *text, int charset)
 			next = p + (charset == TERM_TYPE_BIG5 && p[1] != '\0' &&
 				    is_big5(p[0], p[1]) ? 2 : 1);
 		} else {
+			/* one character as the text view reads it: a grapheme
+			 * cluster. One it does not draw whole is no part of an
+			 * address. */
 			u.chr = textbuffer_read_unichar(p, &next, &width);
 			if (next <= p)
 				next = p + 1;
-			if (!cluster_is_ok(p, next))
+			if (next - p >= TERM_LINK_CLUSTER_MAX || !cluster_is_ok(p, next))
 				u.brk = TRUE;
 		}
 		u.end = next - base;
@@ -180,34 +202,41 @@ static gsize scheme_at(const UNIT *units, guint count, guint i)
 	return 0;
 }
 
-static guint count_char(const UNIT *units, guint from, guint to, char c)
-{
-	guint n = 0;
-
-	for (; from < to; from++)
-		if (unit_is_ascii(&units[from], c))
-			n++;
-	return n;
-}
-
 /* Where the address units[from..] really ends: without the punctuation
  * that ends the sentence around it, and without a closing bracket that
- * has no opening one in it ("(see https://example.org/)"). */
+ * has no opening one in it ("(see https://example.org/)"). The brackets
+ * are counted once and then as they are cut off: linear also for a line
+ * of nothing but ")". */
 static guint trim_end(const UNIT *units, guint from, guint to)
 {
+	static const char OPEN[] = "([{", CLOSE[] = ")]}";
+	guint opened[3] = { 0, 0, 0 }, closed[3] = { 0, 0, 0 }, i;
+
+	for (i = from; i < to; i++) {
+		const char *b;
+
+		if (units[i].brk || units[i].chr >= 0x80 || units[i].chr == 0)
+			continue;
+		if ((b = strchr(OPEN, (char) units[i].chr)) != NULL)
+			opened[b - OPEN]++;
+		else if ((b = strchr(CLOSE, (char) units[i].chr)) != NULL)
+			closed[b - CLOSE]++;
+	}
+
 	while (to > from) {
 		const UNIT *last = &units[to - 1];
 
 		if (last->chr < 0x80) {
 			char c = (char) last->chr;
+			const char *b;
 
-			if (strchr(".,;:!?'*", c) != NULL) {
+			if (c != '\0' && strchr(".,;:!?'*", c) != NULL) {
 				to--;
 				continue;
 			}
-			if ((c == ')' && count_char(units, from, to, ')') > count_char(units, from, to, '(')) ||
-			    (c == ']' && count_char(units, from, to, ']') > count_char(units, from, to, '[')) ||
-			    (c == '}' && count_char(units, from, to, '}') > count_char(units, from, to, '{'))) {
+			if (c != '\0' && (b = strchr(CLOSE, c)) != NULL &&
+			    closed[b - CLOSE] > opened[b - CLOSE]) {
+				closed[b - CLOSE]--;
 				to--;
 				continue;
 			}
@@ -416,6 +445,13 @@ static gboolean has_prefix(const char *s, const char *prefix)
 	return s != NULL && g_str_has_prefix(s, prefix);
 }
 
+/* vt100, vt220, vt52...: the DEC terminals and what emulates only them;
+ * not vte-256color, the TERM of VTE itself */
+static gboolean is_vt(const char *term)
+{
+	return has_prefix(term, "vt") && (term[2] == '\0' || g_ascii_isdigit(term[2]));
+}
+
 /* The text console of the system: the Linux console (/dev/tty1), FreeBSD
  * syscons and vt (/dev/ttyv0, which say TERM=xterm), wscons of NetBSD and
  * OpenBSD (/dev/ttyC0, /dev/ttyE0), and serial lines. None of them knows
@@ -449,7 +485,7 @@ gboolean term_link_detect(const TermLinkEnv *env)
 		return FALSE;
 
 	if (!is_set(term) || is_str(term, "dumb") || has_prefix(term, "linux") ||
-	    has_prefix(term, "cons") || has_prefix(term, "vt") || has_prefix(term, "ansi") ||
+	    has_prefix(term, "cons") || is_vt(term) || has_prefix(term, "ansi") ||
 	    has_prefix(term, "eterm") || has_prefix(term, "emacs") || has_prefix(term, "wsvt") ||
 	    has_prefix(term, "pccon") || is_set(env->inside_emacs))
 		return FALSE;
