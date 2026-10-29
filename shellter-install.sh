@@ -2177,16 +2177,32 @@ do_restore() {
     # stopped between the two renames: the old home goes back
     trap 'rm -rf "$BK_WORK"; [ -z "$BK_NEW" ] || rm -rf "$BK_NEW"
         if [ -n "$ASIDE" ] && [ -d "$ASIDE" ] && [ ! -e "$T" ] && [ ! -L "$T" ]; then mv "$ASIDE" "$T"; fi' EXIT
-    bk_check_archive "$BK_FILE" || bk_fail "$BK_WHY"
-    n=$BK_N
-    # it must fit: the unpacked size against the free space next to the home
-    size=$("$BK_COMP" -dc "$BK_FILE" | wc -c | tr -d ' ')
+    # a directory of this restore's own: next to the home, on its file
+    # system, so the new home moves in with one rename (a dry run: in the
+    # temporary directory)
     if [ "$DRY_RUN" = 1 ]; then
         where=$BK_WORK
+        BK_NEW=$BK_WORK/scratch
+        mkdir "$BK_NEW" || bk_fail "cannot create a temporary directory"
     else
         where=$PARENT
         mkdir -p "$PARENT" 2>/dev/null || bk_fail "cannot create $(tilde "$PARENT")"
+        [ -w "$PARENT" ] || bk_fail "cannot write to $(tilde "$PARENT")"
+        BK_NEW=$(mktemp -d "$PARENT/.erssi-restore.XXXXXX") || bk_fail "cannot create a directory in $(tilde "$PARENT")"
     fi
+    # what is checked is what is unpacked: a copy of the archive there,
+    # read once; the file itself may change from here on
+    BK_ARC=$BK_NEW/archive
+    cp "$BK_FILE" "$BK_ARC" || bk_fail "cannot copy $BK_FILE (no space next to the home?)"
+    magic=$(od -An -tx1 -N6 "$BK_ARC" 2>/dev/null | tr -d ' \n') || magic=""
+    case "$BK_COMP $magic" in
+        "gzip 1f8b"*|"xz fd377a585a00") ;;
+        *) bk_fail "$BK_FILE changed while it was read" ;;
+    esac
+    bk_check_archive "$BK_ARC" || bk_fail "$(printf '%s' "$BK_WHY" | sed "s|$BK_ARC|$BK_FILE|")"
+    n=$BK_N
+    # it must fit: the unpacked size against the free space next to the home
+    size=$("$BK_COMP" -dc "$BK_ARC" | wc -c | tr -d ' ')
     avail=$(df -P -k "$where" 2>/dev/null | awk 'NR == 2 { print $4 }') || avail=""
     case "$avail" in
         ''|*[!0-9]*) ;;
@@ -2196,23 +2212,18 @@ do_restore() {
     done_ "$n entries $S_SEP $(bk_size "$size") $S_SEP files and directories only"
 
     step "Unpacking"
-    if [ "$DRY_RUN" = 1 ]; then
-        BK_NEW=$BK_WORK/new
-        mkdir "$BK_NEW" || bk_fail "cannot create a temporary directory"
-    else
-        [ -w "$PARENT" ] || bk_fail "cannot write to $(tilde "$PARENT")"
-        # next to the home: on its file system, so it moves in with one rename
-        BK_NEW=$(mktemp -d "$PARENT/.erssi-restore.XXXXXX") || bk_fail "cannot create a directory in $(tilde "$PARENT")"
-    fi
+    U=$BK_NEW/u
+    mkdir "$U" || bk_fail "cannot create a directory in $(tilde "$BK_NEW")"
     # owners are the restoring user's, never those stored in the archive
-    "$BK_COMP" -dc "$BK_FILE" | (cd "$BK_NEW" && tar --no-same-owner -x -f -) 2> "$BK_WORK/err" ||
+    "$BK_COMP" -dc "$BK_ARC" | (cd "$U" && tar --no-same-owner -x -f -) 2> "$BK_WORK/err" ||
         bk_fail "unpacking $BK_FILE failed ($(head -n 1 "$BK_WORK/err"))"
-    H=$BK_NEW/$BK_TOP/home
-    M=$BK_NEW/$BK_TOP/MANIFEST
+    rm -f "$BK_ARC"
+    H=$U/$BK_TOP/home
+    M=$U/$BK_TOP/MANIFEST
     # what was unpacked, checked again on the disk
-    [ -z "$(find "$BK_NEW" ! -type f ! -type d -print | head -n 1)" ] ||
+    [ -z "$(find "$U" ! -type f ! -type d -print | head -n 1)" ] ||
         bk_fail "$BK_FILE unpacked to something other than files and directories"
-    [ "$(find "$BK_NEW/." ! -name . -prune -print | wc -l | tr -d ' ')" = 1 ] ||
+    [ "$(find "$U/." ! -name . -prune -print | wc -l | tr -d ' ')" = 1 ] ||
         bk_fail "$BK_FILE unpacked to more than one directory"
     [ -d "$H" ] || mkdir "$H"
     [ -f "$M" ] || bk_fail "$BK_FILE has no MANIFEST - not an erssi backup"

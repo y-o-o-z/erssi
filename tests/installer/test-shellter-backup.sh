@@ -509,6 +509,35 @@ PM
     check "it says only the process list was checked" said "only the process list was checked"
     ;;
 
+archive-swapped)
+    # the archive replaced while --restore works on it: what is checked
+    # must be what is unpacked, a copy read once
+    make_home "$E"
+    run --backup "$W/good.tar.gz"
+    mkbad "$W/evil.tar.gz" symlink
+    REAL_GZIP=$(command -v gzip)
+    mkdir "$W/shim2"
+    cat > "$W/shim2/gzip" <<EOF2
+#!/bin/sh
+for a in "\$@"; do
+    if [ "\$a" = "$W/good.tar.gz" ]; then
+        echo read >> "$W/gzip.orig"
+        "$REAL_GZIP" "\$@"; rc=\$?
+        [ -e "$W/swapped" ] || { cp "$W/evil.tar.gz" "$W/good.tar.gz"; : > "$W/swapped"; }
+        exit \$rc
+    fi
+done
+exec "$REAL_GZIP" "\$@"
+EOF2
+    chmod 755 "$W/shim2/gzip"
+    PATH=$W/shim2:$PATH run --restore "$W/good.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "the archive as it was when copied is restored" [ "$RC" = 0 ]
+    check "gzip never read the file itself" [ ! -e "$W/gzip.orig" ]
+    check "nothing of the other archive is there" [ ! -L "$W/new/.erssi/link" ] && [ ! -e "$W/outside" ]
+    check "the home is the backed up one" cmp -s "$E/config" "$W/new/.erssi/config"
+    ;;
+
 self-check)
     make_home "$E"
     FAKE_TAR_FIFO=1 run --backup "$W/b.tar.gz"
