@@ -63,6 +63,20 @@ static void answer(const char *line, int code)
 	g_free(text);
 }
 
+static int runs(void)
+{
+	char *text = NULL;
+	int n = 0;
+	char *p;
+
+	if (!g_file_get_contents(runs_file, &text, NULL, NULL))
+		return 0;
+	for (p = text; *p != '\0'; p++)
+		n += *p == '\n';
+	g_free(text);
+	return n;
+}
+
 /* off, no state, nothing printed */
 static void reset(void)
 {
@@ -105,6 +119,31 @@ static void test_running_version_not_available(void)
 	g_assert_nonnull(strstr(printed->str, "erssi 9999.1.0 is available (signed)"));
 	reset();
 	g_assert_null(update_check_available());
+}
+
+/* Two erssi with one home: the one whose timer finds that the other has
+ * checked meanwhile shows what that check found, and does not check. */
+static void test_other_erssi_checked(void)
+{
+	char *state;
+
+	reset();
+	write_state("last_check=1\n");
+	set_check(TRUE);
+	g_assert_null(update_check_available());
+	/* the other erssi checks */
+	state = g_strdup_printf("last_check=%" G_GINT64_FORMAT "\nnotified=9999.1.0\n"
+	                        "available=9999.1.0\n",
+	                        (gint64) time(NULL));
+	write_state(state);
+	g_free(state);
+	update_check_tick_now();
+	g_assert_false(update_check_running());
+	g_assert_cmpint(runs(), ==, 0);
+	g_assert_cmpstr(update_check_available(), ==, "9999.1.0");
+	/* it said so, this one does not again */
+	g_assert_null(strstr(printed->str, "is available"));
+	reset();
 }
 
 static void test_newer(void)
@@ -157,5 +196,6 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/module/newer", test_newer);
 	g_test_add_func("/update_check/module/running_version_not_available",
 	                test_running_version_not_available);
+	g_test_add_func("/update_check/module/other_erssi_checked", test_other_erssi_checked);
 	return g_test_run();
 }

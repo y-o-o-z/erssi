@@ -833,8 +833,10 @@ static gboolean tick(gpointer data)
 		return G_SOURCE_REMOVE;
 	due = update_check_due_in((gint64) time(NULL), cached.last_check);
 	if (due == 0) {
-		/* another erssi with this home may have checked meanwhile */
+		/* another erssi with this home may have checked meanwhile: then
+		   what it found is shown here too */
 		state_reload();
+		set_available(cached.available);
 		due = update_check_due_in((gint64) time(NULL), cached.last_check);
 	}
 	if (due == 0 && cached.unmanaged == NULL)
