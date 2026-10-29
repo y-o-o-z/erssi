@@ -213,7 +213,8 @@ Capsicum capability mode works: `/capsicum enter`, or `/set capsicum on`
 and `/save` to enter it at every start, which
 [docs/capsicum.txt](../capsicum.txt) recommends. erssi can then open files
 only below `capsicum_irclogs_path` (`~/irclogs` by default), and `/save`
-and `/search` do not work; `/connect` works. The shipped config logs to
+and `/search` and the update notice (`update_check`) do not work;
+`/connect` works. The shipped config logs to
 `~/.erssi/logs`, so first `/set capsicum_irclogs_path ~/.erssi/logs` (and
 `/save`), or autolog and the Mentions log stop writing. `/help capsicum`
 has the details.
@@ -229,7 +230,9 @@ erssi --update           # install it
 release tags and downloads only the newest signed tag and the commit it
 names (and, when nothing is newer, those of the installed release, to see
 that its tag has not moved): about 10 KB, the files of the release are not
-downloaded. The signature is checked as for an update.
+downloaded. The signature is checked as for an update. erssi itself can
+run this check once a day and say when a new release is there:
+`/set update_check on` ([Update notice](configuration.md#update-notice)).
 
 For a program, the installer of the installed release answers in one line
 on stdout (the steps go to stderr):

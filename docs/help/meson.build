@@ -139,6 +139,8 @@ install_data(
     'unnotify',
     'unquery',
     'unsilence',
+    'update',
+    'update_check',
     'upgrade',
     'uptime',
     'userhost',

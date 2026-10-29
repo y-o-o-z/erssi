@@ -24,6 +24,7 @@
 #include <irssi/src/core/servers.h>
 
 #include <irssi/src/fe-common/core/themes.h>
+#include <irssi/src/fe-common/core/update-check.h>
 #include <irssi/src/fe-ansi/statusbar.h>
 #include <irssi/src/fe-ansi/gui-entry.h>
 #include <irssi/src/fe-ansi/gui-windows.h>
@@ -480,6 +481,24 @@ static void item_user(SBAR_ITEM_REC *item, int get_size_only)
 	statusbar_item_default_handler(item, get_size_only, NULL, "", TRUE);
 }
 
+/* "update": the newest signed release while update_check found one newer
+   than the installed erssi, otherwise nothing (no space taken) */
+static void item_update(SBAR_ITEM_REC *item, int get_size_only)
+{
+	const char *version = update_check_available();
+
+	if (version == NULL) {
+		item->min_size = item->max_size = 0;
+		return;
+	}
+	statusbar_item_default_handler(item, get_size_only, NULL, version, TRUE);
+}
+
+static void sig_update_check_changed(void)
+{
+	statusbar_items_redraw("update");
+}
+
 void statusbar_items_init(void)
 {
 	settings_add_time("misc", "lag_min_show", "1sec");
@@ -499,6 +518,8 @@ void statusbar_items_init(void)
 	statusbar_item_register("act", NULL, item_act);
 	statusbar_item_register("more", NULL, item_more);
 	statusbar_item_register("input", NULL, item_input);
+	statusbar_item_register("update", "{sb update $0}", item_update);
+	signal_add("update check changed", (SIGNAL_FUNC) sig_update_check_changed);
 
         /* activity */
 	activity_list = NULL;
@@ -556,5 +577,6 @@ void statusbar_items_deinit(void)
         g_hash_table_foreach(input_entries, (GHFunc) g_free, NULL);
 	g_hash_table_destroy(input_entries);
 
+	signal_remove("update check changed", (SIGNAL_FUNC) sig_update_check_changed);
         signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
 }

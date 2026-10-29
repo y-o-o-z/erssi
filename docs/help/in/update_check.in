@@ -1,0 +1,45 @@
+%9Setting:%9
+
+    update_check (boolean; default: OFF)
+
+%9Description:%9
+
+    Checks once a day whether a newer signed release of erssi Shellter
+    Edition is there, and says so - once for each new release - in the
+    window of client messages (the Notices window of erssi, the status
+    window of irssi):
+
+        erssi 2026.11.1 is available (signed). Update from a shell:
+        erssi --update, then /UPGRADE
+
+    It is off by default because each check contacts github.com. The
+    first check runs a minute after erssi starts, then one every 24 hours.
+    The time of the last check is kept in ~/.erssi/update-check.state
+    (mode 0600), so a restart or /UPGRADE does not check again before the
+    day is over; two erssi with the same home share it.
+
+    The check is the one /UPDATE CHECK makes (/HELP update). Nothing is
+    installed. A check that fails (no network, GitHub down) is not shown;
+    after three failures in a row one line says so, and /UPDATE shows
+    why the last one failed. A release tag that
+    moved to another commit is shown at once: report it.
+
+    The shipped config marks no activity for client messages, so from
+    another window the line is easy to miss. The statusbar item "update"
+    shows the new version while there is one (and nothing otherwise). It
+    is not in the shipped statusbars; to add it to the info bar:
+
+        /STATUSBAR ADDITEM -after lag update info
+
+    With no installer installed with erssi (a distribution package, a
+    build of your own), for an install of another user (a system install
+    made by root) and in Capsicum capability mode the setting does
+    nothing, and says why when it is turned on.
+
+%9Examples:%9
+
+    /SET update_check ON
+    /UPDATE
+
+%9See also:%9 UPDATE, UPGRADE, STATUSBAR
+

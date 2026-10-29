@@ -334,6 +334,20 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "search_capsicum", "Search: not available in capability mode", 0 },
 	{ "search_failed", "Search for {hilight $0} failed: $1", 2, { 0, 0 } },
 
+	/* ---- */
+	{ NULL, "Updates", 0 },
+
+	{ "update_available", "erssi {hilight $1} is available (signed). Update from a shell: {hilight erssi --update}, then {hilight /upgrade}", 2, { 0, 0 } },
+	{ "update_current", "erssi $0 is the newest signed release", 1, { 0 } },
+	{ "update_checking", "Update check: asking the installer for the newest signed release", 0 },
+	{ "update_busy", "Update check: one is running", 0 },
+	{ "update_failed", "Update check failed: $0", 1, { 0 } },
+	{ "update_failed_again", "Update check failed $1 times in a row: $0 - erssi tries again every 24 hours (/UPDATE CHECK now)", 2, { 0, 1 } },
+	{ "update_unavailable", "Update check: $0", 1, { 0 } },
+	{ "update_off", "Update check is off: /SET update_check on checks once a day (it contacts github.com)", 0 },
+	{ "update_last", "Update check: last one $0", 1, { 0 } },
+	{ "update_last_failed", "Update check: last one $0 failed: $1 ($2 in a row)", 3, { 0, 0, 1 } },
+
 	{ NULL, NULL, 0 }
 	/* clang-format on */
 };

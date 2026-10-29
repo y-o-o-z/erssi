@@ -391,3 +391,27 @@ test('test-credential-warning test', test_test_credential_warning,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# the update notice: the installer's answer, the state file, the timing and
+# the background job against stand-in installers
+test_test_update_check = executable('test-update-check',
+  files(
+    'test-update-check.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-update-check test', test_test_update_check,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 60)

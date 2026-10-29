@@ -1,0 +1,44 @@
+%9Syntax:%9
+
+@SYNTAX:update@
+
+%9Parameters:%9
+
+    CHECK:       Asks now whether a newer signed release is there, and
+                 shows the answer (also when nothing is newer, and why a
+                 check failed).
+
+    Without an argument: whether update_check is on, when the last check
+    was made and what it found.
+
+%9Description:%9
+
+    Tells you about new releases of erssi Shellter Edition. It never
+    installs anything: an update is made from a shell with erssi --update,
+    then /UPGRADE loads the new release and keeps your windows and
+    channels.
+
+    The check runs the installer that was installed with this erssi
+    (shellter-install.sh --update --check --porcelain, the same check as
+    erssi --check-update) in the background, so erssi goes on while it
+    runs. The installer asks GitHub for the release tags and takes the
+    newest one with a valid signature by the release key it carries; a
+    tag signed by anyone else is not counted. It downloads only that tag
+    and its commit (a few KB), not the release. One check runs at a time,
+    and one that takes longer than two minutes is stopped.
+
+    erssi checks by itself only with update_check on (/HELP update_check).
+    An erssi that the installer did not install (a distribution package,
+    a build of your own) has nothing to run: the check says so, and you
+    update it the way it was installed. In Capsicum capability mode no
+    program can be started, so there is no check either; erssi
+    --check-update from a shell still works.
+
+%9Examples:%9
+
+    /UPDATE
+    /UPDATE CHECK
+    /SET update_check ON
+
+%9See also:%9 UPGRADE, UPDATE_CHECK, STATUSBAR
+
