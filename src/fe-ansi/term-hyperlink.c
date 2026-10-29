@@ -202,34 +202,41 @@ static gsize scheme_at(const UNIT *units, guint count, guint i)
 	return 0;
 }
 
-static guint count_char(const UNIT *units, guint from, guint to, char c)
-{
-	guint n = 0;
-
-	for (; from < to; from++)
-		if (unit_is_ascii(&units[from], c))
-			n++;
-	return n;
-}
-
 /* Where the address units[from..] really ends: without the punctuation
  * that ends the sentence around it, and without a closing bracket that
- * has no opening one in it ("(see https://example.org/)"). */
+ * has no opening one in it ("(see https://example.org/)"). The brackets
+ * are counted once and then as they are cut off: linear also for a line
+ * of nothing but ")". */
 static guint trim_end(const UNIT *units, guint from, guint to)
 {
+	static const char OPEN[] = "([{", CLOSE[] = ")]}";
+	guint opened[3] = { 0, 0, 0 }, closed[3] = { 0, 0, 0 }, i;
+
+	for (i = from; i < to; i++) {
+		const char *b;
+
+		if (units[i].brk || units[i].chr >= 0x80 || units[i].chr == 0)
+			continue;
+		if ((b = strchr(OPEN, (char) units[i].chr)) != NULL)
+			opened[b - OPEN]++;
+		else if ((b = strchr(CLOSE, (char) units[i].chr)) != NULL)
+			closed[b - CLOSE]++;
+	}
+
 	while (to > from) {
 		const UNIT *last = &units[to - 1];
 
 		if (last->chr < 0x80) {
 			char c = (char) last->chr;
+			const char *b;
 
-			if (strchr(".,;:!?'*", c) != NULL) {
+			if (c != '\0' && strchr(".,;:!?'*", c) != NULL) {
 				to--;
 				continue;
 			}
-			if ((c == ')' && count_char(units, from, to, ')') > count_char(units, from, to, '(')) ||
-			    (c == ']' && count_char(units, from, to, ']') > count_char(units, from, to, '[')) ||
-			    (c == '}' && count_char(units, from, to, '}') > count_char(units, from, to, '{'))) {
+			if (c != '\0' && (b = strchr(CLOSE, c)) != NULL &&
+			    closed[b - CLOSE] > opened[b - CLOSE]) {
+				closed[b - CLOSE]--;
 				to--;
 				continue;
 			}

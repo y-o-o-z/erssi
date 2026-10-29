@@ -200,6 +200,34 @@ static void test_scan_evil(void)
 	}
 }
 
+/* A long line (a paste, /exec, /cat) of closing brackets after an
+ * address: found in linear time. In a subprocess with a time limit, so
+ * a slow scan fails instead of hanging the suite. */
+static void test_scan_long_line(void)
+{
+	if (g_test_subprocess()) {
+		static const char *const TAILS[] = { ")", "]", "}", ".", "a)" };
+		guint t;
+
+		for (t = 0; t < G_N_ELEMENTS(TAILS); t++) {
+			GString *line = g_string_new("x https://example.org/");
+			TermLinkList *list;
+			int i;
+
+			for (i = 0; i < 100000; i++)
+				g_string_append(line, TAILS[t]);
+			list = term_link_scan(line->str, TERM_TYPE_UTF8);
+			/* trimmed to the address, or too long for a link */
+			g_assert_true(list == NULL || strcmp(list->spans[0].uri, "https://example.org/") == 0);
+			term_link_list_free(list);
+			g_string_free(line, TRUE);
+		}
+		return;
+	}
+	g_test_trap_subprocess(NULL, 10 * G_USEC_PER_SEC, 0);
+	g_test_trap_assert_passed();
+}
+
 static void test_encode_uri(void)
 {
 	static const char *const REFUSED[] = {
@@ -893,6 +921,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term-hyperlink/scan-offsets", test_scan_offsets);
 	g_test_add_func("/term-hyperlink/scan-8bit", test_scan_8bit);
 	g_test_add_func("/term-hyperlink/scan-evil", test_scan_evil);
+	g_test_add_func("/term-hyperlink/scan-long-line", test_scan_long_line);
 	g_test_add_func("/term-hyperlink/encode-uri", test_encode_uri);
 	g_test_add_func("/term-hyperlink/make-id", test_make_id);
 	g_test_add_func("/term-hyperlink/detect", test_detect);
