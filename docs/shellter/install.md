@@ -472,18 +472,25 @@ written with mode 0600 from the start, under another name next to FILE,
 and gets its name only once complete; an existing FILE (or a link there)
 is never overwritten. The default name is in the current directory, or in
 `~` when that is inside the home or not writable; FILE cannot be inside
-the home. **It holds your private keys and passwords** - see
+the home. Before it gets its name, the file is checked as `--restore`
+will check it, so a backup that would be refused on the new box is not
+written. Names may hold any byte (UTF-8 or not) but a control character
+or a backslash; `--backup` stops at such a name and asks to rename it.
+**It holds your private keys and passwords** - see
 [security.md](security.md#backups).
 
-**Restoring.** `--restore` checks the archive before it unpacks anything:
+**Restoring.** `--restore` copies the archive into a directory of its own
+next to the home (mode 0700) and works only on that copy, read once for
+each step. It checks the copy before it unpacks anything:
 only regular files and directories (no links, hard links, devices or
 FIFOs), all below its one `erssi-backup-*` directory, no absolute name and
 no `..`, and no more than fits into the free space next to the home. It
 unpacks into a new directory next to the home and checks that against the
 `MANIFEST` (the same files and directories, nothing more), checks each
-link of the `MANIFEST` (relative, `../` first and names after, staying in
-the home and leading to a file or directory of the backup through
-directories only), sets the modes (directories 0700, files 0600, files
+link of the `MANIFEST` (each path once, none below or through another
+link, relative, `../` first and names after, staying in the home and
+leading to a file or directory of the backup through directories only;
+once made, each is checked again to lead into the home), sets the modes (directories 0700, files 0600, files
 that were executable 0700) and makes the links. Only then is the home
 moved aside to `<home>.before-restore-YYYYMMDD-HHMMSS` (the output names
 it) and the new one renamed into its place. A damaged, foreign or
@@ -513,7 +520,11 @@ link to it) counts as running when relative and is missed when a link.
 Without perl, `flock` or `lockf`, or on a file system without locks, the
 renames run without the locks, with a warning. `--backup` works while erssi
 runs; `/save` first if you changed settings since, as the backup takes
-the files as they are on the disk.
+the files as they are on the disk. A log that erssi writes to while it is
+read is named in the output and is in the backup as it was at that moment
+(GNU tar says it changed; FreeBSD's tar takes it as it was when it began
+reading it). The listings and messages of tar are read in the C locale,
+so the language you run it in does not matter.
 
 ## Upgrading from 1.3.x
 
