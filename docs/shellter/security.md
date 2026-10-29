@@ -76,7 +76,10 @@ The addresses that become links come from other people, so:
 
 - **No hidden targets** — a link is only ever the address as it is
   shown, and its target is that same text; nobody can make words point
-  somewhere else. Only http, https, ftp, gopher, gemini, irc and ircs
+  somewhere else. A colour change (also reverse and a reset to the
+  defaults) ends an address, so its rest cannot be drawn in the colour of
+  the background and still be part of the target; bold, underline and
+  italic do not end it. Only http, https, ftp, gopher, gemini, irc and ircs
   addresses become links (no file:, javascript:, data: or mailto:).
 - **Nothing ends the sequence early** — the target holds only printable
   ASCII: characters that may not be in a URI are percent-encoded, and

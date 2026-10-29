@@ -79,8 +79,21 @@ static gboolean cluster_is_ok(const unsigned char *p, const unsigned char *end)
 	return TRUE;
 }
 
+/* A format sequence that leaves the colours alone: the text after it
+ * looks like the text before it, so an address can go on through it. */
+static gboolean format_keeps_colours(unsigned char c)
+{
+	return c == FORMAT_STYLE_BOLD || c == FORMAT_STYLE_UNDERLINE ||
+	       c == FORMAT_STYLE_ITALIC || c == FORMAT_STYLE_MONOSPACE ||
+	       c == FORMAT_STYLE_BLINK || c == FORMAT_STYLE_INDENT;
+}
+
 /* The line as the text view walks it (view_line_draw()): format
- * sequences are skipped, each character is one unit. */
+ * sequences are skipped, each character is one unit. A sequence that
+ * changes a colour (also reverse and the defaults) is a break: the
+ * sender could draw the rest of an address in the background colour
+ * (or one next to it) and make a link whose target is not what anyone
+ * sees. */
 static GArray *line_units(const char *text, int charset)
 {
 	GArray *units = g_array_new(FALSE, FALSE, sizeof(UNIT));
@@ -96,6 +109,12 @@ static GArray *line_units(const char *text, int charset)
 			p++;
 			if (*p == '\0')
 				break;
+			if (!format_keeps_colours(*p)) {
+				u.start = u.end = p - 1 - base;
+				u.chr = 0;
+				u.brk = TRUE;
+				g_array_append_val(units, u);
+			}
 			if (*p == FORMAT_STYLE_INDENT)
 				p++;
 			else

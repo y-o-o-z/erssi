@@ -14,7 +14,9 @@
     bracket or quote that is not part of it) is left out. Characters that
     may not appear in a URI (non-ASCII letters, \ ^ ` { | }) are
     percent-encoded in the target; spaces and control characters end an
-    address, and an address longer than 2048 bytes stays plain text. An
+    address, and an address longer than 2048 bytes stays plain text. A
+    colour change ends an address too (the rest could be drawn in the
+    colour of the background); bold, underline and italic do not. An
     address that wraps over several lines is still one link.
 
     AUTO makes links only where that is known to be safe:

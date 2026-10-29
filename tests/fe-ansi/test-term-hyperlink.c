@@ -95,8 +95,19 @@ static const SCAN_ROW SCAN[] = {
 	{ "https://example.org/%41", "https://example.org/%41" },
 	/* closing punctuation of other scripts */
 	{ "「https://example.org/x」", "https://example.org/x" },
-	/* format sequences in between are not part of the target */
+	/* format sequences in between are not part of the target; bold,
+	 * underline, italic and monospace do not end it */
 	{ "\004" "a" "https://exa\004" "cmple.org/\004" "e", "https://example.org/" },
+	{ "https://e\004" "b" "x\004" "f" "a\004" "i" "mple.org/", "https://example.org/" },
+	/* a colour change ends it: the rest could be drawn invisible, as
+	 * the user part of an address that goes elsewhere */
+	{ "https://paypal.example\004" "00" "@evil.example/login", "https://paypal.example" },
+	{ "https://paypal.example\004" "#" "\x21\x21\x22\x20" "\004" "#" "\x21\x21\x21\x21" "@evil.example/",
+	  "https://paypal.example" },
+	{ "https://paypal.example\004" ".!" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "1/" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "d" "@evil.example/", "https://paypal.example" },
+	{ "https://paypal.example\004" "g" "@evil.example/", "https://paypal.example" },
 	/* lines of one entry */
 	{ "https://a.example/\nhttps://b.example/", "https://a.example/ https://b.example/" },
 };
@@ -764,6 +775,36 @@ static void test_view_colour_and_evil(void)
 	term_close();
 }
 
+/* A sender colours the rest of an address like the background (mIRC
+ * colour 1 on 1): only what is visible before it is the link. */
+static void test_view_colour_ends_link(void)
+{
+	TEXT_BUFFER_VIEW_REC *view;
+	TERM_WINDOW *win;
+	LINE_REC *line;
+	char id[TERM_LINK_ID_SIZE], *opens, *expected;
+
+	term_open(80, 3);
+	term_use_hyperlinks = TRUE;
+	win = term_window_create(0, 0, 80, 3);
+	view = view_open(80, 3, FALSE);
+	textbuffer_view_set_window(view, win);
+	line = view_add(view, "https://paypal.example\00301,01@evil.example/login");
+	line_id(line, 0, id);
+	term_reset_output();
+	textbuffer_view_redraw(view);
+
+	opens = osc8_opens(term_output());
+	expected = g_strdup_printf("%s https://paypal.example\n", id);
+	g_assert_cmpstr(opens, ==, expected);
+	g_free(opens);
+	g_free(expected);
+
+	view_close(view);
+	term_window_destroy(win);
+	term_close();
+}
+
 /* What the side panels draw goes through term_add_unichar() after a
  * term_move(): never part of a link, also when a link was open. */
 static gboolean add_unichar(unichar chr, int width, int color, unsigned int fg24,
@@ -854,6 +895,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term-hyperlink/view-partial", test_view_partial);
 	g_test_add_func("/term-hyperlink/view-full-width", test_view_full_width);
 	g_test_add_func("/term-hyperlink/view-colour-and-evil", test_view_colour_and_evil);
+	g_test_add_func("/term-hyperlink/view-colour-ends-link", test_view_colour_ends_link);
 	g_test_add_func("/term-hyperlink/side-panel-no-link", test_side_panel_no_link);
 	g_test_add_func("/term-hyperlink/setting", test_setting);
 
