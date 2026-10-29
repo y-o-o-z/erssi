@@ -371,8 +371,10 @@ signed_tag() {
     TAG_OBJ=$(git -C "$1" rev-parse --verify -q FETCH_HEAD) || return 1
     [ "$(git -C "$1" cat-file -t "$TAG_OBJ" 2>/dev/null)" = tag ] || return 1
     [ "$(git -C "$1" cat-file tag "$TAG_OBJ" | sed -n '1,/^$/s/^tag //p')" = "$2" ] || return 1
-    signers=$(mktemp)
-    printf '%s\n' "$RELEASE_SIGNER" > "$signers"
+    # in the repository, not in $TMPDIR: a check stopped by a signal
+    # leaves nothing behind once its temporary repository is removed
+    signers="$(git -C "$1" rev-parse --absolute-git-dir)/erssi-allowed-signers" || return 1
+    printf '%s\n' "$RELEASE_SIGNER" > "$signers" || return 1
     if git -C "$1" -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$signers" \
             -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false -c gpg.ssh.program=ssh-keygen \
             verify-tag --raw "$TAG_OBJ" 2>&1 |
@@ -382,8 +384,9 @@ signed_tag() {
     rm -f "$signers"; return 1
 }
 # --check needs the tag object and its commit, not the files: a filter
-# (tree:0) leaves the trees and files out - about 2 KB instead of 3 MB
-# from GitHub; a server without filters sends everything, as without it.
+# (tree:0) leaves the trees and files out - a whole check (the tag list
+# and one such fetch) is about 6 KB from GitHub instead of 3 MB; a
+# server without filters sends everything, as without it.
 # The tag and the commit are checked as in a full fetch. A filter needs a
 # named remote marked as the promisor of the repository (the temporary
 # one of --check): git refuses one for a plain path.
@@ -2570,6 +2573,14 @@ keep_value() {
 
 main() {
 unset CDPATH        # cd in $(...) must print nothing
+# git takes the repository from these before -C: one inherited from the
+# caller (erssi started in a git checkout, a hook) would make every git
+# below read and write the caller's repository instead of the
+# installer's own (git rev-parse --local-env-vars, and GIT_NAMESPACE)
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
+    GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE \
+    GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE \
+    GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
 # What the cleanup traps and the later steps test or remove, empty before
 # any trap is set: a variable of the same name in the environment (STAGE
 # is a common one in CI and deploy scripts) would otherwise be taken for

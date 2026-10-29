@@ -429,16 +429,31 @@ static void test_job_answers(void)
 	result_clear(&r);
 
 	/* the arguments erssi gives, and no terminal: stdin is /dev/null,
-	   git asks for no password */
+	   git asks for no password, no repository of erssi's environment
+	   reaches git */
+	g_setenv("GIT_DIR", "/nonexistent/.git", TRUE);
+	g_setenv("GIT_WORK_TREE", "/nonexistent", TRUE);
+	g_setenv("GIT_INDEX_FILE", "/nonexistent/.git/index", TRUE);
+	g_setenv("GIT_OBJECT_DIRECTORY", "/nonexistent/.git/objects", TRUE);
+	g_setenv("GIT_COMMON_DIR", "/nonexistent/.git", TRUE);
+	g_setenv("GIT_NAMESPACE", "x", TRUE);
 	run("[ \"$*\" = \"--update --check --porcelain --prefix $(dirname \"$0\")\" ] || exit 9\n"
 	    "if read x; then exit 8; fi\n"
 	    "[ \"$GIT_TERMINAL_PROMPT\" = 0 ] || exit 7\n"
+	    "env | grep -Eq '^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|COMMON_DIR|NAMESPACE)=' &&"
+	    " exit 5\n"
 	    "[ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] || exit 6\n"
 	    "echo 'current 1.0'\n",
 	    10000, &r, &pid);
 	g_assert_cmpstr(r.answer.reason, ==, NULL);
 	g_assert_cmpint(r.answer.kind, ==, UPDATE_ANSWER_CURRENT);
 	result_clear(&r);
+	g_unsetenv("GIT_DIR");
+	g_unsetenv("GIT_WORK_TREE");
+	g_unsetenv("GIT_INDEX_FILE");
+	g_unsetenv("GIT_OBJECT_DIRECTORY");
+	g_unsetenv("GIT_COMMON_DIR");
+	g_unsetenv("GIT_NAMESPACE");
 }
 
 static void test_job_garbage(void)
@@ -545,6 +560,58 @@ static void test_job_cancel(void)
 	g_free(child);
 }
 
+/* a job whose process has exited, but was not reaped yet: cancelling it
+   reaps it and sends its process group no signal - once reaped, its
+   number may belong to another process. A child it left behind in that
+   group lives on. */
+static void test_job_cancel_after_exit(void)
+{
+	char *child = g_build_filename(script_dir, "stray.pid", NULL);
+	char *got = g_build_filename(script_dir, "stray.term", NULL);
+	char *path, *body, *text = NULL;
+	const char *argv[3];
+	UPDATE_JOB *job;
+	RESULT r;
+	int pid, stray, i;
+
+	unlink(child);
+	unlink(got);
+	/* the child says when a signal reaches it */
+	body = g_strdup_printf("sh -c 'trap \"echo TERM > %s; exit\" TERM; sleep 300 & wait' "
+	                       "> /dev/null 2>&1 &\necho $! > '%s'\n",
+	                       got, child);
+	path = script("exits.sh", body);
+	argv[0] = "/bin/sh";
+	argv[1] = path;
+	argv[2] = NULL;
+	memset(&r, 0, sizeof(r));
+	job = update_job_start(argv, 60000, job_done, &r, NULL);
+	g_assert_nonnull(job);
+	pid = update_job_pid(job);
+	for (i = 0; i < 500 && !g_file_get_contents(child, &text, NULL, NULL); i++)
+		g_usleep(10000);
+	g_assert_nonnull(text);
+	stray = atoi(text);
+	g_free(text);
+	g_assert_cmpint(stray, >, 1);
+	/* the script has exited by now (no main loop ran: nothing reaped it) */
+	g_usleep(500000);
+	update_job_cancel(job);
+	g_assert_false(r.done);
+	assert_reaped(pid);
+	g_usleep(300000);
+	g_assert_false(g_file_test(got, G_FILE_TEST_EXISTS));
+	g_assert_cmpint(kill(stray, 0), ==, 0);
+	kill(-pid, SIGKILL); /* the stray and its sleep, the group still exists */
+	unlink(got);
+	g_free(got);
+	unlink(child);
+	unlink(path);
+	g_free(path);
+	g_free(body);
+	g_free(child);
+}
+
 static void test_job_spawn_fails(void)
 {
 	const char *argv[] = { "/nonexistent/sh", NULL };
@@ -579,6 +646,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/job_garbage", test_job_garbage);
 	g_test_add_func("/update_check/job_timeout", test_job_timeout);
 	g_test_add_func("/update_check/job_cancel", test_job_cancel);
+	g_test_add_func("/update_check/job_cancel_after_exit", test_job_cancel_after_exit);
 	g_test_add_func("/update_check/job_spawn_fails", test_job_spawn_fails);
 	ret = g_test_run();
 	return ret;

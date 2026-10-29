@@ -138,7 +138,9 @@ static void test_ask_update_offered(void)
 	offer_update = TRUE;
 	g_assert_cmpint(run_ask(yes, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
 	g_assert_true(a.update_check);
-	g_assert_nonnull(strstr(out, UPDATE_PROMPT " (contacts github.com, installs nothing)? [y/N] "));
+	g_assert_nonnull(strstr(out, UPDATE_PROMPT " (contacts the erssi repository - github.com "
+	                             "unless you installed from elsewhere - and installs "
+	                             "nothing)? [y/N] "));
 	g_free(out);
 	firstrun_answers_clear(&a);
 	g_assert_false(a.update_check);

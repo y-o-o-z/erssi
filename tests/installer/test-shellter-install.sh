@@ -500,6 +500,14 @@ porc() {
     sh "$INSTALLER" --update --check --porcelain --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
     RC=$?
 }
+# snap DIR: every path below DIR with its contents, in one text
+snap() {
+    for f in "$1"/* "$1"/.[!.]*; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        printf '== %s\n' "$f"
+        if [ -d "$f" ] && [ ! -L "$f" ]; then snap "$f"; else cat "$f"; fi
+    done
+}
 # $W/pout is the one line $1
 # shellcheck disable=SC2317 # called through check
 one_line() { [ "$(wc -l < "$W/pout")" -eq 1 ] && [ "$(cat "$W/pout")" = "$1" ]; }
@@ -2050,7 +2058,54 @@ update-porcelain)
     release_prefix 2026.10.2 "$c1" main
     porc
     check "from a branch, nothing newer: current" one_line "current 2026.10.2"
+    # a GIT_DIR (and work tree, index) from the caller - erssi started in
+    # a checkout - is not the installer's repository: left as it was
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    git -c init.defaultBranch=main init -q "$W/canary" &&
+        echo canary > "$W/canary/file" && git -C "$W/canary" add file &&
+        git -C "$W/canary" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            commit -q -m canary || exit 1
+    snap "$W/canary" > "$W/canary.before"
+    exported GIT_DIR="$W/canary/.git" GIT_WORK_TREE="$W/canary" GIT_INDEX_FILE="$W/canary/.git/index" \
+        GIT_OBJECT_DIRECTORY="$W/canary/.git/objects" GIT_COMMON_DIR="$W/canary/.git" porc
+    snap "$W/canary" > "$W/canary.after"
+    check "GIT_DIR of the caller: the check works" one_line "update 2026.10.1 2026.10.2"
+    check "... the caller's repository untouched" [ "$(cat "$W/canary.before")" = "$(cat "$W/canary.after")" ]
+    # the signature is checked with an allowed signers file in the
+    # temporary repository, not in $TMPDIR, where a stopped check would
+    # leave it
+    mkdir "$W/tmpd"
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nfor a in "$@"; do case "$a" in gpg.ssh.allowedSignersFile=*) echo "${a#*=}" >> "$TEST_W/signers.log" ;; esac; done\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+    rm -rf "$W/st" && git init -q "$W/st" || exit 1
+    # shellcheck disable=SC2016 # run by fn
+    t_old=$TMPDIR; TMPDIR=$W/tmpd
+    fn 'fetch_ref "$1" "$2" && signed_tag "$1" "$2"' "$W/st" shellter-v2026.10.2
+    TMPDIR=$t_old
+    check "signers file: signature verified" [ "$RC" = 0 ]
+    check "... in the repository" grep -q "^$W/st/.git/" "$W/signers.log"
+    check "... not in TMPDIR" no_grep "^$W/tmpd" "$W/signers.log"
+    check "... removed" [ ! -e "$W/st/.git/erssi-allowed-signers" ]
+    # a newer tag that is unsigned, or signed by another key, through the
+    # filtered fetch: not an update
+    git -C "$W/repo" config uploadpack.allowFilter true
+    c5=$(release_commit 2026.10.5)
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -m shellter-v2026.10.5 shellter-v2026.10.5 "$c5"
+    c6=$(release_commit 2026.10.6); rtag shellter-v2026.10.6 "$c6" "$W/other"
+    release_prefix 2026.10.2 "$c2" shellter-v2026.10.2
+    rm -f "$W/git.log"
+    # shellcheck disable=SC2016 # the stand-in script
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$TEST_W/git.log"\nexec "$TEST_W/bin/git" "$@"\n' | stand git
+    use_tool git
+    porc
+    check "unsigned and foreign-signed newer tags, filtered: current" one_line "current 2026.10.2"
+    check "... both fetched filtered" [ "$(grep -c 'fetch -q --no-tags --depth 1 --filter=tree:0 erssi shellter-v2026.10.[56]$' "$W/git.log")" = 2 ]
+    check "... both named" grep -q 'shellter-v2026.10.6 is not signed by the erssi Shellter release key' "$W/perr"
+    check "... and the unsigned one" grep -q 'shellter-v2026.10.5 is not signed by the erssi Shellter release key' "$W/perr"
+    git -C "$W/repo" tag -d shellter-v2026.10.5 shellter-v2026.10.6 > /dev/null
     # the download fails
+    fetch_fails
     release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
     exported FAKE_FETCH_FAIL=1 porc
     check "download fails: code 1" [ "$RC" = 1 ]

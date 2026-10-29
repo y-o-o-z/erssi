@@ -76,7 +76,8 @@ set -as terminal-features ',xterm-kitty:hyperlinks' # clickable addresses in kit
 
 erssi can tell you when a new signed release is out, so an erssi that
 lives in tmux for months does not stay on an old release. It is off by
-default, because it contacts GitHub:
+default, because it contacts the erssi repository (GitHub, unless you
+installed from another `--repo`):
 
 ```
 /set update_check on                     # check once a day
@@ -91,8 +92,12 @@ default, because it contacts GitHub:
   one check runs at a time, one that takes longer than two minutes is
   stopped. The installer finds the newest release tag with a valid
   signature by the release key it carries, exactly as for an update
-  ([What the installer verifies](install.md#what-the-installer-verifies)),
-  and downloads only that tag and its commit, about 10 KB.
+  ([What the installer verifies](install.md#what-the-installer-verifies)).
+  It downloads the list of release tags and one tag object with the
+  commit it names, never the files of a release: about 6 KB received
+  and 2 KB sent (measured against GitHub, plus TLS); a newer tag skipped
+  as not signed by the release key costs one more such fetch (five at
+  most).
 - **When** — a minute after the start, then every 24 hours. The time of
   the last check is kept in `~/.erssi/update-check.state` (mode 0600), so
   a restart or `/upgrade` does not check again before the day is over;
@@ -114,9 +119,14 @@ default, because it contacts GitHub:
   (a distribution package, a build of your own: no `shellter-install.sh`
   installed with it, or no `shellter-install.conf` in its prefix), one
   that another user installed (a system install made by root: root
-  updates it), or one whose conf names another tool (`UPDATE_COMMAND`).
-  Turning the setting on says why. In Capsicum capability mode erssi cannot start programs, so
-  there is no check; `erssi --check-update` from a shell still works.
+  updates it). Turning the setting on says why. For an install whose conf
+  names another tool (`UPDATE_COMMAND`) the installer says so, and erssi
+  says it once; it still asks the installer every day, which answers
+  from the conf without contacting anything, so the check finds releases
+  again once the conf names no other tool. In Capsicum capability mode
+  erssi cannot start programs, so there is no check: a check that runs
+  when the mode is entered is stopped first, and erssi says why there is
+  none from then on; `erssi --check-update` from a shell still works.
 
 ## Web client
 

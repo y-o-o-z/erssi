@@ -415,3 +415,27 @@ test('test-update-check test', test_test_update_check,
   args : ['--tap'],
   protocol : 'tap',
   timeout : 60)
+
+# the update notice as a module: the item, /UPDATE and the timer against a
+# stand-in installer, with core and fe-common running in a temporary home
+test_test_update_check_module = executable('test-update-check-module',
+  files(
+    'test-update-check-module.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-update-check-module test', test_test_update_check_module,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 60)

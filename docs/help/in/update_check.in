@@ -12,7 +12,9 @@
         erssi 2026.11.1 is available (signed). Update from a shell:
         erssi --update, then /UPGRADE
 
-    It is off by default because each check contacts github.com. The
+    It is off by default because each check contacts the erssi
+    repository (github.com, unless erssi was installed from another
+    repository: the REPO of its shellter-install.conf). The
     first check runs a minute after erssi starts, then one every 24 hours.
     The time of the last check is kept in ~/.erssi/update-check.state
     (mode 0600), so a restart or /UPGRADE does not check again before the

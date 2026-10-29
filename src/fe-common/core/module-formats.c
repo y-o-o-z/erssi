@@ -344,7 +344,7 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "update_failed", "Update check failed: $0", 1, { 0 } },
 	{ "update_failed_again", "Update check failed $1 times in a row: $0 - erssi tries again every 24 hours (/UPDATE CHECK now)", 2, { 0, 1 } },
 	{ "update_unavailable", "Update check: $0", 1, { 0 } },
-	{ "update_off", "Update check is off: /SET update_check on checks once a day (it contacts github.com)", 0 },
+	{ "update_off", "Update check is off: /SET update_check on checks once a day (it contacts the erssi repository, github.com unless you installed from elsewhere)", 0 },
 	{ "update_last", "Update check: last one $0", 1, { 0 } },
 	{ "update_last_failed", "Update check: last one $0 failed: $1 ($2 in a row)", 3, { 0, 0, 1 } },
 

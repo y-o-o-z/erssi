@@ -377,8 +377,9 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 	/* update check: off unless asked for - it contacts GitHub */
 	if (offer_update_check) {
 		for (tries = 0; tries < FIRSTRUN_MAX_TRIES; tries++) {
-			PROMPT(out, "Check once a day for a new signed erssi release "
-			            "(contacts github.com, installs nothing)? [y/N] ");
+			PROMPT(out, "Check once a day for a new signed erssi release (contacts the "
+			            "erssi repository - github.com unless you installed from "
+			            "elsewhere - and installs nothing)? [y/N] ");
 			line = read(ctx, FALSE);
 			if (line == NULL)
 				goto skipped;
