@@ -26,8 +26,8 @@ test('resign-history test', find_program('sh'),
 # CI, the release host; never in an install's or an update's source
 # build), and alone, so that the tests beside them are not starved of CPU
 # into a timeout. skips: how they skip without it, and without the tools.
-foreach c : ['verify', 'package', 'tests-fail', 'skips']
+foreach c : ['verify', 'package', 'tests-fail', 'reproduce', 'skips']
   test('build-binary ' + c, find_program('sh'),
     args : [files('test-build-binary.sh'), meson.current_source_dir() / '..' / '..', c],
-    is_parallel : c in ['verify', 'skips'], timeout : c in ['verify', 'skips'] ? 120 : 1800)
+    is_parallel : c in ['verify', 'skips'], timeout : {'verify' : 120, 'skips' : 120, 'reproduce' : 2700}.get(c, 1800))
 endforeach

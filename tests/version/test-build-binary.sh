@@ -16,6 +16,10 @@
 #               the relocatable live test and a fuzz corpus test whose
 #               program is not built by default (BUILD_BINARY_TESTS)
 #   tests-fail  a tag whose tests fail: no package
+#   reproduce   --verify: the package built again in another work directory
+#               is identical (the same sha256), a changed package is reported
+#               with the file that differs, and the refusals (no package, a
+#               package of another platform) before any build
 #   skips       the two cases above skip without ERSSI_TEST_PACKAGER=1, and
 #               every case skips when a tool of the packager is not in its
 #               PATH (TEST_PACKAGER_PATH stands in for that PATH), and
@@ -38,7 +42,7 @@ tools=$(sed -n 's/^for t in \(.*\); do$/\1/p' "$root/utils/build-binary.sh")
 # drops these variables)
 if [ -z "${BUILD_BINARY_TEST_CLEAN:-}" ]; then
     case $CASE in
-        package|tests-fail)
+        package|tests-fail|reproduce)
             # a package build runs the tests of what it builds: not this one again
             if [ -n "${ERSSI_BUILD_BINARY:-}" ]; then
                 echo "skip: inside a package build"; exit 77
@@ -436,7 +440,7 @@ case_package() {
     P=$X/$NAME
     M=$P/MANIFEST
     check "MANIFEST: the keys of the release format, sorted" \
-        [ "$(cut -d= -f1 "$M" | tr '\n' ' ')" = "built commit libc needed perl_version platform tag version " ]
+        [ "$(cut -d= -f1 "$M" | tr '\n' ' ')" = "built cc commit libc libs meson needed ninja perl_version platform tag version " ]
     check "MANIFEST: version" [ "$(manifest version)" = "$VERSION" ]
     check "MANIFEST: tag" [ "$(manifest tag)" = "$TAG" ]
     check "MANIFEST: commit" [ "$(manifest commit)" = "$COMMIT" ]
@@ -448,6 +452,9 @@ case_package() {
     esac
     check "MANIFEST: libc ($libc)" [ "$(manifest libc)" = "$libc" ]
     check "MANIFEST: built is the commit time ($BUILT)" [ "$(manifest built)" = "$BUILT" ]
+    check "MANIFEST: cc is the compiler's version" [ "$(manifest cc)" = "$(cc --version | head -n 1)" ]
+    check "MANIFEST: meson and ninja versions" [ "$(manifest meson)" = "$(meson --version)" -a "$(manifest ninja)" = "$(ninja --version)" ]
+    check "MANIFEST: libs has glib's version" sh -c 'case " $1 " in *" glib-2.0=$2 "*) ;; *) exit 1 ;; esac' sh "$(manifest libs)" "$(pkg-config --modversion glib-2.0)"
     needed=$(manifest needed)
     check "MANIFEST: needed are sonames" sh -c 'for l in $1; do case $l in */*|"") exit 1 ;; *.so*) ;; *) exit 1 ;; esac; done' sh "$needed"
     check "MANIFEST: needed has libc and glib" sh -c 'case " $1 " in *" libc.so."*) ;; *) exit 1 ;; esac
@@ -496,10 +503,55 @@ case_tests_fail() {
     fi
 }
 
+case_reproduce() {
+    # refused before any build: not a package, and a package of another platform
+    printf 'not a package\n' > "$tmp/junk.tar.xz"
+    run_bb --verify "$tmp/junk.tar.xz"
+    refused "--verify: a file that is not a package" "is not a package"
+    mkdir -p "$tmp/otherplat/erssi-$VERSION-other9-amd64" || exit 1
+    printf 'platform=other9-amd64\ntag=%s\n' "$TAG" > "$tmp/otherplat/erssi-$VERSION-other9-amd64/MANIFEST"
+    (cd "$tmp/otherplat" && tar -cf - "erssi-$VERSION-other9-amd64" | xz -c > "$tmp/otherplat.tar.xz") || exit 1
+    run_bb --verify "$tmp/otherplat.tar.xz"
+    refused "--verify: a package of another platform" "is for other9-amd64, this is $PLATFORM"
+
+    # --verify builds with the tag's own packager: in this repository the
+    # copy that trusts the throwaway key
+    cp "$BB" "$R/utils/build-binary.sh" && git -C "$R" commit -q -a -m "the packager of the test key" || exit 1
+    git -C "$R" tag -s -m "erssi Shellter Edition $VERSION" "$TAG" || exit 1
+    # one quick test in each build: what is compared is the package
+    export BUILD_BINARY_TESTS="test-formats test"
+    run_bb "$TAG"
+    check "the package is built (exit $RC)" [ "$RC" = 0 ]
+    [ "$RC" = 0 ] || { printf '%s\n' "$OUT" | tail -n 30; return; }
+    T=$OUTDIR/$NAME.tar.xz
+    SUM=$(sha256_hex < "$T")
+
+    # built again from scratch, in another work directory (another path)
+    run_bb --verify "$T"
+    check "--verify: the package is reproduced (exit $RC)" [ "$RC" = 0 ]
+    check "--verify: says reproduced, with the sha256" sh -c 'printf "%s\n" "$1" | grep -q "reproduced: $2 is identical" && printf "%s\n" "$1" | grep -q "sha256 $3"' sh "$OUT" "$NAME.tar.xz" "$SUM"
+    check "--verify: writes nothing but its work directory, which goes" sh -c '[ -z "$(ls -A "$1" 2>/dev/null)" ] && [ ! -e "$2" ]' sh "$OUTDIR" "$tmp/work.$n"
+    [ "$RC" = 0 ] || printf '%s\n' "$OUT" | tail -n 30
+
+    # a package changed after the build: one file of it
+    X=$tmp/changed
+    if ! { mkdir "$X" && (cd "$X" && xz -dc "$T" | tar -xf -); }; then bad "unpacking"; return; fi
+    changed=$(cd "$X/$NAME" && find share -type f | LC_ALL=C sort | head -n 1)
+    [ -n "$changed" ] || { bad "no file under share/ in the package"; return; }
+    printf 'changed\n' >> "$X/$NAME/$changed" || exit 1
+    mkdir "$tmp/changed-out" || exit 1
+    sh "$BB" --pack "$X/$NAME" "$tmp/changed-out/$NAME.tar.xz" "$tmp/changed-out" > /dev/null 2>&1 || { bad "repacking"; return; }
+    run_bb --verify "$tmp/changed-out/$NAME.tar.xz"
+    check "--verify: a changed package is not reproduced (exit $RC)" [ "$RC" = 1 ]
+    check "--verify: says so" sh -c 'printf "%s\n" "$1" | grep -q "NOT reproduced"' sh "$OUT"
+    check "--verify: names the file that differs ($changed)" sh -c 'printf "%s\n" "$1" | grep -q "differs: *$2/$3"' sh "$OUT" "$NAME" "$changed"
+    [ "$RC" = 1 ] || printf '%s\n' "$OUT" | tail -n 30
+}
+
 # the skips: run this script again as a plain meson test would (no
 # ERSSI_TEST_PACKAGER), and with a packager PATH that lacks the tools
 case_skips() {
-    for c in package tests-fail; do
+    for c in package tests-fail reproduce; do
         out=$(env -i PATH="$PATH" TMPDIR="$TMPDIR" sh "$0" "$root" "$c" 2>&1)
         rc=$?
         check "$c skips without ERSSI_TEST_PACKAGER (exit $rc)" [ "$rc" = 77 ]
@@ -537,6 +589,7 @@ case $CASE in
     verify) case_verify ;;
     package) case_package ;;
     tests-fail) case_tests_fail ;;
+    reproduce) case_reproduce ;;
     *) echo "unknown case $CASE"; exit 1 ;;
 esac
 exit $failed

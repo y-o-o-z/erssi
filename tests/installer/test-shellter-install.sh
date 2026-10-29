@@ -2094,6 +2094,27 @@ binary-platform)
     check "another system: none" [ "$RC" = 1 ]
     fn 'perl_version'
     check "perl v5.40.1: 5.40.1" [ "$(cat "$W/fn.out")" = 5.40.1 ]
+    # the package to install for a missing library, by platform
+    lp() {   # platform soname -> want
+        fn "lib_package $1 $2"
+        check "lib_package $1 $2: $3" [ "$(cat "$W/fn.out")" = "$3" ]
+    }
+    lp debian13-amd64 libssl.so.3 libssl3t64
+    lp debian13-arm64 libperl.so.5.40 libperl5.40
+    lp debian13-amd64 libutf8proc.so.3 libutf8proc3
+    lp debian12-amd64 libssl.so.3 libssl3
+    lp debian12-amd64 libglib-2.0.so.0 libglib2.0-0
+    lp debian12-amd64 libperl.so.5.36 libperl5.36
+    lp debian12-amd64 libotr.so.5 libotr5
+    lp debian12-amd64 libcurl.so.4 libcurl4
+    lp debian12-amd64 libchafa.so.0 libchafa0
+    lp debian12-amd64 libutf8proc.so.2 libutf8proc2
+    lp ubuntu24-amd64 libssl.so.3 libssl3t64
+    lp ubuntu24-amd64 libglib-2.0.so.0 libglib2.0-0t64
+    lp ubuntu24-amd64 libperl.so.5.38 libperl5.38t64
+    lp ubuntu24-amd64 libchafa.so.0 libchafa0t64
+    lp ubuntu24-amd64 libutf8proc.so.3 libutf8proc3
+    lp freebsd15-amd64 libperl.so.5.42 perl5
     # the link switch renames a new link over the old one: never into the
     # directory the old one points to (as mv would)
     mkdir -p "$W/sw/a" "$W/sw/b" && ln -s a "$W/sw/cur"

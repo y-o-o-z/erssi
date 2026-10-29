@@ -75,18 +75,24 @@ The platforms are `debian13-amd64`, `freebsd14-amd64` and
   | key | value |
   |---|---|
   | `built` | the commit's time, UTC (`2026-10-18T12:00:00Z`) |
+  | `cc` | the first line of `cc --version` (from 2026.11.0) |
   | `commit` | the tag's commit, 40 hex digits |
   | `libc` | `glibc 2.41` or `freebsd 14.5` |
+  | `libs` | `pkg-config --modversion` of the libraries built against: `glib-2.0=… openssl=… libotr=… libgcrypt=… libcurl=… chafa=… libutf8proc=…` (`?` for one pkg-config does not know; from 2026.11.0) |
+  | `meson`, `ninja` | their versions (from 2026.11.0) |
   | `needed` | the shared libraries the binary and its modules need (sonames from `readelf -d`, space-separated, sorted) |
   | `perl_version` | `perl -e 'print $^V'` without the `v` (`5.40.1`) |
   | `platform` | `<os><major>-<arch>`: `os` is the `ID` of `/etc/os-release` or `freebsd`; `major` is from `VERSION_ID` or `freebsd-version -u`; `arch` is `amd64` (`x86_64`) or `arm64` (`aarch64`) |
   | `tag` | `shellter-v<version>` |
   | `version` | the version |
 
-  The packing is reproducible as far as it can be: the entries sorted,
-  owner and group 0, every entry dated to the commit
-  (`SOURCE_DATE_EPOCH`), the modes without the umask, and no paths of the
-  build directory in the binary.
+  The packing is reproducible: the entries sorted, owner and group 0,
+  every entry dated to the commit (`SOURCE_DATE_EPOCH`), the modes
+  without the umask, and no paths of the build directory in the binary.
+  Two builds of a tag on the same platform with the same tools (the
+  `cc`, `meson`, `ninja`, `libs`, `perl_version` and `libc` lines) are
+  the same bytes; `build-binary.sh --verify` checks it (see
+  [Checking a package by building it again](#checking-a-package-by-building-it-again)).
 - **The release assets:** every tarball, `SHA256SUMS` (lines
   `<sha256>  <tarball>`, sorted) and `SHA256SUMS.sig`, an SSH signature by
   the release key in the namespace `erssi-release`.
@@ -188,6 +194,26 @@ skipped, with the reason in the test log.
 `MANIFEST` records the perl version (from `perl5` of the quarterly
 branch) and the FreeBSD version the package was built on.
 
+### Checking a package by building it again
+
+`sh utils/build-binary.sh [--repo DIR] [--keep-work] --verify TARBALL`
+builds TARBALL again on this machine and compares the two. It reads the
+tag and the platform from the package's `MANIFEST`, refuses a package
+of another platform, checks that the tag is signed by the release key,
+and runs the build of that tag's own `utils/build-binary.sh` (so an older
+release is built by the packager that made it). Exit 0 and `reproduced`
+when the sha256 is the same; exit 1 and `NOT reproduced` otherwise, with
+the entries only in one of them, the files that differ and the
+`MANIFEST` lines that differ. With `--keep-work` both unpacked trees stay
+in the work directory to compare.
+
+Before a release's packages are signed, each is checked on a second,
+clean machine or chroot of its platform (for Debian and Ubuntu a new
+mmdebstrap chroot, for FreeBSD a second VM or the same one after `pkg
+upgrade` changed nothing): `--verify` must say `reproduced`. A package
+that does not reproduce is not published until the difference is
+understood.
+
 ### Signing and uploading
 
 Put both tarballs into one directory on the machine with the release
@@ -242,10 +268,15 @@ throwaway repository holding this tree, tagged with a throwaway key:
   name, the top directory, the order, owner and dates of the entries,
   the `MANIFEST` and erssi running from two places;
 - `build-binary tests-fail`: no package when a test fails;
+- `build-binary reproduce`: `--verify` on a package of the tree, built
+  again in another work directory, says `reproduced`; on the same
+  package with one file changed it says `NOT reproduced` and names the
+  file; it refuses what is not a package and a package of another
+  platform before building anything;
 - `build-binary skips`: how the others skip.
 
-`package` and `tests-fail` build the tree from scratch with every
-feature, a few minutes each. They run only with
+`package`, `tests-fail` and `reproduce` build the tree from scratch with
+every feature, a few minutes each (`reproduce` twice). They run only with
 `ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's hardened job set
 it, and so must the release host before it builds packages:
 
@@ -257,11 +288,11 @@ Without it they skip. So does the source build of an install or of
 `erssi --update`, which must not depend on the packager's tools, on
 every feature being there, or take minutes more. Every case also skips
 when a tool of the packager (`git meson ninja perl tar xz strip readelf
-od sort ssh-keygen`) is missing from its own PATH. That is the case,
+od sort cc pkg-config ssh-keygen`) is missing from its own PATH. That is the case,
 for example, with a meson in the installer's venv. With
 `ERSSI_TEST_PACKAGER=1` a missing tool fails instead, so a pre-push, CI
 or release host cannot lose the package builds without a word. Inside a package
-build, `package` and `tests-fail` skip as well. The copy of the tree
+build, `package`, `tests-fail` and `reproduce` skip as well. The copy of the tree
 gets NEWS dated to the 1st of the month when the release is still
 `YYYY-MM-xx`, so a push before the release commit can run them. In them
 the build's own tests are limited to one or two (`BUILD_BINARY_TESTS`, which a

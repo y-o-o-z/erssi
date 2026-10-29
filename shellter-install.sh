@@ -11,7 +11,7 @@
 #
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. A release
 # that has a ready-made package for this platform (debian13-amd64,
-# freebsd14-amd64) is installed from it, in seconds: SHA256SUMS of the
+# ubuntu24-amd64, freebsd14-amd64, ...) is installed from it, in seconds: SHA256SUMS of the
 # release must carry a valid SSH signature by the release key below
 # (namespace erssi-release), the package its checksum there, and its MANIFEST
 # must name the release, its commit (the recorded one below, or the one of
@@ -787,21 +787,31 @@ missing_libs() {
         awk '/not found/ { print $1 }' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 lib_package() {   # platform soname -> the package that has it, if known
+    # Debian 13 and Ubuntu 24.04 renamed the libraries of the 64-bit
+    # time_t transition (libssl3t64); Debian 12 has the old names, and
+    # Debian kept libperl5.40 while Ubuntu has libperl5.38t64
+    case "$1" in
+        debian12-*) t="" pt="" ;;
+        debian*) t=t64 pt="" ;;
+        ubuntu*) t=t64 pt=t64 ;;
+        *) t="" pt="" ;;
+    esac
     case "$1:$2" in
-        debian*:libglib-2.0.so.*|debian*:libgio-2.0.so.*|debian*:libgmodule-2.0.so.*|debian*:libgobject-2.0.so.*)
-            echo libglib2.0-0t64 ;;
-        debian*:libssl.so.3|debian*:libcrypto.so.3) echo libssl3t64 ;;
-        debian*:libperl.so.*) echo "libperl${2#libperl.so.}" ;;
-        debian*:libncursesw.so.6) echo libncursesw6 ;;
-        debian*:libtinfo.so.6) echo libtinfo6 ;;
-        debian*:libotr.so.5) echo libotr5t64 ;;
-        debian*:libgcrypt.so.20) echo libgcrypt20 ;;
-        debian*:libgpg-error.so.0) echo libgpg-error0 ;;
-        debian*:libcurl.so.4) echo libcurl4t64 ;;
-        debian*:libchafa.so.0) echo libchafa0t64 ;;
-        debian*:libutf8proc.so.3) echo libutf8proc3 ;;
-        debian*:libsodium.so.23) echo libsodium23 ;;
-        debian*:libz.so.1) echo zlib1g ;;
+        debian*:libglib-2.0.so.*|debian*:libgio-2.0.so.*|debian*:libgmodule-2.0.so.*|debian*:libgobject-2.0.so.*|\
+        ubuntu*:libglib-2.0.so.*|ubuntu*:libgio-2.0.so.*|ubuntu*:libgmodule-2.0.so.*|ubuntu*:libgobject-2.0.so.*)
+            echo "libglib2.0-0$t" ;;
+        debian*:libssl.so.3|debian*:libcrypto.so.3|ubuntu*:libssl.so.3|ubuntu*:libcrypto.so.3) echo "libssl3$t" ;;
+        debian*:libperl.so.*|ubuntu*:libperl.so.*) echo "libperl${2#libperl.so.}$pt" ;;
+        debian*:libncursesw.so.6|ubuntu*:libncursesw.so.6) echo libncursesw6 ;;
+        debian*:libtinfo.so.6|ubuntu*:libtinfo.so.6) echo libtinfo6 ;;
+        debian*:libotr.so.5|ubuntu*:libotr.so.5) echo "libotr5$t" ;;
+        debian*:libgcrypt.so.20|ubuntu*:libgcrypt.so.20) echo libgcrypt20 ;;
+        debian*:libgpg-error.so.0|ubuntu*:libgpg-error.so.0) echo libgpg-error0 ;;
+        debian*:libcurl.so.4|ubuntu*:libcurl.so.4) echo "libcurl4$t" ;;
+        debian*:libchafa.so.0|ubuntu*:libchafa.so.0) echo "libchafa0$t" ;;
+        debian*:libutf8proc.so.*|ubuntu*:libutf8proc.so.*) echo "libutf8proc${2#libutf8proc.so.}" ;;
+        debian*:libsodium.so.23|ubuntu*:libsodium.so.23) echo libsodium23 ;;
+        debian*:libz.so.1|ubuntu*:libz.so.1) echo zlib1g ;;
         freebsd*:libglib-2.0.so.*|freebsd*:libgio-2.0.so.*|freebsd*:libgmodule-2.0.so.*|freebsd*:libgobject-2.0.so.*)
             echo glib ;;
         freebsd*:libintl.so.*) echo gettext-runtime ;;
