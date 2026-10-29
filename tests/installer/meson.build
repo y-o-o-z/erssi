@@ -36,7 +36,7 @@ endforeach
 foreach c : ['round-trip', 'xz', 'logs', 'overwrite', 'links', 'bad-archives', 'running', 'aside']
   test('installer backup ' + c, find_program('sh'),
     args : [files('test-shellter-backup.sh'), meson.current_source_dir() / '..' / '..', c],
-    env : test_env, timeout : 120)
+    env : test_env, timeout : 120, suite : 'tooling')
 endforeach
 
 # install.sh (inherited, with sudo and the package manager): the local
