@@ -59,7 +59,14 @@ cat > "$tmp/bin/meson" <<EOF
 printf '%s\n' "\$HOME" >> "$tmp/meson-homes"
 env | grep '^GIT_' >> "$tmp/meson-gitenv"
 printf '%s\n' "\${ERSSI_TEST_PACKAGER:-unset}" >> "$tmp/meson-packager"
-[ "\${STUB_MESON_INT:-}" = 1 ] && kill -INT "\$PPID"
+# as a Ctrl-C does: the hook and meson itself get SIGINT. A meson that
+# went on and exited 0 lets a bash in sh mode (/bin/sh of RHEL, Fedora)
+# take the SIGINT as handled by its child and go on
+if [ "\${STUB_MESON_INT:-}" = 1 ]; then
+    kill -INT "\$PPID"
+    trap - INT
+    kill -INT \$\$
+fi
 exit 0
 EOF
 chmod +x "$tmp/bin/ninja" "$tmp/bin/meson"

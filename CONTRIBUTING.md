@@ -20,6 +20,11 @@ ninja -C Build
 meson test -C Build
 ```
 
+The tests of the release tools (the installer, the packager, the release
+hook) are in the suite `tooling`: `meson test -C Build --suite tooling`
+runs only them, `--no-suite tooling` everything else (what the installer
+runs). A change to those tools runs both.
+
 The tests run with `HOME` inside the build directory, so they never write
 into your own `~/.erssi`. To try a build by hand, give it a home of its
 own, so it cannot touch your configuration or logs:

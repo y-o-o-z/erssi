@@ -39,6 +39,9 @@ BIN_TOOLS=""
 for t in tar xz sha256sum find cmp perl; do
     p=$(find_tool "$t") && BIN_TOOLS="$BIN_TOOLS $t=$p"
 done
+# hostile() writes its archives with Python's tarfile where perl has no
+# Archive::Tar
+REAL_PYTHON3=$(find_tool python3) || REAL_PYTHON3=""
 PS=$(find_tool ps) || PS=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
@@ -111,6 +114,25 @@ case "$1" in
         for a in "$@"; do case "$a" in -Dprefix=*) p=${a#-Dprefix=} ;; esac; done
         mkdir -p "$b" && : > "$b/build.ninja" && printf '%s\n' "$p" > "$b/prefix" || exit 1
         if [ "${FAKE_SLOW:-0}" = 1 ]; then sleep 1.5; fi ;;
+    test)
+        # the arguments in $TEST_W/meson-test; FAKE_TEST_FAIL: these tests
+        # fail, as meson prints them
+        printf '%s\n' "$*" >> "$TEST_W/meson-test"
+        if [ -n "${FAKE_TEST_FAIL:-}" ]; then
+            i=0
+            for t in $FAKE_TEST_FAIL; do
+                i=$((i + 1))
+                # the forms of meson 1.7 and of the newer one in the venv
+                if [ "$i" = 1 ]; then
+                    printf '%3d/9 erssi / %-40s FAIL             0.10s   exit status 1\n' "$i" "$t"
+                else
+                    printf '%3d/9 erssi:%-40s FAIL             0.10s   exit status 1\n' "$i" "$t"
+                fi
+            done
+            printf '\nOk:                 7\nFail:               %d\n' "$i"
+            exit 1
+        fi
+        printf 'Ok:                 9\nFail:               0\n' ;;
 esac
 exit 0
 EOF
@@ -600,28 +622,48 @@ repack() {
 }
 # hostile VERSION NAME [LINK]: the package of make_pkg VERSION (Debian 13)
 # with one more member NAME, an empty file or a hard link to LINK, listed
-# and signed again. Perl's Archive::Tar (core perl) writes it, storing NAME
-# and LINK as given, the same on every system: GNU tar and bsdtar each need
-# options of their own for that, and bsdtar rewrites a hard link's target
-# only when it copies another archive
+# and signed again. Perl's Archive::Tar writes it, or Python's tarfile
+# where perl has no Archive::Tar (RHEL and its kin package it apart from
+# perl), storing NAME and LINK as given, the same on every system: GNU tar
+# and bsdtar each need options of their own for that, and bsdtar rewrites
+# a hard link's target only when it copies another archive. Returns 1,
+# with the case named as skipped, when neither is there.
 hostile() {
     hv=$1 hn=$2 hl=${3:-}
     hr="$W/rel/shellter-v$hv"
     ha="$hr/erssi-$hv-debian13-amd64.tar"
+    hd="$W/pkg/$hv-debian13-amd64"
     rm -f "$ha" "$ha.xz"
-    # shellcheck disable=SC2016 # perl
-    if ! { ( cd "$W/pkg/$hv-debian13-amd64" && find "erssi-$hv-debian13-amd64" -print ) |
-        "$REAL_PERL" -MArchive::Tar -e '
-            my ($dir, $out, $name, $link) = @ARGV;
-            chomp(my @f = <STDIN>);
-            chdir $dir or die "$dir: $!\n";
-            my $t = Archive::Tar->new;
-            $t->add_files(@f) == @f or die "add_files\n";
-            $t->add_data($name, "", length $link ?
-                { type => Archive::Tar::Constant::HARDLINK(), linkname => $link } : {}) or die "add_data\n";
-            $t->write($out) or die "write $out\n";' \
-            "$W/pkg/$hv-debian13-amd64" "$ha" "$hn" "$hl" &&
-            xz "$ha" && ( cd "$hr" && sha256sum erssi-*.tar.xz ) > "$hr/SHA256SUMS"; }; then
+    if "$REAL_PERL" -MArchive::Tar -e 1 2>/dev/null; then
+        # shellcheck disable=SC2016 # perl
+        ( cd "$hd" && find "erssi-$hv-debian13-amd64" -print ) |
+            "$REAL_PERL" -MArchive::Tar -e '
+                my ($dir, $out, $name, $link) = @ARGV;
+                chomp(my @f = <STDIN>);
+                chdir $dir or die "$dir: $!\n";
+                my $t = Archive::Tar->new;
+                $t->add_files(@f) == @f or die "add_files\n";
+                $t->add_data($name, "", length $link ?
+                    { type => Archive::Tar::Constant::HARDLINK(), linkname => $link } : {}) or die "add_data\n";
+                $t->write($out) or die "write $out\n";' \
+                "$hd" "$ha" "$hn" "$hl"
+    elif [ -n "$REAL_PYTHON3" ]; then
+        ( cd "$hd" && find "erssi-$hv-debian13-amd64" -print ) |
+            "$REAL_PYTHON3" -I -c '
+import sys, tarfile
+d, out, name, link = sys.argv[1:5]
+with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
+    for f in sys.stdin.read().splitlines():
+        t.add(d + "/" + f, arcname=f, recursive=False)
+    i = tarfile.TarInfo(name)
+    if link:
+        i.type, i.linkname = tarfile.LNKTYPE, link
+    t.addfile(i)' "$hd" "$ha" "$hn" "$hl"
+    else
+        echo "ok $CASE: hostile $hn # SKIP no Archive::Tar for perl and no python3 here"
+        return 1
+    fi
+    if ! { [ -f "$ha" ] && xz "$ha" && ( cd "$hr" && sha256sum erssi-*.tar.xz ) > "$hr/SHA256SUMS"; }; then
         echo "FAIL $CASE: hostile $hn: no package"; exit 1
     fi
     sign_sums "$hv"
@@ -2063,6 +2105,27 @@ saved-settings)
     check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
     check "... and what is verified" grep -q '^What is verified: ' "$W/out"
     ;;
+tests-run)
+    # the tests of erssi run, without the suite of the release tools; a
+    # failed test is named, with what to do, and nothing is installed
+    rm -f "$W/meson-test"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test > "$W/out" 2>&1 < /dev/null
+    check "installed with the tests" [ $? = 0 ]
+    check "... the tests ran" grep -q 'Testing *ok' "$W/out"
+    check "... meson test without the suite tooling" grep -q -- '--no-suite tooling' "$W/meson-test"
+    check "... the number of tests said" grep -q '9 tests' "$W/out"
+    rm -rf "$HOME/.local/opt/erssi" "$HOME/.local/bin/erssi"
+    FAKE_TEST_FAIL="test-one test-two"; export FAKE_TEST_FAIL
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test > "$W/out" 2>&1 < /dev/null
+    rc=$?
+    unset FAKE_TEST_FAIL
+    check "a failed test: refused" [ "$rc" = 1 ]
+    check "... the tests named" grep -q 'tests failed: test-one, test-two - nothing was installed' "$W/out"
+    check "... where the results are" grep -q 'meson-logs/testlog.txt' "$W/out"
+    check "... how to report it" grep -qF 'https://github.com/y-o-o-z/erssi/issues' "$W/out"
+    check "... how to install anyway" grep -qF 'sh -s -- --no-test' "$W/out"
+    check "... nothing installed" [ ! -e "$HOME/.local/opt/erssi/bin/erssi" ]
+    ;;
 binary-platform)
     # the platform of the packages, from uname, os-release and freebsd-version
     binary_tools
@@ -2272,10 +2335,11 @@ binary-refused)
     refused "files outside the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
     # a name that goes up from the top directory
     make_pkg 2026.10.4 "$c4"
-    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/../../evil
-    # shellcheck disable=SC2016 # run by sh
-    check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
-    refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    if hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/../../evil; then
+        # shellcheck disable=SC2016 # run by sh
+        check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+        refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    fi
     # links that lead out of the package
     PT="$W/pkg/2026.10.4-debian13-amd64/erssi-2026.10.4-debian13-amd64"
     make_pkg 2026.10.4 "$c4"
@@ -2297,10 +2361,11 @@ binary-refused)
     repack 2026.10.4
     refused "a symbolic link with .. inside its target" "holds a symbolic link whose target is absolute or has a .. in it"
     make_pkg 2026.10.4 "$c4"
-    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/share/irssi/h1 etc/passwd
-    # shellcheck disable=SC2016 # run by sh
-    check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
-    refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    if hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/share/irssi/h1 etc/passwd; then
+        # shellcheck disable=SC2016 # run by sh
+        check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+        refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    fi
     # a missing library: named, with the package to install
     good_pkg 2026.10.4 "$c4"
     FAKE_LDD_MISSING="libchafa.so.0 libperl.so.5.40 libunknown.so.7"; export FAKE_LDD_MISSING
@@ -2905,6 +2970,13 @@ binary-fallback)
     run_bin
     check "no ssh-keygen: built from source" grep -q 'no ssh-keygen to check the signature of a binary package' "$W/out"
     check "... installed" [ "$RC" = 0 ]
+    check "... the package that gives the ready-made one named" grep -qF 'for the ready-made package instead: sudo apt install openssh-client, then run this installer again' "$W/out"
+    # and when the build itself needs packages: named there as the way
+    # without a build
+    rm -f "$W/shim/cc"
+    run_bin
+    check "no ssh-keygen, no compiler: refused" [ "$RC" = 1 ]
+    check "... the way without a build named" grep -qF 'Or, without a build: sudo apt install openssh-client' "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;
