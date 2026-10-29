@@ -2003,22 +2003,26 @@ do_backup() {
 }
 
 # ── restore ──
-# 0 when the lock of an erssi is held on the home; 1 when not; 2 when no
-# tool here can tell
+# 0 when the lock of an erssi is held on the home; 1 when not; 2 when it
+# cannot be told (no tool here, or the file system has no locks): the
+# same with every tool
 bk_lock_held() {
     lk=$1/erssi.lock
     [ -f "$lk" ] && [ ! -L "$lk" ] || return 1
     if have perl; then
-        # 6 = LOCK_EX | LOCK_NB
-        perl -e 'open(my $f, "+<", $ARGV[0]) or exit 2; exit(flock($f, 6) ? 1 : 0)' "$lk"
-        return
+        # 6 = LOCK_EX | LOCK_NB; held only when the lock would block
+        rc=0
+        perl -e 'open(my $f, "+<", $ARGV[0]) or exit 2; flock($f, 6) and exit 1;
+            exit($!{EWOULDBLOCK} || $!{EAGAIN} ? 0 : 2)' "$lk" || rc=$?
+        case "$rc" in 0|1) return "$rc" ;; *) return 2 ;; esac
     fi
     if have flock; then
         rc=0; flock -n -x -E 75 "$lk" true 2>/dev/null || rc=$?
         case "$rc" in 0) return 1 ;; 75) return 0 ;; *) return 2 ;; esac
     fi
     if have lockf; then
-        rc=0; lockf -n -s -t 0 "$lk" true 2>/dev/null || rc=$?
+        # -k: lockf removes the file afterwards otherwise
+        rc=0; lockf -k -n -s -t 0 "$lk" true 2>/dev/null || rc=$?
         case "$rc" in 0) return 1 ;; 75) return 0 ;; *) return 2 ;; esac
     fi
     return 2
@@ -2330,11 +2334,11 @@ do_restore() {
         pids=${pids% }
         [ -z "$pids" ] || bk_fail "an erssi is running on $(tilde "$T") (pid $pids) - /quit it first"
         if [ "$held" = 2 ] && [ "$pslist" = 0 ]; then
-            warn "cannot tell whether an erssi runs on $(tilde "$T") (no perl, flock or lockf, and no process list): make sure none does"
+            warn "cannot tell whether an erssi runs on $(tilde "$T") (its lock cannot be checked, and no process list): make sure none does"
         elif [ "$pslist" = 0 ]; then
             warn "no process list here: an erssi older than 2026.11.0 running on $(tilde "$T") would not be noticed"
         elif [ "$held" = 2 ]; then
-            warn "no perl, flock or lockf to check $(tilde "$T/erssi.lock"): only the process list was checked"
+            warn "$(tilde "$T/erssi.lock") cannot be checked here (no perl, flock or lockf, or a file system without locks): only the process list was checked"
         fi
         ASIDE=$T.before-restore-$(date +%Y%m%d-%H%M%S)
         i=1

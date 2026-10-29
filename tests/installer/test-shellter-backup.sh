@@ -490,6 +490,25 @@ file-changed)
     fi
     ;;
 
+lock-unknown)
+    # a file system without locks: perl's flock fails with ENOLCK. That
+    # says nothing about an erssi: the process list decides, with a word
+    command -v perl >/dev/null 2>&1 || { echo "skip: no perl"; exit 77; }
+    make_home "$E"
+    run --backup "$W/b.tar.gz"
+    mkdir -p "$W/perllib"
+    cat > "$W/perllib/NoLocks.pm" <<'PM'
+package NoLocks;
+use Errno;
+BEGIN { *CORE::GLOBAL::flock = sub { $! = Errno::ENOLCK(); return 0 }; }
+1;
+PM
+    PERL5LIB=$W/perllib PERL5OPT=-MNoLocks run --restore "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "a lock that cannot be taken is not taken for a running erssi" [ "$RC" = 0 ]
+    check "it says only the process list was checked" said "only the process list was checked"
+    ;;
+
 self-check)
     make_home "$E"
     FAKE_TAR_FIFO=1 run --backup "$W/b.tar.gz"
