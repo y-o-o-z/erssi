@@ -28,6 +28,13 @@
 #       and LC_ALL=C set. No ELF file of the package
 #       may have an RPATH or RUNPATH, except the system perl's CORE
 #       directory (FreeBSD's perl links libperl that way).
+#   build-binary.sh [--repo DIR] [--work DIR] [--keep-work] --verify TARBALL
+#       Builds the package TARBALL again here, from the release tag its
+#       MANIFEST names, exactly as above (the same checks, the full test
+#       suite), and compares the two: exit 0 when they are identical byte
+#       for byte (the same sha256), 1 when they differ, with the files
+#       that differ and the MANIFEST lines that tell the two builds'
+#       compilers and libraries apart. TARBALL must be for this platform.
 #   build-binary.sh --sums DIR
 #       Writes DIR/SHA256SUMS over the tarballs in DIR (one release) and
 #       prints the command that signs it.
@@ -68,6 +75,7 @@ die() { printf 'build-binary: %s\n' "$*" >&2; exit 1; }
 usage() {
     printf 'build-binary: %s\n' "$1" >&2
     echo 'usage: build-binary.sh [--repo DIR] [--out DIR] [--work DIR] [--keep-work] TAG' >&2
+    echo '       build-binary.sh [--repo DIR] [--work DIR] [--keep-work] --verify TARBALL' >&2
     echo '       build-binary.sh --sums DIR' >&2
     exit 2
 }
@@ -175,6 +183,28 @@ libc_version() {
     esac
 }
 
+# the build's tools and libraries, as MANIFEST lines (cc=, meson=, ninja=,
+# libs=): what another build must have to make the same bytes
+toolchain() {
+    printf 'cc=%s\n' "$(cc --version 2>/dev/null | head -n 1)"
+    printf 'meson=%s\n' "$(meson --version 2>/dev/null)"
+    printf 'ninja=%s\n' "$(ninja --version 2>/dev/null)"
+    libs=
+    for m in glib-2.0 openssl libotr libgcrypt libcurl chafa libutf8proc; do
+        v=$(pkg-config --modversion "$m" 2>/dev/null) || v='?'
+        libs="$libs $m=$v"
+    done
+    printf 'libs=%s\n' "${libs# }"
+}
+
+# the MANIFEST of package $1 (on stdout)
+tarball_manifest() {
+    top=$(xz -dc "$1" 2>/dev/null | tar -tf - 2>/dev/null | head -n 1) || return 1
+    top=${top%%/*}
+    case $top in erssi-*) ;; *) return 1 ;; esac
+    xz -dc "$1" | tar -xOf - "$top/MANIFEST" 2>/dev/null
+}
+
 # date -u of epoch $1 in format $2 (GNU date, BSD date)
 epoch_date() {
     date -u -d "@$1" "+$2" 2>/dev/null || date -u -r "$1" "+$2"
@@ -278,6 +308,41 @@ pack_tree() {   # dir tarball work
     mv -f "$ptar.tmp" "$ptar" || die "cannot write $ptar"
 }
 
+# --verify: the package $1 (given) against $2 (built here), in WORK;
+# exit 0 when identical, 1 with what differs
+compare_packages() {
+    VSUM=$(sha256_of "$1") || die "cannot compute the sha256 of $1"
+    SUM=$(sha256_of "$2") || die "cannot compute the sha256 of $2"
+    if [ "$VSUM" = "$SUM" ]; then
+        say "reproduced: $(basename -- "$1") is identical to the build here"
+        say "sha256 $SUM"
+        exit 0
+    fi
+    say "NOT reproduced: $(basename -- "$1") differs from the build here"
+    say "  given   sha256 $VSUM"
+    say "  here    sha256 $SUM"
+    mkdir "$WORK/given" "$WORK/here" || die "cannot make $WORK/given"
+    (cd "$WORK/given" && xz -dc "$1" | tar -xf -) || die "cannot unpack $1"
+    (cd "$WORK/here" && xz -dc "$2" | tar -xf -) || die "cannot unpack $2"
+    (cd "$WORK/given" && find . -print | LC_ALL=C sort) > "$WORK/given.list"
+    (cd "$WORK/here" && find . -print | LC_ALL=C sort) > "$WORK/here.list"
+    LC_ALL=C comm -3 "$WORK/given.list" "$WORK/here.list" |
+        awk -F '\t' '{ if ($1 == "") print "  only here:  " $2; else print "  only given: " $1 }' | head -n 20
+    while IFS= read -r f; do
+        if [ -f "$WORK/given/$f" ] && [ ! -L "$WORK/given/$f" ] && [ -f "$WORK/here/$f" ]; then
+            cmp -s "$WORK/given/$f" "$WORK/here/$f" || printf '  differs:    %s\n' "${f#./}"
+        fi
+    done < "$WORK/given.list" | head -n 40
+    m=$(find "$WORK/given" -name MANIFEST | head -n 1)
+    h=$(find "$WORK/here" -name MANIFEST | head -n 1)
+    if [ -n "$m" ] && [ -n "$h" ] && ! cmp -s "$m" "$h"; then
+        say "the MANIFESTs differ (a different compiler or library makes other bytes):"
+        diff "$m" "$h" | sed -n 's/^< /  given: /p; s/^> /  here:  /p'
+    fi
+    [ "$KEEP" = 1 ] || say "(--keep-work keeps both trees to compare: $WORK/given, $WORK/here)"
+    exit 1
+}
+
 # ── a package ────────────────────────────────────────────────────────
 # a build in an empty environment: run again under env -i (the checks
 # and --sums need none of it). BUILD_BINARY_CLEAN marks the second run.
@@ -293,6 +358,7 @@ OUT=.
 WORK=
 KEEP=0
 SUMS=
+VERIFY=
 while [ $# -gt 0 ]; do
     case $1 in
         --repo) [ $# -ge 2 ] || usage "--repo needs a directory"; REPO=$2; shift 2 ;;
@@ -300,6 +366,7 @@ while [ $# -gt 0 ]; do
         --work) [ $# -ge 2 ] || usage "--work needs a directory"; WORK=$2; shift 2 ;;
         --keep-work) KEEP=1; shift ;;
         --sums) [ $# -ge 2 ] || usage "--sums needs a directory"; SUMS=$2; shift 2 ;;
+        --verify) [ $# -ge 2 ] || usage "--verify needs a package"; VERIFY=$2; shift 2 ;;
         # the checks of an installed tree alone, for the packager's test
         --check-stage)
             [ $# -eq 2 ] || usage "--check-stage takes one directory"
@@ -325,8 +392,22 @@ if [ -n "$SUMS" ]; then
     write_sums "$SUMS"
     exit 0
 fi
-[ $# -eq 1 ] || usage "expected one release tag"
-TAG=$1
+if [ -n "$VERIFY" ]; then
+    [ $# -eq 0 ] || usage "--verify takes no tag: the package's MANIFEST names it"
+    [ -f "$VERIFY" ] || die "$VERIFY is not a file"
+    VERIFY=$(cd -- "$(dirname -- "$VERIFY")" && pwd)/$(basename -- "$VERIFY")
+    have xz || die "xz is needed"
+    VMANIFEST=$(tarball_manifest "$VERIFY") || die "$VERIFY is not a package (no MANIFEST in it)"
+    TAG=$(printf '%s\n' "$VMANIFEST" | sed -n 's/^tag=//p')
+    VPLATFORM=$(printf '%s\n' "$VMANIFEST" | sed -n 's/^platform=//p')
+    [ -n "$TAG" ] || die "the MANIFEST of $VERIFY names no tag"
+    HERE=$(platform) || die "unknown platform: $(uname -s) $(uname -m)"
+    [ "$VPLATFORM" = "$HERE" ] || die "$VERIFY is for ${VPLATFORM:-(none)}, this is $HERE - build it again on $VPLATFORM"
+    OUT=
+else
+    [ $# -eq 1 ] || usage "expected one release tag"
+    TAG=$1
+fi
 case $TAG in
     shellter-v[0-9]*.[0-9]*.[0-9]*) VERSION=${TAG#shellter-v} ;;
     *) die "$TAG is not a release tag (shellter-vYYYY.M.PATCH)" ;;
@@ -334,7 +415,7 @@ esac
 printf '%s\n' "$VERSION" | grep -Eq '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$' ||
     die "$TAG is not a release tag (shellter-vYYYY.M.PATCH)"
 
-for t in git meson ninja perl tar xz strip readelf od sort; do
+for t in git meson ninja perl tar xz strip readelf od sort cc pkg-config; do
     have "$t" || die "$t is needed"
 done
 can_verify || die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed)"
@@ -347,8 +428,10 @@ if [ -z "$REPO" ]; then
     REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null) ||
         die "$(dirname "$0") is not in a git repository - give --repo"
 fi
-mkdir -p "$OUT" || die "cannot make $OUT"
-OUT=$(cd "$OUT" && pwd) || die "cannot use $OUT"
+if [ -n "$OUT" ]; then
+    mkdir -p "$OUT" || die "cannot make $OUT"
+    OUT=$(cd "$OUT" && pwd) || die "cannot use $OUT"
+fi
 if [ -n "$WORK" ]; then
     [ ! -e "$WORK" ] || die "$WORK exists - the build needs a new directory"
     mkdir -p "$WORK" || die "cannot make $WORK"
@@ -357,6 +440,7 @@ else
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/build-binary.XXXXXX") || die "cannot make a temporary directory"
 fi
 WORK=$(cd "$WORK" && pwd)
+# shellcheck disable=SC2317 # run by the trap
 cleanup() {
     if [ "$KEEP" = 1 ]; then
         say "the work directory stays: $WORK"
@@ -369,7 +453,7 @@ trap 'exit 1' HUP INT TERM
 
 NAME=erssi-$VERSION-$PLATFORM
 TARBALL=$OUT/$NAME.tar.xz
-[ ! -e "$TARBALL" ] || die "$TARBALL exists"
+[ -n "$VERIFY" ] || [ ! -e "$TARBALL" ] || die "$TARBALL exists"
 
 # the build sees nothing of the user's: no ~/.erssi, no git or ssh config
 mkdir -m 700 "$WORK/home" "$WORK/tmp" || die "cannot make $WORK/home"
@@ -378,8 +462,24 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 # a package test running inside this build must not start another one
 export ERSSI_BUILD_BINARY=1
 
-say "$TAG from $REPO for $PLATFORM"
 SRC=$WORK/src
+if [ -n "$VERIFY" ]; then
+    # built again by the release's own packager (that of the signed tag,
+    # checked here first and by itself again): the same script that made
+    # the package, also for releases older than this one
+    say "$(basename -- "$VERIFY"): $TAG built again from $REPO for $PLATFORM"
+    git clone -q --no-checkout --no-local -- "$REPO" "$SRC" > "$WORK/clone.log" 2>&1 ||
+        die "cannot clone $REPO: $(tail -n 1 "$WORK/clone.log")"
+    signed_tag "$SRC" "$TAG" || die "$TAG is not an annotated tag signed by the release key - nothing to compare"
+    COMMIT=$(git -C "$SRC" rev-parse --verify -q "$TAG_OBJ^{commit}") || die "$TAG names no commit"
+    git -C "$SRC" -c advice.detachedHead=false checkout -q "$COMMIT" || die "cannot check out $COMMIT"
+    [ -f "$SRC/utils/build-binary.sh" ] || die "$TAG has no utils/build-binary.sh - it has no packages"
+    sh "$SRC/utils/build-binary.sh" --repo "$REPO" --out "$WORK/out" --work "$WORK/build-work" "$TAG" ||
+        die "the build of $TAG failed - nothing to compare"
+    compare_packages "$VERIFY" "$WORK/out/$NAME.tar.xz"
+fi
+say "$TAG from $REPO for $PLATFORM"
+
 git clone -q --no-checkout --no-local -- "$REPO" "$SRC" > "$WORK/clone.log" 2>&1 ||
     die "cannot clone $REPO: $(tail -n 1 "$WORK/clone.log")"
 signed_tag "$SRC" "$TAG" || die "$TAG is not an annotated tag signed by the release key - no package"
@@ -455,6 +555,7 @@ done || die "strip failed"
     printf 'libc=%s\n' "$LIBC"
     printf 'built=%s\n' "$BUILT"
     printf 'needed=%s\n' "$NEEDED"
+    toolchain
 } | LC_ALL=C sort > "$PKG/MANIFEST" || die "cannot write the MANIFEST"
 
 # reproducible: modes from the umask out, every entry dated to the commit,

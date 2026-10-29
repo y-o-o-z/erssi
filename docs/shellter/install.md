@@ -392,6 +392,34 @@ platform and the commit of the release (`git rev-parse
 'shellter-v2026.10.6^{commit}'` in a clone with the verified tag, or the
 `RELEASES` line of a checked installer).
 
+### Rebuilding a binary package yourself
+
+The packages are reproducible: built from the same signed tag on the same
+platform, with the same compiler and libraries, they are the same bytes.
+So you need not trust the machine that built a package: build it again
+and compare. In a clone of the repository, on the package's platform,
+with the build tools of [Manual build](#manual-build) (and `xz`):
+
+```sh
+git clone https://github.com/y-o-o-z/erssi.git && cd erssi
+sh utils/build-binary.sh --verify ../erssi-$v-$p.tar.xz
+```
+
+`--verify` reads the tag from the package's `MANIFEST`, checks that the
+tag is signed by the release key, builds the release again with that
+release's own `utils/build-binary.sh` (the full test suite included, a
+few minutes) and compares. It prints `reproduced: … is identical to the
+build here` with the sha256 and exits 0; otherwise it says `NOT
+reproduced`, lists the files that differ and exits 1. A difference
+usually means other versions of the tools: from 2026.11.0 on, the
+`MANIFEST` records the compiler (`cc=`), `meson=`, `ninja=` and the
+libraries (`libs=`) the package was built with, next to `perl_version=`
+and `libc=`, and `--verify` shows the lines where the two builds differ.
+A distribution update of a library between the release and your build
+(a security fix of GLib, say) is enough to change the bytes, so a
+difference is not by itself a sign of tampering; an identical build is
+proof that the package is what its tag says.
+
 ## Files in ~/.erssi
 
 erssi keeps its configuration in `~/.erssi/`, so it runs side by side with
