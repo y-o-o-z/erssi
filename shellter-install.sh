@@ -1145,16 +1145,24 @@ bin_cleanup() {
     [ -z "${BLOG:-}" ] || rm -f "$BLOG"
     STAGE="" BWORK="" BLOCK="" BLOG=""
 }
+# 0 when the packages at base $1 may have one for platform $2: the
+# releases have packages for Debian, Ubuntu and FreeBSD only; a
+# --binary-base of one's own may have any
+may_have_package() {
+    [ "$1" = "$BINARY_BASE_DEFAULT" ] || return 0
+    case "$2" in debian*|ubuntu*|freebsd*) return 0 ;; esac
+    return 1
+}
 # the package that has the tool $1 for the package manager $PM, if known
 tool_pkg() {
     case "$PM:$1" in
         apt:ssh-keygen) echo openssh-client ;;
         dnf:ssh-keygen|zypper:ssh-keygen) echo openssh-clients ;;
         apk:ssh-keygen|pacman:ssh-keygen) echo openssh ;;
+        pkg:*|*:) ;;
         apt:xz) echo xz-utils ;;
         *:xz) echo xz ;;
         *:sha256sum) echo coreutils ;;
-        pkg:*) ;;
         *:perl|*:curl) echo "$1" ;;
     esac
 }
@@ -1199,6 +1207,7 @@ binary_install() {
     # what would let this installer take the package of the release (if
     # there is one for the platform) instead of building it: one small
     # package, named with the build's own list when that stops for packages
+    may_have_package "$BINARY_BASE" "$PLATFORM" || BIN_TOOL=""
     BIN_TOOL_PKG=$(tool_pkg "$BIN_TOOL")
     if [ -n "$why" ]; then binary_fallback "$why"; return 0; fi
 

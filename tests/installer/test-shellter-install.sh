@@ -2271,6 +2271,25 @@ binary-platform)
     lp ubuntu24-amd64 libchafa.so.0 libchafa0t64
     lp ubuntu24-amd64 libutf8proc.so.3 libutf8proc3
     lp freebsd15-amd64 libperl.so.5.42 perl5
+    # the hint "for the ready-made package" only where the releases may
+    # have one
+    mh() {   # base platform -> want rc
+        fn 'may_have_package "$1" "$2"' "$1" "$2"
+        check "may_have_package $1 $2: $3" [ "$RC" = "$3" ]
+    }
+    gh=https://github.com/y-o-o-z/erssi/releases/download
+    mh "$gh" debian12-amd64 0
+    mh "$gh" ubuntu24-amd64 0
+    mh "$gh" freebsd15-amd64 0
+    mh "$gh" almalinux10-amd64 1
+    mh "$gh" alpine3-amd64 1
+    mh "$W/rel" almalinux10-amd64 0
+    fn 'PM=pkg; tool_pkg xz'
+    check "tool_pkg on FreeBSD: nothing (in base)" [ ! -s "$W/fn.out" ]
+    fn 'PM=dnf; tool_pkg ssh-keygen'
+    check "tool_pkg dnf ssh-keygen: openssh-clients" [ "$(cat "$W/fn.out")" = openssh-clients ]
+    fn 'PM=apt; tool_pkg ""'
+    check "tool_pkg of no tool: nothing" [ ! -s "$W/fn.out" ]
     # the link switch renames a new link over the old one: never into the
     # directory the old one points to (as mv would)
     mkdir -p "$W/sw/a" "$W/sw/b" && ln -s a "$W/sw/cur"
