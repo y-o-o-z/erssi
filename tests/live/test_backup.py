@@ -6,7 +6,8 @@ runs, so a restore onto its home is refused and changes nothing, also
 when run by the installer directly; a backup taken while it runs is a
 new file of mode 0600 without the lock, and a restore into a new home
 gives the same files, which an erssi then starts with. erssi --help
-names the options, and --with-logs or --dry-run alone are refused.
+names the options, and --with-logs or --dry-run alone are refused. The
+lock survives /upgrade: the new erssi holds it, once.
 erssi runs the installer of its own installation (PKGDATADIR): in a
 build that is not relocatable that is the compiled prefix, not this
 test's install, so those steps run only in a relocatable build.
@@ -118,6 +119,40 @@ def main():
             except BlockingIOError:
                 pass
 
+    def t_upgrade_keeps_lock():
+        """/UPGRADE runs a new erssi in the same process: the lock is let go
+        with the exec (close-on-exec) and taken again by the new one, once"""
+        a = st["alice"]
+        pid = a.proc.pid
+        lock = a.home / "erssi.lock"
+        a.type("/upgrade")
+
+        def upgraded():
+            r = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True)
+            return "--session" in r.stdout
+        assert harness.wait_until(upgraded, 20), "erssi did not run again with --session after /upgrade"
+
+        def held():
+            with open(lock, "r+") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return False
+                except BlockingIOError:
+                    return True
+        assert harness.wait_until(held, 10), "erssi.lock is not locked after /upgrade"
+        fds = Path(f"/proc/{pid}/fd")
+        if fds.is_dir():
+            ino = lock.stat().st_ino
+            n = 0
+            for fd in fds.iterdir():
+                try:
+                    if os.stat(fd).st_ino == ino:
+                        n += 1
+                except OSError:
+                    pass
+            assert n == 1, f"erssi holds erssi.lock {n} times after /upgrade (the old descriptor was inherited?)"
+        a.wait_ready()
+
     def t_backup_while_running():
         relocatable()
         a = st["alice"]
@@ -187,7 +222,7 @@ def main():
         c.quit()
 
     try:
-        harness.main([t_install, t_help, t_start, t_backup_while_running,
+        harness.main([t_install, t_help, t_start, t_upgrade_keeps_lock, t_backup_while_running,
                       t_restore_refused_while_running, t_restore_new_home])
     finally:
         for name in ("alice", "carol"):
