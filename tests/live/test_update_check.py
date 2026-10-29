@@ -108,7 +108,7 @@ def main():
         assert "notified=2099.1.0" in text and "available=2099.1.0" in text, text
         # /UPDATE: the setting is off, and what the last check found
         e.type_and_wait("/update")
-        assert wait_log(e, "Update check is off: /SET update_check on checks once a day"), log_text(e)[-2000:]
+        assert wait_log(e, "Update check is off: /SET update_check on checks once a day (it contacts the erssi repository"), log_text(e)[-2000:]
         # an error is said when asked for
         answer(d, "error cannot reach https://github.com/y-o-o-z/erssi.git", 1)
         e.type_and_wait("/update check")

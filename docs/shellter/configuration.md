@@ -70,7 +70,8 @@ set -g allow-passthrough on           # for notifications
 
 erssi can tell you when a new signed release is out, so an erssi that
 lives in tmux for months does not stay on an old release. It is off by
-default, because it contacts GitHub:
+default, because it contacts the erssi repository (GitHub, unless you
+installed from another `--repo`):
 
 ```
 /set update_check on                     # check once a day

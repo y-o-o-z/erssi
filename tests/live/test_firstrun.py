@@ -24,7 +24,8 @@ import harness  # noqa: E402
 
 WAIT = 15
 ASK = b"Set up now? [Y/n]"
-UPDATE_ASK = b"Check once a day for a new signed erssi release (contacts github.com, installs nothing)? [y/N] "
+UPDATE_ASK = (b"Check once a day for a new signed erssi release (contacts the erssi repository"
+              b" - github.com unless you installed from elsewhere - and installs nothing)? [y/N] ")
 
 
 def main():
