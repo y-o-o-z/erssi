@@ -213,7 +213,8 @@ static gboolean account_valid(const char *s)
 
 FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtrArray *networks,
                              char **themes, const char *default_nick,
-                             const char *default_theme, FIRSTRUN_ANSWERS *answers)
+                             const char *default_theme, gboolean offer_update_check,
+                             FIRSTRUN_ANSWERS *answers)
 {
 	FIRSTRUN_NETWORK *chosen = NULL;
 	int ntheme = 0, def_net = 1, choice = 0, tries;
@@ -370,6 +371,30 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 				break;
 			}
 			PROMPT(out, "  not a valid choice\n");
+		}
+	}
+
+	/* update check: off unless asked for - it contacts GitHub */
+	if (offer_update_check) {
+		for (tries = 0; tries < FIRSTRUN_MAX_TRIES; tries++) {
+			PROMPT(out, "Check once a day for a new signed erssi release "
+			            "(contacts github.com, installs nothing)? [y/N] ");
+			line = read(ctx, FALSE);
+			if (line == NULL)
+				goto skipped;
+			trim(line);
+			if (*line == '\0' || g_ascii_strcasecmp(line, "n") == 0 ||
+			    g_ascii_strcasecmp(line, "no") == 0) {
+				g_free(line);
+				break;
+			}
+			if (g_ascii_strcasecmp(line, "y") == 0 || g_ascii_strcasecmp(line, "yes") == 0) {
+				answers->update_check = TRUE;
+				g_free(line);
+				break;
+			}
+			g_free(line);
+			PROMPT(out, "  y or n\n");
 		}
 	}
 	return FIRSTRUN_DONE;

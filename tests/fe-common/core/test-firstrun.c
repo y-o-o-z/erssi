@@ -98,6 +98,8 @@ static char *slurp(FILE *f)
 }
 
 static const char *const THEMES[] = { "shellter", "default", NULL };
+/* run_ask offers the update check question */
+static gboolean offer_update;
 
 static FIRSTRUN_RESULT run_ask(const char *const *lines, char **themes, FIRSTRUN_ANSWERS *a,
                                SCRIPT *s, char **outtext)
@@ -110,12 +112,89 @@ static FIRSTRUN_RESULT run_ask(const char *const *lines, char **themes, FIRSTRUN
 	g_assert_nonnull(out);
 	memset(s, 0, sizeof(*s));
 	s->lines = lines;
-	r = firstrun_ask(out, script_read, s, nets, themes, "defnick", "default", a);
+	r = firstrun_ask(out, script_read, s, nets, themes, "defnick", "default", offer_update, a);
 	*outtext = slurp(out);
 	fclose(out);
 	g_ptr_array_free(nets, TRUE);
 	config_close(config);
 	return r;
+}
+
+#define UPDATE_PROMPT "Check once a day for a new signed erssi release"
+
+static void test_ask_update_offered(void)
+{
+	const char *const yes[] = { "", "0", "wizuser", "", "y", NULL };
+	const char *const yes_long[] = { "", "0", "wizuser", "", " YES ", NULL };
+	const char *const enter[] = { "", "0", "wizuser", "", "", NULL };
+	const char *const no[] = { "", "0", "wizuser", "", "n", NULL };
+	const char *const reask[] = { "", "0", "wizuser", "", "maybe", "y", NULL };
+	const char *const bad3[] = { "", "0", "wizuser", "", "a", "b", "c", NULL };
+	const char *const eof[] = { "", "0", "wizuser", "", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	offer_update = TRUE;
+	g_assert_cmpint(run_ask(yes, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_true(a.update_check);
+	g_assert_nonnull(strstr(out, UPDATE_PROMPT " (contacts github.com, installs nothing)? [y/N] "));
+	g_free(out);
+	firstrun_answers_clear(&a);
+	g_assert_false(a.update_check);
+
+	g_assert_cmpint(run_ask(yes_long, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_true(a.update_check);
+	g_free(out);
+	firstrun_answers_clear(&a);
+
+	/* Enter keeps it off: it contacts GitHub */
+	g_assert_cmpint(run_ask(enter, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_false(a.update_check);
+	g_assert_cmpstr(a.nick, ==, "wizuser");
+	g_free(out);
+	firstrun_answers_clear(&a);
+
+	g_assert_cmpint(run_ask(no, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_false(a.update_check);
+	g_free(out);
+	firstrun_answers_clear(&a);
+
+	g_assert_cmpint(run_ask(reask, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_true(a.update_check);
+	g_assert_nonnull(strstr(out, "  y or n\n"));
+	g_free(out);
+	firstrun_answers_clear(&a);
+
+	/* three wrong answers: the default, off */
+	g_assert_cmpint(run_ask(bad3, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_false(a.update_check);
+	g_assert_cmpint(s.pos, ==, 7);
+	g_free(out);
+	firstrun_answers_clear(&a);
+
+	/* no answer: skipped, nothing kept */
+	g_assert_cmpint(run_ask(eof, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_SKIPPED);
+	g_assert_false(a.update_check);
+	g_assert_null(a.nick);
+	g_free(out);
+	offer_update = FALSE;
+}
+
+static void test_ask_update_not_offered(void)
+{
+	const char *const lines[] = { "", "0", "wizuser", "", "y", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_false(a.update_check);
+	g_assert_null(strstr(out, UPDATE_PROMPT));
+	/* the "y" was not read */
+	g_assert_cmpint(s.pos, ==, 4);
+	g_free(out);
+	firstrun_answers_clear(&a);
 }
 
 static void test_wanted(void)
@@ -1123,7 +1202,7 @@ static void test_unprintable_skipped(void)
 	memset(&sc, 0, sizeof(sc));
 	sc.lines = lines;
 	g_assert_cmpint(firstrun_ask(out, script_read, &sc, nets, (char **) THEMES, "n\033[2J",
-	                             "t\033[2J", &a),
+	                             "t\033[2J", FALSE, &a),
 	                ==, FIRSTRUN_DONE);
 	text = slurp(out);
 	fclose(out);
@@ -1373,6 +1452,8 @@ int main(int argc, char **argv)
 	g_test_init(&argc, &argv, NULL);
 
 	g_test_add_func("/firstrun/wanted", test_wanted);
+	g_test_add_func("/firstrun/ask_update_offered", test_ask_update_offered);
+	g_test_add_func("/firstrun/ask_update_not_offered", test_ask_update_not_offered);
 	g_test_add_func("/firstrun/networks", test_networks);
 	g_test_add_func("/firstrun/ask_full", test_ask_full);
 	g_test_add_func("/firstrun/ask_defaults_plaintext", test_ask_defaults_plaintext);

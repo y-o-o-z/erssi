@@ -3,8 +3,9 @@
 "n", EOF, --noconnect, TERM=dumb or no terminal on stdin or stdout, asked
 again with --setup (which needs a terminal); ^C (also at the password
 prompt) and SIGTERM leave without saving; the default-nick hint on a later
-start. No test chooses a network of the default config (that would connect
-to the internet): the network and SASL config changes are covered by the
+start; the update check question only with an installer (a stand-in,
+ERSSI_TEST_UPDATE_INSTALLER). No test chooses a network of the default
+config (that would connect to the internet): the network and SASL config changes are covered by the
 unit test /firstrun/apply. Only t_ctrl_c_password chooses a network, a
 127.0.0.1 one, with --noconnect, and quits at the password prompt.
 Usage: test_firstrun.py <build dir> [<source dir>]"""
@@ -23,6 +24,7 @@ import harness  # noqa: E402
 
 WAIT = 15
 ASK = b"Set up now? [Y/n]"
+UPDATE_ASK = b"Check once a day for a new signed erssi release (contacts github.com, installs nothing)? [y/N] "
 
 
 def main():
@@ -68,6 +70,7 @@ def main():
             answer(e, b"Theme [", b"\r")
             assert e.wait_output(b"Saved to", WAIT), e.text()[-2000:]
             assert f"Saved to {e.home}/config.".encode() in e.output(), e.text()[-2000:]
+            assert UPDATE_ASK not in e.output(), "the update check asked without an installer"
             cfg = e.home / "config"
             assert cfg.is_file(), "no config written"
             mode = stat.S_IMODE(cfg.stat().st_mode)
@@ -82,6 +85,26 @@ def main():
             assert 'nick = "wizuser";' in text, text
             assert "autoconnect" not in text, text
             assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+
+    def t_wizard_update_check():
+        """with an installer that made the install, the last question is
+        the daily update check: "y" turns update_check on; without one
+        (t_wizard_none) it is not asked"""
+        w = Path(tempfile.mkdtemp(prefix="update.", dir=work))
+        fake = w / "shellter-install.sh"
+        fake.write_text("#!/bin/sh\necho 'current 2026.11.0'\n")
+        e = harness.Erssi(st["inst"], w, "upd", env={"ERSSI_TEST_UPDATE_INSTALLER": str(fake)})
+        with e:
+            e.start()
+            answer(e, ASK, b"\r")
+            answer(e, b"Network [", b"0\r")
+            answer(e, b"Nick [", b"wizuser\r")
+            answer(e, b"Theme [", b"\r")
+            answer(e, UPDATE_ASK, b"y\r")
+            assert e.wait_output(b"Saved to", WAIT), e.text()[-2000:]
+            e.wait_terminal()
+            finish(e)
+            assert 'update_check = "yes";' in config_of(e), config_of(e)
 
     def t_skip_n():
         with fresh("bob") as e:
@@ -275,7 +298,7 @@ def main():
             assert "Your nick is still" not in e.all_log().read_text(errors="replace")
 
     try:
-        harness.main([t_install, t_wizard_none, t_skip_n, t_eof, t_no_tty, t_stdout_pipe,
+        harness.main([t_install, t_wizard_none, t_wizard_update_check, t_skip_n, t_eof, t_no_tty, t_stdout_pipe,
                       t_setup_no_tty, t_term_dumb, t_noconnect, t_setup_forced, t_setup_broken_config, t_ctrl_c,
                       t_sigterm, t_ctrl_c_password, t_hint])
     finally:

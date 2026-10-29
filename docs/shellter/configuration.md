@@ -17,7 +17,10 @@ the screen opens:
 1. a network (or none; the chosen one connects at every start),
 2. your nick,
 3. a SASL account, when that network has TLS with a verified certificate,
-4. the theme.
+4. the theme,
+5. whether erssi checks once a day for a new release (`update_check`,
+   see [Update notice](#update-notice); asked only when the installer
+   installed erssi, and Enter keeps it off).
 
 Enter keeps the default shown in brackets. The answers go to
 `~/.erssi/config` (mode 0600; a SASL password is stored there in plain
