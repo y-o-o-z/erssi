@@ -77,6 +77,16 @@ static int runs(void)
 	return n;
 }
 
+/* until the running check is done (10 s at most) */
+static void wait_check(void)
+{
+	gint64 end = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+
+	while (update_check_running() && g_get_monotonic_time() < end)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_false(update_check_running());
+}
+
 /* off, no state, nothing printed */
 static void reset(void)
 {
@@ -146,6 +156,45 @@ static void test_other_erssi_checked(void)
 	reset();
 }
 
+static int count(const char *text, const char *what)
+{
+	int n = 0;
+
+	while ((text = strstr(text, what)) != NULL) {
+		n++;
+		text += strlen(what);
+	}
+	return n;
+}
+
+/* "unmanaged" (another tool updates this erssi) is said once, and the
+ * daily check goes on: once the conf names no other tool any more, the
+ * check finds releases again. */
+static void test_unmanaged_checked_daily(void)
+{
+	reset();
+	write_state("last_check=1\nunmanaged=updated with: pkg upgrade erssi\n");
+	answer("unmanaged updated with: pkg upgrade erssi", 3);
+	set_check(TRUE);
+	g_assert_cmpint(count(printed->str, "updated with: pkg upgrade erssi"), ==, 1);
+	update_check_tick_now();
+	wait_check();
+	g_assert_cmpint(runs(), ==, 1);
+	/* the same answer is not said again */
+	g_assert_cmpint(count(printed->str, "updated with: pkg upgrade erssi"), ==, 1);
+	/* the next day (the state read again) the installer answers again */
+	set_check(FALSE);
+	write_state("last_check=1\nunmanaged=updated with: pkg upgrade erssi\n");
+	set_check(TRUE);
+	answer("update 2026.10.6 9999.2.0", 0);
+	update_check_tick_now();
+	wait_check();
+	g_assert_cmpint(runs(), ==, 2);
+	g_assert_cmpstr(update_check_available(), ==, "9999.2.0");
+	g_assert_nonnull(strstr(printed->str, "erssi 9999.2.0 is available (signed)"));
+	reset();
+}
+
 static void test_newer(void)
 {
 	g_assert_true(update_check_newer("2026.11.0", "2026.10.6"));
@@ -197,5 +246,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/module/running_version_not_available",
 	                test_running_version_not_available);
 	g_test_add_func("/update_check/module/other_erssi_checked", test_other_erssi_checked);
+	g_test_add_func("/update_check/module/unmanaged_checked_daily",
+	                test_unmanaged_checked_daily);
 	return g_test_run();
 }

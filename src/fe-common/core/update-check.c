@@ -839,7 +839,9 @@ static gboolean tick(gpointer data)
 		set_available(cached.available);
 		due = update_check_due_in((gint64) time(NULL), cached.last_check);
 	}
-	if (due == 0 && cached.unmanaged == NULL)
+	/* also after an "unmanaged" answer: the conf may name no other tool
+	   any more (an install with shellter-install.sh again) */
+	if (due == 0)
 		check_start(FALSE);
 	if (job == NULL)
 		tick_schedule(due > 0 ? due : UPDATE_TICK_MAX);

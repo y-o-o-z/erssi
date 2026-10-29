@@ -108,9 +108,13 @@ default, because it contacts GitHub:
   (a distribution package, a build of your own: no `shellter-install.sh`
   installed with it, or no `shellter-install.conf` in its prefix), one
   that another user installed (a system install made by root: root
-  updates it), or one whose conf names another tool (`UPDATE_COMMAND`).
-  Turning the setting on says why. In Capsicum capability mode erssi cannot start programs, so
-  there is no check; `erssi --check-update` from a shell still works.
+  updates it). Turning the setting on says why. For an install whose conf
+  names another tool (`UPDATE_COMMAND`) the installer says so, and erssi
+  says it once; it still asks the installer every day, which answers
+  from the conf without contacting anything, so the check finds releases
+  again once the conf names no other tool. In Capsicum capability mode
+  erssi cannot start programs, so there is no check; `erssi
+  --check-update` from a shell still works.
 
 ## Web client
 
