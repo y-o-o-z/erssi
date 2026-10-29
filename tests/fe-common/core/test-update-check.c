@@ -429,16 +429,31 @@ static void test_job_answers(void)
 	result_clear(&r);
 
 	/* the arguments erssi gives, and no terminal: stdin is /dev/null,
-	   git asks for no password */
+	   git asks for no password, no repository of erssi's environment
+	   reaches git */
+	g_setenv("GIT_DIR", "/nonexistent/.git", TRUE);
+	g_setenv("GIT_WORK_TREE", "/nonexistent", TRUE);
+	g_setenv("GIT_INDEX_FILE", "/nonexistent/.git/index", TRUE);
+	g_setenv("GIT_OBJECT_DIRECTORY", "/nonexistent/.git/objects", TRUE);
+	g_setenv("GIT_COMMON_DIR", "/nonexistent/.git", TRUE);
+	g_setenv("GIT_NAMESPACE", "x", TRUE);
 	run("[ \"$*\" = \"--update --check --porcelain --prefix $(dirname \"$0\")\" ] || exit 9\n"
 	    "if read x; then exit 8; fi\n"
 	    "[ \"$GIT_TERMINAL_PROMPT\" = 0 ] || exit 7\n"
+	    "env | grep -Eq '^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|COMMON_DIR|NAMESPACE)=' &&"
+	    " exit 5\n"
 	    "[ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] || exit 6\n"
 	    "echo 'current 1.0'\n",
 	    10000, &r, &pid);
 	g_assert_cmpstr(r.answer.reason, ==, NULL);
 	g_assert_cmpint(r.answer.kind, ==, UPDATE_ANSWER_CURRENT);
 	result_clear(&r);
+	g_unsetenv("GIT_DIR");
+	g_unsetenv("GIT_WORK_TREE");
+	g_unsetenv("GIT_INDEX_FILE");
+	g_unsetenv("GIT_OBJECT_DIRECTORY");
+	g_unsetenv("GIT_COMMON_DIR");
+	g_unsetenv("GIT_NAMESPACE");
 }
 
 static void test_job_garbage(void)

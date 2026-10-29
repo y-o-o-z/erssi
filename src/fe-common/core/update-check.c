@@ -455,9 +455,18 @@ static gboolean job_timeout(gpointer data)
 UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB_FUNC done,
                              void *data, GError **error)
 {
+	/* git rev-parse --local-env-vars, and GIT_NAMESPACE */
+	static const char *const git_env[] = {
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+		"GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+		"GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE",
+		"GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+		"GIT_COMMON_DIR", "GIT_NAMESPACE"
+	};
 	UPDATE_JOB *job;
 	char **envp;
 	int null_fd;
+	gsize i;
 	gboolean ok;
 
 	null_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
@@ -466,8 +475,12 @@ UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB
 		            "cannot open /dev/null: %s", g_strerror(errno));
 		return NULL;
 	}
-	/* git never asks for a password, no colours, plain ASCII messages */
+	/* git never asks for a password, no colours, plain ASCII messages;
+	   no repository of erssi's environment (erssi started in a git
+	   checkout or a hook): git would take it before -C */
 	envp = g_get_environ();
+	for (i = 0; i < G_N_ELEMENTS(git_env); i++)
+		envp = g_environ_unsetenv(envp, git_env[i]);
 	envp = g_environ_setenv(envp, "GIT_TERMINAL_PROMPT", "0", TRUE);
 	envp = g_environ_setenv(envp, "NO_COLOR", "1", TRUE);
 	envp = g_environ_setenv(envp, "LC_ALL", "C", TRUE);
