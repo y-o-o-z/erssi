@@ -41,7 +41,15 @@ that the installer checks the system first.
 The source build takes the newest release recorded in the installer, only
 if its tag points to the recorded commit and carries a valid signature by
 the release key (checked with git 2.34+ and ssh-keygen; without them the
-installer warns and checks the commit only), and runs the test suite.
+installer warns and checks the commit only), and runs the tests of erssi
+(`meson test --no-suite tooling`). The suite `tooling` tests the release
+tools themselves (this installer, the packager, the release hook): it is
+left out here, since a missing tool on your box (Perl's `Archive::Tar`,
+say) says nothing about the erssi you install, and CI and every release
+build run it. When a test of erssi fails, nothing is installed; the
+installer names the failed tests, where the full results are, and how to
+install the build anyway (`--no-test`, kept for later updates until
+`--test`). Please report such a failure, with that file.
 Either way erssi is installed to `~/.local/opt/erssi`, linked as
 `~/.local/bin/erssi`. Every step is one line; the output of the steps goes
 to `~/.local/state/erssi/install.log`, shown when a step fails. Works on

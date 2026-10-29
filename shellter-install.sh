@@ -2203,7 +2203,16 @@ done_ "$(elapsed $(($(now) - STEP_T0)))"
 # ── 5. test ──────────────────────────────────────────────────────────
 step "Testing"
 if [ "$RUN_TESTS" = 1 ]; then
-    run_logged "$MESON" test -C "$SRC/Build" || die_log "tests failed (all results: $SRC/Build/meson-logs/testlog.txt)"
+    # the tests of erssi itself: the suite 'tooling' tests the release
+    # tools (this installer, the packager, the release hook), not the erssi
+    # being installed, and needs tools a shell box may not have. A release
+    # older than the suite has no such tests named, so all of them run.
+    if ! run_logged "$MESON" test -C "$SRC/Build" --no-suite tooling; then
+        # the failed tests by name, and the way on
+        failed=$(sed -En 's/^ *[0-9]+\/[0-9]+ +(.*[^ ]) +(FAIL|ERROR|TIMEOUT) .*/\1/p' "$LOG" |
+            sed 's/^[^ /]* \/ //; s/^[A-Za-z0-9_+-]*://' | sort -u | head -n 5 | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+        die_log "tests failed${failed:+: $failed} - nothing was installed. All results: $SRC/Build/meson-logs/testlog.txt. Please report it (https://github.com/y-o-o-z/erssi/issues, with that file); to install this build anyway, run the installer again with --no-test (curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh -s -- --no-test; it is kept for updates until --test)"
+    fi
     n=$(sed -n 's/^Ok: *\([0-9]*\).*/\1/p' "$LOG" | tail -n 1)
     done_ "${n:+$n tests $S_SEP }$(elapsed $(($(now) - STEP_T0)))"
 else

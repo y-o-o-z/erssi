@@ -114,6 +114,25 @@ case "$1" in
         for a in "$@"; do case "$a" in -Dprefix=*) p=${a#-Dprefix=} ;; esac; done
         mkdir -p "$b" && : > "$b/build.ninja" && printf '%s\n' "$p" > "$b/prefix" || exit 1
         if [ "${FAKE_SLOW:-0}" = 1 ]; then sleep 1.5; fi ;;
+    test)
+        # the arguments in $TEST_W/meson-test; FAKE_TEST_FAIL: these tests
+        # fail, as meson prints them
+        printf '%s\n' "$*" >> "$TEST_W/meson-test"
+        if [ -n "${FAKE_TEST_FAIL:-}" ]; then
+            i=0
+            for t in $FAKE_TEST_FAIL; do
+                i=$((i + 1))
+                # the forms of meson 1.7 and of the newer one in the venv
+                if [ "$i" = 1 ]; then
+                    printf '%3d/9 erssi / %-40s FAIL             0.10s   exit status 1\n' "$i" "$t"
+                else
+                    printf '%3d/9 erssi:%-40s FAIL             0.10s   exit status 1\n' "$i" "$t"
+                fi
+            done
+            printf '\nOk:                 7\nFail:               %d\n' "$i"
+            exit 1
+        fi
+        printf 'Ok:                 9\nFail:               0\n' ;;
 esac
 exit 0
 EOF
@@ -2085,6 +2104,27 @@ saved-settings)
     check "--help names --no-clean" grep -q -- '^  --no-clean ' "$W/out"
     check "... and that the settings are kept" grep -qF 'shellter-install.conf' "$W/out"
     check "... and what is verified" grep -q '^What is verified: ' "$W/out"
+    ;;
+tests-run)
+    # the tests of erssi run, without the suite of the release tools; a
+    # failed test is named, with what to do, and nothing is installed
+    rm -f "$W/meson-test"
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test > "$W/out" 2>&1 < /dev/null
+    check "installed with the tests" [ $? = 0 ]
+    check "... the tests ran" grep -q 'Testing *ok' "$W/out"
+    check "... meson test without the suite tooling" grep -q -- '--no-suite tooling' "$W/meson-test"
+    check "... the number of tests said" grep -q '9 tests' "$W/out"
+    rm -rf "$HOME/.local/opt/erssi" "$HOME/.local/bin/erssi"
+    FAKE_TEST_FAIL="test-one test-two"; export FAKE_TEST_FAIL
+    sh "$SRC/shellter-install.sh" --repo "$W/repo" --ref main --test > "$W/out" 2>&1 < /dev/null
+    rc=$?
+    unset FAKE_TEST_FAIL
+    check "a failed test: refused" [ "$rc" = 1 ]
+    check "... the tests named" grep -q 'tests failed: test-one, test-two - nothing was installed' "$W/out"
+    check "... where the results are" grep -q 'meson-logs/testlog.txt' "$W/out"
+    check "... how to report it" grep -qF 'https://github.com/y-o-o-z/erssi/issues' "$W/out"
+    check "... how to install anyway" grep -qF 'sh -s -- --no-test' "$W/out"
+    check "... nothing installed" [ ! -e "$HOME/.local/opt/erssi/bin/erssi" ]
     ;;
 binary-platform)
     # the platform of the packages, from uname, os-release and freebsd-version
