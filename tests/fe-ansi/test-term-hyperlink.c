@@ -108,6 +108,13 @@ static const SCAN_ROW SCAN[] = {
 	{ "https://paypal.example\004" "1/" "@evil.example/", "https://paypal.example" },
 	{ "https://paypal.example\004" "d" "@evil.example/", "https://paypal.example" },
 	{ "https://paypal.example\004" "g" "@evil.example/", "https://paypal.example" },
+	/* a character the text view draws whole (under 16 bytes) is part of
+	 * it; a longer one the view draws as its first code point only, so
+	 * it ends the address (here x and 8 or 7 combining acute accents) */
+	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
+	  "https://example.org/a" },
+	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
+	  "https://example.org/ax%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81b" },
 	/* lines of one entry */
 	{ "https://a.example/\nhttps://b.example/", "https://a.example/ https://b.example/" },
 };

@@ -128,7 +128,7 @@ static GArray *line_units(const char *text, int charset)
 			u.chr = *p;
 			u.brk = TRUE;
 			next = p + 1;
-		} else if (*p < 0x80) {
+		} else if (*p < 0x80 && charset != TERM_TYPE_UTF8) {
 			u.chr = *p;
 			next = p + 1;
 		} else if (charset != TERM_TYPE_UTF8) {
@@ -139,10 +139,13 @@ static GArray *line_units(const char *text, int charset)
 			next = p + (charset == TERM_TYPE_BIG5 && p[1] != '\0' &&
 				    is_big5(p[0], p[1]) ? 2 : 1);
 		} else {
+			/* one character as the text view reads it: a grapheme
+			 * cluster. One it does not draw whole is no part of an
+			 * address. */
 			u.chr = textbuffer_read_unichar(p, &next, &width);
 			if (next <= p)
 				next = p + 1;
-			if (!cluster_is_ok(p, next))
+			if (next - p >= TERM_LINK_CLUSTER_MAX || !cluster_is_ok(p, next))
 				u.brk = TRUE;
 		}
 		u.end = next - base;

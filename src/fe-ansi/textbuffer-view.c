@@ -502,7 +502,7 @@ static int view_line_draw(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
 			if (unichar_isprint(chr)) {
 				if (view->utf8) {
 					/* Send entire grapheme cluster to preserve variation selectors */
-					char cluster_str[16];
+					char cluster_str[TERM_LINK_CLUSTER_MAX];
 					int cluster_len = end - text;
 					if (cluster_len < sizeof(cluster_str)) {
 						memcpy(cluster_str, text, cluster_len);
