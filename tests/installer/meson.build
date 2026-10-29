@@ -26,6 +26,14 @@ foreach c : ['ascii', 'utf8',
     env : test_env, timeout : 120)
 endforeach
 
+# shellter-install.sh --backup / --restore on homes made up in a temporary
+# directory (test-shellter-backup.sh SOURCE_ROOT CASE)
+foreach c : ['round-trip', 'xz', 'logs', 'overwrite', 'links', 'bad-archives', 'running', 'aside']
+  test('installer backup ' + c, find_program('sh'),
+    args : [files('test-shellter-backup.sh'), meson.current_source_dir() / '..' / '..', c],
+    env : test_env, timeout : 120)
+endforeach
+
 # install.sh (inherited, with sudo and the package manager): the local
 # install's ~/.local/bin, with a temporary HOME
 test('installer install.sh', find_program('sh'),
