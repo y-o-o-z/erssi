@@ -38,6 +38,11 @@ void update_answer_clear(UPDATE_ANSWER *answer);
 /* "2026.11.1": 1 to 4 numbers of 1 to 9 digits, separated by dots */
 gboolean update_check_version_valid(const char *version);
 
+/* TRUE when the valid version A is newer than the valid version B, number
+ * by number ("2026.10.10" > "2026.10.9", "1.3.10" < "2026.10.0"; a
+ * missing number is 0); FALSE when either is not valid */
+gboolean update_check_newer(const char *a, const char *b);
+
 /* ANSWER from what the installer printed on stdout (OUT, LEN bytes) and its
  * wait status: exactly one line, "update A B" or "current A" with exit 0,
  * "error R" with exit 1, "unmanaged R" with exit 3. Anything else -
@@ -102,12 +107,16 @@ void update_job_cancel(UPDATE_JOB *job);
 int update_job_pid(UPDATE_JOB *job);
 
 /* the newest version found - by the last check while update_check is on,
- * or by /UPDATE CHECK - else NULL (for the statusbar item; "update check
- * changed" is emitted when it changes) */
+ * or by /UPDATE CHECK - when it is newer than this erssi, else NULL (for
+ * the statusbar item; "update check changed" is emitted when it changes) */
 const char *update_check_available(void);
 /* TRUE when update_check can work in this installation (for the first-run
  * setup, which offers it only then) */
 gboolean update_check_possible(void);
+
+/* for the tests: the timer's work at once, and whether a check runs */
+void update_check_tick_now(void);
+gboolean update_check_running(void);
 
 void update_check_init(void);
 void update_check_deinit(void);

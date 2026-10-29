@@ -34,6 +34,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -80,6 +81,24 @@ gboolean update_check_version_valid(const char *version)
 			return FALSE;
 		}
 	}
+}
+
+gboolean update_check_newer(const char *a, const char *b)
+{
+	if (!update_check_version_valid(a) || !update_check_version_valid(b))
+		return FALSE;
+	while (*a != '\0' || *b != '\0') {
+		/* at most 9 digits each: no overflow */
+		long x = strtol(a, (char **) &a, 10), y = strtol(b, (char **) &b, 10);
+
+		if (x != y)
+			return x > y;
+		if (*a == '.')
+			a++;
+		if (*b == '.')
+			b++;
+	}
+	return FALSE;
 }
 
 /* printable ASCII, at most UPDATE_REASON_MAX bytes */
@@ -600,8 +619,12 @@ static void state_store(void)
 	g_free(path);
 }
 
+/* VERSION, unless this erssi is that release or a newer one already (it
+   was updated and /UPGRADEd since the check that found it) */
 static void set_available(const char *version)
 {
+	if (!update_check_newer(version, PACKAGE_VERSION))
+		version = NULL;
 	if (g_strcmp0(available, version) == 0)
 		return;
 	g_free(available);
@@ -916,9 +939,22 @@ static void cmd_update(const char *data, SERVER_REC *server, void *item)
 	if (cached.unmanaged != NULL)
 		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, TXT_UPDATE_UNAVAILABLE,
 		            cached.unmanaged);
-	else if (cached.available != NULL)
+	else if (update_check_newer(cached.available, PACKAGE_VERSION))
 		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, TXT_UPDATE_AVAILABLE, PACKAGE_VERSION,
 		            cached.available);
+}
+
+void update_check_tick_now(void)
+{
+	if (tick_tag != 0)
+		g_source_remove(tick_tag);
+	tick_tag = 0;
+	tick(NULL);
+}
+
+gboolean update_check_running(void)
+{
+	return job != NULL;
 }
 
 /* SYNTAX: UPDATE CHECK */
