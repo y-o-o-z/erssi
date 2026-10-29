@@ -28,7 +28,8 @@ done
 command -v python3 >/dev/null 2>&1 || { echo "skip: no python3 to make the bad archives"; exit 77; }
 
 W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
-trap 'rm -rf "$W"' EXIT
+# chmod first: a failing case may leave a directory no one may enter
+trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
 trap 'exit 1' HUP INT TERM
 chgrp "$(id -g)" "$W" || exit 1
 HOME=$W/home; export HOME
@@ -43,9 +44,28 @@ for a in "\$@"; do
         -*) [ "\$a" = - ] || { echo "stand-in tar: option \$a is not one of both tars" >&2; echo "BAD \$a" >> "$W/tar.opts"; exit 2; } ;;
     esac
 done
+# stand-ins for what is hard to make happen on time: a file that grows
+# while it is read (GNU tar's exit 1), another error, an entry --restore
+# refuses (a FIFO put into what is written)
+case " \$* " in
+    *" -c "*)
+        for top in "\$@"; do :; done
+        if [ -n "\${FAKE_TAR_FIFO:-}" ]; then mkfifo "\$top/home/fifo"; fi
+        if [ -n "\${FAKE_TAR_CHANGED:-}" ] || [ -n "\${FAKE_TAR_ERROR:-}" ]; then
+            "$REAL_TAR" "\$@" || exit
+            for f in \${FAKE_TAR_CHANGED:-}; do echo "tar: \$top/home/\$f: file changed as we read it" >&2; done
+            [ -z "\${FAKE_TAR_ERROR:-}" ] || echo "tar: \$top/home/\$FAKE_TAR_ERROR: Cannot open: Permission denied" >&2
+            exit 1
+        fi ;;
+esac
 exec "$REAL_TAR" "\$@"
 EOF
 chmod 755 "$W/shim/tar"
+# a UTF-8 locale with translations, for the cases that need one
+PL=""
+for l in pl_PL.UTF-8 pl_PL.utf8; do
+    if [ "$(LC_ALL=$l locale charmap 2>/dev/null)" = UTF-8 ]; then PL=$l; break; fi
+done
 PATH=$W/shim:$PATH; export PATH
 
 E=$HOME/.erssi
@@ -55,6 +75,7 @@ run() {   # installer options... -> output in $W/out, exit code in $RC
 }
 said() { grep -q -- "$1" "$W/out"; }
 show() { sed 's/^/    | /' "$W/out"; }
+# shellcheck disable=SC2012 # the mode string, of names the test made
 mode_of() { ls -ld "$1" | cut -c1-10; }
 
 # a home with what erssi keeps there, in modes erssi would not use
@@ -107,10 +128,12 @@ mkbad() {   # file kind
 import io, sys, tarfile
 out, kind = sys.argv[1], sys.argv[2]
 top = "erssi-backup-20260101-000000"
-def add(t, name, data=b"x", type_=tarfile.REGTYPE, link=""):
+def add(t, name, data=b"x", type_=tarfile.REGTYPE, link="", mode=None):
     i = tarfile.TarInfo(name)
     i.type = type_
     i.mode = 0o600 if type_ != tarfile.DIRTYPE else 0o700
+    if mode is not None:
+        i.mode = mode
     i.linkname = link
     if type_ == tarfile.REGTYPE:
         i.size = len(data)
@@ -131,6 +154,33 @@ with tarfile.open(out, "w:gz", format=tarfile.GNU_FORMAT) as t:
             manifest += "l\tscripts/x\t../config/..\n"
         if kind == "manifest-extra":
             manifest += "f\t1\tmissing\n"
+        # links of the MANIFEST that would lead out once made one after
+        # the other: a1/a2/a3/L made twice (the second ln follows the
+        # first into sub/), or a link below another link
+        # directories no one may enter or list (0000, 0100, 0300), with a
+        # file in each; -bad: and a MANIFEST that does not match
+        if kind.startswith("closed"):
+            for d, m in (("d0", 0o000), ("d1", 0o100), ("d3", 0o300)):
+                add(t, top + "/home/" + d, type_=tarfile.DIRTYPE, mode=m)
+                add(t, top + "/home/" + d + "/x")
+                manifest += "d\t" + d + "\nf\t1\t" + d + "/x\n"
+            if kind == "closed-bad":
+                manifest += "f\t1\tmissing\n"
+        if kind.startswith("links-"):
+            for d in ("a1", "a1/a2", "a1/a2/a3", "sub"):
+                add(t, top + "/home/" + d, type_=tarfile.DIRTYPE)
+                manifest += "d\t" + d + "\n"
+            add(t, top + "/home/f")
+            manifest += "f\t1\tf\n"
+            manifest = manifest.replace("files 1", "files 2")
+            manifest += {
+                "links-dup": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/a3/L\t../../../f\n",
+                "links-dup-same": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/a3/L\t../../../sub\n",
+                "links-dup-file-first": "l\ta1/a2/a3/L\t../../../f\nl\ta1/a2/a3/L\t../../../sub\n",
+                "links-below": "l\ta1/L\t../sub\nl\ta1/L/x\t../../f\n",
+                "links-through": "l\ta1/L\t../sub\nl\tM\ta1/L\n",
+                "links-fine": "l\ta1/a2/a3/L\t../../../sub\nl\ta1/a2/K\t../../f\n",
+            }[kind]
         add(t, top + "/MANIFEST", manifest.encode())
         if kind == "absolute":
             add(t, "/tmp/erssi-backup-test-absolute")
@@ -184,7 +234,8 @@ round-trip)
     # the original without what a backup leaves out
     rm -rf "$E/image_cache" "$E/session" "$E/erssi.lock" "$E/sidepanels.log" "$E/logs/IRCnet"
     content "$E" > "$W/want"
-    content "$W/new/.erssi" > "$W/got"
+    # the lock file it held while it swapped the home stays there
+    content "$W/new/.erssi" | grep -v ' ./erssi.lock$' > "$W/got"
     check "the restored home has the same files, contents and links" cmp -s "$W/want" "$W/got"
     [ "$FAILED" = 0 ] || diff "$W/want" "$W/got"
     check "the home is 0700" [ "$(mode_of "$W/new/.erssi")" = "drwx------" ]
@@ -364,6 +415,215 @@ aside)
     run --restore "$W/newer.tar.gz" --home "$W/n/.erssi" --erssi-version 2026.11.0
     check "a backup of a newer erssi is restored" [ "$RC" = 0 ]
     check "with a warning" said "newer than this erssi 2026.11.0"
+    ;;
+
+names)
+    # names that are not ASCII: tar lists them as \ooo in the C locale,
+    # always so when they are not UTF-8 (a Latin-2 byte)
+    make_home "$E"
+    L2=$(printf 'l\261.txt')
+    printf 'utf8\n' > "$E/zażółć.txt"
+    mkdir "$E/scripts/pełne"
+    printf 'dir\n' > "$E/scripts/pełne/ąę.pl"
+    printf 'latin2\n' > "$E/$L2"
+    for pair in "C C" "C $PL" "$PL C"; do
+        # shellcheck disable=SC2086 # two words
+        set -- $pair
+        if [ -z "${2:-}" ]; then echo "skip half: no pl_PL UTF-8 locale"; continue; fi
+        rm -rf "$W/new" "$W/b.tar.gz"
+        RC=0; LC_ALL=$1 sh "$INSTALLER" --backup "$W/b.tar.gz" > "$W/out" 2>&1 || RC=$?
+        if [ "$RC" != 0 ]; then show; fi
+        check "backup with LC_ALL=$1 succeeds" [ "$RC" = 0 ]
+        RC=0; LC_ALL=$2 sh "$INSTALLER" --restore "$W/b.tar.gz" --home "$W/new/.erssi" > "$W/out" 2>&1 || RC=$?
+        if [ "$RC" != 0 ]; then show; fi
+        check "and restore with LC_ALL=$2 ($1 backup) succeeds" [ "$RC" = 0 ]
+        check "a Latin-2 name comes back byte for byte" cmp -s "$E/$L2" "$W/new/.erssi/$L2"
+        check "UTF-8 names too" cmp -s "$E/scripts/pełne/ąę.pl" "$W/new/.erssi/scripts/pełne/ąę.pl"
+        check "and the rest" cmp -s "$E/zażółć.txt" "$W/new/.erssi/zażółć.txt"
+    done
+    ;;
+
+locale-hardlink)
+    [ -n "$PL" ] || { echo "skip: no pl_PL UTF-8 locale (where tar does not say \"link to\")"; exit 77; }
+    make_home "$E"
+    ln "$E/config" "$E/config.hard"
+    mkdir -p "$W/outside"; printf 'x\n' > "$W/outside/one"
+    ln -s "$W/outside/one" "$E/a.txt"; ln -s "$W/outside/one" "$E/b.txt"
+    RC=0; LC_ALL=$PL LANG=$PL sh "$INSTALLER" --backup "$W/b.tar.gz" > "$W/out" 2>&1 || RC=$?
+    if [ "$RC" != 0 ]; then show; fi
+    check "backup in a Polish locale succeeds" [ "$RC" = 0 ]
+    check "no hard link is stored" sh -c "! gzip -dc '$W/b.tar.gz' | LC_ALL=C '$REAL_TAR' -tvf - | grep -q '^h'"
+    RC=0; LC_ALL=$PL LANG=$PL sh "$INSTALLER" --restore "$W/b.tar.gz" --home "$W/new/.erssi" > "$W/out" 2>&1 || RC=$?
+    if [ "$RC" != 0 ]; then show; fi
+    check "and it restores" [ "$RC" = 0 ]
+    check "both names are files" sh -c "[ -f '$W/new/.erssi/config.hard' ] && [ -f '$W/new/.erssi/b.txt' ]"
+    ;;
+
+manifest-links)
+    make_home "$E"
+    tree "$E" > "$W/before"
+    for kind in links-dup links-dup-same links-dup-file-first links-below links-through; do
+        mkbad "$W/$kind.tar.gz" "$kind"
+        run --restore "$W/$kind.tar.gz"
+        echo "# $kind: $(grep error: "$W/out")"
+        check "$kind: refused" [ "$RC" != 0 ]
+        check "$kind: says nothing was changed" said "nothing was changed"
+        tree "$E" > "$W/after"
+        check "$kind: the home is as it was" cmp -s "$W/before" "$W/after"
+        check "$kind: nothing made next to the home" [ ! -e "$HOME/f" ] && [ ! -L "$HOME/f" ] && [ ! -e "$W/f" ]
+        check "$kind: no temporary directory left" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
+    done
+    mkbad "$W/fine.tar.gz" links-fine
+    run --restore "$W/fine.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "two links in one directory tree are made" [ "$RC" = 0 ]
+    check "each where it belongs" sh -c "[ -d '$W/new/.erssi/a1/a2/a3/L' ] && [ -f '$W/new/.erssi/a1/a2/K' ] && [ -z \"\$(find '$W/new/.erssi/sub' -type l)\" ]"
+    ;;
+
+file-changed)
+    make_home "$E"
+    FAKE_TAR_CHANGED="logs/IRCnet/#chan.log logs/mentions.log" run --backup "$W/b.tar.gz" --with-logs
+    if [ "$RC" != 0 ]; then show; fi
+    check "a log that grew while it was read does not stop the backup" [ "$RC" = 0 ]
+    check "it is named" said "logs/IRCnet/#chan.log changed while it was read"
+    check "the other one too" said "logs/mentions.log changed while it was read"
+    check "the backup is there" [ -f "$W/b.tar.gz" ]
+    FAKE_TAR_CHANGED="logs/mentions.log" FAKE_TAR_ERROR=config run --backup "$W/c.tar.gz"
+    check "with another error from tar the backup fails" [ "$RC" != 0 ]
+    check "and nothing is written" [ ! -e "$W/c.tar.gz" ]
+    # a real one: GNU tar, a log appended to while it is read
+    if "$REAL_TAR" --version 2>/dev/null | grep -q 'GNU tar'; then
+        i=0; while [ $i -lt 2000 ]; do printf '%s\n' "line $i of a long log, written before the backup" >> "$E/logs/IRCnet/#big.log"; i=$((i + 1)); done
+        ( while :; do printf 'more\n' >> "$E/logs/IRCnet/#big.log"; done ) &
+        APP=$!
+        run --backup "$W/d.tar.gz" --with-logs
+        kill "$APP"; wait "$APP" 2>/dev/null
+        if [ "$RC" != 0 ]; then show; fi
+        check "a log written to during a real backup does not stop it" [ "$RC" = 0 ]
+    fi
+    ;;
+
+lock-unknown)
+    # a file system without locks: perl's flock fails with ENOLCK. That
+    # says nothing about an erssi: the process list decides, with a word
+    command -v perl >/dev/null 2>&1 || { echo "skip: no perl"; exit 77; }
+    make_home "$E"
+    run --backup "$W/b.tar.gz"
+    mkdir -p "$W/perllib"
+    cat > "$W/perllib/NoLocks.pm" <<'PM'
+package NoLocks;
+use Errno;
+BEGIN { *CORE::GLOBAL::flock = sub { $! = Errno::ENOLCK(); return 0 }; }
+1;
+PM
+    PERL5LIB=$W/perllib PERL5OPT=-MNoLocks run --restore "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "a lock that cannot be taken is not taken for a running erssi" [ "$RC" = 0 ]
+    check "it says only the process list was checked" said "only the process list was checked"
+    ;;
+
+archive-swapped)
+    # the archive replaced while --restore works on it: what is checked
+    # must be what is unpacked, a copy read once
+    make_home "$E"
+    run --backup "$W/good.tar.gz"
+    mkbad "$W/evil.tar.gz" symlink
+    REAL_GZIP=$(command -v gzip)
+    mkdir "$W/shim2"
+    cat > "$W/shim2/gzip" <<EOF2
+#!/bin/sh
+for a in "\$@"; do
+    if [ "\$a" = "$W/good.tar.gz" ]; then
+        echo read >> "$W/gzip.orig"
+        "$REAL_GZIP" "\$@"; rc=\$?
+        [ -e "$W/swapped" ] || { cp "$W/evil.tar.gz" "$W/good.tar.gz"; : > "$W/swapped"; }
+        exit \$rc
+    fi
+done
+exec "$REAL_GZIP" "\$@"
+EOF2
+    chmod 755 "$W/shim2/gzip"
+    PATH=$W/shim2:$PATH run --restore "$W/good.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "the archive as it was when copied is restored" [ "$RC" = 0 ]
+    check "gzip never read the file itself" [ ! -e "$W/gzip.orig" ]
+    check "nothing of the other archive is there" [ ! -L "$W/new/.erssi/link" ] && [ ! -e "$W/outside" ]
+    check "the home is the backed up one" cmp -s "$E/config" "$W/new/.erssi/config"
+    ;;
+
+closed-dirs)
+    make_home "$E"
+    tree "$E" > "$W/before"
+    mkbad "$W/closed.tar.gz" closed
+    run --restore "$W/closed.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "directories of mode 0000, 0100 and 0300 are restored" [ "$RC" = 0 ]
+    check "as 0700, with their files" sh -c "for d in d0 d1 d3; do [ \"\$(ls -ld '$W/new/.erssi/'\$d | cut -c1-10)\" = drwx------ ] && [ -f '$W/new/.erssi/'\$d/x ] || exit 1; done"
+    check "and the files stay 0600" sh -c "for d in d0 d1 d3; do [ \"\$(ls -ld '$W/new/.erssi/'\$d/x | cut -c1-10)\" = -rw------- ] || exit 1; done"
+    check "no temporary directory is left" [ -z "$(find "$W/new" -maxdepth 1 -name '.erssi-restore.*')" ]
+    mkbad "$W/closed-bad.tar.gz" closed-bad
+    run --restore "$W/closed-bad.tar.gz"
+    check "refused when they do not match the MANIFEST" [ "$RC" != 0 ]
+    check "and the temporary directory is removed all the same" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
+    tree "$E" > "$W/after"
+    check "the home is as it was" cmp -s "$W/before" "$W/after"
+    # a TMPDIR of its own: other cases running at the same time use theirs
+    mkdir "$W/tmpd"
+    TMPDIR=$W/tmpd run --restore "$W/closed-bad.tar.gz" --dry-run
+    check "a dry run leaves nothing in the temporary directory either" [ -z "$(find "$W/tmpd" ! -path "$W/tmpd")" ]
+    ;;
+
+swap-locked)
+    # the two renames run while the restore holds the exclusive lock of
+    # the old home's erssi.lock and of the new one's: a stand-in mv looks
+    command -v perl >/dev/null 2>&1 || { echo "skip: no perl"; exit 77; }
+    make_home "$E"
+    run --backup "$W/b.tar.gz"
+    REAL_MV=$(command -v mv)
+    mkdir "$W/shim3"
+    cat > "$W/shim3/mv" <<EOF3
+#!/bin/sh
+for a in "\$@"; do :; done
+src=""; for b in "\$@"; do [ "\$b" = "\$a" ] || src=\$b; done
+if [ -f "\$src/erssi.lock" ]; then
+    if "$(command -v perl)" -e 'open(my \$f, "<", \$ARGV[0]) or exit 2; flock(\$f, 5) and exit 1; exit 0' "\$src/erssi.lock"; then
+        echo "locked \$src" >> "$W/mv.log"
+    else
+        echo "free \$src" >> "$W/mv.log"
+    fi
+fi
+exec "$REAL_MV" "\$@"
+EOF3
+    chmod 755 "$W/shim3/mv"
+    PATH=$W/shim3:$PATH run --restore "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "restore over a home succeeds" [ "$RC" = 0 ]
+    check "the old home is moved aside while its lock is held" grep -q "^locked $E\$" "$W/mv.log"
+    check "the new home is moved in while its lock is held" grep -q "^locked .*/home\$" "$W/mv.log"
+    check "never without" sh -c "! grep -q '^free' '$W/mv.log'"
+    check "the lock file is in the new home" [ -f "$E/erssi.lock" ]
+    # the same with flock(1) where there is no perl
+    if command -v flock >/dev/null 2>&1; then
+        mkdir "$W/noperl"
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env flock uname basename dirname touch; do
+            p=$(command -v "$t") && ln -s "$p" "$W/noperl/$t"
+        done
+        : > "$W/mv.log"
+        PATH=$W/shim3:$W/shim:$W/noperl run --restore "$W/b.tar.gz"
+        if [ "$RC" != 0 ]; then show; fi
+        check "without perl, with flock(1): restore succeeds" [ "$RC" = 0 ]
+        check "and holds both locks for the renames" [ "$(grep -c '^locked' "$W/mv.log")" = 2 ]
+        check "never without them" sh -c "! grep -q '^free' '$W/mv.log'"
+    fi
+    ;;
+
+self-check)
+    make_home "$E"
+    FAKE_TAR_FIFO=1 run --backup "$W/b.tar.gz"
+    check "a backup --restore would refuse is not written" [ "$RC" != 0 ]
+    check "the file is not there" [ ! -e "$W/b.tar.gz" ]
+    check "it says why" said "does not pass the checks of --restore"
+    check "no temporary file is left" [ -z "$(find "$W" -maxdepth 1 -name '.erssi-backup.*')" ]
     ;;
 
 *) echo "unknown case $CASE"; exit 1 ;;

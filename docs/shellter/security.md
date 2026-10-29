@@ -236,10 +236,12 @@ keep it for longer, encrypt it, e.g. `age -p` or `gpg -c`. Someone who got
 a copy should be treated as having your keyring: `/e2e reset -force` and
 new passwords.
 
-`erssi --restore` takes an archive as untrusted input: it refuses links,
+`erssi --restore` takes an archive as untrusted input: it works on a copy
+of its own, read once (the file you named may change meanwhile), refuses links,
 hard links, devices, FIFOs, absolute names and `..` before anything is
 unpacked, unpacks into a new directory (never over the home), checks the
-result against its `MANIFEST`, makes only links that stay in the home,
+result against its `MANIFEST`, makes only links that stay in the home
+(each path once, never inside another link, checked again once made),
 gives every file and directory your ownership and mode 0600/0700, and
 only then swaps the home. Anyone who can give you an archive can still
 give you their config, scripts and keys: restore only backups you made.

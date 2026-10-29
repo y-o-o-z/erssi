@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static char *dir_new(void)
@@ -133,6 +134,86 @@ static void test_no_home(void)
 	g_free(dir);
 }
 
+/* a child holds the exclusive lock (as --restore does while it swaps the
+ * home) for HOLD_MS, then lets go; returns its pid once it holds it */
+static pid_t hold_exclusive(const char *dir, int hold_ms)
+{
+	char *path = g_build_filename(dir, HOME_LOCK_FILE, NULL);
+	int fd, pipefd[2];
+	pid_t pid;
+	char c;
+
+	fd = open(path, O_RDWR | O_CREAT, 0600);
+	g_free(path);
+	g_assert_cmpint(fd, >=, 0);
+	g_assert_cmpint(pipe(pipefd), ==, 0);
+	pid = fork();
+	g_assert_cmpint(pid, >=, 0);
+	if (pid == 0) {
+		if (flock(fd, LOCK_EX) != 0)
+			_exit(1);
+		if (write(pipefd[1], "x", 1) != 1)
+			_exit(1);
+		g_usleep((gulong) hold_ms * 1000);
+		_exit(0);
+	}
+	close(fd);
+	close(pipefd[1]);
+	g_assert_cmpint(read(pipefd[0], &c, 1), ==, 1);
+	close(pipefd[0]);
+	return pid;
+}
+
+static void reap(pid_t pid)
+{
+	int status;
+
+	g_assert_cmpint(waitpid(pid, &status, 0), ==, pid);
+	g_assert_true(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void test_waits_for_restore(void)
+{
+	char *dir = dir_new();
+	gint64 t0;
+	pid_t pid;
+	int fd;
+
+	/* held for 300 ms: a start waits and gets it */
+	pid = hold_exclusive(dir, 300);
+	g_assert_cmpint(home_lock_take(dir), ==, -1);
+	g_assert_true(errno == EWOULDBLOCK || errno == EAGAIN);
+	t0 = g_get_monotonic_time();
+	fd = home_lock_take_wait(dir, 20, 100);
+	g_assert_cmpint(fd, >=, 0);
+	g_assert_cmpint(g_get_monotonic_time() - t0, >=, 200 * 1000);
+	close(fd);
+	reap(pid);
+
+	/* held longer than it waits: it gives up, with EWOULDBLOCK */
+	pid = hold_exclusive(dir, 1500);
+	t0 = g_get_monotonic_time();
+	g_assert_cmpint(home_lock_take_wait(dir, 3, 100), ==, -1);
+	g_assert_true(errno == EWOULDBLOCK || errno == EAGAIN);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 1000 * 1000);
+	reap(pid);
+	g_free(dir);
+}
+
+static void test_no_wait_for_other_failures(void)
+{
+	char *dir = dir_new(), *path;
+	gint64 t0;
+
+	path = g_build_filename(dir, HOME_LOCK_FILE, NULL);
+	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	t0 = g_get_monotonic_time();
+	g_assert_cmpint(home_lock_take_wait(dir, 20, 100), ==, -1);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 100 * 1000);
+	g_free(path);
+	g_free(dir);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
@@ -143,6 +224,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/home-lock/fifo", test_fifo_refused);
 	g_test_add_func("/home-lock/directory", test_directory_refused);
 	g_test_add_func("/home-lock/no-home", test_no_home);
+	g_test_add_func("/home-lock/waits-for-restore", test_waits_for_restore);
+	g_test_add_func("/home-lock/no-wait-for-other-failures", test_no_wait_for_other_failures);
 
 	return g_test_run();
 }

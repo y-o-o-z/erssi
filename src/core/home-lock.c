@@ -18,12 +18,17 @@
 
 #include "module.h"
 #include <irssi/src/core/home-lock.h>
+#include <irssi/src/core/signals.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/* how long a start waits for a restore's exclusive lock: 20 x 100 ms */
+#define HOME_LOCK_TRIES 20
+#define HOME_LOCK_INTERVAL_MS 100
 
 static int home_lock_fd = -1;
 
@@ -57,12 +62,37 @@ int home_lock_take(const char *dir)
 	return fd;
 }
 
+int home_lock_take_wait(const char *dir, int tries, int interval_ms)
+{
+	int fd, i;
+
+	for (i = 0;; i++) {
+		fd = home_lock_take(dir);
+		if (fd >= 0 || (errno != EWOULDBLOCK && errno != EAGAIN) || i + 1 >= tries)
+			return fd;
+		g_usleep((gulong) interval_ms * 1000);
+	}
+}
+
 void home_lock_init(void)
 {
-	/* nothing to say when it fails: the lock only helps --restore, which
-	 * also looks for erssi processes */
-	if (home_lock_fd < 0)
-		home_lock_fd = home_lock_take(get_irssi_dir());
+	char *msg;
+
+	if (home_lock_fd >= 0)
+		return;
+	home_lock_fd = home_lock_take_wait(get_irssi_dir(), HOME_LOCK_TRIES, HOME_LOCK_INTERVAL_MS);
+	/* held by another program all along (a restore that did not end?):
+	 * worth a word, since --restore will not see this erssi. Other
+	 * failures (no locks on this file system, a link in its place) are
+	 * not: --restore also looks for erssi processes */
+	if (home_lock_fd < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+		msg = g_strdup_printf("%s/" HOME_LOCK_FILE " is locked by another program "
+		                      "(shellter-install.sh --restore?): erssi runs without its "
+		                      "lock, and a restore will not notice this erssi",
+		                      get_irssi_dir());
+		signal_emit("gui dialog", 2, "warning", msg);
+		g_free(msg);
+	}
 }
 
 void home_lock_deinit(void)
