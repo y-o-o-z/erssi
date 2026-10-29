@@ -118,7 +118,8 @@ New in 2026.10.0.
   address is left out. `term_hyperlinks` is `auto`: on in kitty, WezTerm,
   iTerm2, Ghostty, foot, Alacritty, Contour, Windows Terminal, Konsole, the
   VS Code terminal, VTE terminals (GNOME Terminal and others) and inside
-  tmux (3.4 or later passes them on with `terminal-features ',*:hyperlinks'`);
+  tmux (3.4 or later passes them on to an outer terminal given the
+  `hyperlinks` feature, see [configuration.md](configuration.md#tmux));
   off under GNU Screen, on a console and in a terminal erssi cannot
   recognise - over ssh that is most of them, so set it `on` there if your
   terminal shows links. erssi uses the mouse itself, so most terminals open

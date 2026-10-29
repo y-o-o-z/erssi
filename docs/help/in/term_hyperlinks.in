@@ -47,9 +47,17 @@
     /SET term_hyperlinks on
     /SET term_hyperlinks off
 
-    For tmux 3.4 or later, in ~/.tmux.conf:
+    For tmux 3.4 or later, in ~/.tmux.conf, name the TERM of each outer
+    terminal that shows links (tmux matches the TERM of the terminal a
+    client is attached from):
 
-        set -as terminal-features ',*:hyperlinks'
+        set -as terminal-features ',xterm-kitty:hyperlinks'
+        set -as terminal-features ',foot*:hyperlinks'
+
+    Do not use '*': tmux would then send the links to every client,
+    also to one attached from a console or a terminal that prints them.
+    erssi cannot see the outer terminal from inside tmux, so the choice of
+    those terminals is tmux's.
 
 %9See also:%9
 
