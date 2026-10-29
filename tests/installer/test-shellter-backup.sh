@@ -28,7 +28,8 @@ done
 command -v python3 >/dev/null 2>&1 || { echo "skip: no python3 to make the bad archives"; exit 77; }
 
 W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
-trap 'rm -rf "$W"' EXIT
+# chmod first: a failing case may leave a directory no one may enter
+trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
 trap 'exit 1' HUP INT TERM
 chgrp "$(id -g)" "$W" || exit 1
 HOME=$W/home; export HOME
@@ -127,10 +128,12 @@ mkbad() {   # file kind
 import io, sys, tarfile
 out, kind = sys.argv[1], sys.argv[2]
 top = "erssi-backup-20260101-000000"
-def add(t, name, data=b"x", type_=tarfile.REGTYPE, link=""):
+def add(t, name, data=b"x", type_=tarfile.REGTYPE, link="", mode=None):
     i = tarfile.TarInfo(name)
     i.type = type_
     i.mode = 0o600 if type_ != tarfile.DIRTYPE else 0o700
+    if mode is not None:
+        i.mode = mode
     i.linkname = link
     if type_ == tarfile.REGTYPE:
         i.size = len(data)
@@ -154,6 +157,15 @@ with tarfile.open(out, "w:gz", format=tarfile.GNU_FORMAT) as t:
         # links of the MANIFEST that would lead out once made one after
         # the other: a1/a2/a3/L made twice (the second ln follows the
         # first into sub/), or a link below another link
+        # directories no one may enter or list (0000, 0100, 0300), with a
+        # file in each; -bad: and a MANIFEST that does not match
+        if kind.startswith("closed"):
+            for d, m in (("d0", 0o000), ("d1", 0o100), ("d3", 0o300)):
+                add(t, top + "/home/" + d, type_=tarfile.DIRTYPE, mode=m)
+                add(t, top + "/home/" + d + "/x")
+                manifest += "d\t" + d + "\nf\t1\t" + d + "/x\n"
+            if kind == "closed-bad":
+                manifest += "f\t1\tmissing\n"
         if kind.startswith("links-"):
             for d in ("a1", "a1/a2", "a1/a2/a3", "sub"):
                 add(t, top + "/home/" + d, type_=tarfile.DIRTYPE)
@@ -536,6 +548,28 @@ EOF2
     check "gzip never read the file itself" [ ! -e "$W/gzip.orig" ]
     check "nothing of the other archive is there" [ ! -L "$W/new/.erssi/link" ] && [ ! -e "$W/outside" ]
     check "the home is the backed up one" cmp -s "$E/config" "$W/new/.erssi/config"
+    ;;
+
+closed-dirs)
+    make_home "$E"
+    tree "$E" > "$W/before"
+    mkbad "$W/closed.tar.gz" closed
+    run --restore "$W/closed.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "directories of mode 0000, 0100 and 0300 are restored" [ "$RC" = 0 ]
+    check "as 0700, with their files" sh -c "for d in d0 d1 d3; do [ \"\$(ls -ld '$W/new/.erssi/'\$d | cut -c1-10)\" = drwx------ ] && [ -f '$W/new/.erssi/'\$d/x ] || exit 1; done"
+    check "and the files stay 0600" sh -c "for d in d0 d1 d3; do [ \"\$(ls -ld '$W/new/.erssi/'\$d/x | cut -c1-10)\" = -rw------- ] || exit 1; done"
+    check "no temporary directory is left" [ -z "$(find "$W/new" -maxdepth 1 -name '.erssi-restore.*')" ]
+    mkbad "$W/closed-bad.tar.gz" closed-bad
+    run --restore "$W/closed-bad.tar.gz"
+    check "refused when they do not match the MANIFEST" [ "$RC" != 0 ]
+    check "and the temporary directory is removed all the same" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
+    tree "$E" > "$W/after"
+    check "the home is as it was" cmp -s "$W/before" "$W/after"
+    # a TMPDIR of its own: other cases running at the same time use theirs
+    mkdir "$W/tmpd"
+    TMPDIR=$W/tmpd run --restore "$W/closed-bad.tar.gz" --dry-run
+    check "a dry run leaves nothing in the temporary directory either" [ -z "$(find "$W/tmpd" ! -path "$W/tmpd")" ]
     ;;
 
 self-check)

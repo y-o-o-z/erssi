@@ -29,7 +29,7 @@ endforeach
 # shellter-install.sh --backup / --restore on homes made up in a temporary
 # directory (test-shellter-backup.sh SOURCE_ROOT CASE)
 foreach c : ['round-trip', 'xz', 'logs', 'overwrite', 'links', 'bad-archives', 'running', 'aside',
-    'names', 'locale-hardlink', 'self-check', 'manifest-links', 'file-changed', 'lock-unknown', 'archive-swapped']
+    'names', 'locale-hardlink', 'self-check', 'manifest-links', 'file-changed', 'lock-unknown', 'archive-swapped', 'closed-dirs']
   test('installer backup ' + c, find_program('sh'),
     args : [files('test-shellter-backup.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 120)

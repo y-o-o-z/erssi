@@ -2175,7 +2175,8 @@ do_restore() {
     BK_WORK=$(mktemp -d "${TMPDIR:-/tmp}/erssi-restore.XXXXXX") || bk_fail "cannot create a temporary directory"
     BK_NEW="" ASIDE=""
     # stopped between the two renames: the old home goes back
-    trap 'rm -rf "$BK_WORK"; [ -z "$BK_NEW" ] || rm -rf "$BK_NEW"
+    # chmod first: an archive can hold a directory no one may enter
+    trap 'chmod -R u+rwx "$BK_WORK" ${BK_NEW:+"$BK_NEW"} 2>/dev/null; rm -rf "$BK_WORK" ${BK_NEW:+"$BK_NEW"}
         if [ -n "$ASIDE" ] && [ -d "$ASIDE" ] && [ ! -e "$T" ] && [ ! -L "$T" ]; then mv "$ASIDE" "$T"; fi' EXIT
     # a directory of this restore's own: next to the home, on its file
     # system, so the new home moves in with one rename (a dry run: in the
@@ -2218,6 +2219,9 @@ do_restore() {
     "$BK_COMP" -dc "$BK_ARC" | (cd "$U" && tar --no-same-owner -x -f -) 2> "$BK_WORK/err" ||
         bk_fail "unpacking $BK_FILE failed ($(head -n 1 "$BK_WORK/err"))"
     rm -f "$BK_ARC"
+    # a directory of mode 0000 (or 0100, 0300) cannot be looked into: the
+    # user's own access first (X: execute for directories only), the modes are set below
+    chmod -R u+rwX "$U" 2>/dev/null || bk_fail "cannot open up what was unpacked in $(tilde "$U")"
     H=$U/$BK_TOP/home
     M=$U/$BK_TOP/MANIFEST
     # what was unpacked, checked again on the disk
