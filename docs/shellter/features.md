@@ -111,6 +111,20 @@ New in 2026.10.0.
   nearest 256-colour entry where it does not (GNU Screen, Linux console,
   rxvt-unicode, 8/16-colour terminals). `/set term_truecolor auto|on|off`
   overrides it.
+- **Clickable addresses** — new in 2026.11.0. http, https, ftp, gopher,
+  gemini, irc and ircs addresses in messages are OSC 8 hyperlinks, and one
+  that wraps over several lines is still one link. The target is always the
+  text you see (non-ASCII characters percent-encoded); punctuation after an
+  address is left out. `term_hyperlinks` is `auto`: on in kitty, WezTerm,
+  iTerm2, Ghostty, foot, Alacritty, Contour, Windows Terminal, Konsole, the
+  VS Code terminal, VTE terminals (GNOME Terminal and others) and inside
+  tmux (3.4 or later passes them on with `terminal-features ',*:hyperlinks'`);
+  off under GNU Screen, on a console and in a terminal erssi cannot
+  recognise - over ssh that is most of them, so set it `on` there if your
+  terminal shows links. erssi uses the mouse itself, so most terminals open
+  a link with Ctrl, Ctrl+Shift or Cmd held while clicking. Addresses without
+  a scheme (`www.example.org`) and the side panels, statusbar and input line
+  get no links. `/help term_hyperlinks`.
 
 ## Help for every command
 

@@ -28,6 +28,7 @@
 #include <irssi/src/fe-ansi/textbuffer-formats.h>
 #include <irssi/src/fe-ansi/textbuffer-view.h>
 #include <irssi/src/fe-ansi/textbuffer-unformat.h>
+#include <irssi/src/fe-ansi/term-hyperlink.h>
 
 typedef struct {
 	char *name;
@@ -97,6 +98,7 @@ textbuffer_cache_get(GSList *views, int width)
 
 static int line_cache_destroy(void *key, LINE_CACHE_REC *cache)
 {
+	term_link_list_free(cache->links);
 	g_free(cache->line_text);
 	g_free(cache);
 	return TRUE;
@@ -264,6 +266,8 @@ view_update_line_cache(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line)
 	}
 	rec->count = linecount;
 	rec->line_text = line_text;
+	rec->links = NULL;
+	rec->links_scanned = FALSE;
 
 	if (rec->count > 1) {
 		for (pos = 0; lines != NULL; pos++) {
@@ -322,9 +326,32 @@ void textbuffer_view_reset_cache(TEXT_BUFFER_VIEW_REC *view)
 	}
 }
 
+/* The links of a line, found once and kept with its cache. The id is the
+ * same for every piece of one address, in every view of the line. */
+static TermLinkList *view_line_links(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
+				     LINE_CACHE_REC *cache)
+{
+	int i;
+
+	if (!cache->links_scanned) {
+		cache->links_scanned = TRUE;
+		cache->links = term_link_scan(cache->line_text,
+					      view->utf8 ? TERM_TYPE_UTF8 :
+					      term_type == TERM_TYPE_BIG5 ? TERM_TYPE_BIG5 :
+					      TERM_TYPE_8BIT);
+		for (i = 0; cache->links != NULL && i < cache->links->count; i++)
+			term_link_make_id((guint64) GPOINTER_TO_SIZE(line) ^
+					  ((guint64) line->info.time << 32),
+					  i, cache->links->spans[i].id);
+	}
+	return cache->links;
+}
+
 static int view_line_draw(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
 			  int subline, int ypos, int max)
 {
+	TermLinkList *links;
+	int link_index;
 	INDENT_FUNC indent_func;
 	LINE_CACHE_REC *cache;
 	const unsigned char *text, *end, *text_newline;
@@ -339,6 +366,10 @@ static int view_line_draw(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
 	cache = textbuffer_view_get_line_cache(view, line);
 	if (subline >= cache->count)
 		return 0;
+
+	links = term_use_hyperlinks && cache->line_text != NULL ?
+		view_line_links(view, line, cache) : NULL;
+	link_index = 0;
 
 	color = ATTR_RESET;
 	need_move = TRUE; need_clrtoeol = FALSE;
@@ -451,6 +482,22 @@ static int view_line_draw(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
 		}
 
 		xpos += char_width;
+		if (xpos <= view->width && links != NULL) {
+			/* the link this character belongs to, if any: term_move()
+			   for the next piece closed the sequence, the first
+			   character there opens it again with the same id */
+			gsize offset = text - (const unsigned char *) cache->line_text;
+			const TermLinkSpan *span;
+
+			while (link_index < links->count &&
+			       offset >= links->spans[link_index].end)
+				link_index++;
+			span = link_index < links->count &&
+				offset >= links->spans[link_index].start ?
+				&links->spans[link_index] : NULL;
+			term_set_hyperlink(view->window, span != NULL ? span->uri : NULL,
+					   span != NULL ? span->id : NULL);
+		}
 		if (xpos <= view->width) {
 			if (unichar_isprint(chr)) {
 				if (view->utf8) {
@@ -477,6 +524,10 @@ static int view_line_draw(TEXT_BUFFER_VIEW_REC *view, LINE_REC *line,
 		}
 		text = end;
 	}
+
+	/* nothing drawn after this line is part of its last link */
+	if (links != NULL)
+		term_set_hyperlink(view->window, NULL, NULL);
 
 	if (need_clrtoeol && xpos < view->width + (view->width == term_width ? 0 : 1)) {
 		term_set_color(view->window, ATTR_RESET);

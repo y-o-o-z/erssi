@@ -28,6 +28,11 @@ typedef struct {
 	char *line_text;
 	int count; /* number of real lines */
 
+	/* the addresses in line_text that are drawn as links (OSC 8),
+	   found the first time the line is drawn with links on */
+	struct _TermLinkList *links;
+	unsigned int links_scanned:1;
+
 	/* variable sized array, actually. starts from the second line,
 	   so size of it is count-1 */
 	LINE_CACHE_SUB_REC lines[1];

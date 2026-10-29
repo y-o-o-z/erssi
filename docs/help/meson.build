@@ -124,6 +124,7 @@ install_data(
     'squit',
     'stats',
     'statusbar',
+    'term_hyperlinks',
     'term_notify',
     'term_truecolor',
     'time',
