@@ -132,8 +132,17 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 once a day. It is the check of `erssi --check-update`: the newest release
 tag counts only with a valid signature by the release key that installer
 carries ([What the installer verifies](install.md#what-the-installer-verifies));
-erssi does not look for releases itself. The check downloads a tag object
-and a commit, no code, and nothing is installed or run from them.
+erssi does not look for releases itself. The check downloads the list
+of release tags and tag objects with their commits, no code, and nothing
+is installed or run from them.
+
+The list of tags is not authenticated: it comes over HTTPS from the
+repository, and whoever controls that repository, the server or the
+connection can leave a release out of it, or serve an older tag object.
+The check then says "current" (a moved tag of the installed release is
+reported), so a new release can be withheld from you. It can never make
+a tag look signed that the release key did not sign, and nothing it
+fetches is installed.
 
 The installer runs in a session of its own, with no terminal (stdin is
 `/dev/null`, git may not ask for a password), and is stopped with its

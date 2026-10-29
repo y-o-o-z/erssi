@@ -368,8 +368,9 @@ signed_tag() {
     rm -f "$signers"; return 1
 }
 # --check needs the tag object and its commit, not the files: a filter
-# (tree:0) leaves the trees and files out - about 2 KB instead of 3 MB
-# from GitHub; a server without filters sends everything, as without it.
+# (tree:0) leaves the trees and files out - a whole check (the tag list
+# and one such fetch) is about 6 KB from GitHub instead of 3 MB; a
+# server without filters sends everything, as without it.
 # The tag and the commit are checked as in a full fetch. A filter needs a
 # named remote marked as the promisor of the repository (the temporary
 # one of --check): git refuses one for a plain path.

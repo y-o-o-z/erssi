@@ -226,11 +226,15 @@ erssi --check-update     # is a newer release available?
 erssi --update           # install it
 ```
 
-`erssi --check-update` changes nothing. It asks GitHub for the list of
-release tags and downloads only the newest signed tag and the commit it
-names (and, when nothing is newer, those of the installed release, to see
-that its tag has not moved): about 10 KB, the files of the release are not
-downloaded. The signature is checked as for an update. erssi itself can
+`erssi --check-update` changes nothing. It asks the repository (GitHub,
+unless you installed from another `--repo`) for the list of release
+tags, then fetches one tag object with the commit it names: the newest
+tag newer than the installed release, or, when none is newer, the tag of
+the installed release, to see that it has not moved. A newer tag that is
+not signed by the release key is skipped and the next one fetched the
+same way, five at most. The files of a release are never downloaded: a
+check is about 6 KB received and 2 KB sent (measured against GitHub,
+plus TLS). The signature is checked as for an update. erssi itself can
 run this check once a day and say when a new release is there:
 `/set update_check on` ([Update notice](configuration.md#update-notice)).
 

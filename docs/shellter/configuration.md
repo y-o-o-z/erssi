@@ -85,8 +85,12 @@ default, because it contacts GitHub:
   one check runs at a time, one that takes longer than two minutes is
   stopped. The installer finds the newest release tag with a valid
   signature by the release key it carries, exactly as for an update
-  ([What the installer verifies](install.md#what-the-installer-verifies)),
-  and downloads only that tag and its commit, about 10 KB.
+  ([What the installer verifies](install.md#what-the-installer-verifies)).
+  It downloads the list of release tags and one tag object with the
+  commit it names, never the files of a release: about 6 KB received
+  and 2 KB sent (measured against GitHub, plus TLS); a newer tag skipped
+  as not signed by the release key costs one more such fetch (five at
+  most).
 - **When** — a minute after the start, then every 24 hours. The time of
   the last check is kept in `~/.erssi/update-check.state` (mode 0600), so
   a restart or `/upgrade` does not check again before the day is over;
