@@ -577,6 +577,59 @@ static void firstrun_run_tty(void)
 	g_ptr_array_free(networks, TRUE);
 }
 
+/* erssi --backup [FILE] / --restore FILE: the installer of this release
+ * does both (shellter-install.sh --backup / --restore, POSIX sh like
+ * --update), with the home this erssi would use. Returns only on error. */
+static int run_backup(const char *backup_file, const char *restore_file, gboolean with_logs,
+                      gboolean dry_run)
+{
+	char *installer, *home_config;
+	const char *argv[16];
+	int n = 0;
+
+	installer = g_strconcat(get_install_path(PKGDATADIR), "/shellter-install.sh", NULL);
+	if (access(installer, R_OK) != 0) {
+		fprintf(stderr, "erssi: the installer %s is missing - run shellter-install.sh "
+		        "--%s yourself (docs/shellter/install.md)\n", installer,
+		        restore_file != NULL ? "restore" : "backup");
+		g_free(installer);
+		return 1;
+	}
+	argv[n++] = "sh";
+	argv[n++] = installer;
+	if (restore_file != NULL) {
+		argv[n++] = "--restore";
+		argv[n++] = restore_file;
+	} else {
+		argv[n++] = "--backup";
+		if (backup_file != NULL)
+			argv[n++] = backup_file;
+	}
+	argv[n++] = "--home";
+	argv[n++] = get_irssi_dir();
+	argv[n++] = "--prefix";
+	argv[n++] = get_install_prefix();
+	argv[n++] = "--erssi-version";
+	argv[n++] = PACKAGE_VERSION;
+	/* a --config outside the home is not in the backup: the installer
+	 * says so */
+	home_config = g_strdup_printf("%s/" IRSSI_HOME_CONFIG, get_irssi_dir());
+	if (g_strcmp0(get_irssi_config(), home_config) != 0) {
+		argv[n++] = "--config";
+		argv[n++] = get_irssi_config();
+	}
+	if (with_logs)
+		argv[n++] = "--with-logs";
+	if (dry_run)
+		argv[n++] = "--dry-run";
+	argv[n] = NULL;
+	execv("/bin/sh", (char **) argv);
+	fprintf(stderr, "erssi: cannot run %s: %s\n", installer, g_strerror(errno));
+	g_free(home_config);
+	g_free(installer);
+	return 1;
+}
+
 static void check_files(void)
 {
 	struct stat statbuf;
@@ -590,6 +643,8 @@ static void check_files(void)
 int main(int argc, char **argv)
 {
 	static int version = 0, update = 0, check_update = 0, setup = 0, print_prefix = 0;
+	static int backup = 0, with_logs = 0, dry_run = 0;
+	static char *restore_file = NULL, **rest = NULL;
 	static GOptionEntry options[] = {
 		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display erssi version", NULL },
 		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
@@ -598,6 +653,18 @@ int main(int argc, char **argv)
 		  "Show whether a newer signed release is available", NULL },
 		{ "setup", 0, 0, G_OPTION_ARG_NONE, &setup, "Ask the first-run setup questions",
 		  NULL },
+		{ "backup", 0, 0, G_OPTION_ARG_NONE, &backup,
+		  "Back up the home (config, keys, scripts) into one file: erssi --backup [FILE]",
+		  NULL },
+		{ "restore", 0, 0, G_OPTION_ARG_FILENAME, &restore_file,
+		  "Restore the home from a backup (the old home is moved aside)", "FILE" },
+		{ "with-logs", 0, 0, G_OPTION_ARG_NONE, &with_logs,
+		  "With --backup: take the IRC logs too", NULL },
+		{ "dry-run", 0, 0, G_OPTION_ARG_NONE, &dry_run,
+		  "With --backup or --restore: show what would be done, change nothing", NULL },
+		/* the FILE of --backup */
+		{ G_OPTION_REMAINING, 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_FILENAME_ARRAY, &rest,
+		  NULL, NULL },
 		/* for the installer and the tests: the prefix this erssi takes its
 		   modules, help, themes and scripts from */
 		{ "print-prefix", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &print_prefix,
@@ -641,6 +708,27 @@ int main(int argc, char **argv)
 		      check_update ? "--check" : (char *) NULL, (char *) NULL);
 		fprintf(stderr, "erssi: cannot run %s: %s\n", installer, g_strerror(errno));
 		g_free(installer);
+		return 1;
+	}
+
+	if (backup || restore_file != NULL) {
+		if (backup && restore_file != NULL) {
+			fprintf(stderr, "erssi: --backup or --restore, not both\n");
+			return 1;
+		}
+		if (rest != NULL && rest[0] != NULL && (restore_file != NULL || rest[1] != NULL)) {
+			fprintf(stderr, "erssi: --backup takes one FILE, --restore FILE no other\n");
+			return 1;
+		}
+		/* the home and config (--home, --config) as erssi would use them;
+		 * nothing is read or written there yet */
+		core_preinit(argv[0]);
+		return run_backup(rest != NULL ? rest[0] : NULL, restore_file, with_logs,
+		                  dry_run);
+	}
+	if (with_logs || dry_run) {
+		fprintf(stderr, "erssi: --%s goes with --backup or --restore\n",
+		        with_logs ? "with-logs" : "dry-run");
 		return 1;
 	}
 

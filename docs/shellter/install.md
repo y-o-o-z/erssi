@@ -9,6 +9,7 @@ Back to the [README](../../README.md).
 - [Update](#update)
 - [What the installer verifies](#what-the-installer-verifies)
 - [Files in ~/.erssi](#files-in-erssi)
+- [Moving to another box](#moving-to-another-box)
 - [Upgrading from 1.3.x](#upgrading-from-13x)
 - [Manual build](#manual-build)
 
@@ -166,6 +167,9 @@ nothing and asks you to install once more, which records the files.
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
 | `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
+| `--backup [FILE]` | Put the erssi home into one file (see [Moving to another box](#moving-to-another-box)); with `--with-logs` the IRC logs too. |
+| `--restore FILE` | Restore the erssi home from such a file; with `--dry-run` only list what it would restore. |
+| `--home DIR` | The erssi home for `--backup` and `--restore` (default `~/.erssi`). |
 
 `--src`, `--repo`, `--no-test`/`--test`, `--clean`/`--no-clean`, `--source`,
 `--binary-base` and `--keep` are kept in
@@ -403,6 +407,106 @@ have not changed is replaced by the new version on the next start; a copy
 you changed (also by `/save -formats`) is never touched, and erssi says once
 where the new version is. The sha256 of what erssi installed is kept in
 `~/.erssi/default-files.sha256`. Symbolic links are left alone.
+
+Every erssi from 2026.11.0 on holds a shared lock on `~/.erssi/erssi.lock`
+while it runs (several erssi on one home all hold it), which tells
+`--restore` that the home is in use. The file stays when erssi ends; the
+lock goes with the process.
+
+## Moving to another box
+
+```sh
+erssi --backup                      # ./erssi-backup-20261101-120000.tar.gz
+erssi --backup ~/erssi.tar.gz --with-logs
+erssi --restore erssi-backup-20261101-120000.tar.gz --dry-run   # what it would restore
+erssi --restore erssi-backup-20261101-120000.tar.gz
+```
+
+`erssi --backup [FILE]` puts your erssi home (`--home`, `~/.erssi` by
+default) into one file; on the new box (or after a loss) `erssi --restore
+FILE` puts it back. erssi runs the installer of its release for both
+(`<prefix>/share/irssi/shellter-install.sh --backup` / `--restore`, also a
+source install has it); on a new box without erssi yet, the installer
+does it too, before the install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh -s -- --restore FILE
+```
+
+Losing the E2E keyring means a new key exchange with everyone, and people
+see your key change: the backup keeps it.
+
+**What the backup holds.** Everything in the home that is your state:
+`config`, `startup`, your themes, `scripts/` and the links in
+`scripts/autorun/`, `help/`, `modules/`, the E2E keyring and its copies
+(`rpe2e/keyring.json`, `keyring.json.bak-*`) and replay memory, the OTR keys
+(`otr/`), the fe-web key and certificate (`fe-web-key.pem`,
+`fe-web-cert.pem`), the credentials file (`.credentials`), `keepnick`,
+`away.log`, `default-files.sha256` and the Mentions log
+(`logs/mentions.log`).
+
+**What it leaves out.** The IRC logs (`logs/` but the Mentions log), which
+can be large: the backup says how much it left out, and `--with-logs`
+takes them, with the debug logs (`sidepanels.log`,
+`image-preview-debug.log`, `resize-*.log`). Always left out: the image
+cache (`image_cache/`, made again), the `/upgrade` session file, lock
+files (`*.lock`), sockets (`fe_web_socket`), FIFOs and devices. Only the
+home is backed up: logs, a Mentions log or a `--config` file elsewhere are
+not (a `--config` outside the home is named in the output), and neither
+is what you keep outside it, such as `~/.tmux.conf`.
+
+**Links.** A link that points to a file or directory of the home (the
+links in `scripts/autorun`) stays a link: it is written down in the
+backup and made again on restore, as a relative link (an absolute one
+into the home becomes relative). A link out of the home is followed: the
+backup holds what it points to, which comes back as a file or directory.
+A link that leads nowhere, or to the home or above it, is left out with a
+note.
+
+**The file.** A tar archive with one directory
+(`erssi-backup-YYYYMMDD-HHMMSS/`) that holds `MANIFEST` (erssi version,
+date, the home it came from, every file, directory and link) and `home/`,
+compressed with gzip (`.tar.gz`), or with xz when FILE ends in `.tar.xz`;
+the base system tar of Debian and FreeBSD reads it (`tar -tzf FILE`). It is
+written with mode 0600 from the start, under another name next to FILE,
+and gets its name only once complete; an existing FILE (or a link there)
+is never overwritten. The default name is in the current directory, or in
+`~` when that is inside the home or not writable; FILE cannot be inside
+the home. **It holds your private keys and passwords** - see
+[security.md](security.md#backups).
+
+**Restoring.** `--restore` checks the archive before it unpacks anything:
+only regular files and directories (no links, hard links, devices or
+FIFOs), all below its one `erssi-backup-*` directory, no absolute name and
+no `..`, and no more than fits into the free space next to the home. It
+unpacks into a new directory next to the home and checks that against the
+`MANIFEST` (the same files and directories, nothing more), checks each
+link of the `MANIFEST` (relative, `../` first and names after, staying in
+the home and leading to a file or directory of the backup through
+directories only), sets the modes (directories 0700, files 0600, files
+that were executable 0700) and makes the links. Only then is the home
+moved aside to `<home>.before-restore-YYYYMMDD-HHMMSS` (the output names
+it) and the new one renamed into its place. A damaged, foreign or
+malicious archive stops with "nothing was changed". A home that does not
+exist yet is made; a home that is a link is restored where the link
+points. A backup made by a newer erssi is restored with a warning
+(settings this erssi does not know stay in the config, unused).
+`--dry-run` does all the checks in a temporary directory and lists what
+it would restore. The old home holds your old keys and passwords: remove
+it once erssi works.
+
+**Not while erssi runs.** `--restore` refuses while an erssi runs on that
+home: one from 2026.11.0 on holds the lock on `erssi.lock` (checked with
+perl, `flock` or FreeBSD's `lockf`), and an older one is found in the
+process list (`ps`): an erssi process of yours whose `--home` is that
+home, or that has no `--home` and runs with a `HOME` whose `.erssi` it is
+(its `HOME` read from `/proc` on Linux, elsewhere taken to be yours). Limits: an erssi started between the
+check and the rename is not seen, an erssi of another user or in another
+PID namespace (a container) is not in the list, and one that names its
+home in another way (a relative `--home`, a link to it) counts as running
+when relative and is missed when a link. `--backup` works while erssi
+runs; `/save` first if you changed settings since, as the backup takes
+the files as they are on the disk.
 
 ## Upgrading from 1.3.x
 

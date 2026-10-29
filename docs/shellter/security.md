@@ -179,6 +179,29 @@ the fe-web socket lock open their files the same way in their own code:
 The upstream code that reads `~/.erssi/config`, the startup file, themes,
 the `/upgrade` session and `/cat` follows links as irssi always has.
 
+## Backups
+
+`erssi --backup` writes a file that holds everything an attacker needs to
+be you: the E2E identity key and session keys (`rpe2e/keyring.json`), the
+OTR keys, the fe-web key, and the passwords of your networks, SASL
+accounts and fe-web (in `config` and `.credentials`, in plain text). It is
+not encrypted. It is written with mode 0600 from its first byte (a file of
+its own under another name, renamed only once complete), and the output
+says it must be kept private. Keep it so: not in a web directory, not in a
+shared or synced folder others can read, not on a box whose root you do not
+trust; copy it with `scp`/`sftp`, and remove it once the move is done. To
+keep it for longer, encrypt it, e.g. `age -p` or `gpg -c`. Someone who got
+a copy should be treated as having your keyring: `/e2e reset -force` and
+new passwords.
+
+`erssi --restore` takes an archive as untrusted input: it refuses links,
+hard links, devices, FIFOs, absolute names and `..` before anything is
+unpacked, unpacks into a new directory (never over the home), checks the
+result against its `MANIFEST`, makes only links that stay in the home,
+gives every file and directory your ownership and mode 0600/0700, and
+only then swaps the home. Anyone who can give you an archive can still
+give you their config, scripts and keys: restore only backups you made.
+
 ## Hardened build
 
 By default: PIE, stack protector, stack clash protection,
