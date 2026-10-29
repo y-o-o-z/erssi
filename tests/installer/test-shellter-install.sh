@@ -39,6 +39,9 @@ BIN_TOOLS=""
 for t in tar xz sha256sum find cmp perl; do
     p=$(find_tool "$t") && BIN_TOOLS="$BIN_TOOLS $t=$p"
 done
+# hostile() writes its archives with Python's tarfile where perl has no
+# Archive::Tar
+REAL_PYTHON3=$(find_tool python3) || REAL_PYTHON3=""
 PS=$(find_tool ps) || PS=""
 
 # stand-in tool $1 from stdin, kept in $W/stand; use_tool puts it in PATH
@@ -600,28 +603,48 @@ repack() {
 }
 # hostile VERSION NAME [LINK]: the package of make_pkg VERSION (Debian 13)
 # with one more member NAME, an empty file or a hard link to LINK, listed
-# and signed again. Perl's Archive::Tar (core perl) writes it, storing NAME
-# and LINK as given, the same on every system: GNU tar and bsdtar each need
-# options of their own for that, and bsdtar rewrites a hard link's target
-# only when it copies another archive
+# and signed again. Perl's Archive::Tar writes it, or Python's tarfile
+# where perl has no Archive::Tar (RHEL and its kin package it apart from
+# perl), storing NAME and LINK as given, the same on every system: GNU tar
+# and bsdtar each need options of their own for that, and bsdtar rewrites
+# a hard link's target only when it copies another archive. Returns 1,
+# with the case named as skipped, when neither is there.
 hostile() {
     hv=$1 hn=$2 hl=${3:-}
     hr="$W/rel/shellter-v$hv"
     ha="$hr/erssi-$hv-debian13-amd64.tar"
+    hd="$W/pkg/$hv-debian13-amd64"
     rm -f "$ha" "$ha.xz"
-    # shellcheck disable=SC2016 # perl
-    if ! { ( cd "$W/pkg/$hv-debian13-amd64" && find "erssi-$hv-debian13-amd64" -print ) |
-        "$REAL_PERL" -MArchive::Tar -e '
-            my ($dir, $out, $name, $link) = @ARGV;
-            chomp(my @f = <STDIN>);
-            chdir $dir or die "$dir: $!\n";
-            my $t = Archive::Tar->new;
-            $t->add_files(@f) == @f or die "add_files\n";
-            $t->add_data($name, "", length $link ?
-                { type => Archive::Tar::Constant::HARDLINK(), linkname => $link } : {}) or die "add_data\n";
-            $t->write($out) or die "write $out\n";' \
-            "$W/pkg/$hv-debian13-amd64" "$ha" "$hn" "$hl" &&
-            xz "$ha" && ( cd "$hr" && sha256sum erssi-*.tar.xz ) > "$hr/SHA256SUMS"; }; then
+    if "$REAL_PERL" -MArchive::Tar -e 1 2>/dev/null; then
+        # shellcheck disable=SC2016 # perl
+        ( cd "$hd" && find "erssi-$hv-debian13-amd64" -print ) |
+            "$REAL_PERL" -MArchive::Tar -e '
+                my ($dir, $out, $name, $link) = @ARGV;
+                chomp(my @f = <STDIN>);
+                chdir $dir or die "$dir: $!\n";
+                my $t = Archive::Tar->new;
+                $t->add_files(@f) == @f or die "add_files\n";
+                $t->add_data($name, "", length $link ?
+                    { type => Archive::Tar::Constant::HARDLINK(), linkname => $link } : {}) or die "add_data\n";
+                $t->write($out) or die "write $out\n";' \
+                "$hd" "$ha" "$hn" "$hl"
+    elif [ -n "$REAL_PYTHON3" ]; then
+        ( cd "$hd" && find "erssi-$hv-debian13-amd64" -print ) |
+            "$REAL_PYTHON3" -I -c '
+import sys, tarfile
+d, out, name, link = sys.argv[1:5]
+with tarfile.open(out, "w", format=tarfile.GNU_FORMAT) as t:
+    for f in sys.stdin.read().splitlines():
+        t.add(d + "/" + f, arcname=f, recursive=False)
+    i = tarfile.TarInfo(name)
+    if link:
+        i.type, i.linkname = tarfile.LNKTYPE, link
+    t.addfile(i)' "$hd" "$ha" "$hn" "$hl"
+    else
+        echo "ok $CASE: hostile $hn # SKIP no Archive::Tar for perl and no python3 here"
+        return 1
+    fi
+    if ! { [ -f "$ha" ] && xz "$ha" && ( cd "$hr" && sha256sum erssi-*.tar.xz ) > "$hr/SHA256SUMS"; }; then
         echo "FAIL $CASE: hostile $hn: no package"; exit 1
     fi
     sign_sums "$hv"
@@ -2251,10 +2274,11 @@ binary-refused)
     refused "files outside the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
     # a name that goes up from the top directory
     make_pkg 2026.10.4 "$c4"
-    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/../../evil
-    # shellcheck disable=SC2016 # run by sh
-    check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
-    refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    if hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/../../evil; then
+        # shellcheck disable=SC2016 # run by sh
+        check "... the test package holds the name" sh -c 'tar -tJf "$1" 2>/dev/null | grep -qx "erssi-2026.10.4-debian13-amd64/../../evil"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+        refused "a name going up from the top directory" "holds files outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    fi
     # links that lead out of the package
     PT="$W/pkg/2026.10.4-debian13-amd64/erssi-2026.10.4-debian13-amd64"
     make_pkg 2026.10.4 "$c4"
@@ -2276,10 +2300,11 @@ binary-refused)
     repack 2026.10.4
     refused "a symbolic link with .. inside its target" "holds a symbolic link whose target is absolute or has a .. in it"
     make_pkg 2026.10.4 "$c4"
-    hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/share/irssi/h1 etc/passwd
-    # shellcheck disable=SC2016 # run by sh
-    check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
-    refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    if hostile 2026.10.4 erssi-2026.10.4-debian13-amd64/share/irssi/h1 etc/passwd; then
+        # shellcheck disable=SC2016 # run by sh
+        check "... the test package holds the link" sh -c 'tar -tvJf "$1" | grep -q " link to etc/passwd\$"' sh "$R4/erssi-2026.10.4-debian13-amd64.tar.xz"
+        refused "a hard link to a file outside the package" "holds a hard link to a file outside erssi-2026.10.4-debian13-amd64/ - refusing to install"
+    fi
     # a missing library: named, with the package to install
     good_pkg 2026.10.4 "$c4"
     FAKE_LDD_MISSING="libchafa.so.0 libperl.so.5.40 libunknown.so.7"; export FAKE_LDD_MISSING
