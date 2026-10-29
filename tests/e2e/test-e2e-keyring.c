@@ -1043,16 +1043,28 @@ static void test_cache(void)
 	E2E_LOAD_STATUS status;
 	E2E_JSON *kr;
 	char *notice = NULL, *error = NULL;
+	int tries;
 
 	setup();
-	kr = e2e_keyring_new();
-	e2e_json_set_string(kr, "one", "1");
-	g_assert_true(e2e_keyring_save(path, kr, &error));
-	e2e_json_free(kr);
+	/* written this second: read every time. A second that ends between
+	   the save and the load makes the file older than the current
+	   second, which is cached as it should be: then again */
+	for (tries = 0;; tries++) {
+		struct stat st;
 
-	/* written this second: read every time */
-	kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
-	e2e_json_free(kr);
+		e2e_keyring_cache_clear(&cache);
+		cache.reads = 0;
+		kr = e2e_keyring_new();
+		e2e_json_set_string(kr, "one", "1");
+		g_assert_true(e2e_keyring_save(path, kr, &error));
+		e2e_json_free(kr);
+		kr = e2e_keyring_cache_load(&cache, path, &status, &notice);
+		e2e_json_free(kr);
+		g_assert_cmpint(lstat(path, &st), ==, 0);
+		if (st.st_mtim.tv_sec == time(NULL))
+			break;
+		g_assert_cmpint(tries, <, 10);
+	}
 	g_assert_cmpuint(cache.reads, ==, 1);
 	g_assert_null(cache.kr);
 
