@@ -49,6 +49,8 @@
 #define UPDATE_TICK_MAX 900
 #define UPDATE_STATE_FILE "update-check.state"
 #define UPDATE_STATE_MAX 4096
+#define CAPSICUM_REASON "not possible in capability mode (Capsicum): erssi cannot start " \
+	"the installer there - use erssi --check-update from a shell"
 
 /* ── answers ─────────────────────────────────────────────────────────── */
 
@@ -590,7 +592,7 @@ int update_job_pid(UPDATE_JOB *job)
 
 static UPDATE_JOB *job;
 static guint tick_tag;
-static gboolean check_on, started;
+static gboolean check_on, started, capability_mode;
 static char *available;
 static UPDATE_STATE cached;
 
@@ -658,9 +660,10 @@ static char *unavailable_reason(void)
 
 #ifdef HAVE_CAPSICUM
 	if (capsicum_enabled())
-		return g_strdup("not possible in capability mode (Capsicum): erssi cannot start "
-		                "the installer there - use erssi --check-update from a shell");
+		capability_mode = TRUE;
 #endif
+	if (capability_mode)
+		return g_strdup(CAPSICUM_REASON);
 	installer = installer_path(&test);
 	if (access(installer, R_OK) != 0) {
 		reason = g_strdup_printf("this erssi was not installed with shellter-install.sh "
@@ -906,6 +909,24 @@ static void sig_init_finished(void)
 	                  update_check_due_in((gint64) time(NULL), cached.last_check)));
 }
 
+/* Capsicum: SIGCHLD is ignored from here on, so a running check would never
+   be waited for (and its group cannot be signalled in capability mode):
+   it is stopped and reaped now */
+static void sig_capability_entering(void)
+{
+	if (job != NULL)
+		update_job_cancel(job);
+	job = NULL;
+}
+
+static void sig_capability_enabled(void)
+{
+	capability_mode = TRUE;
+	if (check_on)
+		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, TXT_UPDATE_UNAVAILABLE,
+		            CAPSICUM_REASON);
+}
+
 /* SYNTAX: UPDATE */
 static void cmd_update(const char *data, SERVER_REC *server, void *item)
 {
@@ -977,6 +998,8 @@ void update_check_init(void)
 	command_bind("update check", NULL, (SIGNAL_FUNC) cmd_update_check);
 	signal_add_last("irssi init finished", (SIGNAL_FUNC) sig_init_finished);
 	signal_add("setup changed", (SIGNAL_FUNC) read_settings);
+	signal_add("capability mode entering", (SIGNAL_FUNC) sig_capability_entering);
+	signal_add("capability mode enabled", (SIGNAL_FUNC) sig_capability_enabled);
 }
 
 void update_check_deinit(void)
@@ -997,4 +1020,6 @@ void update_check_deinit(void)
 	command_unbind("update check", (SIGNAL_FUNC) cmd_update_check);
 	signal_remove("irssi init finished", (SIGNAL_FUNC) sig_init_finished);
 	signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
+	signal_remove("capability mode entering", (SIGNAL_FUNC) sig_capability_entering);
+	signal_remove("capability mode enabled", (SIGNAL_FUNC) sig_capability_enabled);
 }

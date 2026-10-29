@@ -466,6 +466,10 @@ static void cmd_capsicum_enter(void)
 		return;
 	}
 
+	/* the last moment to stop child processes that are waited for:
+	   from here on they would never be (the update check) */
+	signal_emit("capability mode entering", 0);
+
 	/*
 	 * XXX: We should use pdwait(2) to wait for children.  Unfortunately
 	 *      it's not implemented yet.  Thus the workaround, to get rid

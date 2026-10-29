@@ -113,8 +113,9 @@ default, because it contacts GitHub:
   says it once; it still asks the installer every day, which answers
   from the conf without contacting anything, so the check finds releases
   again once the conf names no other tool. In Capsicum capability mode
-  erssi cannot start programs, so there is no check; `erssi
-  --check-update` from a shell still works.
+  erssi cannot start programs, so there is no check: a check that runs
+  when the mode is entered is stopped first, and erssi says why there is
+  none from then on; `erssi --check-update` from a shell still works.
 
 ## Web client
 

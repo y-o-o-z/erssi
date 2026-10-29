@@ -195,6 +195,54 @@ static void test_unmanaged_checked_daily(void)
 	reset();
 }
 
+/* the pid of the stand-in's last run */
+static int last_pid(void)
+{
+	char *text = NULL, *line;
+	int pid;
+
+	g_assert_true(g_file_get_contents(runs_file, &text, NULL, NULL));
+	line = strrchr(g_strchomp(text), '\n');
+	pid = atoi(line == NULL ? text : line + 1);
+	g_free(text);
+	return pid;
+}
+
+/* Capsicum: SIGCHLD is ignored once the mode is entered, so a running
+ * check is stopped and reaped before ("capability mode entering"), and
+ * after it erssi says why there is no check. Run last: the mode stays. */
+static void test_capability_mode(void)
+{
+	int pid, i;
+
+	reset();
+	set_check(TRUE);
+	answer("hang", 0);
+	command("/update check");
+	g_assert_true(update_check_running());
+	for (i = 0; i < 500 && runs() == 0; i++)
+		g_usleep(10000);
+	pid = last_pid();
+	g_assert_cmpint(pid, >, 1);
+	signal_emit("capability mode entering", 0);
+	g_assert_false(update_check_running());
+	errno = 0;
+	g_assert_cmpint(waitpid(pid, NULL, WNOHANG), ==, -1);
+	g_assert_cmpint(errno, ==, ECHILD);
+	g_string_truncate(printed, 0);
+	signal_emit("capability mode enabled", 0);
+	g_assert_nonnull(strstr(printed->str, "not possible in capability mode (Capsicum)"));
+	/* no check runs in it */
+	g_string_truncate(printed, 0);
+	command("/update check");
+	g_assert_false(update_check_running());
+	g_assert_cmpint(runs(), ==, 1);
+	g_assert_nonnull(strstr(printed->str, "not possible in capability mode (Capsicum)"));
+	update_check_tick_now();
+	g_assert_false(update_check_running());
+	g_assert_cmpint(runs(), ==, 1);
+}
+
 static void test_newer(void)
 {
 	g_assert_true(update_check_newer("2026.11.0", "2026.10.6"));
@@ -248,5 +296,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/module/other_erssi_checked", test_other_erssi_checked);
 	g_test_add_func("/update_check/module/unmanaged_checked_daily",
 	                test_unmanaged_checked_daily);
+	/* last: capability mode stays on */
+	g_test_add_func("/update_check/module/capability_mode", test_capability_mode);
 	return g_test_run();
 }
