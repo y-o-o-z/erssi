@@ -27,6 +27,7 @@ TOPICS = {
     "nick_mode_color_normal": "Sets the colour of the blank $nickmode prints for a nick without a mode.",
     "nickmode": "$nickmode in a message format is the sender's mode prefix",
     "term_notify": "Shows a desktop notification through the terminal for every mention",
+    "term_hyperlinks": "Makes the web addresses in the text view clickable in terminals that",
     "window_close_disconnects": "Disconnects a server when /WINDOW CLOSE closes the last window that",
     "sidepanel_debug": "Writes a debug log of the side panels and the mouse",
     "resize_debug": "Writes a debug log of every terminal resize",

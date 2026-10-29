@@ -70,6 +70,29 @@ above twice the limit no new download (nor a retry) starts, so the cache
 never holds more than twice the limit plus three downloads in progress;
 0 means no lasting cache and has no hard limit (`/help image`).
 
+## Clickable addresses (OSC 8)
+
+The addresses that become links come from other people, so:
+
+- **No hidden targets** — a link is only ever the address as it is
+  shown, and its target is that same text; nobody can make words point
+  somewhere else. Only http, https, ftp, gopher, gemini, irc and ircs
+  addresses become links (no file:, javascript:, data: or mailto:).
+- **Nothing ends the sequence early** — the target holds only printable
+  ASCII: characters that may not be in a URI are percent-encoded, and
+  controls (C0, C1, DEL, also as UTF-8), spaces, invalid UTF-8 and
+  Unicode format characters such as bidi overrides end the address. The
+  terminal code checks the target again before it writes it, and an
+  address longer than 2048 bytes stays plain text. The `id=` of a link is
+  made by erssi from the line and a random salt, letters and digits only.
+- **Nothing leaks into other text** — a link is open only while the
+  address itself is drawn: it is closed before every cursor move, clear
+  and scroll, so the side panels, the statusbar, the input line and the
+  cleared cells are never part of it.
+- **What it does not do** — a link to a look-alike address (another
+  domain that reads the same) is still a link to what is shown; check the
+  address before you open it, as in a browser.
+
 ## What end-to-end encryption protects, and what it does not
 
 erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.

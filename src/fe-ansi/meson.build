@@ -27,6 +27,7 @@ fe_ansi_sources = files(
   'statusbar-items.c',
   'statusbar.c',
   'term-notify.c',
+  'term-hyperlink.c',
   'textbuffer-commands.c',
   'textbuffer-formats.c',
   'textbuffer-view.c',

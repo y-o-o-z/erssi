@@ -1,0 +1,54 @@
+%9Setting:%9
+
+    term_hyperlinks (choice: auto, on, off; default: auto)
+
+%9Description:%9
+
+    Makes the web addresses in the text view clickable in terminals that
+    know OSC 8 hyperlinks. Addresses starting with http://, https://,
+    ftp://, gopher://, gemini://, irc:// and ircs:// become links;
+    file:, javascript:, data: and mailto: never do.
+
+    The link is exactly the text that is shown: there are no hidden
+    targets. Punctuation after an address (. , ; : ! ? and a closing
+    bracket or quote that is not part of it) is left out. Characters that
+    may not appear in a URI (non-ASCII letters, \ ^ ` { | }) are
+    percent-encoded in the target; spaces and control characters end an
+    address, and an address longer than 2048 bytes stays plain text. An
+    address that wraps over several lines is still one link.
+
+    AUTO makes links only where that is known to be safe:
+
+        - kitty, WezTerm, iTerm2, Ghostty, foot, Alacritty (0.11 and
+          later; older versions ignore them), Contour, Windows Terminal,
+          Konsole (where its profile allows links), the VS Code terminal
+          and VTE 0.50 or later (GNOME Terminal, Tilix, Terminator, ...),
+        - inside tmux. tmux 3.4 and later hand the links to the outer
+          terminal when it has the "hyperlinks" feature; older versions
+          drop them.
+
+    AUTO makes no links under GNU Screen (STY, or a TERM of screen*
+    outside tmux), on the Linux, BSD or serial console, for TERM dumb,
+    linux, vt*, cons* and Emacs, and for every terminal it cannot
+    recognise, such as xterm-256color over ssh: ssh passes on only TERM,
+    and a terminal that does not understand OSC could print the
+    sequence. ON makes links whatever the terminal is, OFF never.
+
+    How a link is opened depends on the terminal. erssi uses the mouse
+    itself, so most terminals want a modifier held while clicking (Ctrl
+    or Ctrl+Shift, Cmd on macOS); some show the address when the pointer
+    is over it. The side panels, the statusbar and the input line never
+    contain links.
+
+%9Examples:%9
+
+    /SET term_hyperlinks on
+    /SET term_hyperlinks off
+
+    For tmux 3.4 or later, in ~/.tmux.conf:
+
+        set -as terminal-features ',*:hyperlinks'
+
+%9See also:%9
+
+    SET, TERM_TRUECOLOR

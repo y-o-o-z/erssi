@@ -15,6 +15,8 @@
 #include <glib.h>
 #include <termios.h>
 
+#include <irssi/src/fe-ansi/term-hyperlink.h>
+
 /* Graphics protocol types */
 typedef enum {
 	GFX_NONE = 0,        /* No graphics support - image preview OFF */
@@ -34,6 +36,7 @@ typedef struct {
 	gboolean has_bracketed_paste;
 	gboolean has_mouse_sgr;
 	gboolean has_alt_screen;
+	gboolean has_hyperlinks;    /* term_hyperlinks auto: OSC 8 is safe */
 } TerminalCaps;
 
 /* ANSI terminal state */
@@ -66,6 +69,16 @@ typedef struct {
 	/* Focus reporting (CSI ?1004h) is on; the last focus reported */
 	int focus_reporting;
 	int focused;
+
+	/* The OSC 8 link of the text written next (NULL: none), and whether
+	 * its sequence is open in the terminal now */
+	char *link_uri;
+	char link_id[TERM_LINK_ID_SIZE];
+	int link_open;
+	/* the caller's strings link_uri and link_id were copied from: the
+	 * same ones again (each character of an address) need no check;
+	 * compared, never read */
+	const char *link_src_uri, *link_src_id;
 
 	/* Capabilities */
 	TerminalCaps caps;

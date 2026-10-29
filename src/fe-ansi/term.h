@@ -33,6 +33,8 @@ extern TERM_WINDOW *root_window;
 extern int term_width, term_height;
 extern int term_use_colors, term_type;
 extern int term_use_colors24;
+/* OSC 8 links are drawn (term_hyperlinks) */
+extern int term_use_hyperlinks;
 extern int term_color256map[];
 
 /* Initialize / deinitialize terminal */
@@ -94,6 +96,14 @@ void term_addch(TERM_WINDOW *window, char chr);
 void term_add_unichar(TERM_WINDOW *window, unichar chr);
 int  term_addstr(TERM_WINDOW *window, const char *str);
 void term_clrtoeol(TERM_WINDOW *window);
+/* The text written from now on is the link uri, with id (OSC 8), or no
+ * link with uri NULL. Only while term_use_hyperlinks; uri and id must pass
+ * term_link_uri_is_safe() and term_link_id_is_safe(), or nothing is a
+ * link. The sequence is opened before the next character and closed at
+ * once by uri NULL, and also by term_move() and everything else that moves
+ * the cursor, clears or scrolls: whoever draws next starts without one.
+ * The strings are copied. */
+void term_set_hyperlink(TERM_WINDOW *window, const char *uri, const char *id);
 void term_window_clrtoeol(TERM_WINDOW* window, int ypos);
 void term_window_clrtoeol_abs(TERM_WINDOW* window, int ypos_abs);
 

@@ -102,6 +102,7 @@ TERM_WINDOW *root_window = NULL;
 
 int term_width, term_height;
 int term_use_colors, term_use_colors24;
+int term_use_hyperlinks;
 int term_type;
 
 /* Color 256 to 16 mapping table */
@@ -462,8 +463,12 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 	const char *env_term, *env_colorterm, *env_term_program;
 	const char *env_tmux, *env_sty;
 	const char *env_kitty_pid, *env_ghostty;
+	TermLinkEnv link_env;
 
 	memset(&term->caps, 0, sizeof(term->caps));
+
+	term_link_env_from_process(&link_env);
+	term->caps.has_hyperlinks = term_link_detect(&link_env);
 
 	/* Default to 256 colors for modern terminals */
 	term->caps.max_colors = 256;
@@ -551,6 +556,19 @@ void ansi_detect_capabilities(ANSI_TERM *term)
  * TERM COMMON FUNCTIONS
  * ======================================================================== */
 
+/* OSC 8 links: term_hyperlinks auto (detected), on, off */
+static int term_hyperlinks_wanted(void)
+{
+	switch (settings_get_choice("term_hyperlinks")) {
+	case 1:
+		return TRUE;
+	case 2:
+		return FALSE;
+	default:
+		return ansi_term != NULL && ansi_term->caps.has_hyperlinks;
+	}
+}
+
 /* 24-bit colors reach the screen: term_truecolor auto (detected), on, off */
 int term_truecolor_capable(void)
 {
@@ -569,6 +587,7 @@ static void read_settings(void)
 	const char *str;
 	int old_colors = term_use_colors;
 	int old_colors24 = term_use_colors24;
+	int old_links = term_use_hyperlinks;
 	int old_type = term_type;
 
 	str = settings_get_str("term_charset");
@@ -592,7 +611,10 @@ static void read_settings(void)
 
 	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 
-	if (term_use_colors != old_colors || term_use_colors24 != old_colors24)
+	term_use_hyperlinks = term_hyperlinks_wanted();
+
+	if (term_use_colors != old_colors || term_use_colors24 != old_colors24 ||
+	    term_use_hyperlinks != old_links)
 		irssi_redraw();
 }
 
@@ -633,6 +655,8 @@ void term_common_init(void)
 	 * otherwise the nearest of the 256-colour palette */
 	settings_add_bool("lookandfeel", "colors_ansi_24bit", FALSE);
 	settings_add_choice("lookandfeel", "term_truecolor", 0, "auto;on;off");
+	/* addresses in messages as OSC 8 links: auto, on, off */
+	settings_add_choice("lookandfeel", "term_hyperlinks", 0, "auto;on;off");
 	term_use_colors24 = settings_get_bool("colors_ansi_24bit") && term_truecolor_capable();
 	read_settings();
 
@@ -666,11 +690,83 @@ void term_common_deinit(void)
  * TERM API IMPLEMENTATION
  * ======================================================================== */
 
+/* ========================================================================
+ * OSC 8 LINKS
+ * ======================================================================== */
+
+/* The sequence ends here, the link the caller asked for stays: the next
+ * character after a cursor move opens it again (the next piece of a
+ * wrapped address). */
+static void term_link_close(void)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term->link_open) {
+		fputs(TERM_LINK_CLOSE_SEQ, term->out);
+		term->link_open = FALSE;
+	}
+}
+
+/* No link from here on: before anything that is not the text of one. */
+static void term_link_drop(void)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term == NULL)
+		return;
+	term_link_close();
+	g_free(term->link_uri);
+	term->link_uri = NULL;
+	term->link_id[0] = '\0';
+	term->link_src_uri = term->link_src_id = NULL;
+}
+
+/* before a character: open the link it belongs to */
+static void term_link_flush(void)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term->link_uri != NULL && !term->link_open && term_use_hyperlinks) {
+		fprintf(term->out, TERM_LINK_OPEN_FMT, term->link_id, term->link_uri);
+		term->link_open = TRUE;
+	}
+}
+
+void term_set_hyperlink(TERM_WINDOW *window, const char *uri, const char *id)
+{
+	ANSI_TERM *term = ansi_term;
+
+	if (term == NULL)
+		return;
+	if (uri != NULL && term->link_uri != NULL && uri == term->link_src_uri &&
+	    id == term->link_src_id)
+		return;
+	if (uri == NULL || !term_use_hyperlinks || !term_link_uri_is_safe(uri) ||
+	    !term_link_id_is_safe(id)) {
+		term_link_drop();
+		return;
+	}
+	if (term->link_uri != NULL && strcmp(term->link_id, id) == 0 &&
+	    strcmp(term->link_uri, uri) == 0) {
+		term->link_src_uri = uri;
+		term->link_src_id = id;
+		return;
+	}
+
+	term_link_drop();
+	term->link_uri = g_strdup(uri);
+	g_strlcpy(term->link_id, id, sizeof(term->link_id));
+	term->link_src_uri = uri;
+	term->link_src_id = id;
+}
+
 static void term_move_real(void)
 {
 	ANSI_TERM *term = ansi_term;
 
 	if (term->vcx != term->crealx || term->vcy != term->crealy || term->cforcemove) {
+		term_link_close();
+
 		if (term->curs_visible) {
 			ansi_set_cursor_visible(term, FALSE);
 			term->curs_visible = FALSE;
@@ -757,6 +853,8 @@ int term_init(void)
 	ansi_term->lines_empty = g_new0(char, term_height);
 
 	term_set_input_type(TERM_TYPE_8BIT);
+	/* the ids of the links tell nothing about erssi's memory */
+	term_link_set_salt(((guint64) g_random_int() << 32) | g_random_int());
 	term_common_init();
 
 	term_use_colors = TRUE;
@@ -774,6 +872,7 @@ void term_deinit(void)
 
 		term_common_deinit();
 
+		term_link_drop();
 		term_set_focus_reporting(FALSE);
 
 		/* Disable mouse */
@@ -841,6 +940,7 @@ void term_resize(int width, int height)
 		ansi_term->lines_empty = g_new0(char, term_height);
 
 		/* Clear screen and reset cursor after resize */
+		term_link_drop();
 		ansi_set_normal(ansi_term);
 		ansi_clear(ansi_term);
 	}
@@ -903,6 +1003,7 @@ void term_force_colors(int set)
 
 void term_clear(void)
 {
+	term_link_drop();
 	term_set_color(root_window, ATTR_RESET);
 	ansi_clear(ansi_term);
 	term_move_reset(0, 0);
@@ -1015,6 +1116,7 @@ void term_window_scroll(TERM_WINDOW *window, int count)
 	if (window->x != 0 || window->width != term_width)
 		return;
 
+	term_link_drop();
 	ansi_scroll(ansi_term, window->y, window->y + window->height - 1, count);
 	term_move_reset(ansi_term->vcx, ansi_term->vcy);
 
@@ -1142,6 +1244,7 @@ void term_move(TERM_WINDOW *window, int x, int y)
 {
 	ANSI_TERM *term = ansi_term;
 
+	term_link_drop();
 	if (x >= 0 && y >= 0) {
 		term->vcx = x + window->x;
 		term->vcy = y + window->y;
@@ -1218,6 +1321,7 @@ void term_addch(TERM_WINDOW *window, char chr)
 	if (term_byte_is_control((unsigned char) chr) ||
 	    (term_type == TERM_TYPE_UTF8 && (chr & 0x80) != 0))
 		chr = TERM_CONTROL_REPLACEMENT;
+	term_link_flush();
 
 	if (term_type != TERM_TYPE_UTF8 ||
 	    (chr & 0x80) == 0 || (chr & 0x40) == 0) {
@@ -1244,6 +1348,7 @@ void term_add_unichar(TERM_WINDOW *window, unichar chr)
 
 	if (term->vcx != term->crealx || term->vcy != term->crealy || term->cforcemove)
 		term_move_real();
+	term_link_flush();
 
 	switch (term_type) {
 	case TERM_TYPE_UTF8:
@@ -1344,6 +1449,7 @@ int term_addstr(TERM_WINDOW *window, const char *str)
 	if (term->vcx != term->crealx || term->vcy != term->crealy || term->cforcemove)
 		term_move_real();
 
+	term_link_flush();
 	len = 0;
 	raw_len = strlen(str);
 
@@ -1369,6 +1475,9 @@ int term_addstr(TERM_WINDOW *window, const char *str)
 void term_clrtoeol(TERM_WINDOW *window)
 {
 	ANSI_TERM *term = ansi_term;
+
+	/* the cleared cells, spaces in a split, are no link */
+	term_link_drop();
 
 	if (term->vcx < window->x) {
 		term->vcx += window->x;
@@ -1440,6 +1549,7 @@ void term_refresh(TERM_WINDOW *window)
 	if (term->freeze > 0)
 		return;
 
+	term_link_drop();
 	term_move(root_window, curs_x, curs_y);
 	term_move_real();
 
@@ -1456,6 +1566,7 @@ void term_stop(void)
 {
 	ANSI_TERM *term = ansi_term;
 
+	term_link_drop();
 	if (term->focus_reporting)
 		fputs(FOCUS_REPORT_OFF, term->out);
 	ansi_mouse_disable(term);
@@ -1509,6 +1620,7 @@ void term_write_raw(const char *data)
 
 	/* everything drawn so far goes out first: data is written between
 	 * complete sequences, and only ever as a whole */
+	term_link_drop();
 	fflush(term->out);
 	fputs(data, term->out);
 	fflush(term->out);

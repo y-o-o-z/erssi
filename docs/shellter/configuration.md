@@ -45,6 +45,7 @@ text, as with `/network add -sasl_password`).
 /set print_whois_rpl_in_server_window on  # off: WHOIS in the active window
 /set anti_floodnet_notices off            # hide Anti-Floodnet notices
 /set term_truecolor auto                  # on / off to override terminal detection
+/set term_hyperlinks auto                 # clickable addresses (OSC 8); on over ssh if your terminal shows them
 /set term_notify auto                     # desktop notifications (off in a config from 1.3.x)
 /set mentions_log on                      # log of the Mentions window
 ```
@@ -56,14 +57,17 @@ gives erssi's built-in value.
 
 ## tmux
 
-In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`, and for
-notifications `set -g focus-events on` and `set -g allow-passthrough on`.
+In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`, for
+notifications `set -g focus-events on` and `set -g allow-passthrough on`,
+and for clickable addresses (tmux 3.4 or later, when the outer terminal
+shows links) `set -as terminal-features ',*:hyperlinks'`.
 In `~/.tmux.conf`:
 
 ```
-set -as terminal-features ',*:RGB'    # RGB colour
-set -g focus-events on                # for notifications
-set -g allow-passthrough on           # for notifications
+set -as terminal-features ',*:RGB'         # RGB colour
+set -g focus-events on                     # for notifications
+set -g allow-passthrough on                # for notifications
+set -as terminal-features ',*:hyperlinks'  # clickable addresses
 ```
 
 ## Update notice
