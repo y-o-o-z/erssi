@@ -32,7 +32,8 @@
 #       Builds the package TARBALL again here, from the release tag its
 #       MANIFEST names, exactly as above (the same checks, the full test
 #       suite), and compares the two: exit 0 when they are identical byte
-#       for byte (the same sha256), 1 when they differ, with the files
+#       for byte (the same sha256), 3 when they differ (1 when it cannot
+#       build or refuses), with the files
 #       that differ and the MANIFEST lines that tell the two builds'
 #       compilers and libraries apart. TARBALL must be for this platform.
 #   build-binary.sh --sums DIR
@@ -54,7 +55,8 @@
 # in place of the full suite, for the packager's own test
 # (tests/version/test-build-binary.sh) only. A release never sets it.
 #
-# Exit: 0 package written, 1 refused or failed, 2 usage.
+# Exit: 0 package written (--verify: reproduced), 1 refused or failed,
+# 2 usage, 3 (--verify) built again but not the same bytes.
 
 set -u
 
@@ -189,6 +191,9 @@ toolchain() {
     printf 'cc=%s\n' "$(cc --version 2>/dev/null | head -n 1)"
     printf 'meson=%s\n' "$(meson --version 2>/dev/null)"
     printf 'ninja=%s\n' "$(ninja --version 2>/dev/null)"
+    # the stripping and the packing change the bytes too
+    printf 'strip=%s\n' "$(strip --version 2>/dev/null | head -n 1)"
+    printf 'xz=%s\n' "$(xz --version 2>/dev/null | head -n 1)"
     libs=
     for m in glib-2.0 openssl libotr libgcrypt libcurl chafa libutf8proc; do
         v=$(pkg-config --modversion "$m" 2>/dev/null) || v='?'
@@ -340,7 +345,7 @@ compare_packages() {
         diff "$m" "$h" | sed -n 's/^< /  given: /p; s/^> /  here:  /p'
     fi
     [ "$KEEP" = 1 ] || say "(--keep-work keeps both trees to compare: $WORK/given, $WORK/here)"
-    exit 1
+    exit 3
 }
 
 # ── a package ────────────────────────────────────────────────────────
@@ -355,6 +360,7 @@ if [ -z "${BUILD_BINARY_CLEAN:-}" ]; then
 fi
 REPO=
 OUT=.
+OUT_GIVEN=0
 WORK=
 KEEP=0
 SUMS=
@@ -362,7 +368,7 @@ VERIFY=
 while [ $# -gt 0 ]; do
     case $1 in
         --repo) [ $# -ge 2 ] || usage "--repo needs a directory"; REPO=$2; shift 2 ;;
-        --out) [ $# -ge 2 ] || usage "--out needs a directory"; OUT=$2; shift 2 ;;
+        --out) [ $# -ge 2 ] || usage "--out needs a directory"; OUT=$2; OUT_GIVEN=1; shift 2 ;;
         --work) [ $# -ge 2 ] || usage "--work needs a directory"; WORK=$2; shift 2 ;;
         --keep-work) KEEP=1; shift ;;
         --sums) [ $# -ge 2 ] || usage "--sums needs a directory"; SUMS=$2; shift 2 ;;
@@ -388,12 +394,14 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "$SUMS" ]; then
+    [ -z "$VERIFY" ] || usage "--sums and --verify do not go together"
     [ $# -eq 0 ] || usage "--sums takes no tag"
     write_sums "$SUMS"
     exit 0
 fi
 if [ -n "$VERIFY" ]; then
     [ $# -eq 0 ] || usage "--verify takes no tag: the package's MANIFEST names it"
+    [ "$OUT_GIVEN" = 0 ] || usage "--verify writes no package: no --out"
     [ -f "$VERIFY" ] || die "$VERIFY is not a file"
     VERIFY=$(cd -- "$(dirname -- "$VERIFY")" && pwd)/$(basename -- "$VERIFY")
     have xz || die "xz is needed"
@@ -474,7 +482,8 @@ if [ -n "$VERIFY" ]; then
     COMMIT=$(git -C "$SRC" rev-parse --verify -q "$TAG_OBJ^{commit}") || die "$TAG names no commit"
     git -C "$SRC" -c advice.detachedHead=false checkout -q "$COMMIT" || die "cannot check out $COMMIT"
     [ -f "$SRC/utils/build-binary.sh" ] || die "$TAG has no utils/build-binary.sh - it has no packages"
-    sh "$SRC/utils/build-binary.sh" --repo "$REPO" --out "$WORK/out" --work "$WORK/build-work" "$TAG" ||
+    if [ "$KEEP" = 1 ]; then set -- --keep-work; else set --; fi
+    sh "$SRC/utils/build-binary.sh" --repo "$REPO" --out "$WORK/out" --work "$WORK/build-work" "$@" "$TAG" ||
         die "the build of $TAG failed - nothing to compare"
     compare_packages "$VERIFY" "$WORK/out/$NAME.tar.xz"
 fi

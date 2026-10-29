@@ -398,7 +398,9 @@ The packages are reproducible: built from the same signed tag on the same
 platform, with the same compiler and libraries, they are the same bytes.
 So you need not trust the machine that built a package: build it again
 and compare. In a clone of the repository, on the package's platform,
-with the build tools of [Manual build](#manual-build) (and `xz`):
+with the tools and libraries of a package build there (the package lists
+of [releasing.md](releasing.md#binary-packages): every feature, git
+2.34+, ssh-keygen, xz, python3 and libsodium for the full test suite):
 
 ```sh
 git clone https://github.com/y-o-o-z/erssi.git && cd erssi
@@ -410,11 +412,12 @@ tag is signed by the release key, builds the release again with that
 release's own `utils/build-binary.sh` (the full test suite included, a
 few minutes) and compares. It prints `reproduced: … is identical to the
 build here` with the sha256 and exits 0; otherwise it says `NOT
-reproduced`, lists the files that differ and exits 1. A difference
-usually means other versions of the tools: from 2026.11.0 on, the
-`MANIFEST` records the compiler (`cc=`), `meson=`, `ninja=` and the
-libraries (`libs=`) the package was built with, next to `perl_version=`
-and `libc=`, and `--verify` shows the lines where the two builds differ.
+reproduced`, lists the files that differ and exits 3 (exit 1: it could
+not build it, nothing was compared). A difference usually means other
+versions of the tools: from 2026.11.0 on, the `MANIFEST` records the
+main ones, the compiler (`cc=`), `meson=`, `ninja=`, `strip=`, `xz=` and
+the libraries (`libs=`), next to `perl_version=` and `libc=`, and
+`--verify` shows the lines where the two builds differ.
 A distribution update of a library between the release and your build
 (a security fix of GLib, say) is enough to change the bytes, so a
 difference is not by itself a sign of tampering; an identical build is
