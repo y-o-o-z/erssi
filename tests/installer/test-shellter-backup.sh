@@ -43,9 +43,28 @@ for a in "\$@"; do
         -*) [ "\$a" = - ] || { echo "stand-in tar: option \$a is not one of both tars" >&2; echo "BAD \$a" >> "$W/tar.opts"; exit 2; } ;;
     esac
 done
+# stand-ins for what is hard to make happen on time: a file that grows
+# while it is read (GNU tar's exit 1), another error, an entry --restore
+# refuses (a FIFO put into what is written)
+case " \$* " in
+    *" -c "*)
+        for top in "\$@"; do :; done
+        if [ -n "\${FAKE_TAR_FIFO:-}" ]; then mkfifo "\$top/home/fifo"; fi
+        if [ -n "\${FAKE_TAR_CHANGED:-}" ] || [ -n "\${FAKE_TAR_ERROR:-}" ]; then
+            "$REAL_TAR" "\$@" || exit
+            for f in \${FAKE_TAR_CHANGED:-}; do echo "tar: \$top/home/\$f: file changed as we read it" >&2; done
+            [ -z "\${FAKE_TAR_ERROR:-}" ] || echo "tar: \$top/home/\$FAKE_TAR_ERROR: Cannot open: Permission denied" >&2
+            exit 1
+        fi ;;
+esac
 exec "$REAL_TAR" "\$@"
 EOF
 chmod 755 "$W/shim/tar"
+# a UTF-8 locale with translations, for the cases that need one
+PL=""
+for l in pl_PL.UTF-8 pl_PL.utf8; do
+    if [ "$(LC_ALL=$l locale charmap 2>/dev/null)" = UTF-8 ]; then PL=$l; break; fi
+done
 PATH=$W/shim:$PATH; export PATH
 
 E=$HOME/.erssi
@@ -364,6 +383,57 @@ aside)
     run --restore "$W/newer.tar.gz" --home "$W/n/.erssi" --erssi-version 2026.11.0
     check "a backup of a newer erssi is restored" [ "$RC" = 0 ]
     check "with a warning" said "newer than this erssi 2026.11.0"
+    ;;
+
+names)
+    # names that are not ASCII: tar lists them as \ooo in the C locale,
+    # always so when they are not UTF-8 (a Latin-2 byte)
+    make_home "$E"
+    L2=$(printf 'l\261.txt')
+    printf 'utf8\n' > "$E/zażółć.txt"
+    mkdir "$E/scripts/pełne"
+    printf 'dir\n' > "$E/scripts/pełne/ąę.pl"
+    printf 'latin2\n' > "$E/$L2"
+    for pair in "C C" "C $PL" "$PL C"; do
+        # shellcheck disable=SC2086 # two words
+        set -- $pair
+        if [ -z "${2:-}" ]; then echo "skip half: no pl_PL UTF-8 locale"; continue; fi
+        rm -rf "$W/new" "$W/b.tar.gz"
+        RC=0; LC_ALL=$1 sh "$INSTALLER" --backup "$W/b.tar.gz" > "$W/out" 2>&1 || RC=$?
+        if [ "$RC" != 0 ]; then show; fi
+        check "backup with LC_ALL=$1 succeeds" [ "$RC" = 0 ]
+        RC=0; LC_ALL=$2 sh "$INSTALLER" --restore "$W/b.tar.gz" --home "$W/new/.erssi" > "$W/out" 2>&1 || RC=$?
+        if [ "$RC" != 0 ]; then show; fi
+        check "and restore with LC_ALL=$2 ($1 backup) succeeds" [ "$RC" = 0 ]
+        check "a Latin-2 name comes back byte for byte" cmp -s "$E/$L2" "$W/new/.erssi/$L2"
+        check "UTF-8 names too" cmp -s "$E/scripts/pełne/ąę.pl" "$W/new/.erssi/scripts/pełne/ąę.pl"
+        check "and the rest" cmp -s "$E/zażółć.txt" "$W/new/.erssi/zażółć.txt"
+    done
+    ;;
+
+locale-hardlink)
+    [ -n "$PL" ] || { echo "skip: no pl_PL UTF-8 locale (where tar does not say \"link to\")"; exit 77; }
+    make_home "$E"
+    ln "$E/config" "$E/config.hard"
+    mkdir -p "$W/outside"; printf 'x\n' > "$W/outside/one"
+    ln -s "$W/outside/one" "$E/a.txt"; ln -s "$W/outside/one" "$E/b.txt"
+    RC=0; LC_ALL=$PL LANG=$PL sh "$INSTALLER" --backup "$W/b.tar.gz" > "$W/out" 2>&1 || RC=$?
+    if [ "$RC" != 0 ]; then show; fi
+    check "backup in a Polish locale succeeds" [ "$RC" = 0 ]
+    check "no hard link is stored" sh -c "! gzip -dc '$W/b.tar.gz' | LC_ALL=C '$REAL_TAR' -tvf - | grep -q '^h'"
+    RC=0; LC_ALL=$PL LANG=$PL sh "$INSTALLER" --restore "$W/b.tar.gz" --home "$W/new/.erssi" > "$W/out" 2>&1 || RC=$?
+    if [ "$RC" != 0 ]; then show; fi
+    check "and it restores" [ "$RC" = 0 ]
+    check "both names are files" sh -c "[ -f '$W/new/.erssi/config.hard' ] && [ -f '$W/new/.erssi/b.txt' ]"
+    ;;
+
+self-check)
+    make_home "$E"
+    FAKE_TAR_FIFO=1 run --backup "$W/b.tar.gz"
+    check "a backup --restore would refuse is not written" [ "$RC" != 0 ]
+    check "the file is not there" [ ! -e "$W/b.tar.gz" ]
+    check "it says why" said "does not pass the checks of --restore"
+    check "no temporary file is left" [ -z "$(find "$W" -maxdepth 1 -name '.erssi-backup.*')" ]
     ;;
 
 *) echo "unknown case $CASE"; exit 1 ;;
