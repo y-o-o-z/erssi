@@ -1961,9 +1961,24 @@ do_backup() {
     { (cd "$BK_WORK" && tar -c -h -f - "$BK_TOP") 2> "$BK_WORK/tar.err"; echo $? > "$BK_WORK/tar.rc"; } |
         "$BK_COMP" -c > "$BK_TMPF" || rc=$?
     trc=$(cat "$BK_WORK/tar.rc" 2>/dev/null) || trc=1
+    # GNU tar exits 1 when a file changed while it was read (a log erssi
+    # writes to): the archive is complete, with that file as it was at the
+    # moment. Only then; any other message stays an error. (FreeBSD's tar
+    # stores a growing file as it was when it began reading it, silently.)
+    changed=""
+    if [ "$trc" = 1 ] && [ "$rc" = 0 ] && [ -s "$BK_WORK/tar.err" ] &&
+            ! grep -qv ': file changed as we read it$' "$BK_WORK/tar.err"; then
+        changed=$(sed -e 's/^[^:]*: //' -e 's/: file changed as we read it$//' -e "s|^$BK_TOP/home/||" "$BK_WORK/tar.err")
+        trc=0
+    fi
     if [ "$trc" != 0 ] || [ "$rc" != 0 ]; then
         sed 's/^/        /' "$BK_WORK/tar.err" >&2
-        die "writing the backup failed (a file changed or went away while it was read? run it again) - nothing was written"
+        die "writing the backup failed (a file went away while it was read? run it again) - nothing was written"
+    fi
+    if [ -n "$changed" ]; then
+        printf '%s\n' "$changed" | while IFS= read -r c; do
+            warn "$c changed while it was read: the backup has it as it was at that moment"
+        done
     fi
     # what --restore will check, checked now: a backup that would be
     # refused on the new box is not written at all

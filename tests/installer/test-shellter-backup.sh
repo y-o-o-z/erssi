@@ -74,6 +74,7 @@ run() {   # installer options... -> output in $W/out, exit code in $RC
 }
 said() { grep -q -- "$1" "$W/out"; }
 show() { sed 's/^/    | /' "$W/out"; }
+# shellcheck disable=SC2012 # the mode string, of names the test made
 mode_of() { ls -ld "$1" | cut -c1-10; }
 
 # a home with what erssi keeps there, in modes erssi would not use
@@ -464,6 +465,29 @@ manifest-links)
     if [ "$RC" != 0 ]; then show; fi
     check "two links in one directory tree are made" [ "$RC" = 0 ]
     check "each where it belongs" sh -c "[ -d '$W/new/.erssi/a1/a2/a3/L' ] && [ -f '$W/new/.erssi/a1/a2/K' ] && [ -z \"\$(find '$W/new/.erssi/sub' -type l)\" ]"
+    ;;
+
+file-changed)
+    make_home "$E"
+    FAKE_TAR_CHANGED="logs/IRCnet/#chan.log logs/mentions.log" run --backup "$W/b.tar.gz" --with-logs
+    if [ "$RC" != 0 ]; then show; fi
+    check "a log that grew while it was read does not stop the backup" [ "$RC" = 0 ]
+    check "it is named" said "logs/IRCnet/#chan.log changed while it was read"
+    check "the other one too" said "logs/mentions.log changed while it was read"
+    check "the backup is there" [ -f "$W/b.tar.gz" ]
+    FAKE_TAR_CHANGED="logs/mentions.log" FAKE_TAR_ERROR=config run --backup "$W/c.tar.gz"
+    check "with another error from tar the backup fails" [ "$RC" != 0 ]
+    check "and nothing is written" [ ! -e "$W/c.tar.gz" ]
+    # a real one: GNU tar, a log appended to while it is read
+    if "$REAL_TAR" --version 2>/dev/null | grep -q 'GNU tar'; then
+        i=0; while [ $i -lt 2000 ]; do printf '%s\n' "line $i of a long log, written before the backup" >> "$E/logs/IRCnet/#big.log"; i=$((i + 1)); done
+        ( while :; do printf 'more\n' >> "$E/logs/IRCnet/#big.log"; done ) &
+        APP=$!
+        run --backup "$W/d.tar.gz" --with-logs
+        kill "$APP"; wait "$APP" 2>/dev/null
+        if [ "$RC" != 0 ]; then show; fi
+        check "a log written to during a real backup does not stop it" [ "$RC" = 0 ]
+    fi
     ;;
 
 self-check)
