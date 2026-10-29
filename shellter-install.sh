@@ -1671,6 +1671,14 @@ keep_value() {
 
 main() {
 unset CDPATH        # cd in $(...) must print nothing
+# git takes the repository from these before -C: one inherited from the
+# caller (erssi started in a git checkout, a hook) would make every git
+# below read and write the caller's repository instead of the
+# installer's own (git rev-parse --local-env-vars, and GIT_NAMESPACE)
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
+    GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE \
+    GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE \
+    GIT_COMMON_DIR GIT_NAMESPACE GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
 # What the cleanup traps and the later steps test or remove, empty before
 # any trap is set: a variable of the same name in the environment (STAGE
 # is a common one in CI and deploy scripts) would otherwise be taken for

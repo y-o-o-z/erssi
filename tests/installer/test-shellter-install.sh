@@ -478,6 +478,14 @@ porc() {
     sh "$INSTALLER" --update --check --porcelain --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
     RC=$?
 }
+# snap DIR: every path below DIR with its contents, in one text
+snap() {
+    for f in "$1"/* "$1"/.[!.]*; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        printf '== %s\n' "$f"
+        if [ -d "$f" ] && [ ! -L "$f" ]; then snap "$f"; else cat "$f"; fi
+    done
+}
 # $W/pout is the one line $1
 # shellcheck disable=SC2317 # called through check
 one_line() { [ "$(wc -l < "$W/pout")" -eq 1 ] && [ "$(cat "$W/pout")" = "$1" ]; }
@@ -2008,6 +2016,19 @@ update-porcelain)
     release_prefix 2026.10.2 "$c1" main
     porc
     check "from a branch, nothing newer: current" one_line "current 2026.10.2"
+    # a GIT_DIR (and work tree, index) from the caller - erssi started in
+    # a checkout - is not the installer's repository: left as it was
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    git -c init.defaultBranch=main init -q "$W/canary" &&
+        echo canary > "$W/canary/file" && git -C "$W/canary" add file &&
+        git -C "$W/canary" -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            commit -q -m canary || exit 1
+    snap "$W/canary" > "$W/canary.before"
+    exported GIT_DIR="$W/canary/.git" GIT_WORK_TREE="$W/canary" GIT_INDEX_FILE="$W/canary/.git/index" \
+        GIT_OBJECT_DIRECTORY="$W/canary/.git/objects" GIT_COMMON_DIR="$W/canary/.git" porc
+    snap "$W/canary" > "$W/canary.after"
+    check "GIT_DIR of the caller: the check works" one_line "update 2026.10.1 2026.10.2"
+    check "... the caller's repository untouched" [ "$(cat "$W/canary.before")" = "$(cat "$W/canary.after")" ]
     # the download fails
     release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
     exported FAKE_FETCH_FAIL=1 porc
