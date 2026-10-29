@@ -8,6 +8,8 @@
 #                          [--dry-run] [--rollback] [--uninstall]
 #   erssi --update          (= this installer, installed with erssi: --update)
 #   erssi --check-update    (= --update --check)
+#   sh shellter-install.sh --update --check --porcelain --prefix DIR
+#                           (one line for a program, see "--porcelain" below)
 #
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. A release
 # that has a ready-made package for this platform (debian13-amd64,
@@ -120,6 +122,8 @@ erssi Shellter Edition - install and update
                  newer than the installed one (also for an erssi installed
                  from a branch or a commit with --ref)
   --check        with --update: only report whether an update is available
+  --porcelain    with --update --check: print one line for a program, and
+                 nothing else on stdout (see below)
   --prefix DIR   install here, an absolute path (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
   --ref REF      release tag, branch or full commit SHA (default: newest
@@ -155,6 +159,13 @@ installed only if SHA256SUMS of its release is signed by the release key
 (namespace erssi-release), the package matches its sum there, and its
 MANIFEST names that release, the commit this script records (on --update:
 the commit of the signed tag), this platform and this system's perl.
+
+--update --check --porcelain prints one line and changes nothing:
+  update <installed> <newest>   a newer signed release (exit 0)
+  current <installed>           none newer (exit 0)
+  error <reason>                the check failed, e.g. no network (exit 1)
+  unmanaged <reason>            another tool updates this erssi (exit 3)
+Wrong options exit 2 as always. The steps and warnings go to stderr.
 
 --src, --repo, --no-test/--test, --clean/--no-clean, --source (undone by
 --binary), --binary-base and --keep are kept in
@@ -255,13 +266,32 @@ warn() {   # shown under the step it belongs to
 die() {
     if [ "$IN_STEP" = 1 ]; then step_line "${R}${S_FAIL}${N}"; printf '\n'; IN_STEP=0; fi
     printf '\n  %serror:%s %s\n' "$R" "$N" "$*" >&2
+    porcelain error "$*"
     exit 1
+}
+# fail SHORT LONG: die with LONG; --porcelain says only SHORT
+fail() {
+    PORCELAIN_WHY=$1; shift
+    die "$*"
+}
+# --porcelain: the one line on the stdout of the installer (fd 3), once;
+# "error" takes PORCELAIN_WHY when it is set, the message otherwise, on one
+# line and at most 200 bytes
+porcelain() {   # kind text
+    [ "${PORCELAIN:-0}" = 1 ] && [ "${PORCELAIN_SAID:-0}" = 0 ] || return 0
+    PORCELAIN_SAID=1
+    k=$1; shift
+    t=$*
+    [ "$k" != error ] || [ -z "${PORCELAIN_WHY:-}" ] || t=$PORCELAIN_WHY
+    t=$(printf '%s' "$t" | tr '\n\r\t' '   ' | cut -c1-200)
+    printf '%s %s\n' "$k" "$t" >&3
 }
 die_log() {   # message - with the end of the build log
     if [ "$IN_STEP" = 1 ]; then step_line "${R}${S_FAIL}${N}"; printf '\n'; IN_STEP=0; fi
     printf '\n  %serror:%s %s\n\n' "$R" "$N" "$1" >&2
     tail -n 15 "$LOG" | sed 's/^/    /' >&2
     printf '\n  %sfull log: %s%s\n' "$D" "$LOG" "$N" >&2
+    porcelain error "$1"
     exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -362,7 +392,9 @@ fetch_ref() {   # repository-dir ref
 # object served by a mirror to roll the install back - is reported and
 # never installed. Codes: 1 no signed release, 2 $REPO cannot be reached,
 # 3 a release cannot be downloaded (its name printed) - a failed download
-# is not an unsigned release, and must not end as "up to date".
+# is not an unsigned release, and must not end as "up to date"; 4 nothing
+# newer, but the tag of $2 points to another commit than $3 (said, the
+# tag printed).
 newest_signed() {
     refs=$(git ls-remote --tags --refs -- "$REPO" 'shellter-v*' 2>>"${LOG:-/dev/null}") || return 2
     tags=$(printf '%s\n' "$refs" |
@@ -376,9 +408,9 @@ newest_signed() {
             newer "$2" "$v" || [ -z "${3:-}" ] && return 0
             fetch_ref "$1" "shellter-v$v" || { echo "shellter-v$v"; return 3; }
             if signed_tag "$1" "shellter-v$v"; then
-                [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] ||
-                    warn "the release tag shellter-v$v now points to a different commit than the installed one - not updating; report it" >&2
-                return 0
+                [ "$(git -C "$1" rev-parse "$TAG_OBJ^{commit}")" = "$3" ] && return 0
+                warn "the release tag shellter-v$v now points to a different commit than the installed one - not updating; report it" >&2
+                echo "shellter-v$v"; return 4
             fi
             warn "shellter-v$v is not signed by the erssi Shellter release key - skipped" >&2
             return 0
@@ -1369,7 +1401,7 @@ find_update() {
     # and checks that without a signature check (this copy cannot know a
     # release newer than its own)
     if ! can_verify; then
-        die "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: $(curl_install)"
+        fail "signatures cannot be checked here (git 2.34+ and ssh-keygen are needed)" "release signatures cannot be checked here (git 2.34+ and ssh-keygen are needed) - install the newest release with the current installer, which checks its recorded commit: $(curl_install)"
     fi
     case "$INSTALLED_REF" in
         ''|shellter-v*)
@@ -1385,7 +1417,14 @@ find_update() {
             FROM_BRANCH=$INSTALLED_REF ;;
     esac
     [ "$rc" != 2 ] || die "cannot reach $REPO"
-    [ "$rc" != 3 ] || die "cannot download $FOUND from $REPO - nothing was changed; try again later"
+    [ "$rc" != 3 ] || fail "cannot download $FOUND from $REPO" "cannot download $FOUND from $REPO - nothing was changed; try again later"
+    # the installed release's tag moved: said (newest_signed), nothing to
+    # install; for a program that is no "current"
+    if [ "$rc" = 4 ]; then
+        porcelain error "the release tag $FOUND now points to a different commit than the installed one - report it"
+        [ "$PORCELAIN" = 0 ] || exit 1
+        rc=0 FOUND=""
+    fi
     if [ "$rc" != 0 ]; then
         [ -n "$FROM_BRANCH" ] || die "no signed release newer than $INSTALLED found on $REPO"
         die "no signed release found on $REPO"
@@ -1402,15 +1441,18 @@ find_update() {
         printf '\n  Installed from %s; newest release is %s' "$FROM_BRANCH" "$NEWEST"
         if ! newer "$NEWEST" "$INSTALLED"; then
             printf ', not newer than the installed %s - nothing to do.\n\n' "$INSTALLED"
+            porcelain current "$INSTALLED"
             exit 0
         fi
         printf '.\n'
     elif [ -z "$REF" ]; then
         printf '\n  %serssi Shellter Edition %s is up to date%s (the newest signed release).\n\n' "$B" "$INSTALLED" "$N"
+        porcelain current "$INSTALLED"
         exit 0
     fi
     if [ "$CHECK" = 1 ]; then
         printf '\n  %sUpdate available: %s %s %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$S_ARROW" "$NEWEST" "$N"
+        porcelain update "$INSTALLED $NEWEST"
         exit 0
     fi
 }
@@ -1637,7 +1679,7 @@ unset CDPATH        # cd in $(...) must print nothing
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
 UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
-SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
+SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0 PORCELAIN=0 PORCELAIN_SAID=0 PORCELAIN_WHY=""
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1651,6 +1693,7 @@ while [ $# -gt 0 ]; do
         --no-clean) CLEAN=0; shift ;;
         --update) UPDATE=1; shift ;;
         --check) CHECK=1; shift ;;
+        --porcelain) PORCELAIN=1; shift ;;
         --yes|-y) YES=1; shift ;;
         --binary) USE=binary; shift ;;
         --source) USE=source; shift ;;
@@ -1677,6 +1720,9 @@ case "$PREFIX" in
     *) echo "shellter-install.sh: --prefix / is the whole system - give a directory of its own, e.g. --prefix /opt/erssi (--help)" >&2; exit 2 ;;
 esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
+[ "$PORCELAIN" = 0 ] || [ "$CHECK" = 1 ] || { echo "shellter-install.sh: --porcelain goes with --update --check (--help)" >&2; exit 2; }
+# --porcelain: stdout is for the one line (fd 3); everything else to stderr
+if [ "$PORCELAIN" = 1 ]; then exec 3>&1 1>&2; fi
 [ "$UPDATE" = 0 ] || [ -z "$REF" ] || { echo "shellter-install.sh: --update takes the newest signed release; for a given one use --ref without --update" >&2; exit 2; }
 if [ -n "$ACTION" ] && { [ "$UPDATE$CHECK" != 00 ] || [ -n "$REF" ]; }; then
     echo "shellter-install.sh: --$ACTION goes with --prefix and --dry-run only (--help)" >&2; exit 2
@@ -1775,12 +1821,14 @@ if [ "$UPDATE" = 1 ]; then
         field "updater" "$OTHER"
         if [ "$CHECK" = 1 ]; then
             printf '\n  This erssi is updated with: %s\n\n' "$OTHER"
+            porcelain unmanaged "updated with: $OTHER"
+            [ "$PORCELAIN" = 0 ] || exit 3
             exit 0
         fi
         printf '\n'
         exec sh -c "$OTHER"
     fi
-    [ -n "$INSTALLED" ] || die "no erssi in $PREFIX to update - install it first: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh"
+    [ -n "$INSTALLED" ] || fail "no erssi in $PREFIX" "no erssi in $PREFIX to update - install it first: curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh"
 fi
 
 # The system and its package manager: for step 1 of the source build, and
@@ -1891,7 +1939,7 @@ fi
 # an update finds the newest release with git (ls-remote, the signed tag),
 # for a binary install too, which needs no git otherwise
 if [ "$UPDATE" = 1 ] && ! have git; then
-    die "erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it ($(pm_hint git)), or install the newest release with the current installer: $(curl_install)"
+    fail "git is not installed" "erssi --update needs git to find the newest release and check its signature, and git is not installed here - ask the administrator for it ($(pm_hint git)), or install the newest release with the current installer: $(curl_install)"
 fi
 # a release with a package for this system: installed from it (and done),
 # otherwise built from source below
