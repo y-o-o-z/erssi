@@ -2949,6 +2949,13 @@ binary-fallback)
     run_bin
     check "no ssh-keygen: built from source" grep -q 'no ssh-keygen to check the signature of a binary package' "$W/out"
     check "... installed" [ "$RC" = 0 ]
+    check "... the package that gives the ready-made one named" grep -qF 'for the ready-made package instead: sudo apt install openssh-client, then run this installer again' "$W/out"
+    # and when the build itself needs packages: named there as the way
+    # without a build
+    rm -f "$W/shim/cc"
+    run_bin
+    check "no ssh-keygen, no compiler: refused" [ "$RC" = 1 ]
+    check "... the way without a build named" grep -qF 'Or, without a build: sudo apt install openssh-client' "$W/out"
     ;;
 *)
     echo "unknown case $CASE"; exit 1 ;;

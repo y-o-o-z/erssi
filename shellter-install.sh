@@ -1072,6 +1072,19 @@ bin_cleanup() {
     [ -z "${BLOG:-}" ] || rm -f "$BLOG"
     STAGE="" BWORK="" BLOCK="" BLOG=""
 }
+# the package that has the tool $1 for the package manager $PM, if known
+tool_pkg() {
+    case "$PM:$1" in
+        apt:ssh-keygen) echo openssh-client ;;
+        dnf:ssh-keygen|zypper:ssh-keygen) echo openssh-clients ;;
+        apk:ssh-keygen|pacman:ssh-keygen) echo openssh ;;
+        apt:xz) echo xz-utils ;;
+        *:xz) echo xz ;;
+        *:sha256sum) echo coreutils ;;
+        pkg:*) ;;
+        *:perl|*:curl) echo "$1" ;;
+    esac
+}
 binary_fallback() {   # why
     bin_cleanup
     # the releases directory this run made, if it holds nothing
@@ -1080,6 +1093,7 @@ binary_fallback() {   # why
     [ "$USE" != binary ] || die "no binary install (--binary): $1"
     if [ "$IN_STEP" = 1 ]; then skip_ "$1"; else warn "$1"; fi
     warn "building from source instead, in $(tilde "$SRC")"
+    [ -z "${BIN_TOOL_PKG:-}" ] || warn "for the ready-made package instead: $(pm_hint "$BIN_TOOL_PKG"), then run this installer again"
     SRC_NAMED=1
     printf '\n'
     STEP=0 STEPS=6
@@ -1097,18 +1111,22 @@ binary_install() {
     fi
     PLATFORM=$(platform_id) || PLATFORM=""
     PERL_V=$(perl_version)
-    why=""
+    why="" BIN_TOOL=""
     if [ -z "$PLATFORM" ]; then why="no binary package: the platform cannot be told"
-    elif [ -z "$PERL_V" ]; then why="no binary package without perl"
-    elif ! have ssh-keygen; then why="no ssh-keygen to check the signature of a binary package"
+    elif [ -z "$PERL_V" ]; then why="no binary package without perl" BIN_TOOL=perl
+    elif ! have ssh-keygen; then why="no ssh-keygen to check the signature of a binary package" BIN_TOOL=ssh-keygen
     elif ! can_check_sig; then why="this ssh-keygen cannot check SSH signatures (OpenSSH 8.1 or newer is needed) - no binary package"
-    elif ! have sha256sum && ! have sha256 && ! have shasum; then why="no sha256sum to check a binary package"
-    elif ! can_unxz; then why="no xz to unpack a binary package"
+    elif ! have sha256sum && ! have sha256 && ! have shasum; then why="no sha256sum to check a binary package" BIN_TOOL=sha256sum
+    elif ! can_unxz; then why="no xz to unpack a binary package" BIN_TOOL=xz
     else
         case "$BINARY_BASE" in
-            http*) have curl || have fetch || why="neither curl nor fetch to download a binary package" ;;
+            http*) have curl || have fetch || why="neither curl nor fetch to download a binary package" BIN_TOOL=curl ;;
         esac
     fi
+    # what would let this installer take the package of the release (if
+    # there is one for the platform) instead of building it: one small
+    # package, named with the build's own list when that stops for packages
+    BIN_TOOL_PKG=$(tool_pkg "$BIN_TOOL")
     if [ -n "$why" ]; then binary_fallback "$why"; return 0; fi
 
     trap 'bin_cleanup' EXIT
@@ -1622,7 +1640,7 @@ unset CDPATH        # cd in $(...) must print nothing
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
 UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
-SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
+BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -2055,7 +2073,11 @@ else
       ${NEED:-$REQ}
     $(pm_hint ${NEED:-$REQ})${GLIB_OLD:+
   GLib $GLIB_MIN or newer is needed; this system has $GLIB_OLD}${WANT:+
-  recommended as well: $WANT}"
+  recommended as well: $WANT}${BIN_TOOL_PKG:+
+
+  Or, without a build: $(pm_hint "$BIN_TOOL_PKG")
+  and run this installer again - it then installs the ready-made package
+  of the release, if there is one for ${PLATFORM:-this system}}"
     fi
     if [ -n "$WANT" ] && [ "$ROOT" = 0 ]; then
         for f in $REC; do warn "$(what "$f") not available - recommended: $(names "$f")"; done
