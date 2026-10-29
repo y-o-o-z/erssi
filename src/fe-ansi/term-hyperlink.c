@@ -445,6 +445,13 @@ static gboolean has_prefix(const char *s, const char *prefix)
 	return s != NULL && g_str_has_prefix(s, prefix);
 }
 
+/* vt100, vt220, vt52...: the DEC terminals and what emulates only them;
+ * not vte-256color, the TERM of VTE itself */
+static gboolean is_vt(const char *term)
+{
+	return has_prefix(term, "vt") && (term[2] == '\0' || g_ascii_isdigit(term[2]));
+}
+
 /* The text console of the system: the Linux console (/dev/tty1), FreeBSD
  * syscons and vt (/dev/ttyv0, which say TERM=xterm), wscons of NetBSD and
  * OpenBSD (/dev/ttyC0, /dev/ttyE0), and serial lines. None of them knows
@@ -478,7 +485,7 @@ gboolean term_link_detect(const TermLinkEnv *env)
 		return FALSE;
 
 	if (!is_set(term) || is_str(term, "dumb") || has_prefix(term, "linux") ||
-	    has_prefix(term, "cons") || has_prefix(term, "vt") || has_prefix(term, "ansi") ||
+	    has_prefix(term, "cons") || is_vt(term) || has_prefix(term, "ansi") ||
 	    has_prefix(term, "eterm") || has_prefix(term, "emacs") || has_prefix(term, "wsvt") ||
 	    has_prefix(term, "pccon") || is_set(env->inside_emacs))
 		return FALSE;

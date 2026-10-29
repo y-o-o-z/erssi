@@ -336,6 +336,11 @@ static const DETECT_ROW DETECT[] = {
 	{ "TERM=xterm-256color, TTY=/dev/pts/3, KITTY_WINDOW_ID=1", TRUE },
 	{ "TERM=cons25", FALSE },
 	{ "TERM=vt100", FALSE },
+	{ "TERM=vt220", FALSE },
+	{ "TERM=vt", FALSE },
+	/* TERM of VTE itself starts with "vt" too */
+	{ "TERM=vte-256color, VTE_VERSION=7600", TRUE },
+	{ "TERM=vte", FALSE },
 	{ "TERM=dumb", FALSE },
 	{ "", FALSE },
 	{ "TERM=xterm-256color, INSIDE_EMACS=29.1,eat", FALSE },
