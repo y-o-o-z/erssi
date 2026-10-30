@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 13, FreeBSD 14 and FreeBSD 15, built from source elsewhere. Release 2026.10.6.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.10.8.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.10.6">
+<meta property="og:title" content="erssi Shellter Edition 2026.10.8">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -68,12 +68,12 @@
       </div>
       <div class="actions">
         <a class="btn btn-primary" href="#install">Install guide <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release 2026.10.6</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.8">Release 2026.10.8</a>
       </div>
       <ul class="facts">
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Signed releases</li>
         <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>No root, installs in your home</li>
-        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Binaries for Debian 13, FreeBSD 14 and 15</li>
+        <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Binaries for Debian, Ubuntu and FreeBSD</li>
       </ul>
       <p class="sr" data-status aria-live="polite"></p>
     </div>
@@ -194,7 +194,7 @@ erssi --update</pre>
       </div>
       <div class="platforms">
         <div class="platform">
-          <h3><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Debian 13, FreeBSD 14 and 15, amd64</h3>
+          <h3><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, amd64</h3>
           <p>A ready-made binary, in seconds, installed only when the signature on its SHA256SUMS, its checksum and its manifest check out. The previous release stays for <code>--rollback</code>.</p>
         </div>
         <div class="platform">
@@ -216,19 +216,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.6</pre>
+    verify-tag shellter-v2026.10.8</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.10.6">
-        <header><b>shellter-v2026.10.6</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.10.8">
+        <header><b>shellter-v2026.10.8</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>bdf44f572</dd></div>
+          <div><dt>Commit</dt><dd>28a8a5cb6</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="ce2330cfbcacf901ab962546168609a0e482bc5c03e6e2e1d0b2b56b680e8e4d">sha256 ce2330cf…b680e8e4d</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="49161cd13d0de05eac09caae7ebfb39e38886b6d8fc3a1c1be67a01cc696438a">sha256 49161cd1…cc696438a</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="849f403479e30bf18938090ac5d252c70d67fcd5326c0bb6249cc0d0347133c2">sha256 849f4034…0347133c2</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="6cd1142d231eb82550e38f0611c0237b4a0f7dc2d6eaa40d5b50f7ce77f654d0">sha256 6cd1142d…e77f654d0</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="e874a6c5113403108d00cb59cbeb354610531b117c89be97d64c4cb00f666eff">sha256 e874a6c5…00f666eff</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="88c7e967bbc77602f7d5810d567494c35a0cdda6e48c1af5f130ea4c7c0f5b9f">sha256 88c7e967…c7c0f5b9f</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="655828437b41d1a266a9d8c747c1423be803b6a4a2783b7768f5d940961642dc">sha256 65582843…0961642dc</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="3251c1db6ff53d9873861d65a78da13ddfc7608dcc4ee43db79ce1db10d8320f">sha256 3251c1db…b10d8320f</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -238,19 +240,19 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.10.6</h2>
-        <p>Released on 25 October 2026: fixes from a full review of 2026.10.5.</p>
+        <h2 id="h-new">New in 2026.10.7 and 2026.10.8</h2>
+        <p>Released on 30 October 2026. 2026.10.8 is the same erssi as 2026.10.7, with the FreeBSD packages.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">terminal</span><p><b>Nothing reaches your terminal raw.</b> Control characters from the network are drawn as <code>?</code> on every terminal type, so a channel name cannot set your clipboard or window title.</p></li>
-        <li><span class="tag">install</span><p><b><code>--uninstall</code> removes only its own files.</b> Libraries and man pages of other software in the same prefix stay, and the installer names what it left.</p></li>
-        <li><span class="tag">fe-web</span><p><b>A web frontend that holds under load.</b> Too many new connections from one address are closed before TLS starts; new certificates get a random serial, the extensions browsers expect and 825 days.</p></li>
-        <li><span class="tag">e2e</span><p><b>Steadier encryption.</b> Key requests have a budget per sender, the keyring is cached, and freed plaintext is wiped.</p></li>
-        <li><span class="tag">core</span><p><b>A safer <code>/upgrade</code>.</b> It checks that it can write the session file first, and a failed <code>/upgrade</code> sends nothing twice.</p></li>
-        <li><span class="tag">docs</span><p><b><code>man erssi</code>.</b> A manual page of its own, linked for an install in your home.</p></li>
+        <li><span class="tag">install</span><p><b>More ready-made binaries.</b> Debian 12 and Ubuntu 24.04 join Debian 13 and FreeBSD 14 and 15: installed in seconds, checked against the signed sums.</p></li>
+        <li><span class="tag">release</span><p><b>Packages you can rebuild.</b> <code>sh utils/build-binary.sh --verify PACKAGE</code> builds one again from its signed tag and says whether it is the same, byte for byte. Every package of this release was built twice.</p></li>
+        <li><span class="tag">update</span><p><b>Told when a release is out.</b> <code>/set update_check on</code> checks once a day for a newer signed release and says so in the Notices window; nothing is installed by itself.</p></li>
+        <li><span class="tag">terminal</span><p><b>Clickable links.</b> Addresses in messages are OSC 8 links in terminals that support them, also when they wrap; the link is always the text you see.</p></li>
+        <li><span class="tag">backup</span><p><b>Moving to another box.</b> <code>erssi --backup</code> puts your whole setup, E2E keyring included, into one private file; <code>erssi --restore</code> checks it and puts it back.</p></li>
+        <li><span class="tag">install</span><p><b>Installs that do not stop for nothing.</b> A source install runs the tests of erssi, not those of the release tools, and a failed test is named with what to do next.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.6">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.8">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -314,7 +316,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.10.6 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.10.8 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>
