@@ -1,3 +1,36 @@
+shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.0
+
+	+ Release tools
+	  - utils/release.sh runs the steps of a release, one command each:
+	    check (the signed tag, its version in meson.build, NEWS, README
+	    and install.md, its message, a clean tree, not published yet),
+	    build (the packages from the local tag: Debian 13 on the host,
+	    Debian 12 and Ubuntu 24.04 in new chroots, FreeBSD over ssh),
+	    verify (each package built again in a fresh environment, the
+	    same bytes), sums (SHA256SUMS signed), upload (only once the tag
+	    is on GitHub; the packages first, the sums last) and confirm (the
+	    assets downloaded again and checked). Each step checks what it
+	    needs and keeps what is done; all runs them in order, and
+	    --dry-run shows what they would run. The build hosts are options
+	    or environment variables, not part of the repository
+	  - release.sh tag-message prints the message of a release tag: the
+	    title line and the intro paragraph of its NEWS entry, for git
+	    tag -s -F
+	  - a release tag is pushed only after its packages are built and
+	    verified (docs/shellter/releasing.md)
+
+	+ Documentation
+	  - install.md: Upgrading (from an older release with erssi --update
+	    and /upgrade, from a distribution package or irssi, from a
+	    source install, going back) and When the install fails (a
+	    missing ssh-keygen or Perl module, a failed test, slow builds,
+	    no network, the lock of a running installer)
+	  - the GitHub Actions workflow is gone; it had been switched off
+	    since 2026-10-04. README and CONTRIBUTING.md name the commit
+	    statuses of the team's own CI (erssi-ci/build, sanitizers,
+	    shellcheck, installer, e2e-live, fuzz)
+
 shellter-v2026.10.8 2026-10-30  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.8
 
