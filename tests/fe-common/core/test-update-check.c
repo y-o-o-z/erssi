@@ -382,8 +382,41 @@ static void assert_reaped(int pid)
 	g_assert_cmpint(errno, ==, ECHILD);
 }
 
-/* the process named in FILE is gone (a child of the installer: reparented,
-   so it may take a moment until it is reaped by init) */
+/* TRUE while PID exists and is not a zombie. A child of the installer is
+   reparented when the installer ends; an init that does not reap orphans
+   (bash as PID 1 in a minimal container) leaves it a zombie for good:
+   ended, but kill(pid, 0) still finds it. Linux: the state in
+   /proc/<pid>/stat; elsewhere ps, when there is one; without either a
+   process that kill() finds counts as running. */
+static gboolean running(int pid)
+{
+	char *path, *text = NULL, *ps, *p;
+	gboolean zombie = FALSE;
+
+	if (kill(pid, 0) != 0)
+		return FALSE;
+	path = g_strdup_printf("/proc/%d/stat", pid);
+	if (g_file_get_contents(path, &text, NULL, NULL)) {
+		/* "pid (comm) S ...": the state follows the last ')' */
+		p = strrchr(text, ')');
+		zombie = p != NULL && p[1] == ' ' && p[2] == 'Z';
+	} else if ((ps = g_find_program_in_path("ps")) != NULL) {
+		char *pidstr = g_strdup_printf("%d", pid);
+		const char *argv[] = { ps, "-o", "stat=", "-p", pidstr, NULL };
+
+		if (g_spawn_sync(NULL, (char **) argv, NULL, G_SPAWN_STDERR_TO_DEV_NULL, NULL,
+		                 NULL, &text, NULL, NULL, NULL))
+			zombie = *g_strchug(text) == 'Z';
+		g_free(pidstr);
+		g_free(ps);
+	}
+	g_free(text);
+	g_free(path);
+	return !zombie;
+}
+
+/* the process named in FILE no longer runs (a child of the installer:
+   reparented, so it may take a moment until init reaps it, if it does) */
 static void assert_gone(const char *file)
 {
 	char *text = NULL;
@@ -393,9 +426,9 @@ static void assert_gone(const char *file)
 	pid = atoi(text);
 	g_free(text);
 	g_assert_cmpint(pid, >, 1);
-	for (i = 0; i < 100 && kill(pid, 0) == 0; i++)
+	for (i = 0; i < 100 && running(pid); i++)
 		g_usleep(20000);
-	g_assert_cmpint(kill(pid, 0), ==, -1);
+	g_assert_false(running(pid));
 }
 
 static void test_job_answers(void)
