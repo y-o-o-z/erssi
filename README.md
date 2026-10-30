@@ -251,17 +251,23 @@ ERSSI_TEST_PERF=1 meson test -C Build --suite perf # log search speed (2 x 1 GiB
 ### Continuous integration
 
 Every commit on `main`, every release tag and the branches of the
-pull requests to erssi-org are built and tested on the Shellter team's own
-server: the hardened build with `meson test`, the ASan/UBSan build, live
-E2E interop with `rpe2e.pl`, libFuzzer runs on the fe-web and E2E parsers,
-the installer test and shellcheck. Each job is a commit status (the check
-mark next to a commit) with a one-line result; it shows "pending" until the
-job has run, which after a history rewrite, when every release tag is tested
-again, can take hours. Pull requests from other
-contributors are tested after they have been reviewed.
-`.github/workflows/shellter-ci.yml` describes a subset of these jobs for
-GitHub Actions (the hardened build, the ASan/UBSan build and the installer
-checks), which stay switched off on this repository.
+pull requests to erssi-org are built and tested by erssi-ci, the CI on the
+Shellter team's own server. Each job is a commit status (the check mark
+next to a commit) with a one-line result:
+
+| Status | What it runs |
+|---|---|
+| `erssi-ci/build` | the hardened build and the full `meson test`, the package builds of the packager included |
+| `erssi-ci/sanitizers` | the same tests in an ASan/UBSan build |
+| `erssi-ci/shellcheck` | shellcheck on the shell scripts |
+| `erssi-ci/installer` | the installer's tests, and that every release it records points to its commit and is signed |
+| `erssi-ci/e2e-live` | live E2E interop with `rpe2e.pl` |
+| `erssi-ci/fuzz` | libFuzzer runs on the fe-web and E2E parsers |
+
+A status shows "pending" until its job has run, which after a history
+rewrite, when every release tag is tested again, can take hours. Pull
+requests from other contributors are tested after they have been
+reviewed. GitHub Actions are not used: the repository has no workflow.
 
 ## Credits and license
 

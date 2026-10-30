@@ -21,7 +21,7 @@ meson test -C Build
 ```
 
 The tests of the release tools (the installer, the packager, the release
-hook) are in the suite `tooling`: `meson test -C Build --suite tooling`
+hook, `utils/release.sh`) are in the suite `tooling`: `meson test -C Build --suite tooling`
 runs only them, `--no-suite tooling` everything else (what the installer
 runs). A change to those tools runs both.
 
@@ -45,9 +45,15 @@ there.
 - New commands and settings get a help page in `docs/help/in/`.
 - Describe the user-visible change in the pull request; the release notes
   in [NEWS](NEWS) are written when a release is made.
+- CI is not GitHub Actions: erssi-ci, on the Shellter team's own server,
+  builds and tests each commit and reports commit statuses
+  (`erssi-ci/build`, `erssi-ci/sanitizers`, `erssi-ci/shellcheck`,
+  `erssi-ci/installer`, `erssi-ci/e2e-live`, `erssi-ci/fuzz`; see the
+  [README](README.md#continuous-integration)). A pull request from another
+  contributor is tested after it has been reviewed.
 
 Releases are made by the Shellter team with the release hook
-`utils/pre-push`; the rules and the procedures (a release, and the
+`utils/pre-push` and `utils/release.sh`; the rules and the procedures (a release, and the
 one-time re-signing of the release tags) are in
 [docs/shellter/releasing.md](docs/shellter/releasing.md).
 
