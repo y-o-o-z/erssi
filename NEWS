@@ -80,7 +80,8 @@ shellter-v2026.10.7 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    <home>.before-restore-<time> and the backup into its place, under
 	    the lock of erssi.lock; --dry-run lists what it would restore.
 	    Refused while an erssi runs on the home. Works in any locale and
-	    with non-ASCII names
+	    with non-ASCII names, and on a minimal system without cmp, diff
+	    or ps
 	  - also as shellter-install.sh --backup / --restore, so a new box
 	    can restore before erssi is installed
 	  - a running erssi holds a shared lock on <home>/erssi.lock
