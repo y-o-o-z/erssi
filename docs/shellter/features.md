@@ -172,6 +172,11 @@ loaded on demand (`/script load <name>`, or a symlink in
   itself: `/update install` runs the installer's `--update` in the
   background when you give it, and `/upgrade` (or `/update install
   -upgrade`) loads the new release ([configuration.md](configuration.md#update-notice)).
+- **Automatic backups** — with `/set backup_auto daily` (or `weekly`),
+  erssi runs `erssi --backup` by itself in the background into
+  `backup_dir` (`~/erssi-backups`) and keeps the newest `backup_keep` (7);
+  `/backup` shows the state, `/backup now` makes one
+  ([configuration.md](configuration.md#automatic-backups)).
 - **FreeBSD** — tested on FreeBSD 14.5 and 15.1: builds with the base system's
   OpenSSL and passes the test suite; `/connect` works inside Capsicum
   capability mode (`/search` does not run there). See

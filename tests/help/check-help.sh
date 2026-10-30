@@ -10,7 +10,8 @@ for t in term_truecolor colors_ansi_24bit print_whois_rpl_in_server_window \
 	print_whois_rpl_in_active_window show_names_on_join show_names_on_join_alone \
 	show_names_on_join_limit nick_mode_color nick_mode_color_owner \
 	nick_mode_color_op nick_mode_color_halfop nick_mode_color_voice \
-	nick_mode_color_normal nickmode term_notify window_close_disconnects update_check; do
+	nick_mode_color_normal nickmode term_notify window_close_disconnects update_check \
+	backup_auto backup_dir backup_keep; do
 	in="$src/docs/help/in/$t.in"
 	out="$src/docs/help/$t"
 	if [ ! -f "$in" ]; then
@@ -33,6 +34,7 @@ done
 if command -v git >/dev/null 2>&1 && git -C "$src" rev-parse --git-dir >/dev/null 2>&1; then
 	tracked=$(git -C "$src" ls-files -- docs/help | grep -v -e '^docs/help/in/' -e '^docs/help/meson.build$')
 	if [ -n "$tracked" ]; then
+		# shellcheck disable=SC2086 # one name per word
 		echo "FAIL generated help files in git:" $tracked; rc=1
 	else
 		echo "ok no generated help file in git"

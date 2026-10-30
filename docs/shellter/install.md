@@ -517,6 +517,10 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
 Losing the E2E keyring means a new key exchange with everyone, and people
 see your key change: the backup keeps it.
 
+erssi can also make this backup by itself, once a day or a week, into a
+directory of its own, keeping the newest few: `/set backup_auto daily`
+([Automatic backups](configuration.md#automatic-backups)).
+
 **What the backup holds.** Everything in the home that is your state:
 `config`, `startup`, your themes, `scripts/` and the links in
 `scripts/autorun/`, `help/`, `modules/`, the E2E keyring and its copies

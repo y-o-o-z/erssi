@@ -360,6 +360,22 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "update_installed_path", "erssi {hilight $0} is installed: {hilight /upgrade $2} loads it and keeps your windows and channels (TLS connections reconnect once). Full output: $1", 3, { 0, 0, 0 } },
 	{ "update_install_upgrading", "erssi {hilight $0} is installed: running /upgrade to load it (TLS connections reconnect once). Full output: $1", 2, { 0, 0 } },
 
+	/* ---- */
+	{ NULL, "Backups", 0 },
+
+	{ "backup_done", "Backup: {hilight $0} ($1)", 2, { 0, 0 } },
+	{ "backup_running", "Backup: writing one into $0", 1, { 0 } },
+	{ "backup_busy", "Backup: one is running", 0 },
+	{ "backup_failed", "Backup failed: $0", 1, { 0 } },
+	{ "backup_failed_retry", "Backup failed: $0 - erssi tries again in an hour (/BACKUP NOW to try now)", 1, { 0 } },
+	{ "backup_unavailable", "Backup: $0", 1, { 0 } },
+	{ "backup_off", "Backup: automatic backups are off (/SET backup_auto daily or weekly)", 0 },
+	{ "backup_on", "Backup: automatic backups $0 into $1, the newest $2 kept", 3, { 0, 0, 0 } },
+	{ "backup_last", "Backup: last one $0$1", 2, { 0, 0 } },
+	{ "backup_none", "Backup: none made yet", 0 },
+	{ "backup_next", "Backup: next one $0", 1, { 0 } },
+	{ "backup_last_failed", "Backup: the last try $0 failed: $1 ($2 in a row)", 3, { 0, 0, 1 } },
+
 	{ NULL, NULL, 0 }
 	/* clang-format on */
 };

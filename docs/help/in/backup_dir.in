@@ -1,0 +1,18 @@
+%9Setting:%9
+
+    backup_dir (path; default: ~/erssi-backups)
+
+%9Description:%9
+
+    The directory of the backups that backup_auto and /BACKUP NOW make.
+    It is made (mode 0700) when it is not there yet. It must be outside
+    the erssi home: a backup there would hold all the ones before it,
+    so erssi refuses it and says so. A directory that others can read
+    shows them your backups: they hold your private keys and passwords.
+
+%9Examples:%9
+
+    /SET backup_dir ~/erssi-backups
+    /SET backup_dir /backup/me/erssi
+
+%9See also:%9 BACKUP, BACKUP_AUTO, BACKUP_KEEP

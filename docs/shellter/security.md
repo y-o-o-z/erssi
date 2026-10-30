@@ -260,7 +260,9 @@ its own under another name, renamed only once complete), and the output
 says it must be kept private. Keep it so: not in a web directory, not in a
 shared or synced folder others can read, not on a box whose root you do not
 trust; copy it with `scp`/`sftp`, and remove it once the move is done. To
-keep it for longer, encrypt it, e.g. `age -p` or `gpg -c`. Someone who got
+keep it for longer, encrypt it, e.g. `age -p` or `gpg -c`. The automatic
+backups (`backup_auto`) are the same files, kept in `backup_dir` (made
+with mode 0700): choose a directory only you can read. Someone who got
 a copy should be treated as having your keyring: `/e2e reset -force` and
 new passwords.
 
