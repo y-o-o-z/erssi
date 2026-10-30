@@ -4,6 +4,7 @@ Back to the [README](../../README.md).
 
 - [Rules](#rules)
 - [A release](#a-release)
+- [Testing under load](#testing-under-load)
 - [Binary packages](#binary-packages)
 - [Re-signing the release tags](#re-signing-the-release-tags)
 
@@ -28,6 +29,10 @@ Back to the [README](../../README.md).
 
 ## A release
 
+Before the first step, run the tests under load on the commit to be
+tagged (see [Testing under load](#testing-under-load)). Every run must
+pass.
+
 1. Make a signed commit with `NEWS` and the version in `meson.build`, then
    the release commit `erssi Shellter Edition X`.
 2. Tag it: `git tag -s -m "erssi Shellter Edition X" shellter-vX`.
@@ -39,6 +44,27 @@ Back to the [README](../../README.md).
    checks it against that commit.
 5. Build the binary packages, sign them and upload them to the release
    (see [Binary packages](#binary-packages)).
+
+## Testing under load
+
+A package is built while other builds and VMs run, so its tests run on a
+loaded machine. A test that waits a fixed time, or has a short deadline,
+can pass on an idle machine and fail there (this happened in 2026.10.7
+and 2026.10.8). `utils/stress-tests.sh` (POSIX sh) runs the suite of a
+build directory several times while busy processes load every CPU, and
+prints how often each test failed:
+
+```sh
+utils/stress-tests.sh Build                    # 3 rounds, one busy process per CPU
+utils/stress-tests.sh -n 2 -l 2 -j 2 Build     # 2 rounds of 2 runs at once, 2 busy processes
+utils/stress-tests.sh -n 5 Build -- "live keepnick"  # one test; meson test arguments after --
+```
+
+It exits non-zero when any test failed in any run. The busy processes are
+ended when it ends (also on ^C); the logs of each run stay in
+`Build/meson-logs/stress-r*-p*.*`. Run it before tagging a release: a test
+that fails there is fixed (it waits for a condition, with a long
+deadline), not run again until it passes. `--help` lists the options.
 
 ## Binary packages
 
