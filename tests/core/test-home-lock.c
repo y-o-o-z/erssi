@@ -27,6 +27,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -138,10 +139,15 @@ static void test_no_home(void)
 
 /* a child holds the exclusive lock (as --restore does while it swaps the
  * home) for HOLD_MS, then lets go; returns its pid once it holds it */
+/* the write end of the holder's life line: it holds the lock until
+   HOLD_MS are over or this end is closed - also when the test dies on a
+   failed assertion, so no holder is left behind */
+static int holder_life = -1;
+
 static pid_t hold_exclusive(const char *dir, int hold_ms)
 {
 	char *path = g_build_filename(dir, HOME_LOCK_FILE, NULL);
-	int fd, pipefd[2];
+	int fd, pipefd[2], life[2];
 	pid_t pid;
 	char c;
 
@@ -149,21 +155,37 @@ static pid_t hold_exclusive(const char *dir, int hold_ms)
 	g_free(path);
 	g_assert_cmpint(fd, >=, 0);
 	g_assert_cmpint(pipe(pipefd), ==, 0);
+	g_assert_cmpint(pipe(life), ==, 0);
 	pid = fork();
 	g_assert_cmpint(pid, >=, 0);
 	if (pid == 0) {
+		struct pollfd pfd;
+
+		close(life[1]);
 		if (flock(fd, LOCK_EX) != 0)
 			_exit(1);
 		if (write(pipefd[1], "x", 1) != 1)
 			_exit(1);
-		g_usleep((gulong) hold_ms * 1000);
+		pfd.fd = life[0];
+		pfd.events = POLLIN;
+		while (poll(&pfd, 1, hold_ms) < 0 && errno == EINTR)
+			;
 		_exit(0);
 	}
 	close(fd);
 	close(pipefd[1]);
+	close(life[0]);
+	holder_life = life[1];
 	g_assert_cmpint(read(pipefd[0], &c, 1), ==, 1);
 	close(pipefd[0]);
 	return pid;
+}
+
+static void holder_gone(void)
+{
+	if (holder_life != -1)
+		close(holder_life);
+	holder_life = -1;
 }
 
 /* the holder of a lock the test no longer waits for */
@@ -171,6 +193,7 @@ static void kill_reap(pid_t pid)
 {
 	int status;
 
+	holder_gone();
 	kill(pid, SIGKILL);
 	g_assert_cmpint(waitpid(pid, &status, 0), ==, pid);
 }
@@ -180,6 +203,7 @@ static void reap(pid_t pid)
 	int status;
 
 	g_assert_cmpint(waitpid(pid, &status, 0), ==, pid);
+	holder_gone();
 	g_assert_true(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
