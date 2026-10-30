@@ -820,10 +820,11 @@ void update_job_cancel(UPDATE_JOB *job)
 
 	if (job->cancelled)
 		return;
-	/* the installer removes its temporary files on SIGTERM */
+	/* the installer removes its temporary files on SIGTERM, once the
+	   step it runs has ended: the same grace as after a timeout */
 	job->stopping = TRUE;
 	job_signal(job, SIGTERM);
-	for (i = 0; i < 40 && !job_reap(job); i++)
+	for (i = 0; i < UPDATE_CHECK_KILL_GRACE_MS / 50 && !job_reap(job); i++)
 		g_usleep(50000);
 	if (!job->exited) {
 		kill(-job->pid, SIGKILL); /* not reaped just above */

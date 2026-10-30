@@ -807,7 +807,7 @@ static void test_job_timeout(void)
 static void test_job_cancel(void)
 {
 	char *child = g_build_filename(script_dir, "child.pid", NULL);
-	char *path, *body;
+	char *path, *body, *clean;
 	const char *argv[3];
 	UPDATE_JOB *job;
 	RESULT r;
@@ -833,6 +833,31 @@ static void test_job_cancel(void)
 	while (g_main_context_iteration(NULL, FALSE))
 		;
 	g_assert_false(r.done);
+	unlink(child);
+	unlink(path);
+	g_free(path);
+	g_free(body);
+
+	/* an installer that cleans up for 3 s on SIGTERM (it waits for the
+	   step it runs) is given the time: the grace of a timeout */
+	clean = g_build_filename(script_dir, "cleaned", NULL);
+	unlink(clean);
+	body = g_strdup_printf("trap 'sleep 3; echo done > \"%s\"; exit 0' TERM\n"
+	                       "sleep 300 &\n" PID_TO "wait\n",
+	                       clean, child, child, child);
+	path = script("slow.sh", body);
+	argv[1] = path;
+	job = update_job_start(argv, 60000, job_done, &r, NULL);
+	g_assert_nonnull(job);
+	pid = update_job_pid(job);
+	while (!g_file_test(child, G_FILE_TEST_EXISTS))
+		g_usleep(10000);
+	update_job_cancel(job);
+	g_assert_false(r.done);
+	assert_reaped(pid);
+	g_assert_true(g_file_test(clean, G_FILE_TEST_EXISTS));
+	unlink(clean);
+	g_free(clean);
 	unlink(child);
 	unlink(path);
 	g_free(path);

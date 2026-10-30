@@ -143,8 +143,8 @@ typedef void (*UPDATE_JOB_RAW_FUNC)(const char *failure, int wait_status, const 
                                     const char *stderr_text, void *data);
 UPDATE_JOB *update_job_start_raw(const char *const *argv, int timeout_ms, UPDATE_JOB_RAW_FUNC done,
                                  void *data, GError **error);
-/* the process group stopped (SIGTERM, up to 2 s, then SIGKILL) while
- * its process is still there, and the process reaped here; what is left
+/* the process group stopped (SIGTERM, up to UPDATE_CHECK_KILL_GRACE_MS,
+ * then SIGKILL) while its process is still there, and the process reaped here; what is left
  * of the group then gets SIGKILL, before the reap.
  * DONE (LINE, RAW) is not called any more, the job is freed - from the
  * main loop after the callback when it is cancelled from inside one of
