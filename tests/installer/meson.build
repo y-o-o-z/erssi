@@ -1,5 +1,5 @@
-# The tests of the release tools (the installer here, the packager and
-# the release hook in tests/version) are in the suite 'tooling': the
+# The tests of the release tools (the installer and release.sh here, the
+# packager and the release hook in tests/version) are in the suite 'tooling': the
 # installer's own source build leaves them out (meson test --no-suite
 # tooling), since they test the tools, not the erssi being installed, and
 # CI and the release host run them all.
@@ -45,3 +45,12 @@ endforeach
 test('installer install.sh', find_program('sh'),
   args : [files('test-install-sh.sh'), meson.current_source_dir() / '..' / '..'],
   suite : 'tooling')
+
+# utils/release.sh with throwaway repositories, a throwaway signing key, a
+# local bare remote and a stand-in gh: no network, no chroot, no ssh
+# (test-release.sh SOURCE_ROOT CASE)
+foreach c : ['args', 'tag-message', 'check', 'dry-run', 'sums', 'upload', 'confirm']
+  test('release ' + c, find_program('sh'),
+    args : [files('test-release.sh'), meson.current_source_dir() / '..' / '..', c],
+    timeout : 120, suite : 'tooling')
+endforeach
