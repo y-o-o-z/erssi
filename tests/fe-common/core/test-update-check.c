@@ -417,6 +417,10 @@ static gboolean running(int pid)
 
 /* the process named in FILE no longer runs (a child of the installer:
    reparented, so it may take a moment until init reaps it, if it does) */
+/* the pid of the last background job into the file, whole: written
+   aside and renamed, so a reader never sees it empty or half written */
+#define PID_TO "echo $! > '%s.t' && mv '%s.t' '%s'\n"
+
 static void assert_gone(const char *file)
 {
 	char *text = NULL;
@@ -530,7 +534,7 @@ static void test_job_timeout(void)
 	int pid;
 
 	/* hangs in a child (as in git): both stopped, the job reaped */
-	body = g_strdup_printf("sleep 300 &\necho $! > '%s'\nwait\necho 'current 1.0'\n", child);
+	body = g_strdup_printf("sleep 300 &\n" PID_TO "wait\necho 'current 1.0'\n", child, child, child);
 	t0 = g_get_monotonic_time();
 	run(body, 500, &r, &pid);
 	g_assert_cmpint(g_get_monotonic_time() - t0, <, 3 * G_USEC_PER_SEC);
@@ -542,7 +546,7 @@ static void test_job_timeout(void)
 	g_free(body);
 
 	/* SIGTERM ignored: SIGKILL after the grace time */
-	body = g_strdup_printf("trap '' TERM\nsleep 300 &\necho $! > '%s'\nwait\nwait\n", child);
+	body = g_strdup_printf("trap '' TERM\nsleep 300 &\n" PID_TO "wait\nwait\n", child, child, child);
 	t0 = g_get_monotonic_time();
 	run(body, 1000, &r, &pid);
 	g_assert_cmpint(g_get_monotonic_time() - t0, >=,
@@ -566,7 +570,7 @@ static void test_job_cancel(void)
 	RESULT r;
 	int pid;
 
-	body = g_strdup_printf("sleep 300 &\necho $! > '%s'\nwait\n", child);
+	body = g_strdup_printf("sleep 300 &\n" PID_TO "wait\n", child, child, child);
 	path = script("hang.sh", body);
 	argv[0] = "/bin/sh";
 	argv[1] = path;
@@ -611,8 +615,8 @@ static void test_job_cancel_after_exit(void)
 	unlink(got);
 	/* the child says when a signal reaches it */
 	body = g_strdup_printf("sh -c 'trap \"echo TERM > %s; exit\" TERM; sleep 300 & wait' "
-	                       "> /dev/null 2>&1 &\necho $! > '%s'\n",
-	                       got, child);
+	                       "> /dev/null 2>&1 &\n" PID_TO,
+	                       got, child, child, child);
 	path = script("exits.sh", body);
 	argv[0] = "/bin/sh";
 	argv[1] = path;
