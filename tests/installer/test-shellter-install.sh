@@ -930,7 +930,8 @@ lock-freebsd)
     use_tool uname sysctl
     sh -c 'exit 0' & gone=$!
     wait "$gone"
-    sleep 30 & alive=$!
+    # the running installer: it outlives a slow run (the trap ends it)
+    sleep 3600 < /dev/null > /dev/null 2>&1 & alive=$!
     trap 'kill "$alive" 2>/dev/null; rm -rf "$W"' EXIT
     L=$W/lk
     # shellcheck disable=SC2016 # run by sh
@@ -1014,7 +1015,8 @@ stale-lock)
     fi
     sh -c 'exit 0' & gone=$!
     wait "$gone"
-    sleep 30 & alive=$!
+    # the running installer: it outlives a slow run (the trap ends it)
+    sleep 3600 < /dev/null > /dev/null 2>&1 & alive=$!
     trap 'kill "$alive" 2>/dev/null; rm -rf "$W"' EXIT
     P=$HOME/.local/opt/erssi S=$HOME/.local/src/erssi
     mkdir -p "$P/.install.lock" "$S.lock"
