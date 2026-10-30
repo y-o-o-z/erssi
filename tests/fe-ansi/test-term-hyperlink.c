@@ -108,13 +108,6 @@ static const SCAN_ROW SCAN[] = {
 	{ "https://paypal.example\004" "1/" "@evil.example/", "https://paypal.example" },
 	{ "https://paypal.example\004" "d" "@evil.example/", "https://paypal.example" },
 	{ "https://paypal.example\004" "g" "@evil.example/", "https://paypal.example" },
-	/* a character the text view draws whole (under 16 bytes) is part of
-	 * it; a longer one the view draws as its first code point only, so
-	 * it ends the address (here x and 8 or 7 combining acute accents) */
-	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
-	  "https://example.org/a" },
-	{ "https://example.org/a" "x\314\201\314\201\314\201\314\201\314\201\314\201\314\201" "b",
-	  "https://example.org/ax%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81%CC%81b" },
 	/* lines of one entry */
 	{ "https://a.example/\nhttps://b.example/", "https://a.example/ https://b.example/" },
 };
@@ -131,6 +124,40 @@ static void test_scan(void)
 				g_strescape(SCAN[i].text, NULL), got, SCAN[i].uris);
 		g_free(got);
 	}
+}
+
+#define ACUTE "\314\201"
+#define ACUTE_URI "%CC%81"
+
+/* A character the text view draws whole is part of an address; one it
+ * draws as its first code point only (a grapheme cluster of 16 bytes or
+ * more) ends it. What a character is depends on the build: with utf8proc
+ * x and its combining accents are one cluster, without it each code point
+ * is drawn on its own (and then all of them are shown). */
+static void test_scan_clusters(void)
+{
+	const char *cluster = "x" ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE, *p = cluster;
+	gboolean grouped;
+	char *got;
+
+	string_advance(&p, TREAT_STRING_AS_UTF8);
+	grouped = p - cluster > 1;
+	g_test_message("grapheme clusters: %s", grouped ? "yes" : "no");
+
+	/* x and 8 accents: 17 bytes */
+	got = scan_uris("https://example.org/a" "x" ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE "b",
+			TERM_TYPE_UTF8);
+	g_assert_cmpstr(got, ==, grouped ? "https://example.org/a" :
+			"https://example.org/ax" ACUTE_URI ACUTE_URI ACUTE_URI ACUTE_URI ACUTE_URI
+			ACUTE_URI ACUTE_URI ACUTE_URI "b");
+	g_free(got);
+
+	/* x and 7 accents: 15 bytes, drawn whole either way */
+	got = scan_uris("https://example.org/a" "x" ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE "b",
+			TERM_TYPE_UTF8);
+	g_assert_cmpstr(got, ==, "https://example.org/ax" ACUTE_URI ACUTE_URI ACUTE_URI ACUTE_URI
+			ACUTE_URI ACUTE_URI ACUTE_URI "b");
+	g_free(got);
 }
 
 /* the span is where the shown address is, format sequences included */
@@ -845,6 +872,59 @@ static void test_view_colour_ends_link(void)
 	term_close();
 }
 
+/* The text drawn inside a link, percent-decoded, is its target: also
+ * for characters the text view draws in part (a long grapheme cluster),
+ * in a build with or without utf8proc. */
+static void test_view_shown_is_target(void)
+{
+	static const char *const LINES[] = {
+		"https://example.org/a" "x" ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE "b",
+		"https://example.org/a" "x" ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE ACUTE "b",
+		"https://example.org/za\305\274\303\263\305\202\304\207 x",
+		"https://example.org/\360\237\221\215\360\237\217\275 x",
+	};
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS(LINES); i++) {
+		TEXT_BUFFER_VIEW_REC *view;
+		TERM_WINDOW *win;
+		GString *drawn = g_string_new(NULL);
+		const char *out, *p;
+
+		term_open(200, 3);
+		term_use_hyperlinks = TRUE;
+		win = term_window_create(0, 0, 200, 3);
+		view = view_open(200, 3, FALSE);
+		textbuffer_view_set_window(view, win);
+		view_add(view, LINES[i]);
+		term_reset_output();
+		textbuffer_view_redraw(view);
+		out = term_output();
+
+		/* the one link: its target, and what is drawn until its close */
+		p = strstr(out, "\033]8;id=");
+		g_assert_nonnull(p);
+		{
+			const char *uri = strchr(p + 4, ';') + 1, *st = strstr(uri, "\033\\");
+			const char *close = strstr(st, "\033]8;;\033\\");
+			char *target = g_strndup(uri, st - uri), *decoded;
+
+			g_assert_nonnull(close);
+			g_string_append_len(drawn, st + 2, close - (st + 2));
+			decoded = g_uri_unescape_string(target, NULL);
+			if (strcmp(decoded, drawn->str) != 0)
+				g_error("line %u: drawn \"%s\", target \"%s\"", i,
+					g_strescape(drawn->str, NULL), target);
+			g_free(decoded);
+			g_free(target);
+		}
+		g_string_free(drawn, TRUE);
+		view_close(view);
+		term_window_destroy(win);
+		term_close();
+	}
+}
+
 /* What the side panels draw goes through term_add_unichar() after a
  * term_move(): never part of a link, also when a link was open. */
 static gboolean add_unichar(unichar chr, int width, int color, unsigned int fg24,
@@ -924,6 +1004,7 @@ int main(int argc, char **argv)
 
 	g_test_add_func("/term-hyperlink/scan", test_scan);
 	g_test_add_func("/term-hyperlink/scan-offsets", test_scan_offsets);
+	g_test_add_func("/term-hyperlink/scan-clusters", test_scan_clusters);
 	g_test_add_func("/term-hyperlink/scan-8bit", test_scan_8bit);
 	g_test_add_func("/term-hyperlink/scan-evil", test_scan_evil);
 	g_test_add_func("/term-hyperlink/scan-long-line", test_scan_long_line);
@@ -937,6 +1018,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/term-hyperlink/view-full-width", test_view_full_width);
 	g_test_add_func("/term-hyperlink/view-colour-and-evil", test_view_colour_and_evil);
 	g_test_add_func("/term-hyperlink/view-colour-ends-link", test_view_colour_ends_link);
+	g_test_add_func("/term-hyperlink/view-shown-is-target", test_view_shown_is_target);
 	g_test_add_func("/term-hyperlink/side-panel-no-link", test_side_panel_no_link);
 	g_test_add_func("/term-hyperlink/setting", test_setting);
 
