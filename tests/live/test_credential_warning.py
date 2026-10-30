@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 15
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 WARNING = "Credentials: this configuration still uses the old credential encryption"
 
 

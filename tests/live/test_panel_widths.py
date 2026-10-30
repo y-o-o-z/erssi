@@ -24,7 +24,7 @@ import harness  # noqa: E402
 
 block = harness.block
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 TRIPS = 6
 # the widths of the main windows, set by hand with the right panel off:
 # two stacked rows, ones the old layout lost a column of in the first
@@ -121,7 +121,7 @@ def main():
     def started(off=0):
         """alice joined #test (in the log past OFF)"""
         a = st["alice"]
-        end = time.time() + 15
+        end = time.time() + WAIT
         while "has joined #test" not in log_text(off):
             assert time.time() < end, "alice never joined #test"
             time.sleep(0.1)

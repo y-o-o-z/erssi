@@ -35,6 +35,7 @@ and the watchers get 730/731 when a monitored nick comes or goes.
 """
 import argparse
 import asyncio
+import os
 import time
 import unicodedata
 
@@ -328,7 +329,8 @@ async def handle(reader, writer, wire_path, times_path):
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--port", type=int, required=True, help="0: any free port (see --port-file)")
+    parser.add_argument("--port-file", help="once listening, write the port to this file (made whole by a rename)")
     parser.add_argument("--wire", required=True)
     parser.add_argument("--wire-times", help="every PRIVMSG/NOTICE again, with the time it arrived")
     parser.add_argument("--trace", help="log every line in and out with the time (off by default)")
@@ -351,6 +353,11 @@ async def main():
     CASEMAPPING = args.casemapping
     HIDE_CASEMAPPING = args.hide_casemapping
     server = await asyncio.start_server(lambda r, w: handle(r, w, args.wire, args.wire_times), "127.0.0.1", args.port)
+    if args.port_file:
+        tmp = args.port_file + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("%d\n" % server.sockets[0].getsockname()[1])
+        os.replace(tmp, args.port_file)
     async with server:
         await server.serve_forever()
 

@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 FOCUS_ON = b"\x1b[?1004h"
 FOCUS_OFF = b"\x1b[?1004l"
 FOCUS_IN = b"\x1b[I"

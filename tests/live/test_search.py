@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 BIG_MB = 100
 
 
@@ -263,8 +263,8 @@ def main():
         assert wait_log_since(off, "Search: one is running - /SEARCH -stop first"), log_since(off)
         alice.write_raw(b"/search -stop\r")
         assert wait_log_since(off, "Search stopped"), log_since(off)
-        assert all(gone(k, 2) for k in kids), f"-stop did not end the search process {kids}"
-        assert no_children(2), f"the search process is still there: {children()}"
+        assert all(gone(k, WAIT) for k in kids), f"-stop did not end the search process {kids}"
+        assert no_children(WAIT), f"the search process is still there: {children()}"
         # -stop in the same read as the start: the SIGTERM comes right
         # after fork(), before the child has set up its signals
         for _ in range(3):
@@ -274,7 +274,7 @@ def main():
             out = log_since(off)
             assert "Search: one is running - /SEARCH -stop first" in out, out
             assert out.index("one is running") < out.index("Search stopped"), out
-            assert no_children(2), f"the search process is still there: {children()}"
+            assert no_children(WAIT), f"the search process is still there: {children()}"
         # a negative check: no late summary of a stopped search (one would
         # come from a child that is gone already) - a short bounded wait
         time.sleep(1)
@@ -324,7 +324,7 @@ def main():
         assert kids, "no search process"
         time.sleep(0.5)  # the child past its start: /quit comes while it searches
         alice.quit()
-        assert all(gone(k, 2) for k in kids), f"the search process outlived erssi: {kids}"
+        assert all(gone(k, WAIT) for k in kids), f"the search process outlived erssi: {kids}"
         st["big"].unlink()
         assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 

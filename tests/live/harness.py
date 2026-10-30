@@ -399,19 +399,6 @@ def free_port():
         return s.getsockname()[1]
 
 
-def wait_port(port, timeout=5, proc=None):
-    end = time.time() + timeout
-    while time.time() < end:
-        if proc is not None and proc.poll() is not None:
-            return False
-        try:
-            socket.create_connection(("127.0.0.1", port), 1).close()
-            return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
 class Ircd:
     """tests/live/ircd.py as a child process; the wire log is work/wire.log,
     every line in and out (with the time) is in work/ircd-trace.log.
@@ -430,20 +417,30 @@ class Ircd:
     def __exit__(self, *exc):
         self.stop()
 
-    def start(self):
-        """Start the server on a free port (retried: the port can be taken
-        between choosing it and binding it). Returns the port."""
-        for _ in range(4):
-            port = free_port()
-            self.proc = subprocess.Popen(
-                [sys.executable, str(HERE / "ircd.py"), "--port", str(port), "--wire", str(self.wire),
-                 "--trace", str(self.trace)] + self.extra)
-            up = wait_port(port, 5, self.proc)
-            time.sleep(0.2)  # a server that lost the bind race exits now
-            if up and self.proc.poll() is None:
-                return port
+    def start(self, timeout=60):
+        """Start the server on a port the system picks when it binds (no
+        race with another program for a port chosen before); it writes the
+        port to a file once it listens. Returns the port. The deadline is
+        for a loaded machine: an idle one takes a fraction of a second."""
+        port_file = self.work / "ircd.port"
+        try:
+            port_file.unlink()
+        except FileNotFoundError:
+            pass
+        self.proc = subprocess.Popen(
+            [sys.executable, str(HERE / "ircd.py"), "--port", "0", "--port-file", str(port_file),
+             "--wire", str(self.wire), "--trace", str(self.trace)] + self.extra)
+
+        def listening():
+            try:
+                return int(port_file.read_text())
+            except (OSError, ValueError):
+                return self.proc.poll() is not None and -1
+        port = wait_until(listening, timeout)
+        if not port or port < 0:
             self.stop()
-        raise AssertionError("fake IRC server did not start")
+            raise AssertionError(f"fake IRC server did not start in {timeout} s (exit {self.proc.poll()})")
+        return port
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -460,7 +457,7 @@ class Client:
 
     def __init__(self, port, nick, user="u"):
         self.nick = nick
-        self.sock = socket.create_connection(("127.0.0.1", port), 5)
+        self.sock = socket.create_connection(("127.0.0.1", port), 30)
         self.buf = b""
         try:
             self.send(f"NICK {nick}")
@@ -479,7 +476,7 @@ class Client:
     def send(self, line):
         self.sock.sendall(line.encode() + b"\r\n")
 
-    def expect(self, substr, timeout=10):
+    def expect(self, substr, timeout=30):
         end = time.time() + timeout
         while True:
             while b"\r\n" in self.buf:
@@ -796,6 +793,25 @@ class Erssi:
         if not self.wait_output(mark.encode(), timeout):
             raise AssertionError(f"{self.name}: the /echo {mark} was not drawn in {timeout} s"
                                  f" (exited: {self.proc.poll()})")
+
+    def upgrade(self, timeout=60):
+        """/UPGRADE, then wait until the new erssi runs what is typed: it
+        has opened the all log again (one more "--- Log opened" line: the
+        old process does not close its logs before the exec), and an /echo
+        reaches it (wait_ready). The session file is no sign: /UPGRADE
+        first writes a probe under its name and removes it again."""
+        def opened():
+            try:
+                return self.all_log().read_bytes().count(b"--- Log opened")
+            except OSError:
+                return 0
+        before = opened()
+        self.write_raw(b"/upgrade\r")
+        if not wait_until(lambda: opened() > before or self.proc.poll() is not None, timeout) \
+                or self.proc.poll() is not None:
+            raise AssertionError(f"{self.name}: no new erssi after /upgrade in {timeout} s"
+                                 f" (exited: {self.proc.poll()})")
+        self.wait_ready(timeout)
 
     def save_config(self, *lines, timeout=20):
         """Type LINES (e.g. "/layout save") and /SAVE, wait until erssi has

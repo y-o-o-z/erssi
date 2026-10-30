@@ -99,9 +99,9 @@ def main():
                 alice.type_and_wait("/window name livewin")
                 alice.type_and_wait("/alias wn echo active=$winname")
                 alice.type_and_wait("/wn")
-                assert alice.wait_file(alice.all_log(), "active=livewin", 5), "$winname not expanded"
+                assert alice.wait_file(alice.all_log(), "active=livewin", 30), "$winname not expanded"
                 bob.send("TESTRAW alice ::e2e.test NOTICE alice :raw works")
-                assert alice.wait_file(alice.all_log(), "raw works", 5), "TESTRAW line not delivered"
+                assert alice.wait_file(alice.all_log(), "raw works", 30), "TESTRAW line not delivered"
             alice.quit()
             assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 

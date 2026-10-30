@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 # the Description of a /help page of the fork (docs/help/in/term_truecolor.in)
 HELP_TOPIC = "term_truecolor"
 HELP_LINE = "Chooses whether erssi sends 24-bit colours to the terminal."

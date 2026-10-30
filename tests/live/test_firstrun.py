@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 15
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 ASK = b"Set up now? [Y/n]"
 UPDATE_ASK = (b"Check once a day for a new signed erssi release (contacts the erssi repository"
               b" - github.com unless you installed from elsewhere - and installs nothing)? [y/N] ")

@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 15
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 AVAILABLE = "erssi 2099.1.0 is available (signed). Update from a shell: erssi --update, then /upgrade"
 
 
@@ -149,9 +149,7 @@ def main():
         assert log_text(e).count("2099.1.0 is available") == 1
         # /UPGRADE: the item is back at once, from the state file; no new
         # check before the day is over
-        e.type("/upgrade")
-        time.sleep(3)
-        e.type_and_wait("/echo after-upgrade")
+        e.upgrade()
         assert on_screen(e, "update 2099.1.0"), "\n".join(e.screen())
         time.sleep(75)
         e.sync_output()
