@@ -2132,11 +2132,16 @@ bk_lock_held() {
 bk_erssi_pids() {
     have ps || return 0
     me=$(id -u)
-    ps -A -o pid= -o uid= -o comm= > "$BK_WORK/ps" 2>/dev/null || return 1
-    while read -r pid uid comm; do
+    # an erssi by its command name or its argv[0] (Linux names a process
+    # after the link it was started through, FreeBSD after the file)
+    ps -A -o pid= -o uid= -o comm= -o args= > "$BK_WORK/ps" 2>/dev/null || return 1
+    while read -r pid uid comm args; do
         [ "$uid" = "$me" ] || continue
-        case "$comm" in erssi|*/erssi) ;; *) continue ;; esac
-        args=$(ps -p "$pid" -o args= 2>/dev/null) || continue
+        a0=${args%% *}
+        case "$comm" in
+            erssi|*/erssi) ;;
+            *) case "$a0" in erssi|*/erssi) ;; *) continue ;; esac ;;
+        esac
         h=$(printf '%s\n' "$args" | awk '{
             for (i = 2; i <= NF; i++) {
                 if ($i == "--home" && i < NF) { print $(i + 1); exit }

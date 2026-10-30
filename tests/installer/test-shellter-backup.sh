@@ -73,6 +73,18 @@ run() {   # installer options... -> output in $W/out, exit code in $RC
     RC=0
     sh "$INSTALLER" "$@" > "$W/out" 2>&1 || RC=$?
 }
+# the same with variables for the installer: VAR=value... -- options.
+# Not "VAR=value run ...": FreeBSD's sh does not export assignments put
+# before a function call to the commands the function runs
+run_env() {
+    RC=0
+    (
+        # shellcheck disable=SC2163 # export NAME=value as given
+        while [ "$1" != -- ]; do export "$1"; shift; done
+        shift
+        sh "$INSTALLER" "$@"
+    ) > "$W/out" 2>&1 || RC=$?
+}
 said() { grep -q -- "$1" "$W/out"; }
 show() { sed 's/^/    | /' "$W/out"; }
 # shellcheck disable=SC2012 # the mode string, of names the test made
@@ -368,15 +380,37 @@ running)
     check "it says an erssi is running" said "an erssi is running on"
     tree "$W/target" > "$W/after"
     check "the home is as it was" cmp -s "$W/before" "$W/after"
+    # the same check with flock(1) or lockf(1) where there is no perl
+    for tool in flock lockf; do
+        command -v "$tool" >/dev/null 2>&1 || continue
+        mkdir "$W/no-perl-$tool"
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env uname basename dirname touch "$tool"; do
+            p=$(command -v "$t") && ln -s "$p" "$W/no-perl-$tool/$t"
+        done
+        run_env PATH="$W/shim:$W/no-perl-$tool" -- --restore "$W/b.tar.gz" --home "$W/target"
+        check "with $tool: refused while the lock is held" [ "$RC" != 0 ] && said "an erssi is running on"
+        check "with $tool: the lock file stays" [ -f "$W/target/erssi.lock" ]
+    done
     kill "$LOCKER"; wait "$LOCKER" 2>/dev/null
     # an older erssi, without the lock: an erssi process naming the home
-    ln -s "$(command -v perl)" "$W/shim/erssi"
+    # a perl named erssi; started through a link, FreeBSD would name it
+    # perl (its file), Linux erssi (the link): one of each
+    cp "$(command -v perl)" "$W/shim/erssi"
     "$W/shim/erssi" -e 'sleep 60' -- "--home=$W/target" &
     OLD=$!
     sleep 0.5
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "restore is refused while an erssi process names the home" [ "$RC" != 0 ]
     check "it names the pid" said "pid $OLD"
+    kill "$OLD"; wait "$OLD" 2>/dev/null
+    mkdir "$W/link"
+    ln -s "$(command -v perl)" "$W/link/erssi"
+    "$W/link/erssi" -e 'sleep 60' -- --home "$W/target" &
+    OLD=$!
+    sleep 0.5
+    run --restore "$W/b.tar.gz" --home "$W/target"
+    check "also an erssi started through a link (--home DIR)" [ "$RC" != 0 ]
+    check "named by its pid" said "pid $OLD"
     kill "$OLD"; wait "$OLD" 2>/dev/null
     run --restore "$W/b.tar.gz" --home "$W/target"
     if [ "$RC" != 0 ]; then show; fi
@@ -482,13 +516,13 @@ manifest-links)
 
 file-changed)
     make_home "$E"
-    FAKE_TAR_CHANGED="logs/IRCnet/#chan.log logs/mentions.log" run --backup "$W/b.tar.gz" --with-logs
+    run_env FAKE_TAR_CHANGED="logs/IRCnet/#chan.log logs/mentions.log" -- --backup "$W/b.tar.gz" --with-logs
     if [ "$RC" != 0 ]; then show; fi
     check "a log that grew while it was read does not stop the backup" [ "$RC" = 0 ]
     check "it is named" said "logs/IRCnet/#chan.log changed while it was read"
     check "the other one too" said "logs/mentions.log changed while it was read"
     check "the backup is there" [ -f "$W/b.tar.gz" ]
-    FAKE_TAR_CHANGED="logs/mentions.log" FAKE_TAR_ERROR=config run --backup "$W/c.tar.gz"
+    run_env FAKE_TAR_CHANGED="logs/mentions.log" FAKE_TAR_ERROR="config" -- --backup "$W/c.tar.gz"
     check "with another error from tar the backup fails" [ "$RC" != 0 ]
     check "and nothing is written" [ ! -e "$W/c.tar.gz" ]
     # a real one: GNU tar, a log appended to while it is read
@@ -516,7 +550,7 @@ use Errno;
 BEGIN { *CORE::GLOBAL::flock = sub { $! = Errno::ENOLCK(); return 0 }; }
 1;
 PM
-    PERL5LIB=$W/perllib PERL5OPT=-MNoLocks run --restore "$W/b.tar.gz"
+    run_env PERL5LIB="$W/perllib" PERL5OPT="-MNoLocks" -- --restore "$W/b.tar.gz"
     if [ "$RC" != 0 ]; then show; fi
     check "a lock that cannot be taken is not taken for a running erssi" [ "$RC" = 0 ]
     check "it says only the process list was checked" said "only the process list was checked"
@@ -543,7 +577,7 @@ done
 exec "$REAL_GZIP" "\$@"
 EOF2
     chmod 755 "$W/shim2/gzip"
-    PATH=$W/shim2:$PATH run --restore "$W/good.tar.gz" --home "$W/new/.erssi"
+    run_env PATH="$W/shim2:$PATH" -- --restore "$W/good.tar.gz" --home "$W/new/.erssi"
     if [ "$RC" != 0 ]; then show; fi
     check "the archive as it was when copied is restored" [ "$RC" = 0 ]
     check "gzip never read the file itself" [ ! -e "$W/gzip.orig" ]
@@ -569,7 +603,7 @@ closed-dirs)
     check "the home is as it was" cmp -s "$W/before" "$W/after"
     # a TMPDIR of its own: other cases running at the same time use theirs
     mkdir "$W/tmpd"
-    TMPDIR=$W/tmpd run --restore "$W/closed-bad.tar.gz" --dry-run
+    run_env TMPDIR="$W/tmpd" -- --restore "$W/closed-bad.tar.gz" --dry-run
     check "a dry run leaves nothing in the temporary directory either" [ -z "$(find "$W/tmpd" ! -path "$W/tmpd")" ]
     ;;
 
@@ -595,31 +629,35 @@ fi
 exec "$REAL_MV" "\$@"
 EOF3
     chmod 755 "$W/shim3/mv"
-    PATH=$W/shim3:$PATH run --restore "$W/b.tar.gz"
+    run_env PATH="$W/shim3:$PATH" -- --restore "$W/b.tar.gz"
     if [ "$RC" != 0 ]; then show; fi
     check "restore over a home succeeds" [ "$RC" = 0 ]
     check "the old home is moved aside while its lock is held" grep -q "^locked $E\$" "$W/mv.log"
     check "the new home is moved in while its lock is held" grep -q "^locked .*/home\$" "$W/mv.log"
     check "never without" sh -c "! grep -q '^free' '$W/mv.log'"
     check "the lock file is in the new home" [ -f "$E/erssi.lock" ]
-    # the same with flock(1) where there is no perl
-    if command -v flock >/dev/null 2>&1; then
-        mkdir "$W/noperl"
-        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env flock uname basename dirname touch; do
-            p=$(command -v "$t") && ln -s "$p" "$W/noperl/$t"
+    # the same with flock(1) (Linux) or lockf(1) (FreeBSD) where there is
+    # no perl
+    for tool in flock lockf; do
+        command -v "$tool" >/dev/null 2>&1 || continue
+        mkdir "$W/no-perl-$tool"
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env uname basename dirname touch "$tool"; do
+            p=$(command -v "$t") && ln -s "$p" "$W/no-perl-$tool/$t"
         done
         : > "$W/mv.log"
-        PATH=$W/shim3:$W/shim:$W/noperl run --restore "$W/b.tar.gz"
+        run_env PATH="$W/shim3:$W/shim:$W/no-perl-$tool" -- --restore "$W/b.tar.gz"
         if [ "$RC" != 0 ]; then show; fi
-        check "without perl, with flock(1): restore succeeds" [ "$RC" = 0 ]
+        check "without perl, with $tool: restore succeeds" [ "$RC" = 0 ]
         check "and holds both locks for the renames" [ "$(grep -c '^locked' "$W/mv.log")" = 2 ]
         check "never without them" sh -c "! grep -q '^free' '$W/mv.log'"
-    fi
+        check "the lock file of the home is still there" [ -f "$E/erssi.lock" ]
+        check "no warning that it could not lock" sh -c "! grep -q 'could not be locked' '$W/out'"
+    done
     ;;
 
 self-check)
     make_home "$E"
-    FAKE_TAR_FIFO=1 run --backup "$W/b.tar.gz"
+    run_env FAKE_TAR_FIFO="1" -- --backup "$W/b.tar.gz"
     check "a backup --restore would refuse is not written" [ "$RC" != 0 ]
     check "the file is not there" [ ! -e "$W/b.tar.gz" ]
     check "it says why" said "does not pass the checks of --restore"
