@@ -337,7 +337,7 @@ FORMAT_REC fecommon_core_formats[] = {
 	/* ---- */
 	{ NULL, "Updates", 0 },
 
-	{ "update_available", "erssi {hilight $1} is available (signed). Update from a shell: {hilight erssi --update}, then {hilight /upgrade}", 2, { 0, 0 } },
+	{ "update_available", "erssi {hilight $1} is available (signed). Install it: {hilight /update install} (or {hilight erssi --update} in a shell), then {hilight /upgrade}", 2, { 0, 0 } },
 	{ "update_current", "erssi $0 is the newest signed release", 1, { 0 } },
 	{ "update_checking", "Update check: asking the installer for the newest signed release", 0 },
 	{ "update_busy", "Update check: one is running", 0 },
@@ -347,6 +347,18 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "update_off", "Update check is off: /SET update_check on checks once a day (it contacts the erssi repository, github.com unless you installed from elsewhere)", 0 },
 	{ "update_last", "Update check: last one $0", 1, { 0 } },
 	{ "update_last_failed", "Update check: last one $0 failed: $1 ($2 in a row)", 3, { 0, 0, 1 } },
+	{ "update_summary", "  $0", 1, { 0 } },
+	{ "update_install_checking", "Update install: checking for the newest signed release (full output: $0)", 1, { 0 } },
+	{ "update_install_start", "Update install: installing erssi {hilight $1} over $0 in the background - erssi goes on meanwhile (full output: $2)", 3, { 0, 0, 0 } },
+	{ "update_install_progress", "Update install: $0", 1, { 0 } },
+	{ "update_install_current", "Update install: erssi $0 is the newest signed release - nothing to install", 1, { 0 } },
+	{ "update_install_busy", "Update install: one is running (full output: $0)", 1, { 0 } },
+	{ "update_install_running", "Update install: running since $0 (full output: $1)", 2, { 0, 0 } },
+	{ "update_install_refused", "Update install: $0", 1, { 0 } },
+	{ "update_install_failed", "Update install failed: $0 (full output: $1)", 2, { 0, 0 } },
+	{ "update_installed", "erssi {hilight $0} is installed: {hilight /upgrade} loads it and keeps your windows and channels (TLS connections reconnect once). Full output: $1", 2, { 0, 0 } },
+	{ "update_installed_path", "erssi {hilight $0} is installed: {hilight /upgrade $2} loads it and keeps your windows and channels (TLS connections reconnect once). Full output: $1", 3, { 0, 0, 0 } },
+	{ "update_install_upgrading", "erssi {hilight $0} is installed: running /upgrade to load it (TLS connections reconnect once). Full output: $1", 2, { 0, 0 } },
 
 	{ NULL, NULL, 0 }
 	/* clang-format on */

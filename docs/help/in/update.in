@@ -7,16 +7,17 @@
     CHECK:       Asks now whether a newer signed release is there, and
                  shows the answer (also when nothing is newer, and why a
                  check failed).
+    INSTALL:     Installs the newest signed release, if it is newer than
+                 this erssi, in the background.
+    -upgrade:    With INSTALL: runs /UPGRADE once it is installed.
 
     Without an argument: whether update_check is on, when the last check
-    was made and what it found.
+    was made and what it found, and whether an install is running.
 
 %9Description:%9
 
-    Tells you about new releases of erssi Shellter Edition. It never
-    installs anything: an update is made from a shell with erssi --update,
-    then /UPGRADE loads the new release and keeps your windows and
-    channels.
+    Tells you about new releases of erssi Shellter Edition, with a short
+    summary of what a new one brings when its release tag has one.
 
     The check runs the installer that was installed with this erssi
     (shellter-install.sh --update --check --porcelain, the same check as
@@ -29,17 +30,42 @@
     most), never the files of a release. One check runs at a time,
     and one that takes longer than two minutes is stopped.
 
+    Nothing is installed by a check. Only /UPDATE INSTALL installs, and
+    only when you give it: it checks first, then runs the same installer
+    with --update (as erssi --update in a shell does), in the background
+    and without a terminal, so it asks nothing. erssi goes on while it
+    runs. Its steps, warnings and errors are shown in the Notices window;
+    everything it prints goes to ~/.erssi/update-install.log (mode 0600).
+    A ready-made package installs in seconds, a build from source can
+    take 20 minutes or more; one that takes longer than an hour is
+    stopped. Nothing is installed when this erssi is the newest release,
+    one install runs at a time (the installer locks the install, and the
+    log is locked for another erssi with the same home), and erssi does
+    not run another tool named as the updater of the install (a system
+    package): update such an erssi the way it was installed. As root,
+    missing system packages stop the install (erssi --update in a shell
+    asks before installing them).
+
+    The running erssi is not changed: /UPGRADE loads the new release and
+    keeps your windows and channels; TLS connections reconnect once.
+    When erssi was not started as the install's bin/erssi (or a link to
+    it), the message names the binary to give /UPGRADE. /QUIT or
+    /UPGRADE while an install runs stops it; the installer leaves the
+    release in use as it was.
+
     erssi checks by itself only with update_check on (/HELP update_check).
     An erssi that the installer did not install (a distribution package,
     a build of your own) has nothing to run: the check says so, and you
     update it the way it was installed. In Capsicum capability mode no
-    program can be started, so there is no check either; erssi
-    --check-update from a shell still works.
+    program can be started, so there is no check and no install either;
+    erssi --check-update and erssi --update from a shell still work.
 
 %9Examples:%9
 
     /UPDATE
     /UPDATE CHECK
+    /UPDATE INSTALL
+    /UPDATE INSTALL -upgrade
     /SET update_check ON
 
 %9See also:%9 UPGRADE, UPDATE_CHECK, STATUSBAR
