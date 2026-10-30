@@ -33,6 +33,15 @@ W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
 BG=""
 trap 'for p in $BG; do kill "$p" 2>/dev/null; done; chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
 trap 'exit 1' HUP INT TERM
+# a helper process ended, waited for and taken out of BG: the EXIT trap
+# must never kill its number, which another process may have by then
+reap() {
+    kill "$1" 2>/dev/null
+    wait "$1" 2>/dev/null
+    rest=""
+    for p in $BG; do [ "$p" = "$1" ] || rest="$rest $p"; done
+    BG=$rest
+}
 chgrp "$(id -g)" "$W" || exit 1
 HOME=$W/home; export HOME
 mkdir -p "$HOME" "$W/shim"
@@ -404,7 +413,7 @@ running)
         check "with $tool: refused while the lock is held" [ "$RC" != 0 ] && said "an erssi is running on"
         check "with $tool: the lock file stays" [ -f "$W/target/erssi.lock" ]
     done
-    kill "$LOCKER"; wait "$LOCKER" 2>/dev/null
+    reap "$LOCKER"
     # an older erssi, without the lock: an erssi process naming the home
     # a perl named erssi; started through a link, FreeBSD would name it
     # perl (its file), Linux erssi (the link): one of each
@@ -426,7 +435,7 @@ running)
         run_env PATH="$W/shim:$W/no-ps" -- --restore "$W/b.tar.gz" --home "$W/target"
         check "without ps, the process is found in /proc" [ "$RC" != 0 ] && said "pid $OLD"
     fi
-    kill "$OLD"; wait "$OLD" 2>/dev/null
+    reap "$OLD"
     mkdir "$W/link"
     ln -s "$(command -v perl)" "$W/link/erssi"
     "$W/link/erssi" -e '$| = 1; print "up\n"; sleep 3600' -- --home "$W/target" > "$W/link-up" &
@@ -435,7 +444,7 @@ running)
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "also an erssi started through a link (--home DIR)" [ "$RC" != 0 ]
     check "named by its pid" said "pid $OLD"
-    kill "$OLD"; wait "$OLD" 2>/dev/null
+    reap "$OLD"
     run --restore "$W/b.tar.gz" --home "$W/target"
     if [ "$RC" != 0 ]; then show; fi
     check "once it is gone, restore succeeds" [ "$RC" = 0 ]
@@ -555,7 +564,7 @@ file-changed)
         ( while :; do printf 'more\n' >> "$E/logs/IRCnet/#big.log"; done ) &
         APP=$!; BG="$BG $APP"
         run --backup "$W/d.tar.gz" --with-logs
-        kill "$APP"; wait "$APP" 2>/dev/null
+        reap "$APP"
         if [ "$RC" != 0 ]; then show; fi
         check "a log written to during a real backup does not stop it" [ "$RC" = 0 ]
     fi
