@@ -4,6 +4,7 @@ Back to the [README](../../README.md).
 
 - [Rules](#rules)
 - [A release](#a-release)
+- [release.sh](#releasesh)
 - [Binary packages](#binary-packages)
 - [Re-signing the release tags](#re-signing-the-release-tags)
 
@@ -25,20 +26,123 @@ Back to the [README](../../README.md).
   tag and do not install it (see
   [install.md](install.md#what-the-installer-verifies)). The only
   exception is the one-time re-signing below.
+- **A tag is pushed only after its packages are built and verified.** The
+  packages are built from the local tag. Until it is pushed, a tag whose
+  build fails on one platform (a test that fails only there) can still be
+  deleted and made again. Once pushed, it cannot: the fix is a new PATCH
+  release, as 2026.10.8 was for the FreeBSD packages of 2026.10.7.
 
 ## A release
 
-1. Make a signed commit with `NEWS` and the version in `meson.build`, then
-   the release commit `erssi Shellter Edition X`.
-2. Tag it: `git tag -s -m "erssi Shellter Edition X" shellter-vX`.
-3. Push `main` and the tag. The hook checks both.
-4. Make a signed commit on `main` that adds the line
+`utils/release.sh` (POSIX sh) runs each step with one command. Every step
+first checks what it needs. What is done already it says and keeps, so a
+step, or the whole run, can be run again after a failure. `--dry-run`
+prints what a step would run and changes nothing (its checks still run).
+
+1. Make a signed commit with `NEWS`, the version in `meson.build` and the
+   docs brought to the release (the badge and the version table of
+   `README.md`, the examples in `docs/shellter/install.md`). Then make the
+   release commit `erssi Shellter Edition X`, which dates `NEWS`.
+2. Tag it, here only, with the message made from `NEWS`:
+
+   ```sh
+   sh utils/release.sh tag-message X > ../tag-message
+   git tag -s -F ../tag-message shellter-vX
+   ```
+
+   From 2026.11.0 the message is the title line `erssi Shellter Edition
+   X`, a blank line and the intro paragraph of the release's `NEWS` entry,
+   wrapped at 72 columns. The GitHub release takes its notes from it.
+   Before 2026.11.0 the message was the title line only.
+3. `sh utils/release.sh check shellter-vX` checks the tag: an annotated tag
+   of that name, signed by the release key (`utils/allowed_signers`), on a
+   signed commit; `meson.build`, `NEWS` (`utils/check-version.sh`),
+   `README.md` and `install.md` name the version; the message is the one
+   from `NEWS`; the working tree is clean; and the tag is not on GitHub
+   yet. A tag that is on GitHub as the same tag object passes (a run
+   again after the push); another tag object of that name is refused.
+4. `sh utils/release.sh build shellter-vX --out ~/release-X --freebsd14
+   HOST14 --freebsd15 HOST15` builds the packages from the local tag (see
+   [release.sh](#releasesh)).
+5. `sh utils/release.sh verify ~/release-X` builds each package again in a
+   fresh environment. It must be the same bytes.
+6. `sh utils/release.sh sums ~/release-X` writes and signs `SHA256SUMS`.
+7. Push `main` and the tag. The hook checks both.
+8. `sh utils/release.sh upload shellter-vX ~/release-X`, then `sh
+   utils/release.sh confirm shellter-vX` (see [Signing and
+   uploading](#signing-and-uploading)). `upload` refuses while the tag is
+   not on GitHub.
+9. Make a signed commit on `main` that adds the line
    `shellter-vX <commit> signed` to `RELEASES` in `shellter-install.sh`.
    The subject is `shellter-install.sh: verified and signed release
-   shellter-vX`. From then on, `curl … | sh` installs the release and
-   checks it against that commit.
-5. Build the binary packages, sign them and upload them to the release
-   (see [Binary packages](#binary-packages)).
+   shellter-vX`. Push it. From then on, `curl … | sh` installs the release and
+   checks it against that commit; the packages are there already, so it
+   installs them.
+
+`sh utils/release.sh all shellter-vX --out ~/release-X …` runs steps 3 to 6
+and stops with what to push. Run it again after the push: it keeps what
+is done, then uploads and confirms.
+
+## release.sh
+
+`sh utils/release.sh --help` lists the steps and options. What the
+steps run:
+
+- **build** takes each platform's packager from the tag itself (its
+  `utils/build-binary.sh`). The tag goes into each build environment as a
+  git bundle (`git bundle create … refs/tags/shellter-vX`), so it need not
+  be on GitHub. `debian13-amd64` is built on the host when the host is
+  Debian 13, and in a `trixie` chroot otherwise. `debian12-amd64` and
+  `ubuntu24-amd64` are built in new mmdebstrap chroots, as described in
+  [Debian 12 and Ubuntu 24.04](#debian-12-and-ubuntu-2404).
+  `freebsd14-amd64` and `freebsd15-amd64` are built over ssh on the hosts
+  given: the bundle goes into a new directory made with `mktemp -d` there,
+  the build runs from a clone of it, and the package comes back. The
+  remote commands run under `sh -s`, whatever the login shell is. A
+  package already in `--out` is kept if its `MANIFEST` names the tag's
+  commit, and refused otherwise. The logs go to `--out/logs/<platform>/`.
+- **verify** runs `build-binary.sh --verify` on each package in a new
+  environment: a new mmdebstrap chroot for Debian and Ubuntu (also for
+  Debian 13 built on the host), and for FreeBSD the host of
+  `--freebsd14-verify` (default: the build host; `--verify` builds in a
+  new clone and work directory). A package that reproduces is marked in
+  `logs/<platform>/verified` with its sha256. One that does not reproduce
+  stops the release, with the files and the `MANIFEST` lines that differ.
+- **sums** signs only packages marked as reproduced with that sha256.
+- **upload** and **confirm** use `gh` (see [Signing and
+  uploading](#signing-and-uploading)).
+
+The hosts, users and paths of the machines that build a release are
+options or environment variables, never part of the repository:
+
+| Option | Variable | Default |
+|---|---|---|
+| `--repo DIR` | `RELEASE_REPO` | the repository of the script |
+| `--remote NAME\|URL` | `RELEASE_REMOTE` | `origin` |
+| `--gh-repo OWNER/NAME` | `RELEASE_GH_REPO` | `y-o-o-z/erssi` |
+| `--signers FILE` | `RELEASE_SIGNERS` | `utils/allowed_signers` |
+| `--key FILE` | `RELEASE_KEY` | `git config user.signingkey` |
+| `--platforms LIST` | `RELEASE_PLATFORMS` | Debian 12 and 13, Ubuntu 24.04, and FreeBSD where a host is given |
+| `--freebsd14 HOST`, `--freebsd15 HOST` | `RELEASE_FREEBSD14`, `RELEASE_FREEBSD15` | none |
+| `--freebsd14-verify HOST`, `--freebsd15-verify HOST` | `RELEASE_FREEBSD14_VERIFY`, `RELEASE_FREEBSD15_VERIFY` | the build host |
+| `--mm-tmpdir DIR` | `RELEASE_MM_TMPDIR` | `/var/tmp/<user>-mm` |
+| | `RELEASE_SSH` | `ssh` (for example `ssh -p 2222`) |
+| | `RELEASE_UBUNTU_MIRROR`, `RELEASE_UBUNTU_KEYRING`, `RELEASE_DEBIAN_MIRROR` | as in the recipes below |
+
+A host is a destination ssh takes (`user@host`, or a `Host` of
+`~/.ssh/config`). Keep the variables of your machines in a file outside
+the repository and source it before a release. Paths given to `build`
+and `verify` may hold letters, digits and `._+/-` only, since mmdebstrap's
+hooks take them as words.
+
+`tests/installer/test-release.sh` (the `release` tests of the suite
+`tooling`) runs release.sh on throwaway repositories, with a throwaway
+key, a local bare repository as the remote and a stand-in `gh`. It
+covers the arguments, the tag message, `check`, `--dry-run` of `build`,
+`verify` and `all`, `sums` (checked again with `ssh-keygen`), `upload`
+(the order of the assets, refused before the push) and `confirm` (each way
+a release can be wrong). It runs nothing over the network, in a chroot
+or over ssh.
 
 ## Binary packages
 
@@ -152,6 +256,11 @@ FreeBSD's perl uses to find libperl. Each step prints one line.
 
 ### Debian 13
 
+`release.sh build` does what this section and the next two describe; the
+recipes are for a build by hand, and they say what the build needs. By
+hand, the tag must be on GitHub (they clone from there); release.sh hands
+the chroot the local tag instead.
+
 Build on a Debian 13 host, or in a clean Debian 13 chroot, with packages
 from the Debian 13 archive only:
 
@@ -246,21 +355,21 @@ understood.
 
 ### Signing and uploading
 
-Put all the tarballs into one directory on the machine with the release
-key:
+`release.sh sums DIR` signs the packages in one directory on the machine
+with the release key:
 
 ```sh
-mkdir ~/release-X && cp out/erssi-X-*.tar.xz ~/release-X/
-sh utils/build-binary.sh --sums ~/release-X           # writes SHA256SUMS
-cd ~/release-X
-ssh-keygen -Y sign -n erssi-release -f "$(git -C ~/src/erssi config user.signingkey)" SHA256SUMS
+sh utils/release.sh sums ~/release-X       # --key FILE, or user.signingkey
 ```
 
+It refuses a package that `verify` has not reproduced. It writes
+`SHA256SUMS` with `build-binary.sh --sums` (lines `<sha256>  <tarball>`,
+sorted by name) and signs it:
 `ssh-keygen -Y sign -n erssi-release -f <release key> SHA256SUMS` writes
 `SHA256SUMS.sig`. The release key is the key that signs the commits and
-tags (`user.signingkey`). Check the signature and the sums the way the
-installer does. The allowed signer is the key of `utils/allowed_signers`
-with the namespace `erssi-release`:
+tags (`user.signingkey`). It then checks the signature and the sums the
+way the installer does: the allowed signer is the key of
+`utils/allowed_signers` with the namespace `erssi-release`. By hand:
 
 ```sh
 printf '%s namespaces="erssi-release" %s\n' 136268860+y-o-o-z@users.noreply.github.com \
@@ -271,20 +380,31 @@ sha256sum -c SHA256SUMS
 rm release_signers
 ```
 
-Then upload them to the GitHub release of the tag: **the tarballs
-first, SHA256SUMS and SHA256SUMS.sig last.** The installer reads
-SHA256SUMS first. A tarball it lists but cannot download makes it build
-from source, with a warning (with `--binary` it refuses), so every
-install in between would take minutes instead of seconds.
+`release.sh upload shellter-vX DIR` uploads them to the GitHub release of
+the tag, which it makes first if there is none (`gh release create
+--verify-tag --notes-from-tag`). **The tarballs go first, SHA256SUMS and
+SHA256SUMS.sig last.** The installer reads SHA256SUMS first. A tarball it
+lists but cannot download makes it build from source, with a warning
+(with `--binary` it refuses), so every install in between would take
+minutes instead of seconds. By hand:
 
 ```sh
 gh release upload shellter-vX erssi-X-*.tar.xz
 gh release upload shellter-vX SHA256SUMS SHA256SUMS.sig
 ```
 
-Between the tag's push (step 3 of [A release](#a-release)) and this
-upload, `erssi --update` and new installs build the release from source,
-as before.
+`upload` refuses while the tag is not on GitHub, or is another tag
+object there, and when the signature or a sum in DIR does not check out.
+An asset already in the release is left as it is: a published asset
+does not change.
+
+`release.sh confirm shellter-vX` downloads every asset of the release into
+a new directory (`gh release download`) and checks it as the installer
+would: the signature of `SHA256SUMS`, each sum, and that no package is
+missing or unlisted and no other file is there.
+
+Between the tag's push (step 7 of [A release](#a-release)) and the upload,
+`erssi --update` builds the release from source, as before.
 
 The assets are then at
 `https://github.com/y-o-o-z/erssi/releases/download/shellter-vX/<asset>`.
@@ -307,7 +427,7 @@ throwaway repository holding this tree, tagged with a throwaway key:
 
 `package`, `tests-fail` and `reproduce` build the tree from scratch with
 every feature, a few minutes each (`reproduce` twice). They run only with
-`ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's hardened job set
+`ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's build job (`erssi-ci/build`) set
 it, and so must the release host before it builds packages:
 
 ```sh
@@ -495,7 +615,8 @@ afterwards](#what-installed-copies-do-afterwards)).
    a few minutes after the push, `curl … | sh` can still get the old pins
    and refuse the moved release ("points to …, but this installer expects
    …"). It fails closed. After that:
-   - the CI job "Every pinned release points to its commit" passes;
+   - the commit status `erssi-ci/installer` passes (it checks that every
+     pinned release points to its commit);
    - the commit statuses: after a rewrite every release tag has a new
      commit, and the CI tests each of them again, one after another, with
      `main`. That can take hours; until a job has run, its status shows
