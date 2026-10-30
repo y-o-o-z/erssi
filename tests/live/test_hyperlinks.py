@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 COLS, ROWS = 90, 30
 URL = "https://example.org/" + "a" * 50 + "/" + "b" * 50 + "?q=1&r=(x)"
 KITTY = {"TERM": "xterm-kitty", "KITTY_WINDOW_ID": "1"}

@@ -23,7 +23,7 @@ import harness  # noqa: E402
 
 block = harness.block
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 COLS, ROWS = 200, 50
 # the right panel: its default 15 columns at the right edge, the border
 # in the first one, the scroll markers in the last one
@@ -139,7 +139,7 @@ def main():
                           harness.config(port, "alice", channels=("#one", "#two")))
         st["alice"] = a
         a.start(COLS, ROWS)
-        end = time.time() + 15
+        end = time.time() + WAIT
         while not all(f"has joined {c}" in log_text(0) for c in ("#one", "#two")):
             assert time.time() < end, "alice never joined #one and #two"
             time.sleep(0.1)
@@ -370,6 +370,32 @@ def main():
         assert (first, lines) == st["single"], (mws, st["single"])
         wait_bands({(first, lines): st["names"][st["lower"]]}, "the upper main window closed")
 
+    def t_move_click():
+        # /WINDOW MOVE UP and a click on the band at once: one write, read
+        # as keys one by one (no paste detection), so the click comes
+        # right after the command, before any redraw. It is on the window
+        # that moved, as the panel shows it right after the move
+        a = st["alice"]
+        shown = st["lower"]
+        other = st["upper"]
+        goto(shown)
+        a.type_and_wait("/window new split")
+        goto(other)
+        layout_two()
+        upper, lower = st["upper"], st["lower"]
+        assert {upper, lower} == {shown, other}, st
+        bands("the two rows again")
+        goto(lower)
+        only = sorted(set(st["names"][lower]) - set(st["names"][upper]))
+        assert only, st["names"]
+        first, _ = rows_of(upper)
+        row = first + st["names"][lower].index(only[0])
+        a.type_and_wait("/set paste_detect_time 0")
+        a.write_raw(f"/window move up\r\x1b[<0;{PANEL + 6};{row + 1}M\x1b[<0;{PANEL + 6};{row + 1}m".encode())
+        a.type_and_wait("/set paste_detect_time 5msecs")
+        got = wn()
+        assert got[0] == only[0], f"the click on {only[0]} right after /window move up: {got}"
+
     def t_sanitizers():
         reports = st["alice"].sanitizer_reports() if "alice" in st else []
         for p in reports:
@@ -380,7 +406,7 @@ def main():
         harness.main([t_install, t_start, t_one_window, t_two_rows, t_statusbar_gap, t_active_moves,
                       t_join_lower, t_other_band_untouched, t_wheel_lower, t_click_lower,
                       t_side_by_side, t_upper_no_channel, t_window_close, t_close_upper,
-                      t_sanitizers])
+                      t_move_click, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()

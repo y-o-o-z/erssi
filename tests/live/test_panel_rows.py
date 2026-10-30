@@ -19,8 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
-LAYOUT_WAIT = 3
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
+LAYOUT_WAIT = 20  # a few ms on an idle machine
 COLS, ROWS = 120, 40
 PANEL = 15  # the default width of both panels
 # a window statusbar on top of the main window and one under it, each with

@@ -11,7 +11,12 @@
 - A theme that sets a side panel format to "" hides those entries: before,
   the raw window name or nick was written instead, unclipped and with the
   control characters a server can put in a channel name (ESC included).
+- /WINDOW MOVE draws the window list again at once. A click on the list
+  goes by the windows as they are; before, the list showed the old
+  numbers and names until something else drew it, and a click there
+  opened another window than the one it showed.
 Usage: test_panel_draw.py <build dir> [<source dir>]"""
+import re
 import shutil
 import sys
 import tempfile
@@ -22,7 +27,7 @@ import harness  # noqa: E402
 
 block = harness.block
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 COLS, ROWS = 120, 40
 BOX = "│"
 BOX_UTF8 = BOX.encode()
@@ -150,6 +155,39 @@ def main():
         assert all(not r.strip() for r in right), right
         e.quit()
 
+    def t_move_then_click():
+        # windows without a name or item are listed by their number
+        # ("window5"): /WINDOW MOVE changes their names and order. What
+        # the list shows right after the move is what a click there opens
+        e = new("move", cols=COLS, rows=ROWS)
+        e.type_and_wait("/alias wn echo active=$winname refnum=$winref")
+        e.type_and_wait("/window new hide", "/window new hide")
+
+        def listed(rows):
+            """{row: refnum} of the "windowN" entries of the left panel"""
+            return {y: int(m.group(1)) for y, r in enumerate(rows)
+                    if (m := re.search(r"\bwindow(\d+)\b", r[:14]))}
+
+        rows, ok = e.wait_screen(lambda rows: len(listed(rows)) == 2, WAIT, 0, 14)
+        assert ok, "\n".join(rows)
+        before = listed(rows)
+        y = min(before)
+        e.type_and_wait("/window move 1")
+        e.sync_output()  # all that was drawn for the move is on the screen
+        shown = listed(e.screen(0, 14))
+        assert shown.get(y) == 1 and shown != before, \
+            f"the list did not follow /window move 1: {before} -> {shown}"
+        # the click read on its own (with the next line in the same read
+        # it would be taken for a paste): wait until erssi draws for it
+        mark = e.mark()
+        e.write_raw(f"\x1b[<0;3;{y + 1}M\x1b[<0;3;{y + 1}m".encode())
+        assert harness.wait_until(lambda: e.output_since(mark), WAIT), "nothing drawn for the click"
+        off = e.all_log().stat().st_size
+        e.type_and_wait("/wn")
+        m = re.findall(r"active=\S* refnum=(\d+)", e.all_log().read_bytes()[off:].decode(errors="replace"))
+        assert m and int(m[-1]) == shown[y], f"the click on window{shown[y]} opened window {m}"
+        e.quit()
+
     def t_sanitizers():
         reports = [p for e in st["all"] for p in e.sanitizer_reports()]
         for p in reports:
@@ -158,7 +196,7 @@ def main():
 
     try:
         harness.main([t_install, t_border_once_from_theme, t_border_not_utf8, t_width_lower_bound,
-                      t_hidden_entries, t_sanitizers])
+                      t_hidden_entries, t_move_then_click, t_sanitizers])
     finally:
         for e in st["all"]:
             e.kill()

@@ -610,6 +610,12 @@ void sidepanels_signals_register(void)
 	signal_add("print text", (SIGNAL_FUNC) sig_print_text);
 	/* Network name changes (ISUPPORT NETWORK) */
 	signal_add("server network changed", (SIGNAL_FUNC) redraw_left_panels_only);
+	/* /WINDOW MOVE, NUMBER and NAME: the window list's numbers, names and
+	 * order change. Drawn at once, not at the next redraw: a click on the
+	 * list goes by the windows as they are now, it must hit the one the
+	 * list shows there */
+	signal_add("window refnum changed", (SIGNAL_FUNC) redraw_left_panels_only);
+	signal_add("window name changed", (SIGNAL_FUNC) redraw_left_panels_only);
 }
 
 void sidepanels_signals_unregister(void)
@@ -652,6 +658,8 @@ void sidepanels_signals_unregister(void)
 	signal_remove("print text", (SIGNAL_FUNC) sig_print_text);
 	/* Network name changes (ISUPPORT NETWORK) */
 	signal_remove("server network changed", (SIGNAL_FUNC) redraw_left_panels_only);
+	signal_remove("window refnum changed", (SIGNAL_FUNC) redraw_left_panels_only);
+	signal_remove("window name changed", (SIGNAL_FUNC) redraw_left_panels_only);
 }
 
 void sidepanels_signals_init(void)

@@ -23,7 +23,7 @@ import harness  # noqa: E402
 
 block = harness.block
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 CHANNELS = ("#one", "#two", "#three")
 
 
@@ -125,7 +125,7 @@ def main():
         return shown, numbers, sticky_of(text), wn()
 
     def joined(off):
-        end = time.time() + 15
+        end = time.time() + WAIT
         while not all(f"has joined {c}" in log_text(off) for c in CHANNELS):
             assert time.time() < end, "alice did not join " + " ".join(CHANNELS) + ":\n" + log_text(off)[-2000:]
             time.sleep(0.1)

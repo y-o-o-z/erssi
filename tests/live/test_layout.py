@@ -22,7 +22,7 @@ import harness  # noqa: E402
 
 block = harness.block
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 PANELS_OFF = '"fe-ansi" = { sidepanel_left = "no"; sidepanel_right = "no"; };'
 
 

@@ -52,7 +52,7 @@ void irc_core_deinit(void);
 	"isupport_sent = \"yes\"; motd_got = \"yes\"; " \
 	"isupport = { CHANTYPES = \"#\"; }; "
 
-#define WAIT_MS 5000
+#define WAIT_MS 20000 /* for what comes at once: a loaded machine is slow */
 #define WELCOME ":irc.example.net 001 user :Welcome\r\n"
 
 static int sasl_failures;

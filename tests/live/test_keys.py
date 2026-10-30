@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 
 # key name -> the sequences that are bound to it by default (a key name),
 # or the sequence itself (meta2-...: no default binding, bound here)

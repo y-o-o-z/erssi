@@ -78,7 +78,8 @@ static volatile gboolean server_stop;
 /* the picture: chunks of 100 bytes, Content-Length announced */
 static int server_chunks = 150, server_length = 1000000;
 
-/* answers one request with a picture that comes 100 bytes every 20 ms */
+/* answers one request with a picture that comes 100 bytes every 20 ms,
+   server_chunks of them or until server_stop */
 static gpointer slow_server(gpointer data)
 {
 	char request[4096], chunk[100], *header;
@@ -105,7 +106,7 @@ static gpointer slow_server(gpointer data)
 	if (send(fd, header, strlen(header), MSG_NOSIGNAL) < 0)
 		server_stop = TRUE;
 	g_free(header);
-	/* 150 chunks: 3 seconds, longer than the test looks */
+	/* server_chunks of 20 ms each, or until the test is done with it */
 	for (i = 0; i < server_chunks && !server_stop; i++) {
 		if (send(fd, chunk, sizeof(chunk), MSG_NOSIGNAL) < 0)
 			break;
@@ -173,10 +174,12 @@ static void test_download_does_not_block(void)
 	GThread *server;
 	IMAGE_FETCH_REC *fetch;
 	char *dir, *path, *url;
-	int port, idle, busy;
+	int port, idle, busy, tries;
 	gint64 idle_gap;
 
-	server_chunks = 150;
+	/* 30 s at most: longer than the test looks, also on a loaded
+	 * machine (server_stop ends it) */
+	server_chunks = 1500;
 	server_length = 1000000;
 	server = start_server(&port);
 	dir = g_dir_make_tmp("image-fetch-loop-XXXXXX", NULL);
@@ -192,14 +195,25 @@ static void test_download_does_not_block(void)
 	image_fetch_init();
 	g_assert_true(image_fetch_start(url, path, NULL, NULL, FALSE));
 
-	/* let the transfer start, then count for one second */
-	g_timeout_add(300, quit_loop, loop);
-	g_main_loop_run(loop);
-	fetch = g_hash_table_lookup(active_fetches, url);
-	g_assert_nonnull(fetch);
+	/* let the transfer start (at once, or up to 20 s on a loaded
+	 * machine), then count for one second - up to three times: a busy
+	 * moment of the machine in one of them is not the download's doing,
+	 * the old polling was slow in every one */
+	for (tries = 0; tries < 200; tries++) {
+		fetch = g_hash_table_lookup(active_fetches, url);
+		g_assert_nonnull(fetch);
+		if (fetch->received_bytes > 0)
+			break;
+		g_timeout_add(100, quit_loop, loop);
+		g_main_loop_run(loop);
+	}
 	g_assert_cmpint(fetch->received_bytes, >, 0);
 
-	busy = count_ticks(loop, 1000);
+	for (tries = 0; tries < 3; tries++) {
+		busy = count_ticks(loop, 1000);
+		if (busy * 2 >= idle)
+			break;
+	}
 	g_main_loop_unref(loop);
 
 	g_test_message("main loop ran %d times in 1 s while downloading (longest gap %"
@@ -248,7 +262,7 @@ static void test_download_completes(void)
 	image_fetch_init();
 	g_assert_true(image_fetch_start(url, path, NULL, NULL, FALSE));
 	loop = g_main_loop_new(NULL, FALSE);
-	for (waited = 0; waited < 50 && g_hash_table_size(active_fetches) > 0; waited++) {
+	for (waited = 0; waited < 200 && g_hash_table_size(active_fetches) > 0; waited++) {
 		g_timeout_add(100, quit_loop, loop);
 		g_main_loop_run(loop);
 	}
@@ -326,7 +340,7 @@ static void test_failed_download_leaves_nothing(void)
 		if (i == 1)
 			image_fetch_cancel(url);
 		if (i != 2) {
-			for (waited = 0; waited < 50 && g_hash_table_size(active_fetches) > 0;
+			for (waited = 0; waited < 200 && g_hash_table_size(active_fetches) > 0;
 			     waited++)
 				run_loop(100);
 			g_assert_cmpuint(g_hash_table_size(active_fetches), ==, 0);

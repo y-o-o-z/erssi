@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
-WAIT = 10
+WAIT = 30  # a deadline for what comes at once: a loaded machine is slow
 NOTICE = "/CONNECT with a server address"
 SLOW = 6  # seconds the Slow server takes to answer USER
 

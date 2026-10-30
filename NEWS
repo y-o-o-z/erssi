@@ -64,6 +64,27 @@ shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    statuses of the team's own CI (erssi-ci/build, sanitizers,
 	    shellcheck, installer, e2e-live, fuzz)
 
+	+ Side panels
+	  - /WINDOW MOVE, /WINDOW NUMBER and /WINDOW NAME draw the window
+	    list again at once. Before, the list kept the old numbers and
+	    names until something else drew it, and a click there opened
+	    another window than the one it showed
+
+	+ Tests
+	  - utils/stress-tests.sh runs the test suite several times while
+	    busy processes load every CPU, and says how often each test
+	    failed; a release runs it before the tag (releasing.md)
+	  - the tests that passed on an idle machine only now wait for what
+	    they check, with long deadlines, instead of a fixed time: the
+	    fake IRC server reports the port it listens on (no race for a
+	    free port), /UPGRADE is seen by the new erssi opening its log,
+	    the helper processes of the backup cases live until the case
+	    ends, and the lock, download and session cases of the C tests no
+	    longer measure short times on a busy machine
+	  - the live keepnick test takes about half the time: a check every
+	    second instead of five (ERSSI_TEST_KEEPNICK_MIN_MS, for the tests
+	    only), and conditions in place of fixed waits
+
 shellter-v2026.10.8 2026-10-30  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.8
 
