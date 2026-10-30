@@ -877,6 +877,91 @@ static void test_job_cancel_after_exit(void)
 	g_free(child);
 }
 
+/* cancelled from inside its own callbacks (a print handler that enters
+   Capsicum mode): no more lines, no DONE, freed from the main loop once
+   the callback is over; and from inside DONE: not freed twice */
+typedef struct {
+	UPDATE_JOB *job;
+	int lines, done;
+	gboolean cancel_in_done;
+} CANCELLING;
+
+static void cancelling_line(const char *line, gboolean from_stderr, void *data)
+{
+	CANCELLING *c = data;
+
+	(void) line;
+	(void) from_stderr;
+	if (c->lines++ == 0)
+		update_job_cancel(c->job);
+}
+
+static void cancelling_done(const UPDATE_ANSWER *answer, const char *err, void *data)
+{
+	CANCELLING *c = data;
+
+	(void) answer;
+	(void) err;
+	c->done++;
+	if (c->cancel_in_done)
+		update_job_cancel(c->job);
+}
+
+static void test_job_cancel_in_callback(void)
+{
+	char *child = g_build_filename(script_dir, "child.pid", NULL);
+	char *path, *body;
+	const char *argv[3];
+	CANCELLING c;
+	gint64 end;
+	int pid;
+
+	/* in LINE: the first of three lines */
+	unlink(child);
+	body = g_strdup_printf("sleep 300 &\n" PID_TO "echo one\necho two\necho three\nwait\n",
+	                       child, child, child);
+	path = script("lines.sh", body);
+	argv[0] = "/bin/sh";
+	argv[1] = path;
+	argv[2] = NULL;
+	memset(&c, 0, sizeof(c));
+	c.job = update_job_start_logged(argv, 60000, -1, cancelling_line, cancelling_done, &c, NULL);
+	g_assert_nonnull(c.job);
+	pid = update_job_pid(c.job);
+	end = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
+	while (c.lines == 0 && g_get_monotonic_time() < end)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_cmpint(c.lines, ==, 1);
+	assert_reaped(pid);
+	assert_gone(child);
+	end = g_get_monotonic_time() + G_USEC_PER_SEC;
+	while (g_get_monotonic_time() < end)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_cmpint(c.lines, ==, 1);
+	g_assert_cmpint(c.done, ==, 0);
+	g_free(path);
+	g_free(body);
+
+	/* in DONE */
+	path = script("ends.sh", "echo 'current 1.0'\n");
+	argv[1] = path;
+	memset(&c, 0, sizeof(c));
+	c.cancel_in_done = TRUE;
+	c.job = update_job_start(argv, 60000, cancelling_done, &c, NULL);
+	g_assert_nonnull(c.job);
+	end = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
+	while (c.done == 0 && g_get_monotonic_time() < end)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_cmpint(c.done, ==, 1);
+	while (g_main_context_iteration(NULL, FALSE))
+		;
+	g_assert_cmpint(c.done, ==, 1);
+	unlink(child);
+	unlink(path);
+	g_free(path);
+	g_free(child);
+}
+
 static void test_job_spawn_fails(void)
 {
 	const char *argv[] = { "/nonexistent/sh", NULL };
@@ -916,6 +1001,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/job_timeout", test_job_timeout);
 	g_test_add_func("/update_check/job_cancel", test_job_cancel);
 	g_test_add_func("/update_check/job_cancel_after_exit", test_job_cancel_after_exit);
+	g_test_add_func("/update_check/job_cancel_in_callback", test_job_cancel_in_callback);
 	g_test_add_func("/update_check/job_spawn_fails", test_job_spawn_fails);
 	ret = g_test_run();
 	return ret;

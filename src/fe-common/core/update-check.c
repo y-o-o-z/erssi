@@ -447,6 +447,11 @@ struct _UPDATE_JOB {
 	int log_fd;
 	UPDATE_LINE_FUNC line;
 	GString *out_line, *err_line;
+	/* in one of its callbacks (LINE, DONE, RAW) now: a callback that
+	   cancels the job (a print handler that enters Capsicum mode) leaves
+	   it CANCELLED, freed from the main loop once the callback is over */
+	int busy;
+	gboolean cancelled;
 };
 
 /* in the child, between fork and exec: a session of its own (no terminal,
@@ -491,6 +496,12 @@ static void job_free(UPDATE_JOB *job)
 	g_free(job);
 }
 
+static gboolean job_free_later(gpointer data)
+{
+	job_free(data);
+	return G_SOURCE_REMOVE;
+}
+
 static void job_finish(UPDATE_JOB *job)
 {
 	UPDATE_ANSWER answer;
@@ -500,9 +511,12 @@ static void job_finish(UPDATE_JOB *job)
 		                g_strdup_printf("timed out after %d s", job->timeout_ms / 1000) :
 		                job->lost ? g_strdup("the installer could not be waited for") : NULL;
 
+		job->busy++;
 		job->raw(failure, job->status, job->out->str, job->err->str, job->data);
+		job->busy--;
 		g_free(failure);
-		job_free(job);
+		if (!job->cancelled)
+			job_free(job);
 		return;
 	}
 	if (job->timed_out || job->lost) {
@@ -515,9 +529,12 @@ static void job_finish(UPDATE_JOB *job)
 	} else {
 		update_check_parse(job->out->str, job->out->len, job->status, &answer);
 	}
+	job->busy++;
 	job->done(&answer, job->err->str, job->data);
+	job->busy--;
 	update_answer_clear(&answer);
-	job_free(job);
+	if (!job->cancelled)
+		job_free(job);
 }
 
 /* LEN bytes of the output into the log (a write that fails ends the log:
@@ -544,13 +561,18 @@ static void job_lines(UPDATE_JOB *job, GString *line, gboolean from_stderr, gboo
 {
 	char *nl;
 
-	while ((nl = memchr(line->str, '\n', line->len)) != NULL) {
+	/* LINE is NULL once a line cancelled the job */
+	while (job->line != NULL && (nl = memchr(line->str, '\n', line->len)) != NULL) {
 		*nl = '\0';
+		job->busy++;
 		job->line(line->str, from_stderr, job->data);
+		job->busy--;
 		g_string_erase(line, 0, nl - line->str + 1);
 	}
-	if (line->len >= UPDATE_LINE_MAX || (flush && line->len > 0)) {
+	if (job->line != NULL && (line->len >= UPDATE_LINE_MAX || (flush && line->len > 0))) {
+		job->busy++;
 		job->line(line->str, from_stderr, job->data);
+		job->busy--;
 		g_string_truncate(line, 0);
 	}
 }
@@ -665,9 +687,10 @@ static gboolean job_poll(gpointer data)
 	   left-over child still holds open is not waited for */
 	if (job->out_fd != -1)
 		job_read(job, FALSE);
-	if (job->err_fd != -1)
+	if (job->err_fd != -1 && !job->cancelled)
 		job_read(job, TRUE);
-	job_finish(job); /* closes what is still open */
+	if (!job->cancelled)
+		job_finish(job); /* closes what is still open */
 	return G_SOURCE_REMOVE;
 }
 
@@ -781,6 +804,8 @@ void update_job_cancel(UPDATE_JOB *job)
 {
 	int i, status;
 
+	if (job->cancelled)
+		return;
 	/* the installer removes its temporary files on SIGTERM */
 	job_signal(job, SIGTERM);
 	for (i = 0; i < 40 && !job_reap(job); i++)
@@ -789,8 +814,31 @@ void update_job_cancel(UPDATE_JOB *job)
 		kill(-job->pid, SIGKILL); /* not reaped just above */
 		while (waitpid(job->pid, &status, 0) == -1 && errno == EINTR)
 			;
+		job->exited = TRUE;
 	}
-	job_free(job);
+	if (job->busy == 0) {
+		job_free(job);
+		return;
+	}
+	/* from inside one of its callbacks: no more of them, no more
+	   sources; the memory stays until the callback has returned */
+	job->cancelled = TRUE;
+	job->line = NULL;
+	job->done = NULL;
+	job->raw = NULL;
+	job->log_fd = -1;
+	if (job->out_tag != 0)
+		g_source_remove(job->out_tag);
+	if (job->err_tag != 0)
+		g_source_remove(job->err_tag);
+	if (job->poll_tag != 0)
+		g_source_remove(job->poll_tag);
+	if (job->timeout_tag != 0)
+		g_source_remove(job->timeout_tag);
+	if (job->kill_tag != 0)
+		g_source_remove(job->kill_tag);
+	job->out_tag = job->err_tag = job->poll_tag = job->timeout_tag = job->kill_tag = 0;
+	g_idle_add(job_free_later, job);
 }
 
 int update_job_pid(UPDATE_JOB *job)
@@ -1323,7 +1371,9 @@ static void check_done(const UPDATE_ANSWER *answer, const char *err_text, void *
 	}
 	state_store();
 	set_available(cached.available);
-	if (mode == CHECK_INSTALL)
+	/* a print handler may have stopped the install meanwhile (Capsicum):
+	   then there is no log and nothing to start */
+	if (mode == CHECK_INSTALL && installing)
 		install_after_check(answer);
 	if (check_on)
 		tick_schedule(UPDATE_TICK_MAX);

@@ -504,6 +504,78 @@ static void test_install_refused(void)
 	reset();
 }
 
+/* a print handler (a script) that enters Capsicum mode when a line with
+   this text is printed, or when what is available changes */
+static const char *capsicum_on_print;
+static gboolean capsicum_on_change;
+
+static void enter_capsicum(void)
+{
+	capsicum_on_print = NULL;
+	capsicum_on_change = FALSE;
+	signal_emit("capability mode entering", 0);
+}
+
+static void sig_print_capsicum(TEXT_DEST_REC *dest, const char *text, const char *stripped)
+{
+	(void) dest;
+	(void) text;
+	if (capsicum_on_print != NULL && strstr(stripped, capsicum_on_print) != NULL)
+		enter_capsicum();
+}
+
+static void sig_changed_capsicum(void)
+{
+	if (capsicum_on_change)
+		enter_capsicum();
+}
+
+/* An install stopped from inside its own callbacks (a print handler that
+ * enters Capsicum mode): while a line of the installer is shown, no more
+ * lines are taken, the installer is stopped and reaped, nothing is said
+ * about its end; while the check before it ends, no install starts. */
+static void test_install_stopped_in_callback(void)
+{
+	int i;
+
+	reset();
+	answer("update 2026.10.6 9999.1.0", 0);
+	install_body("echo '  [1/5] Checking the system  ok'\n"
+	             "echo '  [2/5] Downloading           ok'\n"
+	             "sleep 300\n");
+	capsicum_on_print = "Update install: [1/5]";
+	command("/update install");
+	for (i = 0; i < 3000 && update_install_running(); i++)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_false(update_install_running());
+	g_assert_null(capsicum_on_print);
+	/* what was left of it is freed from the main loop, and says nothing */
+	for (i = 0; i < 50; i++)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_nonnull(strstr(printed->str, "Update install: [1/5]"));
+	g_assert_null(strstr(printed->str, "[2/5]"));
+	g_assert_null(strstr(printed->str, "is installed"));
+	g_assert_null(strstr(printed->str, "Update install failed"));
+	g_assert_cmpint(runs_with("--update --prefix"), ==, 1);
+	errno = 0;
+	g_assert_cmpint(waitpid(-1, NULL, WNOHANG), ==, -1);
+	g_assert_cmpint(errno, ==, ECHILD);
+
+	/* stopped while the check's answer is taken (another release than
+	   before: what is available changes): no install starts */
+	reset();
+	answer("update 2026.10.6 9999.2.0", 0);
+	install_body("echo VERSION=9999.2.0 > \"$(dirname \"$0\")/shellter-install.conf\"\n");
+	capsicum_on_change = TRUE;
+	command("/update install");
+	wait_install();
+	g_assert_false(capsicum_on_change);
+	g_assert_cmpint(runs_with("--check"), ==, 1);
+	g_assert_cmpint(runs_with("--update --prefix"), ==, 0);
+	g_assert_null(strstr(printed->str, "installing erssi 9999.2.0"));
+	reset();
+}
+
 static void test_newer(void)
 {
 	g_assert_true(update_check_newer("2026.11.0", "2026.10.6"));
@@ -560,6 +632,8 @@ int main(int argc, char **argv)
 	upgraded = g_string_new("");
 	signal_add("print text", (SIGNAL_FUNC) sig_print_text);
 	signal_add_first("command upgrade", (SIGNAL_FUNC) sig_command_upgrade);
+	signal_add("print text", (SIGNAL_FUNC) sig_print_capsicum);
+	signal_add("update check changed", (SIGNAL_FUNC) sig_changed_capsicum);
 
 	g_test_add_func("/update_check/module/newer", test_newer);
 	g_test_add_func("/update_check/module/running_version_not_available",
@@ -570,6 +644,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/module/summary", test_summary);
 	g_test_add_func("/update_check/module/install", test_install);
 	g_test_add_func("/update_check/module/install_refused", test_install_refused);
+	g_test_add_func("/update_check/module/install_stopped_in_callback",
+	                test_install_stopped_in_callback);
 	/* last: capability mode stays on */
 	g_test_add_func("/update_check/module/capability_mode", test_capability_mode);
 	return g_test_run();
