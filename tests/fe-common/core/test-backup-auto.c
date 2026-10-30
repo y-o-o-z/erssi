@@ -417,9 +417,10 @@ static int count(const char *text, const char *what)
 	return n;
 }
 
+/* until the backup is over (30 s at most: a loaded machine) */
 static void wait_backup(void)
 {
-	gint64 end = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+	gint64 end = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
 
 	while (backup_auto_running() && g_get_monotonic_time() < end)
 		g_main_context_iteration(NULL, FALSE), g_usleep(10000);

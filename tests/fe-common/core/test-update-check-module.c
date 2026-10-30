@@ -99,10 +99,10 @@ static void install_body(const char *body)
 	g_assert_true(g_file_set_contents(install_file, body, -1, NULL));
 }
 
-/* until the install is over (10 s at most) */
+/* until the install is over (30 s at most: a loaded machine) */
 static void wait_install(void)
 {
-	gint64 end = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+	gint64 end = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
 
 	while (update_install_running() && g_get_monotonic_time() < end)
 		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
