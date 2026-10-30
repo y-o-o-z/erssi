@@ -101,7 +101,7 @@ def main():
         assert on_screen(e, "erssi 2099.1.0 is available (signed). Install it:"), \
             "\n".join(e.screen())
         e.type_and_wait("/window goto #test")
-        assert len(runs(d)) == 1 and runs(d)[0].startswith("--update --check --porcelain --prefix /"), runs(d)
+        assert len(runs(d)) == 1 and runs(d)[0].startswith("--update --check --porcelain --summary --prefix /"), runs(d)
         state = e.home / "update-check.state"
         mode = stat.S_IMODE(state.lstat().st_mode)
         assert stat.S_ISREG(state.lstat().st_mode) and mode == 0o600, oct(mode)

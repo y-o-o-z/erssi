@@ -175,7 +175,8 @@ nothing and asks you to install once more, which records the files.
 | `--source` | Always build from source, also on `erssi --update` (until `--binary`). |
 | `--binary-base <url\|dir>` | Where the packages are: a directory or URL holding `shellter-vX.Y.Z/` (default: the GitHub releases of `y-o-o-z/erssi`; another `--repo` has none unless given). |
 | `--keep N` | Old releases of a binary install kept besides the one in use (default 2, from 1 to 9999). |
-| `--porcelain` | With `--update --check`: print one line for a program (and the summary of a new release) instead of the steps (see [Update](#update)). |
+| `--porcelain` | With `--update --check`: print one line for a program instead of the steps (see [Update](#update)). |
+| `--summary` | With `--update --check --porcelain`: the summary of a new release after that line (see [Update](#update)). |
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
 | `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
@@ -267,11 +268,12 @@ sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --update --check --porcela
 | `error <reason>` | 1 | The check failed (no network, GitHub down, signatures cannot be checked here, the tag of the installed release moved). |
 | `unmanaged <reason>` | 3 | Another tool updates this erssi (`UPDATE_COMMAND` in the conf). |
 
-After `update`, up to three lines `summary <text>` may follow: what the
-new release brings, from the message of its signed tag (the paragraph
-after the title line), on lines of at most 200 bytes without control
-characters. Tags before 2026.11.0 have none. The first line is always
-one of the above.
+With `--summary`, up to three lines `summary <text>` may follow `update`:
+what the new release brings, from the message of its signed tag (the
+paragraph after the title line), on lines of at most 200 bytes without
+control characters. Tags before 2026.11.0 have none. Without
+`--summary` the one line is all, as an erssi before 2026.11.0 expects
+it. The first line is always one of the above.
 
 In a running erssi, `/update install` runs `--update` the same way in the
 background, and `/upgrade` loads the new release

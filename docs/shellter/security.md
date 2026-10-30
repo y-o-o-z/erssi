@@ -154,7 +154,7 @@ erssi's E2E is RPE2E v1.0, the protocol of repartee and its scripts.
 ## Update notice
 
 `update_check` (off by default) runs the installer installed with erssi,
-`<prefix>/share/irssi/shellter-install.sh --update --check --porcelain`,
+`<prefix>/share/irssi/shellter-install.sh --update --check --porcelain --summary`,
 once a day. It is the check of `erssi --check-update`: the newest release
 tag counts only with a valid signature by the release key that installer
 carries ([What the installer verifies](install.md#what-the-installer-verifies));

@@ -495,9 +495,9 @@ run_update() {
     sh "$INSTALLER" --update --no-test --prefix "$W/p" "$@" > "$W/out" 2>&1 < /dev/null
     RC=$?
 }
-# --update --check --porcelain: stdout in $W/pout, stderr in $W/perr
+# --update --check --porcelain [OPTIONS]: stdout in $W/pout, stderr in $W/perr
 porc() {
-    sh "$INSTALLER" --update --check --porcelain --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
+    sh "$INSTALLER" --update --check --porcelain "$@" --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
     RC=$?
 }
 # snap DIR: every path below DIR with its contents, in one text
@@ -2152,11 +2152,12 @@ update-porcelain)
     check "... said" grep -q -- '--porcelain goes with --update --check' "$W/perr"
     ;;
 update-summary)
-    # --update --check --porcelain: after the "update" line, the summary of
-    # the release from the message of its signed tag (the paragraph after
-    # the title), at most 3 lines of at most 200 bytes, no control
-    # characters; none from a tag without it, and never from one that is
-    # not signed by the release key
+    # --update --check --porcelain --summary: after the "update" line, the
+    # summary of the release from the message of its signed tag (the
+    # paragraph after the title), at most 3 lines of at most 200 bytes, no
+    # control characters, no UTF-8 character cut in two; none from a tag
+    # without it, and never from one that is not signed by the release
+    # key. Without --summary (an erssi before 2026.11.0) the one line only
     release_key
     c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
     c2=$(release_commit 2026.10.2)
@@ -2170,6 +2171,13 @@ update-summary)
         -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
     release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
     porc
+    check "without --summary: the one line, as an erssi of 2026.10 takes it" one_line "update 2026.10.1 2026.10.2"
+    sh "$INSTALLER" --update --check --summary --prefix "$W/p" > "$W/pout" 2> "$W/perr" < /dev/null
+    RC=$?
+    check "--summary without --porcelain: code 2" [ "$RC" = 2 ]
+    check "... nothing on stdout" [ ! -s "$W/pout" ]
+    check "... said" grep -q -- '--summary goes with --update --check --porcelain' "$W/perr"
+    porc --summary
     check "summary: code 0" [ "$RC" = 0 ]
     check "... the first line as always" [ "$(sed -n 1p "$W/pout")" = "update 2026.10.1 2026.10.2" ]
     check "... one summary line, the paragraph joined, controls gone" \
@@ -2183,7 +2191,7 @@ update-summary)
     } > "$W/msg"
     git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
         -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
-    porc
+    porc --summary
     check "long summary: 1 + 3 lines" [ "$(wc -l < "$W/pout")" -eq 4 ]
     check "... each at most 200 bytes after the keyword" \
         [ "$(sed -n '2,$s/^summary //p' "$W/pout" | awk 'length($0) > 200 {n++} END {print n + 0}')" = 0 ]
@@ -2191,15 +2199,37 @@ update-summary)
     # 25 words of 7 bytes and their spaces are 199 bytes
     check "... words kept whole" [ "$(sed -n 2p "$W/pout" | awk '{print $NF}')" = word024 ]
     check "... the next on the next line" [ "$(sed -n 3p "$W/pout" | cut -d" " -f1-2)" = "summary word025" ]
+    # long words of 2-byte characters, cut at 200 and at 197 (+ "...")
+    # where a character would be split, and a NUL byte
+    zz=$(i=0; while [ "$i" -lt 150 ]; do printf '\305\274'; i=$((i + 1)); done)
+    {
+        printf 'erssi Shellter Edition 2026.10.2\n\n'
+        printf 'a%s a%s %s %s\n' "$zz" "$zz" "$zz" "$zz"
+    } > "$W/msg"
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
+    porc --summary
+    check "UTF-8: 1 + 3 lines" [ "$(wc -l < "$W/pout")" -eq 4 ]
+    # "summary " and 199 bytes: the 200th would start a character
+    check "... a word cut at 199 bytes, not in a character" [ "$(sed -n 2p "$W/pout" | LC_ALL=C wc -c)" -eq $((8 + 199 + 1)) ]
+    check "... the last line cut at 196 bytes and ..." [ "$(sed -n 4p "$W/pout" | LC_ALL=C wc -c)" -eq $((8 + 196 + 3 + 1)) ]
+    if command -v iconv >/dev/null 2>&1; then
+        check "... valid UTF-8" iconv -f UTF-8 -t UTF-8 "$W/pout" > /dev/null
+    fi
+    printf 'erssi Shellter Edition 2026.10.2\n\nwith a NUL: ab\000cd.\n' > "$W/msg"
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
+    porc --summary
+    check "a NUL byte: removed" [ "$(sed -n 2p "$W/pout")" = "summary with a NUL: abcd." ]
     # a title only (the tags before 2026.11.0): the one line
     rtag shellter-v2026.10.2 "$c2"
-    porc
+    porc --summary
     check "no summary: the one line" one_line "update 2026.10.1 2026.10.2"
     # unsigned newer tag with a summary: not an update, no summary
     c3=$(release_commit 2026.10.3)
     printf 'erssi Shellter Edition 2026.10.3\n\nForged summary.\n' > "$W/msg"
     git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -F "$W/msg" shellter-v2026.10.3 "$c3"
-    porc
+    porc --summary
     check "unsigned tag: its summary not taken" no_grep Forged "$W/pout"
     check "... the signed one found" one_line "update 2026.10.1 2026.10.2"
     ;;

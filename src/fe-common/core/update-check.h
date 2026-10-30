@@ -2,7 +2,8 @@
 #define IRSSI_FE_COMMON_CORE_UPDATE_CHECK_H
 
 /* The update notice (update_check): once a day the installer installed with
- * erssi (<PKGDATADIR>/shellter-install.sh --update --check --porcelain) is
+ * erssi (<PKGDATADIR>/shellter-install.sh --update --check --porcelain
+ * --summary) is
  * run in the background. It finds the newest release signed by the key it
  * carries, exactly as `erssi --check-update` does, and answers in one line;
  * erssi says once per new version that it is there (with the summary of

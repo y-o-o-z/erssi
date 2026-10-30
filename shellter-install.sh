@@ -130,9 +130,10 @@ erssi Shellter Edition - install and update
                  newer than the installed one (also for an erssi installed
                  from a branch or a commit with --ref)
   --check        with --update: only report whether an update is available
-  --porcelain    with --update --check: print one line for a program (and
-                 the summary of a new release), nothing else on stdout
-                 (see below)
+  --porcelain    with --update --check: print one line for a program,
+                 nothing else on stdout (see below)
+  --summary      with --update --check --porcelain: the summary of a new
+                 release after that line (see below)
   --prefix DIR   install here, an absolute path (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
   --ref REF      release tag, branch or full commit SHA (default: newest
@@ -187,11 +188,11 @@ the commit of the signed tag), this platform and this system's perl.
   current <installed>           none newer (exit 0)
   error <reason>                the check failed, e.g. no network (exit 1)
   unmanaged <reason>            another tool updates this erssi (exit 3)
-After "update", up to 3 more lines "summary <text>" may follow: what the
-new release brings, from the message of its signed tag (the paragraph
-after the title line), on lines of at most 200 bytes without control
-characters; none when the tag has no such paragraph. The first line is
-always the one above. Wrong options exit 2 as always. The steps and
+With --summary, up to 3 more lines "summary <text>" may follow "update":
+what the new release brings, from the message of its signed tag (the
+paragraph after the title line), on lines of at most 200 bytes without
+control characters; none when the tag has no such paragraph. Without
+--summary the one line is all. The first line is always the one above. Wrong options exit 2 as always. The steps and
 warnings go to stderr.
 
 --src, --repo, --no-test/--test, --clean/--no-clean, --source (undone by
@@ -321,9 +322,11 @@ die_log() {   # message - with the end of the build log
     porcelain error "$1"
     exit 1
 }
-# --porcelain, after "update": the summary lines of the release (RELEASE_SUMMARY)
+# --porcelain --summary, after "update": the summary lines of the release
+# (RELEASE_SUMMARY). Only when asked: an erssi before 2026.11.0 that runs a
+# newer installer takes exactly one line
 porcelain_summary() {
-    [ "${PORCELAIN:-0}" = 1 ] && [ -n "${RELEASE_SUMMARY:-}" ] || return 0
+    [ "${PORCELAIN:-0}" = 1 ] && [ "${SUMMARY:-0}" = 1 ] && [ -n "${RELEASE_SUMMARY:-}" ] || return 0
     printf '%s\n' "$RELEASE_SUMMARY" | sed 's/^/summary /' >&3
 }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -429,10 +432,29 @@ fetch_ref() {   # repository-dir ref
 # What a release brings, from the message of its tag object $2 (verified,
 # in the repository $1): the paragraph after the title line, up to the SSH
 # signature, its words on at most 3 lines of at most 200 bytes (a longer
-# text cut with "..."), control characters as spaces. Nothing when the
-# message has no such paragraph (the tags before 2026.11.0).
+# text cut with "..."; a cut never splits a UTF-8 character), NUL bytes
+# removed and other control characters as spaces. Nothing when the message
+# has no such paragraph (the tags before 2026.11.0).
 tag_summary() {
-    git -C "$1" cat-file tag "$2" 2>/dev/null | LC_ALL=C tr '\001-\011\013-\037\177' ' ' | LC_ALL=C awk '
+    git -C "$1" cat-file tag "$2" 2>/dev/null | LC_ALL=C tr -d '\000' |
+        LC_ALL=C tr '\001-\011\013-\037\177' ' ' | LC_ALL=C awk '
+        # an awk that counts bytes: the UTF-8 lead and continuation bytes
+        BEGIN {
+            bytes = length("\303\251") == 2
+            for (i = 128; bytes && i < 256; i++) { c = sprintf("%c", i); if (i < 192) cont = cont c; else lead[c] = i < 224 ? 2 : i < 240 ? 3 : 4 }
+        }
+        # the first n bytes of s, without the start of a UTF-8 character
+        # that does not fit whole (an awk that counts characters never
+        # splits one)
+        function cut(s, n,   t, k, b) {
+            if (length(s) <= n) return s
+            t = substr(s, 1, n)
+            if (!bytes) return t
+            for (k = 0; k < 3 && k < length(t) && index(cont, substr(t, length(t) - k, 1)); k++) ;
+            b = substr(t, length(t) - k, 1)
+            if ((b in lead) && k + 1 < lead[b]) t = substr(t, 1, length(t) - k - 1)
+            return t
+        }
         !body { if ($0 == "") body = 1; next }
         /^-----BEGIN SSH SIGNATURE-----/ { exit }
         !title { if (NF) title = 1; next }
@@ -441,15 +463,14 @@ tag_summary() {
         END {
             line = ""; lines = 0
             for (i = 1; i <= n && lines < 3; i++) {
-                x = w[i]
-                if (length(x) > 200) x = substr(x, 1, 200)
+                x = cut(w[i], 200)
                 if (line == "") { line = x; continue }
                 if (length(line) + 1 + length(x) <= 200) { line = line " " x; continue }
                 if (lines == 2) break
                 print line; lines++; line = x
             }
             if (line == "") exit
-            if (i <= n) line = (length(line) > 197 ? substr(line, 1, 197) : line) "..."
+            if (i <= n) line = cut(line, 197) "..."
             print line
         }'
 }
@@ -2661,7 +2682,7 @@ unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONF
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
 UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
-BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0 PORCELAIN=0 PORCELAIN_SAID=0 PORCELAIN_WHY="" RELEASE_SUMMARY=""
+BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0 PORCELAIN=0 SUMMARY=0 PORCELAIN_SAID=0 PORCELAIN_WHY="" RELEASE_SUMMARY=""
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 BK_NL='
 ' BK_LOCKS="" KEPT_TRY=""
@@ -2679,6 +2700,7 @@ while [ $# -gt 0 ]; do
         --update) UPDATE=1; shift ;;
         --check) CHECK=1; shift ;;
         --porcelain) PORCELAIN=1; shift ;;
+        --summary) SUMMARY=1; shift ;;
         --yes|-y) YES=1; shift ;;
         --binary) USE=binary; shift ;;
         --source) USE=source; shift ;;
@@ -2715,6 +2737,7 @@ case "$PREFIX" in
 esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
 [ "$PORCELAIN" = 0 ] || [ "$CHECK" = 1 ] || { echo "shellter-install.sh: --porcelain goes with --update --check (--help)" >&2; exit 2; }
+[ "$SUMMARY" = 0 ] || [ "$PORCELAIN" = 1 ] || { echo "shellter-install.sh: --summary goes with --update --check --porcelain (--help)" >&2; exit 2; }
 # --porcelain: stdout is for the one line (fd 3); everything else to stderr
 if [ "$PORCELAIN" = 1 ]; then exec 3>&1 1>&2; fi
 [ "$UPDATE" = 0 ] || [ -z "$REF" ] || { echo "shellter-install.sh: --update takes the newest signed release; for a given one use --ref without --update" >&2; exit 2; }

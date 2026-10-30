@@ -90,7 +90,7 @@ installed from another `--repo`):
 ```
 
 - **What runs** — the installer that was installed with erssi
-  (`shellter-install.sh --update --check --porcelain`, the same check as
+  (`shellter-install.sh --update --check --porcelain --summary`, the same check as
   `erssi --check-update`), in the background: erssi goes on while it runs,
   one check runs at a time, one that takes longer than two minutes is
   stopped. The installer finds the newest release tag with a valid

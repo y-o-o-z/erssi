@@ -1331,7 +1331,7 @@ static void check_done(const UPDATE_ANSWER *answer, const char *err_text, void *
 
 static void check_start(int mode)
 {
-	const char *argv[8];
+	const char *argv[9];
 	GError *error = NULL;
 	char *installer, *reason;
 	gboolean test, manual = mode == CHECK_MANUAL;
@@ -1356,9 +1356,12 @@ static void check_start(int mode)
 	argv[2] = "--update";
 	argv[3] = "--check";
 	argv[4] = "--porcelain";
-	argv[5] = "--prefix";
-	argv[6] = get_install_prefix();
-	argv[7] = NULL;
+	/* the summary lines only when asked: an erssi before 2026.11.0 that
+	   runs a newer installer takes exactly one line */
+	argv[5] = "--summary";
+	argv[6] = "--prefix";
+	argv[7] = get_install_prefix();
+	argv[8] = NULL;
 
 	/* the start is what counts: a check cut short by /UPGRADE or /QUIT
 	   is not run again right after the next start */

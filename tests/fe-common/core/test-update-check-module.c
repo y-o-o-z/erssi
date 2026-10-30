@@ -369,7 +369,7 @@ static void test_install(void)
 	command("/update install");
 	g_assert_true(update_install_running());
 	wait_install();
-	g_assert_cmpint(runs_with("--update --check --porcelain --prefix"), ==, 1);
+	g_assert_cmpint(runs_with("--update --check --porcelain --summary --prefix"), ==, 1);
 	g_assert_cmpint(runs_with("--update --prefix"), ==, 1);
 	g_assert_nonnull(strstr(printed->str, "Update install: checking for the newest signed release"));
 	g_assert_nonnull(strstr(printed->str, "Update install: installing erssi 9999.1.0 over 2026.10.6 "

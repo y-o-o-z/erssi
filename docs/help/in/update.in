@@ -20,9 +20,9 @@
     summary of what a new one brings when its release tag has one.
 
     The check runs the installer that was installed with this erssi
-    (shellter-install.sh --update --check --porcelain, the same check as
-    erssi --check-update) in the background, so erssi goes on while it
-    runs. The installer asks the repository it installed from (GitHub by
+    (shellter-install.sh --update --check --porcelain --summary, the same
+    check as erssi --check-update) in the background, so erssi goes on
+    while it runs. The installer asks the repository it installed from (GitHub by
     default) for the release tags and takes the newest one with a valid
     signature by the release key it carries; a tag signed by anyone else
     is not counted. It downloads the tag list and one tag with its commit
