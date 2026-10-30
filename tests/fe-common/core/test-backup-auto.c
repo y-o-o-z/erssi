@@ -215,10 +215,22 @@ static void test_dir_reason(void)
 	char *dots = g_build_filename(home, "..", "out", NULL);
 	char *dots_in = g_build_filename(top, "out", "..", "home", "x", NULL);
 	char *via_link = g_build_filename(link, "sub", NULL);
+	/* ".." after a link: the parent of where it points, not of the link */
+	char *sub = g_build_filename(home, "sub", NULL);
+	char *sub_link = g_build_filename(top, "sublink", NULL);
+	char *link_dots = g_build_filename(sub_link, "..", "b", NULL);
+	char *out_link = g_build_filename(home, "outlink", NULL);
+	char *out_deep = g_build_filename(top, "out", "deep", NULL);
+	char *link_dots_out = g_build_filename(out_link, "..", "b", NULL);
+	char *missing_dots = g_build_filename(top, "nothere", "..", "home", "c", NULL);
 	char *r;
 
 	g_assert_cmpint(g_mkdir_with_parents(home, 0700), ==, 0);
 	g_assert_cmpint(symlink(home, link), ==, 0);
+	g_assert_cmpint(g_mkdir(sub, 0700), ==, 0);
+	g_assert_cmpint(symlink(sub, sub_link), ==, 0);
+	g_assert_cmpint(g_mkdir_with_parents(out_deep, 0700), ==, 0);
+	g_assert_cmpint(symlink(out_deep, out_link), ==, 0);
 
 	g_assert_null(backup_auto_dir_reason(outside, home));
 	g_assert_null(backup_auto_dir_reason(dots, home));
@@ -247,6 +259,21 @@ static void test_dir_reason(void)
 	r = backup_auto_dir_reason(inside, link);
 	g_assert_nonnull(r);
 	g_free(r);
+	/* <top>/sublink/../b is <home>/b, not <top>/b */
+	r = backup_auto_dir_reason(link_dots, home);
+	g_assert_nonnull(r);
+	g_assert_nonnull(strstr(r, "is inside the erssi home"));
+	g_free(r);
+	g_assert_false(g_file_test(link_dots, G_FILE_TEST_EXISTS));
+	/* <home>/outlink/../b is <top>/out/b: outside, though named in it
+	   (refused all the same: by its name it is in the home) */
+	r = backup_auto_dir_reason(link_dots_out, home);
+	g_assert_nonnull(r);
+	g_free(r);
+	/* a missing name and its "..": as mkdir -p takes it */
+	r = backup_auto_dir_reason(missing_dots, home);
+	g_assert_nonnull(r);
+	g_free(r);
 	/* ~ is HOME, which is the test's --home */
 	r = backup_auto_dir_reason("~/erssi-backups", test_home_dir);
 	g_assert_nonnull(strstr(r, "~/erssi-backups is inside the erssi home"));
@@ -266,6 +293,13 @@ static void test_dir_reason(void)
 	g_free(dots);
 	g_free(dots_in);
 	g_free(via_link);
+	g_free(sub);
+	g_free(sub_link);
+	g_free(link_dots);
+	g_free(out_link);
+	g_free(out_deep);
+	g_free(link_dots_out);
+	g_free(missing_dots);
 }
 
 static void test_error(void)
@@ -602,6 +636,8 @@ static void test_failure_retry(void)
  * the default ~/erssi-backups is in the home here (HOME is the --home) */
 static void test_dir_inside_home(void)
 {
+	char *sub, *link, *dir, *made;
+
 	reset();
 	set("backup_dir", "~/erssi-backups");
 	set("backup_auto", "daily");
@@ -617,6 +653,28 @@ static void test_dir_inside_home(void)
 	g_assert_cmpint(count(printed->str, "Backup failed: backup_dir ~/erssi-backups is inside"),
 	                ==, 1);
 	g_assert_false(g_file_test(state_file, G_FILE_TEST_EXISTS));
+
+	/* <link>/../bk with the link to a directory in the home is <home>/bk:
+	   refused before anything is made */
+	sub = g_build_filename(get_irssi_dir(), "sub", NULL);
+	link = g_build_filename(test_tmpdir, "homesub", NULL);
+	dir = g_build_filename(link, "..", "bk", NULL);
+	made = g_build_filename(get_irssi_dir(), "bk", NULL);
+	g_assert_cmpint(g_mkdir(sub, 0700), ==, 0);
+	g_assert_cmpint(symlink(sub, link), ==, 0);
+	set("backup_dir", dir);
+	g_string_truncate(printed, 0);
+	command("/backup now");
+	g_assert_false(backup_auto_running());
+	g_assert_cmpint(runs(), ==, 0);
+	g_assert_nonnull(strstr(printed->str, "is inside the erssi home"));
+	g_assert_false(g_file_test(made, G_FILE_TEST_EXISTS));
+	unlink(link);
+	rmdir(sub);
+	g_free(sub);
+	g_free(link);
+	g_free(dir);
+	g_free(made);
 	reset();
 }
 

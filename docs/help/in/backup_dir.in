@@ -6,8 +6,9 @@
 
     The directory of the backups that backup_auto and /BACKUP NOW make.
     It is made (mode 0700) when it is not there yet. It must be outside
-    the erssi home: a backup there would hold all the ones before it,
-    so erssi refuses it and says so. A directory that others can read
+    the erssi home, also with its links followed: a backup there would
+    hold all the ones before it, so erssi refuses it, says so and makes
+    nothing. A directory that others can read
     shows them your backups: they hold your private keys and passwords.
 
 %9Examples:%9

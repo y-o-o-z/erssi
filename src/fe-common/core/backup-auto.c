@@ -165,29 +165,46 @@ char **backup_auto_rotate(const char *const *names, const char *id, int keep,
 
 /* ── the backup directory ────────────────────────────────────────────── */
 
-/* PATH (absolute, canonical) with the links followed as far as its
-   directories exist: what is still missing is added as it is named */
+/* PATH (absolute) as the system takes it: its names one by one, links
+   followed as far as the directories exist, so ".." after a link is the
+   parent of where the link points (~/link/../b is not ~/b). What is
+   still missing is added as it is named, a ".." there undoing the
+   missing name before it, as mkdir -p makes it */
 static char *resolve(const char *path)
 {
-	char *real = realpath(path, NULL), *parent, *base, *top, *res;
+	char **parts = g_strsplit(path, "/", -1), **p, *cur = g_strdup("/"), *next, *real;
+	int missing = 0; /* names added after the last one that exists */
 
-	if (real != NULL) {
-		res = g_strdup(real);
+	for (p = parts; *p != NULL; p++) {
+		if (**p == '\0' || strcmp(*p, ".") == 0)
+			continue;
+		if (strcmp(*p, "..") == 0) {
+			/* cur has no links in it, or ends in missing names */
+			next = g_path_get_dirname(cur);
+			g_free(cur);
+			cur = next;
+			if (missing > 0)
+				missing--;
+			continue;
+		}
+		next = g_build_filename(cur, *p, NULL);
+		g_free(cur);
+		cur = next;
+		if (missing > 0) {
+			missing++;
+			continue;
+		}
+		real = realpath(cur, NULL);
+		if (real == NULL) {
+			missing = 1;
+			continue;
+		}
+		g_free(cur);
+		cur = g_strdup(real);
 		free(real);
-		return res;
 	}
-	parent = g_path_get_dirname(path);
-	if (strcmp(parent, path) == 0) {
-		g_free(parent);
-		return g_strdup(path);
-	}
-	base = g_path_get_basename(path);
-	top = resolve(parent);
-	res = g_build_filename(top, base, NULL);
-	g_free(parent);
-	g_free(base);
-	g_free(top);
-	return res;
+	g_strfreev(parts);
+	return cur;
 }
 
 static gboolean path_within(const char *path, const char *dir)
@@ -215,8 +232,10 @@ char *backup_auto_dir_reason(const char *dir, const char *home)
 	}
 	canon_dir = g_canonicalize_filename(path, "/");
 	canon_home = g_canonicalize_filename(home, "/");
-	real_dir = resolve(canon_dir);
-	real_home = resolve(canon_home);
+	/* judged as the system takes the paths, not only by their names: the
+	   un-canonicalized path resolved (a link before a ".." counts) */
+	real_dir = resolve(path);
+	real_home = resolve(g_path_is_absolute(home) ? home : canon_home);
 	if (path_within(canon_dir, canon_home) || path_within(real_dir, real_home) ||
 	    path_within(canon_dir, real_home) || path_within(real_dir, canon_home))
 		reason = g_strdup_printf("backup_dir %s is inside the erssi home %s: each backup "

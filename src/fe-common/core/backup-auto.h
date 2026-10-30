@@ -61,7 +61,9 @@ char **backup_auto_rotate(const char *const *names, const char *id, int keep,
 
 /* NULL when DIR (absolute, after ~ is expanded) can take backups of the
  * erssi home HOME, else why not: empty, relative, or HOME itself or
- * inside it (links followed as far as the directories exist) */
+ * inside it, by its name or as the system takes it (links followed as far
+ * as the directories exist, a ".." after a link going to the parent of
+ * where it points) */
 char *backup_auto_dir_reason(const char *dir, const char *home);
 
 /* why a backup failed, from the installer's stderr (its last "error:"
