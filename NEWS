@@ -1,3 +1,20 @@
+shellter-v2026.10.8 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.8
+
+	The FreeBSD packages, which 2026.10.7 does not have. erssi itself is
+	the same as in 2026.10.7.
+
+	+ Tests
+	  - the live backup case that checks /UPGRADE no longer reads the
+	    arguments of the new process: on FreeBSD, with the long paths of
+	    a package build, ps showed only the program name there, the case
+	    failed, and with it the FreeBSD 14 and 15 packages of 2026.10.7.
+	    It now looks for <home>/session, which /UPGRADE writes and the new
+	    erssi removes, with the same process still running
+	  - in the installer's lock cases the process that stands in for a
+	    running installer lived 30 seconds, less than a slow run of
+	    stale-lock takes; it now lives until the case ends
+
 shellter-v2026.10.7 2026-10-30  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.7
 
