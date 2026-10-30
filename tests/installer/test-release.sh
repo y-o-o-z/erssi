@@ -116,6 +116,10 @@ case $sub in
 esac
 EOF
 chmod 755 "$tmp/bin/gh"
+# mmdebstrap is found on every host, so the tests do not depend on whether
+# it is installed; it is never run for real (--dry-run, or refused before)
+printf '#!/bin/sh\necho "fake mmdebstrap must not run" >&2\nexit 99\n' > "$tmp/bin/mmdebstrap"
+chmod 755 "$tmp/bin/mmdebstrap"
 export FAKE_GH_LOG="$tmp/gh.log" FAKE_GH_RELEASES="$tmp/gh" FAKE_GH_GIT="$tmp/repo.git"
 PATH=$tmp/bin:$PATH
 
@@ -290,7 +294,10 @@ dry-run)
     check "... FreeBSD 15 over ssh" sh -c 'grep -q "would run: ssh builder@example sh -s" "$1" && grep -q "would run: ssh builder@example cat .*/out/erssi-2026.11.0-freebsd15-amd64.tar.xz" "$1"' sh "$tmp/out"
     check "... no FreeBSD 14 without its host" sh -c '! grep -q freebsd14 "$1"' sh "$tmp/out"
     check "... nothing written" sh -c '[ ! -e "$1" ] && [ ! -e "$2" ]' sh "$tmp/out-dir" "$tmp/mm"
-    RELEASE_SSH='ssh -p 2222' run build --repo "$R" "$TAG" --out "$tmp/out-dir" --platforms freebsd14-amd64 --freebsd14 b14 --dry-run
+    # exported: FreeBSD sh does not pass an assignment before a function on
+    export RELEASE_SSH='ssh -p 2222'
+    run build --repo "$R" "$TAG" --out "$tmp/out-dir" --platforms freebsd14-amd64 --freebsd14 b14 --dry-run
+    unset RELEASE_SSH
     expect "RELEASE_SSH: the ssh command" 0 'would run: ssh -p 2222 b14 sh -s'
     run build --repo "$R" "$TAG" --out "$R/out" --dry-run; expect "an --out inside the repository" 1 'is inside'
 
@@ -300,7 +307,7 @@ dry-run)
     fake_package "$D" erssi-2026.11.0-debian12-amd64.tar.xz "$(git -C "$R" rev-parse "$TAG^{commit}")"
     run build --repo "$R" "$TAG" --out "$D" --platforms debian12-amd64 --dry-run
     expect "build: a package of the commit is kept" 0 'debian12-amd64: erssi-2026.11.0-debian12-amd64.tar.xz is there (commit'
-    check "... and not built again" sh -c '! grep -q mmdebstrap "$1"' sh "$tmp/out"
+    check "... and not built again" sh -c '! grep -q "would run:.*mmdebstrap" "$1"' sh "$tmp/out"
     fake_package "$D" erssi-2026.11.0-debian12-amd64.tar.xz 0123456789012345678901234567890123456789
     run build --repo "$R" "$TAG" --out "$D" --platforms debian12-amd64 --dry-run
     expect "build: a package of another commit is refused" 1 'built from 0123456789012345678901234567890123456789'
