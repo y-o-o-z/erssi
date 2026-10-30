@@ -439,3 +439,28 @@ test('test-update-check-module test', test_test_update_check_module,
   args : ['--tap'],
   protocol : 'tap',
   timeout : 60)
+
+# automatic backups: when one is due, rotation, backup_dir outside the
+# home, the state file, and as a module the timer and /BACKUP against a
+# stand-in installer, with core and fe-common running in a temporary home
+test_test_backup_auto = executable('test-backup-auto',
+  files(
+    'test-backup-auto.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-backup-auto test', test_test_backup_auto,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 60)
