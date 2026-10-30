@@ -502,6 +502,7 @@ static void reset(void)
 static void test_scheduled_and_rotation(void)
 {
 	char *runs_text = NULL, *link, *state = NULL, *expect;
+	int i;
 
 	reset();
 	touch(of(home_id, "20200101-000000"));
@@ -520,7 +521,11 @@ static void test_scheduled_and_rotation(void)
 	g_free(link);
 
 	set("backup_auto", "daily");
-	g_assert_cmpint(runs(), ==, 0); /* not at once: a minute after */
+	/* not at once: a minute after (the main loop runs a while) */
+	for (i = 0; i < 30; i++)
+		g_main_context_iteration(NULL, FALSE), g_usleep(10000);
+	g_assert_false(backup_auto_running());
+	g_assert_cmpint(runs(), ==, 0);
 	backup_auto_tick_now();
 	g_assert_true(backup_auto_running());
 	wait_backup();
