@@ -118,8 +118,9 @@ char **update_check_conf_paths(const char *prefix);
  * of each). DONE is called once, from the main loop, after the process
  * exited and its output ended, or when it took longer than TIMEOUT_MS:
  * then it is sent SIGTERM, and SIGKILL after UPDATE_CHECK_KILL_GRACE_MS
- * (its whole process group), and DONE gets an error "timed out" once it
- * was reaped. The job frees itself after DONE. */
+ * (its whole process group, also what is left of it once its process has
+ * exited), and DONE gets an error "timed out" once it was reaped. The job
+ * frees itself after DONE. */
 typedef struct _UPDATE_JOB UPDATE_JOB;
 typedef void (*UPDATE_JOB_FUNC)(const UPDATE_ANSWER *answer, const char *stderr_text, void *data);
 /* a whole line of the job's output, without its '\n' (a last one without
@@ -143,13 +144,14 @@ typedef void (*UPDATE_JOB_RAW_FUNC)(const char *failure, int wait_status, const 
 UPDATE_JOB *update_job_start_raw(const char *const *argv, int timeout_ms, UPDATE_JOB_RAW_FUNC done,
                                  void *data, GError **error);
 /* the process group stopped (SIGTERM, up to 2 s, then SIGKILL) while
- * its process is still there, and the process reaped here; DONE (LINE,
- * RAW) is not called any more, the job is freed - from the main loop
- * after the callback when it is cancelled from inside one of its own
- * callbacks. The job's process is reaped only by the job (waitpid on its
- * pid, never a GLib child watch), and its group is sent a signal only
- * while waitpid says it has not exited, so the number can never be
- * another process's by then. */
+ * its process is still there, and the process reaped here; what is left
+ * of the group then gets SIGKILL, before the reap.
+ * DONE (LINE, RAW) is not called any more, the job is freed - from the
+ * main loop after the callback when it is cancelled from inside one of
+ * its own callbacks. The job's process is reaped only by the job
+ * (waitpid on its pid, never a GLib child watch), and its group is sent
+ * a signal only while its process is there or a zombie not reaped yet,
+ * so the number can never be another process's by then. */
 void update_job_cancel(UPDATE_JOB *job);
 /* the pid of the job's process (for the tests) */
 int update_job_pid(UPDATE_JOB *job);

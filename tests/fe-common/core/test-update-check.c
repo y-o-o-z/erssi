@@ -784,6 +784,21 @@ static void test_job_timeout(void)
 	assert_gone(child);
 	result_clear(&r);
 	g_free(body);
+
+	/* the installer ends on SIGTERM at once, a child that ignores it is
+	   left in its group: killed once the installer has exited */
+	body = g_strdup_printf("(trap '' TERM; exec sleep 300) > /dev/null 2>&1 &\n" PID_TO
+	                       "trap 'exit 0' TERM\nsleep 300 &\nwait\n",
+	                       child, child, child);
+	t0 = g_get_monotonic_time();
+	run(body, 500, &r, &pid);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <,
+	                (500 + UPDATE_CHECK_KILL_GRACE_MS) * (gint64) 1000);
+	g_assert_cmpstr(r.answer.reason, ==, "timed out after 0 s");
+	assert_reaped(pid);
+	assert_gone(child);
+	result_clear(&r);
+	g_free(body);
 	unlink(child);
 	g_free(child);
 }
@@ -826,9 +841,11 @@ static void test_job_cancel(void)
 }
 
 /* a job whose process has exited, but was not reaped yet: cancelling it
-   reaps it and sends its process group no signal - once reaped, its
-   number may belong to another process. A child it left behind in that
-   group lives on. */
+   kills what is left of its process group before it reaps it (a zombie
+   still holds its number), and after the reap no signal goes to the
+   group - its number may belong to another process by then. A child it
+   left behind gets SIGKILL, not SIGTERM: the installer is not there to
+   clean up after it. */
 static void test_job_cancel_after_exit(void)
 {
 	char *child = g_build_filename(script_dir, "stray.pid", NULL);
@@ -864,10 +881,8 @@ static void test_job_cancel_after_exit(void)
 	update_job_cancel(job);
 	g_assert_false(r.done);
 	assert_reaped(pid);
-	g_usleep(300000);
+	assert_gone(child);
 	g_assert_false(g_file_test(got, G_FILE_TEST_EXISTS));
-	g_assert_cmpint(kill(stray, 0), ==, 0);
-	kill(-pid, SIGKILL); /* the stray and its sleep, the group still exists */
 	unlink(got);
 	g_free(got);
 	unlink(child);

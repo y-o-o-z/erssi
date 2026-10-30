@@ -437,7 +437,7 @@ struct _UPDATE_JOB {
 	int out_fd, err_fd;
 	guint out_tag, err_tag, poll_tag, timeout_tag, kill_tag;
 	GString *out, *err;
-	gboolean exited, lost, timed_out;
+	gboolean exited, lost, timed_out, stopping;
 	int status, timeout_ms;
 	UPDATE_JOB_FUNC done;
 	UPDATE_JOB_RAW_FUNC raw;
@@ -640,15 +640,29 @@ static gboolean job_err(gint fd, GIOCondition cond, gpointer data)
    nobody else (no GLib child watch, whose worker may reap it before its
    callback runs). A signal goes to its process group only after a
    waitpid() said it is still there: its number, which is the group's,
-   cannot have been given to another process by then. TRUE once it is
-   reaped (or, with SIGCHLD ignored as in Capsicum mode, gone). */
+   cannot have been given to another process by then. A job that is
+   stopped (timed out or cancelled) has what is left of its group killed
+   when its process has exited, before it is reaped: as a zombie it still
+   holds its number. TRUE once it is reaped (or, with SIGCHLD ignored as
+   in Capsicum mode, gone). */
 static gboolean job_reap(UPDATE_JOB *job)
 {
+	siginfo_t info;
 	pid_t r;
-	int status;
+	int status, w;
 
 	if (job->exited)
 		return TRUE;
+	if (job->timed_out || job->stopping) {
+		memset(&info, 0, sizeof(info));
+		do
+			w = waitid(P_PID, job->pid, &info, WEXITED | WNOHANG | WNOWAIT);
+		while (w == -1 && errno == EINTR);
+		if (w == 0 && info.si_pid == 0)
+			return FALSE; /* still running */
+		if (w == 0)
+			kill(-job->pid, SIGKILL); /* a child it left behind */
+	}
 	do
 		r = waitpid(job->pid, &status, WNOHANG);
 	while (r == -1 && errno == EINTR);
@@ -807,6 +821,7 @@ void update_job_cancel(UPDATE_JOB *job)
 	if (job->cancelled)
 		return;
 	/* the installer removes its temporary files on SIGTERM */
+	job->stopping = TRUE;
 	job_signal(job, SIGTERM);
 	for (i = 0; i < 40 && !job_reap(job); i++)
 		g_usleep(50000);
