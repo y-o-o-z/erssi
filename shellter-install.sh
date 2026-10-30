@@ -281,6 +281,14 @@ die_log() {   # message - with the end of the build log
     exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# 0 when the text files $1 and $2 are the same, byte for byte (text: no
+# NUL). Not cmp: a minimal system (AlmaLinux, Rocky) has no diffutils
+same_text() {
+    [ -f "$1" ] && [ -f "$2" ] || return 1
+    [ "$(wc -c < "$1")" = "$(wc -c < "$2")" ] || return 1
+    # the dot keeps trailing line breaks from being stripped
+    [ "$(cat "$1"; echo .)" = "$(cat "$2"; echo .)" ]
+}
 spinner_frame() {   # i
     if [ "$UTF8" = 1 ]; then
         case $(($1 % 10)) in
@@ -1305,7 +1313,7 @@ binary_install() {
     step "Installing"
     REUSED=0 ASIDE=""
     if [ -e "$RELS/$V" ] || [ -L "$RELS/$V" ]; then
-        if cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
+        if same_text "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
             # the same package (a release tree only ever arrives whole, by
             # one rename): kept as it is - never replaced under a running
             # erssi, and previous keeps pointing to it
@@ -2297,7 +2305,7 @@ do_restore() {
     (cd "$H" && find . -type d ! -path . -print) | sed 's|^\./||' | LC_ALL=C sort > "$BK_WORK/got.d"
     awk -F '\t' '$1 == "f" { print $3 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.f"
     awk -F '\t' '$1 == "d" { print $2 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.d"
-    if ! cmp -s "$BK_WORK/got.f" "$BK_WORK/want.f" || ! cmp -s "$BK_WORK/got.d" "$BK_WORK/want.d"; then
+    if ! same_text "$BK_WORK/got.f" "$BK_WORK/want.f" || ! same_text "$BK_WORK/got.d" "$BK_WORK/want.d"; then
         bk_fail "the files in $BK_FILE are not those its MANIFEST lists (damaged, or not made by erssi --backup)"
     fi
     nf=$(wc -l < "$BK_WORK/want.f" | tr -d ' ')
