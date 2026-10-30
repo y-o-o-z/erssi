@@ -199,10 +199,15 @@ static void test_refused_after_save_sends_once(void)
 	/* the queue runs on, as fast as it can */
 	irc->cmd_queue_speed = 0;
 	irc->wait_cmd = 0;
-	end = g_get_monotonic_time() + 2 * G_USEC_PER_SEC;
+	/* until all ten came (a loaded machine is slow: up to 30 s), then
+	 * 200 ms more for a line sent twice */
+	end = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
 	while (g_get_monotonic_time() < end) {
 		g_main_context_iteration(NULL, FALSE);
 		peer_reads(got);
+		if (count_lines(got->str, "PRIVMSG #x :m") >= 10 &&
+		    end - g_get_monotonic_time() > G_USEC_PER_SEC / 5)
+			end = g_get_monotonic_time() + G_USEC_PER_SEC / 5;
 		g_usleep(10000);
 	}
 	g_assert_cmpint(count_lines(got->str, "PRIVMSG #x :m"), ==, 10);

@@ -28,8 +28,10 @@ done
 command -v python3 >/dev/null 2>&1 || { echo "skip: no python3 to make the bad archives"; exit 77; }
 
 W=$(mktemp -d) && W=$(cd -P "$W" && pwd -P) || exit 1
-# chmod first: a failing case may leave a directory no one may enter
-trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
+# the helper processes a case starts (bg below): ended however the case
+# ends. chmod first: a failing case may leave a directory no one may enter
+BG=""
+trap 'for p in $BG; do kill "$p" 2>/dev/null; done; chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
 trap 'exit 1' HUP INT TERM
 chgrp "$(id -g)" "$W" || exit 1
 HOME=$W/home; export HOME
@@ -69,6 +71,13 @@ done
 PATH=$W/shim:$PATH; export PATH
 
 E=$HOME/.erssi
+# up() FILE: wait until a helper started in the background has written
+# FILE (it runs then): an idle machine takes a moment, a loaded one longer
+up() {
+    i=0
+    while [ ! -s "$1" ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
+    [ -s "$1" ] || { fail "the helper never wrote $1"; exit 1; }
+}
 run() {   # installer options... -> output in $W/out, exit code in $RC
     RC=0
     sh "$INSTALLER" "$@" > "$W/out" 2>&1 || RC=$?
@@ -374,10 +383,11 @@ running)
     rm -f "$W/target/erssi.lock"
     : > "$W/target/erssi.lock"
     tree "$W/target" > "$W/before"
-    # an erssi from 2026.11.0 on: the shared lock on erssi.lock
-    perl -e 'open(my $f, "<", $ARGV[0]) or die; flock($f, 1) or die; print "locked\n"; $| = 1; sleep 60' "$W/target/erssi.lock" > "$W/locker" &
-    LOCKER=$!
-    i=0; while [ ! -s "$W/locker" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    # an erssi from 2026.11.0 on: the shared lock on erssi.lock, held
+    # until it is killed (however slow the checks below are)
+    perl -e 'open(my $f, "<", $ARGV[0]) or die; flock($f, 1) or die; print "locked\n"; $| = 1; sleep 3600' "$W/target/erssi.lock" > "$W/locker" &
+    LOCKER=$!; BG="$BG $LOCKER"
+    up "$W/locker"
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "restore is refused while the lock is held" [ "$RC" != 0 ]
     check "it says an erssi is running" said "an erssi is running on"
@@ -398,10 +408,12 @@ running)
     # an older erssi, without the lock: an erssi process naming the home
     # a perl named erssi; started through a link, FreeBSD would name it
     # perl (its file), Linux erssi (the link): one of each
+    # (it says so once it runs as erssi: until then the process is the
+    # shell that starts it, with the shell's arguments)
     cp "$(command -v perl)" "$W/shim/erssi"
-    "$W/shim/erssi" -e 'sleep 60' -- "--home=$W/target" &
-    OLD=$!
-    sleep 0.5
+    "$W/shim/erssi" -e '$| = 1; print "up\n"; sleep 3600' -- "--home=$W/target" > "$W/old-up" &
+    OLD=$!; BG="$BG $OLD"
+    up "$W/old-up"
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "restore is refused while an erssi process names the home" [ "$RC" != 0 ]
     check "it names the pid" said "pid $OLD"
@@ -417,9 +429,9 @@ running)
     kill "$OLD"; wait "$OLD" 2>/dev/null
     mkdir "$W/link"
     ln -s "$(command -v perl)" "$W/link/erssi"
-    "$W/link/erssi" -e 'sleep 60' -- --home "$W/target" &
-    OLD=$!
-    sleep 0.5
+    "$W/link/erssi" -e '$| = 1; print "up\n"; sleep 3600' -- --home "$W/target" > "$W/link-up" &
+    OLD=$!; BG="$BG $OLD"
+    up "$W/link-up"
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "also an erssi started through a link (--home DIR)" [ "$RC" != 0 ]
     check "named by its pid" said "pid $OLD"
@@ -541,7 +553,7 @@ file-changed)
     if "$REAL_TAR" --version 2>/dev/null | grep -q 'GNU tar'; then
         i=0; while [ $i -lt 2000 ]; do printf '%s\n' "line $i of a long log, written before the backup" >> "$E/logs/IRCnet/#big.log"; i=$((i + 1)); done
         ( while :; do printf 'more\n' >> "$E/logs/IRCnet/#big.log"; done ) &
-        APP=$!
+        APP=$!; BG="$BG $APP"
         run --backup "$W/d.tar.gz" --with-logs
         kill "$APP"; wait "$APP" 2>/dev/null
         if [ "$RC" != 0 ]; then show; fi

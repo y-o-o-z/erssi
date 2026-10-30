@@ -27,6 +27,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -37,7 +38,8 @@ static char *dir_new(void)
 	char *dir = g_dir_make_tmp("home-lock-XXXXXX", NULL);
 
 	g_assert_nonnull(dir);
-	alarm(5);
+	/* a hang, not a slow machine: meson's own timeout is 30 s */
+	alarm(20);
 	return dir;
 }
 
@@ -164,6 +166,15 @@ static pid_t hold_exclusive(const char *dir, int hold_ms)
 	return pid;
 }
 
+/* the holder of a lock the test no longer waits for */
+static void kill_reap(pid_t pid)
+{
+	int status;
+
+	kill(pid, SIGKILL);
+	g_assert_cmpint(waitpid(pid, &status, 0), ==, pid);
+}
+
 static void reap(pid_t pid)
 {
 	int status;
@@ -179,24 +190,28 @@ static void test_waits_for_restore(void)
 	pid_t pid;
 	int fd;
 
-	/* held for 300 ms: a start waits and gets it */
+	/* held for 300 ms: a start waits and gets it. The time is taken
+	 * before the child holds it, so a slow machine cannot make the wait
+	 * look shorter; there are tries for 10 s (it takes about 0.3) */
+	t0 = g_get_monotonic_time();
 	pid = hold_exclusive(dir, 300);
 	g_assert_cmpint(home_lock_take(dir), ==, -1);
 	g_assert_true(errno == EWOULDBLOCK || errno == EAGAIN);
-	t0 = g_get_monotonic_time();
-	fd = home_lock_take_wait(dir, 20, 100);
+	fd = home_lock_take_wait(dir, 100, 100);
 	g_assert_cmpint(fd, >=, 0);
-	g_assert_cmpint(g_get_monotonic_time() - t0, >=, 200 * 1000);
+	g_assert_cmpint(g_get_monotonic_time() - t0, >=, 300 * 1000);
 	close(fd);
 	reap(pid);
 
-	/* held longer than it waits: it gives up, with EWOULDBLOCK */
-	pid = hold_exclusive(dir, 1500);
+	/* held longer than it waits: it gives up, with EWOULDBLOCK. The
+	 * holder keeps it until it is killed: 3 tries of 100 ms give up
+	 * however slow the machine is, and do not wait for the holder */
+	pid = hold_exclusive(dir, 60 * 1000);
 	t0 = g_get_monotonic_time();
 	g_assert_cmpint(home_lock_take_wait(dir, 3, 100), ==, -1);
 	g_assert_true(errno == EWOULDBLOCK || errno == EAGAIN);
-	g_assert_cmpint(g_get_monotonic_time() - t0, <, 1000 * 1000);
-	reap(pid);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 10 * 1000 * 1000);
+	kill_reap(pid);
 	g_free(dir);
 }
 
@@ -207,9 +222,10 @@ static void test_no_wait_for_other_failures(void)
 
 	path = g_build_filename(dir, HOME_LOCK_FILE, NULL);
 	g_assert_cmpint(mkfifo(path, 0600), ==, 0);
+	/* one try of 1 s would show: it does not wait at all */
 	t0 = g_get_monotonic_time();
-	g_assert_cmpint(home_lock_take_wait(dir, 20, 100), ==, -1);
-	g_assert_cmpint(g_get_monotonic_time() - t0, <, 100 * 1000);
+	g_assert_cmpint(home_lock_take_wait(dir, 20, 1000), ==, -1);
+	g_assert_cmpint(g_get_monotonic_time() - t0, <, 1000 * 1000);
 	g_free(path);
 	g_free(dir);
 }
