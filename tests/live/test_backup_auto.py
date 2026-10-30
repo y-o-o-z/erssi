@@ -115,21 +115,24 @@ def main():
         old = int(time.time()) - 2 * 24 * 3600
         (e.home / "backup-auto.state").write_text(f"last_success={old}\nlast_attempt={old}\n")
         (e.home / "backup-auto.state").chmod(0o600)
+        # before the start: erssi's minute counts from its start, and a
+        # loaded box may take long to be ready (the bound below holds
+        # however long that takes; the timer can fire up to a second early)
+        t0 = time.time()
         e.start(160, 40)
         e.wait_ready()
-        t0 = time.time()
-        assert harness.wait_until(lambda: bk.is_dir() and autos(bk, e.home), 90), "no backup in 90 s"
-        assert time.time() - t0 > 40, f"backed up after {time.time() - t0:.0f} s, not about a minute"
+        assert harness.wait_until(lambda: bk.is_dir() and autos(bk, e.home), 150), "no backup in 150 s"
+        took = time.time() - t0
+        assert took >= 55, f"backed up {took:.0f} s after the start, not a minute after it"
         assert wait_log(e, ".tar.gz ("), log_text(e)[-2000:]
         assert stat.S_IMODE(bk.stat().st_mode) == 0o700, oct(bk.stat().st_mode)
         state = e.home / "backup-auto.state"
         assert stat.S_IMODE(state.lstat().st_mode) == 0o600
         text = state.read_text()
         assert f"last_file={bk}/" in text and "failures=0" in text, text
-        # /UPGRADE: no other backup within the day
-        e.type("/upgrade")
-        time.sleep(3)
-        e.type_and_wait("/echo after-upgrade")
+        # /UPGRADE (the new erssi runs): no other backup within the day,
+        # also when its first minute is over
+        e.upgrade()
         time.sleep(70)
         e.sync_output()
         assert len(autos(bk, e.home)) == 1, autos(bk, e.home)

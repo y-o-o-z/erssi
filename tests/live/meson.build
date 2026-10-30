@@ -11,8 +11,9 @@ if python3_prog.found()
   live_env.set('PYTHONDONTWRITEBYTECODE', '1')
   foreach t : ['harness', 'help', 'mentions', 'mentions_migrate', 'notify', 'keys', 'firstrun', 'search', 'layout', 'window_close', 'query_window', 'connect_existing', 'panel_widths', 'nicklist_bands', 'layout_restore', 'keepnick', 'debug_logs', 'panel_draw', 'e2e_trust', 'e2e_flood', 'credential_warning', 'panel_rows', 'relocatable', 'early_dialog', 'backup', 'backup_auto', 'update_check', 'hyperlinks']
     # keepnick waits out real check timers and a nick delay (about 170 s),
-    # e2e_flood irssi's real flood queue (about 150 s)
+    # e2e_flood irssi's real flood queue (about 150 s), backup_auto the
+    # first minute after a start and after an /UPGRADE (about 140 s)
     test('live ' + t, python3_prog, args : [files('test_' + t + '.py'), meson.build_root(), meson.source_root()],
-         env : live_env, is_parallel : false, timeout : t in ['keepnick', 'e2e_flood'] ? 600 : 300)
+         env : live_env, is_parallel : false, timeout : t in ['keepnick', 'e2e_flood', 'backup_auto'] ? 600 : 300)
   endforeach
 endif
