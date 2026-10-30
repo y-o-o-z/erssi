@@ -1,3 +1,94 @@
+shellter-v2026.10.7 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.7
+
+	Ready-made binaries for more systems, packages that can be built
+	again and compared, a notice of new releases, clickable links, and
+	backup and restore of the whole setup. Every change went through an
+	independent review before the release.
+
+	+ Install and update
+	  - ready-made binaries also for Debian 12 and Ubuntu 24.04 (amd64),
+	    next to Debian 13, FreeBSD 14 and FreeBSD 15
+	  - a source install runs the tests of erssi only: the tests of the
+	    release tools (the installer, the packager, the release hook)
+	    are in the meson suite 'tooling', which the installer leaves out
+	    (meson test --no-suite tooling) and CI and the release builds
+	    run. Two of them stopped installs on AlmaLinux 10 and other
+	    boxes: the pre-push interrupt case where /bin/sh is bash, and
+	    the hostile-package cases where perl has no Archive::Tar (both
+	    fixed too)
+	  - when a test fails, the installer names the failed tests, where
+	    the full results are, where to report it, and how to install the
+	    build anyway (--no-test)
+	  - a box where only one tool keeps the ready-made package out
+	    (ssh-keygen, perl, sha256sum, xz, curl) is told which package
+	    gives it, instead of only building from source
+	  - the library packages to install are named right on Debian 12
+	    (libssl3, libchafa0, libutf8proc2) and Ubuntu 24.04
+	    (libperl5.38t64)
+	  - erssi --check-update downloads only the signed tag and its
+	    commit, about 6 KB instead of 3 MB
+	  - shellter-install.sh --update --check --porcelain prints one line
+	    for programs: update, current, error or unmanaged (exit codes 0,
+	    0, 1 and 3)
+	  - a GIT_DIR (and the like) in the environment no longer sends the
+	    installer's git into the caller's repository
+
+	+ Packages you can build again
+	  - utils/build-binary.sh --verify PACKAGE builds a package again
+	    from the signed tag its MANIFEST names, with that tag's own
+	    packager and the full test suite, and compares: exit 0 when it
+	    is the same byte for byte, 3 when it differs (with the files and
+	    the MANIFEST lines that differ), 1 when it cannot compare
+	  - the MANIFEST also records the build's tools and libraries (cc,
+	    meson, ninja, strip, xz, libs), so two builds that differ say why
+	  - every package of this release was built twice and compared
+
+	+ Update notice
+	  - /SET update_check ON (off by default: it contacts the erssi
+	    repository) checks once a day, in the background, whether a
+	    newer signed release is out, and says so once per release in the
+	    Notices window; the new "update" statusbar item shows it
+	    (/STATUSBAR ADDITEM -after lag update info). It runs the
+	    installer installed with erssi, which checks the signature as
+	    erssi --update does; nothing is installed. /UPDATE shows what the
+	    last check found, /UPDATE CHECK checks now. The first-run setup
+	    asks whether to turn it on. An erssi the installer did not
+	    install, one of another user and one in Capsicum capability mode
+	    do not check, and say why
+
+	+ Look and feel
+	  - addresses in messages (http, https, ftp, gopher, gemini, irc,
+	    ircs) are clickable OSC 8 links, also when they wrap over several
+	    lines. The link is always the text that is shown; a colour change
+	    ends an address. /SET term_hyperlinks auto|on|off; auto turns them
+	    on in kitty, WezTerm, iTerm2, Ghostty, foot, Alacritty, Contour,
+	    Windows Terminal, Konsole, VS Code, VTE terminals and inside tmux,
+	    and off under GNU Screen, on a console and in terminals it does
+	    not know (over ssh, set it on yourself)
+
+	+ Backup and restore
+	  - erssi --backup [FILE] puts the erssi home into one file of mode
+	    0600: config, themes, startup, scripts and their autorun links,
+	    the E2E keyring, OTR and fe-web keys, credentials and the
+	    Mentions log; the IRC logs only with --with-logs. It holds private
+	    keys and passwords: keep it private. An existing file is never
+	    overwritten, and the backup checks its own file as a restore would
+	  - erssi --restore FILE checks every entry before it unpacks
+	    anything (files and directories only, no absolute name, no ..,
+	    links only inside the home), moves the old home aside to
+	    <home>.before-restore-<time> and the backup into its place, under
+	    the lock of erssi.lock; --dry-run lists what it would restore.
+	    Refused while an erssi runs on the home. Works in any locale and
+	    with non-ASCII names
+	  - also as shellter-install.sh --backup / --restore, so a new box
+	    can restore before erssi is installed
+	  - a running erssi holds a shared lock on <home>/erssi.lock
+
+	+ Tests
+	  - the E2E keyring cache test no longer fails when a second ends
+	    between its save and its load (about 1 run in 40 under load)
+
 shellter-v2026.10.6 2026-10-25  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.6
 

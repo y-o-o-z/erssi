@@ -1733,7 +1733,7 @@ do_uninstall() {
 # files, 0700 files that were executable) and only then moves the home
 # aside (<home>.before-restore-<time>) and the new one into its place, by
 # one rename each. It refuses while an erssi runs on the home: the
-# shared lock every erssi from 2026.11.0 on holds on <home>/erssi.lock,
+# shared lock every erssi from 2026.10.7 on holds on <home>/erssi.lock,
 # and an erssi process of this user that names this home (an older erssi
 # holds no lock).
 
@@ -2229,7 +2229,7 @@ bk_check_archive() {
 
 # command... run while this restore holds the exclusive lock of every
 # file in $BK_LOCKS (one or two lock files): an erssi that starts on the
-# home meanwhile waits for it (erssi from 2026.11.0 on waits up to 2 s),
+# home meanwhile waits for it (erssi from 2026.10.7 on waits up to 2 s),
 # and one that holds its lock already makes it fail. Returns 75 when a
 # lock is held by another process, 76 when the locks cannot be taken
 # here (no tool, no locks on the file system), else what the tool says;
@@ -2484,7 +2484,7 @@ do_restore() {
     if [ -d "$T" ]; then
         held=0; bk_lock_held "$T" || held=$?
         [ "$held" != 0 ] || bk_fail "an erssi is running on $(tilde "$T") (it holds $(tilde "$T/erssi.lock")) - /quit it first"
-        # an erssi older than 2026.11.0 holds no lock: the process list
+        # an erssi older than 2026.10.7 holds no lock: the process list
         pslist=1
         bk_erssi_pids "$T" "$BK_HOME_ABS" "$(tilde "$BK_HOME_ABS")" > "$BK_WORK/pids" || pslist=0
         have ps || pslist=0
@@ -2494,7 +2494,7 @@ do_restore() {
         if [ "$held" = 2 ] && [ "$pslist" = 0 ]; then
             warn "cannot tell whether an erssi runs on $(tilde "$T") (its lock cannot be checked, and no process list): make sure none does"
         elif [ "$pslist" = 0 ]; then
-            warn "no process list here: an erssi older than 2026.11.0 running on $(tilde "$T") would not be noticed"
+            warn "no process list here: an erssi older than 2026.10.7 running on $(tilde "$T") would not be noticed"
         elif [ "$held" = 2 ]; then
             warn "$(tilde "$T/erssi.lock") cannot be checked here (no perl, flock or lockf, or a file system without locks): only the process list was checked"
         fi

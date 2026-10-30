@@ -21,7 +21,7 @@ One command, no root:
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-On Debian 13, FreeBSD 14 and FreeBSD 15 (amd64) this installs the ready-made binary
+On Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15 (amd64) this installs the ready-made binary
 of the newest release in seconds (see [Binary packages](#binary-packages)).
 Anywhere else, with `--source`, or when the binary cannot be used here, it
 builds the release from source, about two minutes on a shell box; for
@@ -59,8 +59,9 @@ Linux and FreeBSD.
 ## Binary packages
 
 A release can carry one package per platform:
-`erssi-<version>-<platform>.tar.xz` (platforms `debian13-amd64`,
-`freebsd14-amd64` and `freebsd15-amd64`), listed in the release's `SHA256SUMS`, which the release
+`erssi-<version>-<platform>.tar.xz` (from 2026.10.7 the platforms
+`debian12-amd64`, `debian13-amd64`, `ubuntu24-amd64`, `freebsd14-amd64`
+and `freebsd15-amd64`), listed in the release's `SHA256SUMS`, which the release
 key signs (`SHA256SUMS.sig`). The installer tells the platform from
 `uname`, `/etc/os-release` (or `freebsd-version`) and `perl -e 'print $^V'`,
 downloads `SHA256SUMS`, `SHA256SUMS.sig` and the package with curl (fetch
@@ -406,17 +407,17 @@ clone), with the same options:
 
 ```sh
 git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
-    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.6
+    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.7
 ```
 
 ### Checking a binary package yourself
 
 The release key for packages is the same key in the namespace
 `erssi-release` (in `utils/allowed_signers` it is listed for `git`). For
-release 2026.10.6 on Debian 13:
+release 2026.10.7 on Debian 13:
 
 ```sh
-v=2026.10.6 p=debian13-amd64
+v=2026.10.7 p=debian13-amd64
 base=https://github.com/y-o-o-z/erssi/releases/download/shellter-v$v
 curl -fsSLO "$base/SHA256SUMS" -fsSLO "$base/SHA256SUMS.sig" -fsSLO "$base/erssi-$v-$p.tar.xz"
 echo '136268860+y-o-o-z@users.noreply.github.com namespaces="erssi-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS' > release_signers
@@ -430,9 +431,9 @@ tar -xJf "erssi-$v-$p.tar.xz" && cat "erssi-$v-$p/MANIFEST"
 136268860+y-o-o-z@users.noreply.github.com with ED25519 key
 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw` (the fingerprint you
 got another way, as above), `sha256sum` must print `OK`, and the
-`MANIFEST` must name `version=2026.10.6`, `tag=shellter-v2026.10.6`, your
+`MANIFEST` must name `version=2026.10.7`, `tag=shellter-v2026.10.7`, your
 platform and the commit of the release (`git rev-parse
-'shellter-v2026.10.6^{commit}'` in a clone with the verified tag, or the
+'shellter-v2026.10.7^{commit}'` in a clone with the verified tag, or the
 `RELEASES` line of a checked installer).
 
 ### Rebuilding a binary package yourself
@@ -457,7 +458,7 @@ few minutes) and compares. It prints `reproduced: … is identical to the
 build here` with the sha256 and exits 0; otherwise it says `NOT
 reproduced`, lists the files that differ and exits 3 (exit 1: it could
 not build it, nothing was compared). A difference usually means other
-versions of the tools: from 2026.11.0 on, the `MANIFEST` records the
+versions of the tools: from 2026.10.7 on, the `MANIFEST` records the
 main ones, the compiler (`cc=`), `meson=`, `ninja=`, `strip=`, `xz=` and
 the libraries (`libs=`), next to `perl_version=` and `libc=`, and
 `--verify` shows the lines where the two builds differ.
@@ -478,7 +479,7 @@ you changed (also by `/save -formats`) is never touched, and erssi says once
 where the new version is. The sha256 of what erssi installed is kept in
 `~/.erssi/default-files.sha256`. Symbolic links are left alone.
 
-Every erssi from 2026.11.0 on holds a shared lock on `~/.erssi/erssi.lock`
+Every erssi from 2026.10.7 on holds a shared lock on `~/.erssi/erssi.lock`
 while it runs (several erssi on one home all hold it), which tells
 `--restore` that the home is in use. The file stays when erssi ends; the
 lock goes with the process.
@@ -573,13 +574,13 @@ it would restore. The old home holds your old keys and passwords: remove
 it once erssi works.
 
 **Not while erssi runs.** `--restore` refuses while an erssi runs on that
-home: one from 2026.11.0 on holds the lock on `erssi.lock` (checked with
+home: one from 2026.10.7 on holds the lock on `erssi.lock` (checked with
 perl, `flock` or FreeBSD's `lockf`), and an older one is found in the
 process list (`ps`): an erssi process of yours whose `--home` is that
 home, or that has no `--home` and runs with a `HOME` whose `.erssi` it is
 (its `HOME` read from `/proc` on Linux, elsewhere taken to be yours). The
 two renames run while `--restore` holds the exclusive lock of the old
-home's `erssi.lock` and of the new one's: an erssi from 2026.11.0 on that
+home's `erssi.lock` and of the new one's: an erssi from 2026.10.7 on that
 starts at that moment waits for it (up to 2 s; still locked then, it runs
 without the lock and says so), and one that started since the check
 makes the restore stop with nothing changed. Limits: an older erssi
@@ -598,7 +599,7 @@ so the language you run it in does not matter.
 
 ## Upgrading from 1.3.x
 
-`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.6. 1.3.9
+`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.7. 1.3.9
 and older have no `--update`: run the install command above again (with
 the same `--prefix` and `--src` if you gave any), which builds the new
 release in the same places. Your `~/.erssi/config` is kept; at the first

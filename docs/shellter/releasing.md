@@ -44,8 +44,12 @@ Back to the [README](../../README.md).
 
 A release has a binary package for each supported platform, built from
 its signed tag by `utils/build-binary.sh` (POSIX sh) on that platform.
-The platforms are `debian13-amd64`, `freebsd14-amd64` and
-`freebsd15-amd64`.
+The platforms are `debian12-amd64`, `debian13-amd64`, `ubuntu24-amd64`,
+`freebsd14-amd64` and `freebsd15-amd64` (from 2026.10.7; Debian 13 and
+FreeBSD 14 since 2026.10.4, FreeBSD 15 since 2026.10.6). arm64 waits for
+a real arm64 machine: under qemu-user emulation tests of fe-web fail
+because the emulator lacks the kernel's socket diagnostics, so such a
+build proves nothing.
 
 ### What a package is
 
@@ -75,12 +79,12 @@ The platforms are `debian13-amd64`, `freebsd14-amd64` and
   | key | value |
   |---|---|
   | `built` | the commit's time, UTC (`2026-10-18T12:00:00Z`) |
-  | `cc` | the first line of `cc --version` (from 2026.11.0) |
+  | `cc` | the first line of `cc --version` (from 2026.10.7) |
   | `commit` | the tag's commit, 40 hex digits |
   | `libc` | `glibc 2.41` or `freebsd 14.5` |
-  | `libs` | `pkg-config --modversion` of the libraries built against: `glib-2.0=… openssl=… libotr=… libgcrypt=… libcurl=… chafa=… libutf8proc=…` (`?` for one pkg-config does not know; from 2026.11.0) |
-  | `meson`, `ninja` | their versions (from 2026.11.0) |
-  | `strip`, `xz` | the first line of their `--version` (from 2026.11.0) |
+  | `libs` | `pkg-config --modversion` of the libraries built against: `glib-2.0=… openssl=… libotr=… libgcrypt=… libcurl=… chafa=… libutf8proc=…` (`?` for one pkg-config does not know; from 2026.10.7) |
+  | `meson`, `ninja` | their versions (from 2026.10.7) |
+  | `strip`, `xz` | the first line of their `--version` (from 2026.10.7) |
   | `needed` | the shared libraries the binary and its modules need (sonames from `readelf -d`, space-separated, sorted) |
   | `perl_version` | `perl -e 'print $^V'` without the `v` (`5.40.1`) |
   | `platform` | `<os><major>-<arch>`: `os` is the `ID` of `/etc/os-release` or `freebsd`; `major` is from `VERSION_ID` or `freebsd-version -u`; `arch` is `amd64` (`x86_64`) or `arm64` (`aarch64`) |
@@ -174,6 +178,28 @@ mmdebstrap --mode=unshare --variant=apt \
 The build runs as an ordinary user (`builder`), not as root. The chroot is
 thrown away at the end, and the tarball is copied out to `./out`.
 
+### Debian 12 and Ubuntu 24.04
+
+The same chroot as for Debian 13, of the other release. `--mode=unshare`
+maps root to one of your subordinate uids, which must be able to enter
+the temporary directory: give mmdebstrap a `TMPDIR` that is not inside a
+0700 home (`mkdir -m 755 /var/tmp/$USER-mm`).
+
+```sh
+PKGS=git,ca-certificates,gcc,meson,ninja-build,pkgconf,libglib2.0-dev,libssl-dev,libperl-dev,libutf8proc-dev,libgcrypt20-dev,libotr5-dev,libcurl4-openssl-dev,libchafa-dev,python3,perl,binutils,xz-utils,openssh-client,libsodium23
+HOOK='chroot "$1" su builder -c "git clone https://github.com/y-o-o-z/erssi.git ~/erssi && sh ~/erssi/utils/build-binary.sh --repo ~/erssi --out ~/out shellter-vX"'
+# Debian 12
+TMPDIR=/var/tmp/$USER-mm mmdebstrap --mode=unshare --variant=apt --include="$PKGS" \
+  --customize-hook='chroot "$1" useradd -m builder' --customize-hook="$HOOK" \
+  --customize-hook='copy-out /home/builder/out ./out-debian12' bookworm /dev/null
+# Ubuntu 24.04: its archive key, and universe (libotr5-dev, libchafa-dev,
+# libutf8proc-dev are there); on Debian: sudo apt install ubuntu-keyring
+TMPDIR=/var/tmp/$USER-mm mmdebstrap --mode=unshare --variant=apt --components=main,universe \
+  --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg --include="$PKGS" \
+  --customize-hook='chroot "$1" useradd -m builder' --customize-hook="$HOOK" \
+  --customize-hook='copy-out /home/builder/out ./out-ubuntu24' noble /dev/null http://archive.ubuntu.com/ubuntu
+```
+
 ### FreeBSD 14 and 15
 
 Build on a FreeBSD 14 or 15 host or VM (each makes its own package), with packages from `pkg` (OpenSSL
@@ -220,7 +246,7 @@ understood.
 
 ### Signing and uploading
 
-Put both tarballs into one directory on the machine with the release
+Put all the tarballs into one directory on the machine with the release
 key:
 
 ```sh

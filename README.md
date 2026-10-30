@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-2026.10.6-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-2026.10.7-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -33,7 +33,7 @@ One command, no root:
 curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh
 ```
 
-- **Debian 13, FreeBSD 14 and FreeBSD 15 (amd64): a ready-made binary, in seconds.**
+- **Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15 (amd64): a ready-made binary, in seconds.**
   The installer downloads the release's package and installs it only if
   the release's `SHA256SUMS` carries a valid signature by the release key,
   the package matches its checksum there, and its manifest names the
@@ -116,16 +116,18 @@ Every command has a page in `/help`. The full lists:
 [docs/shellter/features.md](docs/shellter/features.md); what each release
 changed: [NEWS](NEWS).
 
-**New in 2026.10.6**
+**New in 2026.10.7**
 
-- **Nothing reaches your terminal raw** — control characters from the network (C0, DEL, C1) are drawn as `?` on every terminal type, so a channel or nick name cannot set your clipboard or window title.
-- **`--uninstall` removes only its own files** — libraries, headers and man pages of other software in the same prefix stay, and the installer names what it left.
-- **A web frontend that holds under load** — new connections are limited before TLS starts, and the web nick list follows the server.
-- **`man erssi`** — a manual page of its own, linked for an install in your home.
+- **Ready-made binaries for more systems** — Debian 12 and Ubuntu 24.04 join Debian 13 and FreeBSD 14 and 15.
+- **Packages you can rebuild yourself** — the packages are reproducible: `sh utils/build-binary.sh --verify PACKAGE` builds one again from its signed tag and says whether it is the same, byte for byte.
+- **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so in the Notices window; nothing is installed by itself.
+- **Clickable links** — addresses in messages are OSC 8 links in terminals that support them, also when they wrap over several lines; the link is always the text you see.
+- **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file; `erssi --restore` checks it and puts it back.
+- **Installs that do not stop for nothing** — a source install runs the tests of erssi, not those of the release tools, and names what to do when a test fails; a box without `ssh-keygen` is told which one package gives the ready-made binary.
 
 **Ready-made binaries**
 
-- **Installed in seconds** — on Debian 13, FreeBSD 14 and FreeBSD 15 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
+- **Installed in seconds** — on Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
 - **Checked before anything changes** — the signature on `SHA256SUMS`, the package's checksum and its manifest must all match, or nothing is installed.
 - **Releases side by side** — each release in its own directory, `current` switched in one step, `--rollback` to the previous one.
 

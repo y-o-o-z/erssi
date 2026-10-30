@@ -111,7 +111,7 @@ New in 2026.10.0.
   nearest 256-colour entry where it does not (GNU Screen, Linux console,
   rxvt-unicode, 8/16-colour terminals). `/set term_truecolor auto|on|off`
   overrides it.
-- **Clickable addresses** — new in 2026.11.0. http, https, ftp, gopher,
+- **Clickable addresses** — new in 2026.10.7. http, https, ftp, gopher,
   gemini, irc and ircs addresses in messages are OSC 8 hyperlinks, and one
   that wraps over several lines is still one link. The target is always the
   text you see (non-ASCII characters percent-encoded); punctuation after an
