@@ -13,6 +13,9 @@
 #   erssi --check-update    (= --update --check)
 #   sh shellter-install.sh --update --check --porcelain --prefix DIR
 #                           (one line for a program, see "--porcelain" below)
+#   /UPDATE INSTALL in erssi runs --update --prefix DIR the same way, in the
+#   background, with no terminal (nothing is asked; as root, missing
+#   packages stop it, as without --yes)
 #
 # Installs to ~/.local/opt/erssi and links ~/.local/bin/erssi. A release
 # that has a ready-made package for this platform (debian13-amd64,
@@ -127,8 +130,9 @@ erssi Shellter Edition - install and update
                  newer than the installed one (also for an erssi installed
                  from a branch or a commit with --ref)
   --check        with --update: only report whether an update is available
-  --porcelain    with --update --check: print one line for a program, and
-                 nothing else on stdout (see below)
+  --porcelain    with --update --check: print one line for a program (and
+                 the summary of a new release), nothing else on stdout
+                 (see below)
   --prefix DIR   install here, an absolute path (default ~/.local/opt/erssi)
   --src DIR      source checkout used for building (default ~/.local/src/erssi)
   --ref REF      release tag, branch or full commit SHA (default: newest
@@ -183,7 +187,12 @@ the commit of the signed tag), this platform and this system's perl.
   current <installed>           none newer (exit 0)
   error <reason>                the check failed, e.g. no network (exit 1)
   unmanaged <reason>            another tool updates this erssi (exit 3)
-Wrong options exit 2 as always. The steps and warnings go to stderr.
+After "update", up to 3 more lines "summary <text>" may follow: what the
+new release brings, from the message of its signed tag (the paragraph
+after the title line), on lines of at most 200 bytes without control
+characters; none when the tag has no such paragraph. The first line is
+always the one above. Wrong options exit 2 as always. The steps and
+warnings go to stderr.
 
 --src, --repo, --no-test/--test, --clean/--no-clean, --source (undone by
 --binary), --binary-base and --keep are kept in
@@ -292,7 +301,7 @@ fail() {
     PORCELAIN_WHY=$1; shift
     die "$*"
 }
-# --porcelain: the one line on the stdout of the installer (fd 3), once;
+# --porcelain: the first line on the stdout of the installer (fd 3), once;
 # "error" takes PORCELAIN_WHY when it is set, the message otherwise, on one
 # line and at most 200 bytes
 porcelain() {   # kind text
@@ -311,6 +320,11 @@ die_log() {   # message - with the end of the build log
     printf '\n  %sfull log: %s%s\n' "$D" "$LOG" "$N" >&2
     porcelain error "$1"
     exit 1
+}
+# --porcelain, after "update": the summary lines of the release (RELEASE_SUMMARY)
+porcelain_summary() {
+    [ "${PORCELAIN:-0}" = 1 ] && [ -n "${RELEASE_SUMMARY:-}" ] || return 0
+    printf '%s\n' "$RELEASE_SUMMARY" | sed 's/^/summary /' >&3
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 # 0 when the text files $1 and $2 are the same, byte for byte (text: no
@@ -411,6 +425,33 @@ fetch_ref() {   # repository-dir ref
         return
     fi
     git -C "$1" -c advice.detachedHead=false fetch -q --depth 1 -- "$REPO" "$2" >> "${LOG:-/dev/null}" 2>&1
+}
+# What a release brings, from the message of its tag object $2 (verified,
+# in the repository $1): the paragraph after the title line, up to the SSH
+# signature, its words on at most 3 lines of at most 200 bytes (a longer
+# text cut with "..."), control characters as spaces. Nothing when the
+# message has no such paragraph (the tags before 2026.11.0).
+tag_summary() {
+    git -C "$1" cat-file tag "$2" 2>/dev/null | LC_ALL=C tr '\001-\011\013-\037\177' ' ' | LC_ALL=C awk '
+        !body { if ($0 == "") body = 1; next }
+        /^-----BEGIN SSH SIGNATURE-----/ { exit }
+        !title { if (NF) title = 1; next }
+        NF == 0 { if (n) exit; next }
+        { for (i = 1; i <= NF; i++) w[++n] = $i }
+        END {
+            line = ""; lines = 0
+            for (i = 1; i <= n && lines < 3; i++) {
+                x = w[i]
+                if (length(x) > 200) x = substr(x, 1, 200)
+                if (line == "") { line = x; continue }
+                if (length(line) + 1 + length(x) <= 200) { line = line " " x; continue }
+                if (lines == 2) break
+                print line; lines++; line = x
+            }
+            if (line == "") exit
+            if (i <= n) line = (length(line) > 197 ? substr(line, 1, 197) : line) "..."
+            print line
+        }'
 }
 # the newest shellter-vX.Y.Z on $REPO newer than $2 with a valid signature,
 # checked in the repository $1; unsigned ones are named and skipped. Prints
@@ -1517,8 +1558,12 @@ find_update() {
         exit 0
     fi
     if [ "$CHECK" = 1 ]; then
-        printf '\n  %sUpdate available: %s %s %s%s\n  Run: erssi --update\n\n' "$B" "$INSTALLED" "$S_ARROW" "$NEWEST" "$N"
+        RELEASE_SUMMARY=$(tag_summary "$WORK" "$TAG_OBJ") || RELEASE_SUMMARY=""
+        printf '\n  %sUpdate available: %s %s %s%s\n' "$B" "$INSTALLED" "$S_ARROW" "$NEWEST" "$N"
+        [ -z "$RELEASE_SUMMARY" ] || printf '%s\n' "$RELEASE_SUMMARY" | sed 's/^/  /'
+        printf '  Run: erssi --update\n\n'
         porcelain update "$INSTALLED $NEWEST"
+        porcelain_summary
         exit 0
     fi
 }
@@ -2616,7 +2661,7 @@ unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONF
 STAGE="" BWORK="" BLOCK="" BLOG="" ASIDE="" OLD_LINK="" PREFIX_LOCKED="" SRC_LOCKED=""
 UD="" UL="" RP="" MADE="" FOUND_UPDATE="" NEW_SRC="" SRC_NAMED="" CHK_OPT="" LOCK_SEEN="" LOCK_WHY="" JOB="" LOG=""
 PREFIX="$HOME/.local/opt/erssi"
-BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0 PORCELAIN=0 PORCELAIN_SAID=0 PORCELAIN_WHY=""
+BIN_TOOL_PKG="" SRC="" REF="" REPO="" RUN_TESTS="" CLEAN="" UPDATE=0 CHECK=0 YES=0 PORCELAIN=0 PORCELAIN_SAID=0 PORCELAIN_WHY="" RELEASE_SUMMARY=""
 USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 BK_NL='
 ' BK_LOCKS="" KEPT_TRY=""

@@ -2151,6 +2151,58 @@ update-porcelain)
     check "... nothing on stdout" [ ! -s "$W/pout" ]
     check "... said" grep -q -- '--porcelain goes with --update --check' "$W/perr"
     ;;
+update-summary)
+    # --update --check --porcelain: after the "update" line, the summary of
+    # the release from the message of its signed tag (the paragraph after
+    # the title), at most 3 lines of at most 200 bytes, no control
+    # characters; none from a tag without it, and never from one that is
+    # not signed by the release key
+    release_key
+    c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
+    c2=$(release_commit 2026.10.2)
+    esc=$(printf '\033')
+    {
+        printf 'erssi Shellter Edition 2026.10.2\n\n'
+        printf '/UPDATE INSTALL updates from inside\nerssi;%s[2J the notice\tshows this.\n\n' "$esc"
+        printf 'A second paragraph is not taken.\n'
+    } > "$W/msg"
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
+    release_prefix 2026.10.1 "$c1" shellter-v2026.10.1
+    porc
+    check "summary: code 0" [ "$RC" = 0 ]
+    check "... the first line as always" [ "$(sed -n 1p "$W/pout")" = "update 2026.10.1 2026.10.2" ]
+    check "... one summary line, the paragraph joined, controls gone" \
+        [ "$(sed -n '2,$p' "$W/pout")" = "summary /UPDATE INSTALL updates from inside erssi; [2J the notice shows this." ]
+    check "... no escape byte on stdout" [ "$(LC_ALL=C tr -d '\000-\032\034-\377' < "$W/pout" | wc -c)" -eq 0 ]
+    check "... shown by --check on a terminal too" grep -q '^  /UPDATE INSTALL updates from inside erssi' "$W/perr"
+    # a long one: 3 lines of at most 200 bytes, the rest cut with ...
+    {
+        printf 'erssi Shellter Edition 2026.10.2\n\n'
+        i=0; while [ "$i" -lt 120 ]; do printf 'word%03d ' "$i"; i=$((i + 1)); done; printf '\n'
+    } > "$W/msg"
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid -c gpg.format=ssh \
+        -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
+    porc
+    check "long summary: 1 + 3 lines" [ "$(wc -l < "$W/pout")" -eq 4 ]
+    check "... each at most 200 bytes after the keyword" \
+        [ "$(sed -n '2,$s/^summary //p' "$W/pout" | awk 'length($0) > 200 {n++} END {print n + 0}')" = 0 ]
+    check "... cut with ..." [ "$(sed -n '4p' "$W/pout" | sed -n 's/.*\.\.\.$/cut/p')" = cut ]
+    # 25 words of 7 bytes and their spaces are 199 bytes
+    check "... words kept whole" [ "$(sed -n 2p "$W/pout" | awk '{print $NF}')" = word024 ]
+    check "... the next on the next line" [ "$(sed -n 3p "$W/pout" | cut -d" " -f1-2)" = "summary word025" ]
+    # a title only (the tags before 2026.11.0): the one line
+    rtag shellter-v2026.10.2 "$c2"
+    porc
+    check "no summary: the one line" one_line "update 2026.10.1 2026.10.2"
+    # unsigned newer tag with a summary: not an update, no summary
+    c3=$(release_commit 2026.10.3)
+    printf 'erssi Shellter Edition 2026.10.3\n\nForged summary.\n' > "$W/msg"
+    git -C "$W/repo" -c user.name=test -c user.email=test@example.invalid tag -a -F "$W/msg" shellter-v2026.10.3 "$c3"
+    porc
+    check "unsigned tag: its summary not taken" no_grep Forged "$W/pout"
+    check "... the signed one found" one_line "update 2026.10.1 2026.10.2"
+    ;;
 update-same-version)
     # Release tags never move: a signed tag of the installed release that
     # now points to another commit is reported, never installed - a newer
