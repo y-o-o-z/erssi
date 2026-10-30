@@ -3,16 +3,20 @@
 real installer of this source tree (shellter-install.sh --backup, named by
 ERSSI_TEST_UPDATE_INSTALLER) and a real erssi:
 
-- /BACKUP NOW writes backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz, a tar
-  of the home of mode 0600 with the config in it, says so in one line, and
-  keeps the newest backup_keep automatic backups: older ones of that name
-  go, a file put there by hand and a backup of another name stay;
+- /BACKUP NOW writes backup_dir/erssi-auto-<id>-YYYYMMDD-HHMMSS.tar.gz
+  (<id>: 8 hex digits of the SHA-1 of the home's real path), a tar of the
+  home of mode 0600 with the config in it, says so in one line, and keeps
+  the newest backup_keep automatic backups of this home: older ones of
+  that name go, a file put there by hand, a backup of another name and
+  the backups of another home in the same backup_dir stay;
 - backup_auto daily with the last backup two days old: the backup runs by
   itself about a minute after the start, once, and the state file
   (mode 0600) has it; after /UPGRADE no other one runs;
 - backup_dir inside the home: turning backup_auto on says why it cannot
   be used, and nothing is written.
 Usage: test_backup_auto.py <build dir> [<source dir>]"""
+import hashlib
+import os
 import re
 import shutil
 import stat
@@ -26,7 +30,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
 WAIT = 30
-NAME = re.compile(r"^erssi-auto-\d{8}-\d{6}\.tar\.gz$")
+NAME = re.compile(r"^erssi-auto-[0-9a-f]{8}-\d{8}-\d{6}\.tar\.gz$")
+
+
+def home_id(home):
+    """the id of an erssi home in the names of its automatic backups"""
+    return hashlib.sha1(os.path.realpath(home).encode()).hexdigest()[:8]
 
 
 def main():
@@ -45,8 +54,9 @@ def main():
     def wait_log(e, text, timeout=WAIT):
         return bool(harness.wait_until(lambda: text in log_text(e), timeout))
 
-    def autos(d):
-        return sorted(p.name for p in d.iterdir() if NAME.match(p.name))
+    def autos(d, home):
+        return sorted(p.name for p in d.iterdir()
+                      if NAME.match(p.name) and p.name.startswith(f"erssi-auto-{home_id(home)}-"))
 
     def erssi(name, settings):
         cfg = harness.config(st["port"], name)
@@ -66,18 +76,24 @@ def main():
     def t_now_and_rotation():
         bk = work / "bk-now"
         bk.mkdir()
-        for n in ("erssi-auto-20200101-000000.tar.gz", "erssi-auto-20200102-000000.tar.gz",
-                  "erssi-auto-20200103-000000.tar.gz", "erssi-backup-20200101-000000.tar.gz",
-                  "mine.tar.gz"):
-            (bk / n).write_text("old\n")
         e = erssi("alice", f'backup_dir = "{bk}"; backup_keep = "2";')
+        e.home.mkdir(parents=True, exist_ok=True)
+        me = home_id(e.home)
+        # the other home's: older than this one's, and more than backup_keep
+        other = "0" * 8 if me != "0" * 8 else "1" * 8
+        theirs = [f"erssi-auto-{other}-2019010{i}-000000.tar.gz" for i in range(1, 4)]
+        for n in [f"erssi-auto-{me}-20200101-000000.tar.gz", f"erssi-auto-{me}-20200102-000000.tar.gz",
+                  f"erssi-auto-{me}-20200103-000000.tar.gz", "erssi-backup-20200101-000000.tar.gz",
+                  "mine.tar.gz"] + theirs:
+            (bk / n).write_text("old\n")
         e.start(160, 40)
         e.wait_ready()
         e.type_and_wait("/backup now")
         assert wait_log(e, ".tar.gz ("), log_text(e)[-2000:]
         assert "Backup failed" not in log_text(e), log_text(e)[-2000:]
-        names = autos(bk)
-        assert len(names) == 2 and names[0] == "erssi-auto-20200103-000000.tar.gz", names
+        names = autos(bk, e.home)
+        assert len(names) == 2 and names[0] == f"erssi-auto-{me}-20200103-000000.tar.gz", names
+        assert all((bk / n).read_text() == "old\n" for n in theirs), sorted(os.listdir(bk))
         new = bk / names[1]
         assert f"Backup: {new} (" in log_text(e), log_text(e)[-2000:]
         assert stat.S_IMODE(new.stat().st_mode) == 0o600, oct(new.stat().st_mode)
@@ -102,7 +118,7 @@ def main():
         e.start(160, 40)
         e.wait_ready()
         t0 = time.time()
-        assert harness.wait_until(lambda: bk.is_dir() and autos(bk), 90), "no backup in 90 s"
+        assert harness.wait_until(lambda: bk.is_dir() and autos(bk, e.home), 90), "no backup in 90 s"
         assert time.time() - t0 > 40, f"backed up after {time.time() - t0:.0f} s, not about a minute"
         assert wait_log(e, ".tar.gz ("), log_text(e)[-2000:]
         assert stat.S_IMODE(bk.stat().st_mode) == 0o700, oct(bk.stat().st_mode)
@@ -116,7 +132,7 @@ def main():
         e.type_and_wait("/echo after-upgrade")
         time.sleep(70)
         e.sync_output()
-        assert len(autos(bk)) == 1, autos(bk)
+        assert len(autos(bk, e.home)) == 1, autos(bk, e.home)
         assert log_text(e).count(".tar.gz (") == 1, log_text(e)[-3000:]
         finish(e)
 

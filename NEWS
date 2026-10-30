@@ -25,9 +25,11 @@ shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - automatic backups from inside erssi: /SET backup_auto daily (or
 	    weekly) runs erssi --backup in the background into backup_dir
 	    (default ~/erssi-backups, which must be outside the erssi home)
-	    as erssi-auto-YYYYMMDD-HHMMSS.tar.gz, mode 0600. After each one
-	    the newest backup_keep (default 7) files of that name are kept;
-	    nothing else in backup_dir is ever removed. The time of the
+	    as erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz, mode 0600; ID is made
+	    from the path of the erssi home, so homes can share backup_dir.
+	    After each one the newest backup_keep (default 7) files of that
+	    name and home are kept; nothing else in backup_dir is ever
+	    removed, also not the backups of another home. The time of the
 	    last backup is kept in ~/.erssi/backup-auto.state, so a restart
 	    or /UPGRADE makes no extra one and a missed day is made up at
 	    the next start. One line per backup in the Notices window; a

@@ -4,11 +4,13 @@
 
 %9Description:%9
 
-    How many automatic backups stay in backup_dir. After each backup
-    that worked, the newest backup_keep files named
-    erssi-auto-YYYYMMDD-HHMMSS.tar.gz are kept and older ones of that
-    name removed. Files of any other name are never removed, nor links:
-    put a backup you want to keep under another name. 0 keeps them all.
+    How many automatic backups of this erssi home stay in backup_dir.
+    After each backup that worked, the newest backup_keep files named
+    erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz, ID the one of this home
+    (/HELP backup), are kept and older ones of that name removed. Files
+    of any other name are never removed, nor links, nor the backups of
+    another home: put a backup you want to keep under another name. 0
+    keeps them all.
 
 %9Examples:%9
 

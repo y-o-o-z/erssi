@@ -9,7 +9,7 @@
     (/HELP backup). One line in the window of client messages (the
     Notices window of erssi) says where each backup went:
 
-        Backup: ~/erssi-backups/erssi-auto-20261101-120000.tar.gz (48 KB)
+        Backup: ~/erssi-backups/erssi-auto-3f2a91c0-20261101-120000.tar.gz (48 KB)
 
     The next backup is due a day (a week) after the last one that
     worked. The time of the last one is kept in ~/.erssi/backup-auto.state

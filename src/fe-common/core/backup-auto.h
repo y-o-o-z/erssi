@@ -5,10 +5,12 @@
  * a day or a week the installer installed with erssi
  * (<PKGDATADIR>/shellter-install.sh --backup FILE --home <home>) is run in
  * the background, the same backup as `erssi --backup FILE`, into
- * backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz. After a backup that
- * worked, the newest backup_keep files of that name are kept and older
- * ones of that name removed; nothing else in backup_dir is touched. The
- * job is the one of the update check (update-check.h). */
+ * backup_dir/erssi-auto-<id>-YYYYMMDD-HHMMSS.tar.gz, <id> the home's
+ * (backup_auto_home_id). After a backup that worked, the newest
+ * backup_keep files of that name with this home's id are kept and older
+ * ones of that name removed; nothing else in backup_dir is touched, also
+ * not the backups of another home that shares it. The job is the one of
+ * the update check (update-check.h). */
 
 #include <glib.h>
 
@@ -35,18 +37,27 @@ gint64 backup_auto_interval(BACKUP_AUTO_MODE mode);
 gint64 backup_auto_due_in(gint64 now, BACKUP_AUTO_MODE mode, gint64 last_success,
                           gint64 last_attempt);
 
-/* "erssi-auto-YYYYMMDD-HHMMSS.tar.gz" of the local time T */
-char *backup_auto_name(gint64 t);
-/* TRUE for exactly that pattern (digits where the date and time are) */
-gboolean backup_auto_name_valid(const char *name);
+/* the length of the id of a home in the names of its backups */
+#define BACKUP_AUTO_ID_LEN 8
+
+/* The id of the erssi home HOME: the first BACKUP_AUTO_ID_LEN hex digits
+ * (lowercase) of the SHA-1 of its real path, so two homes that share a
+ * backup_dir keep their own backups apart */
+char *backup_auto_home_id(const char *home);
+/* "erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz" of the home ID, local time T */
+char *backup_auto_name(const char *id, gint64 t);
+/* TRUE for exactly that pattern (lowercase hex where the id is, digits
+ * where the date and time are), of home ID; of any home when ID is NULL */
+gboolean backup_auto_name_valid(const char *name, const char *id);
 
 /* Of the file NAMES of a directory, those to remove so that KEEP
- * automatic backups stay: only names that are backup_auto_name_valid,
- * the newest by name kept. NEWEST (the backup just made, or NULL) is
- * always kept and is one of the KEEP, even when a clock that went back
- * gave it an older name. KEEP < 1 removes nothing. NULL-terminated,
- * g_strfreev, newest first. */
-char **backup_auto_rotate(const char *const *names, int keep, const char *newest);
+ * automatic backups of home ID stay: only names that are
+ * backup_auto_name_valid for ID, the newest by name kept. NEWEST (the
+ * backup just made, or NULL) is always kept and is one of the KEEP, even
+ * when a clock that went back gave it an older name. KEEP < 1 (or no ID)
+ * removes nothing. NULL-terminated, g_strfreev, newest first. */
+char **backup_auto_rotate(const char *const *names, const char *id, int keep,
+                          const char *newest);
 
 /* NULL when DIR (absolute, after ~ is expanded) can take backups of the
  * erssi home HOME, else why not: empty, relative, or HOME itself or

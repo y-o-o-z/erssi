@@ -35,7 +35,7 @@
 #define EXITED(code) ((code) << 8)
 
 static GString *printed;
-static char *mode_file, *runs_file, *state_file, *backups;
+static char *mode_file, *runs_file, *state_file, *backups, *home_id;
 
 /* ── the pure parts ──────────────────────────────────────────────────── */
 
@@ -74,25 +74,64 @@ static void test_due(void)
 	                0);
 }
 
+#define ID "0123abcd"
+#define OTHER "fedc9876"
+
 static void test_names(void)
 {
-	char *name = backup_auto_name(1800000000);
+	char *name = backup_auto_name(ID, 1800000000), *id, *link, *dir, *sum;
 
-	g_assert_true(g_str_has_prefix(name, "erssi-auto-20"));
+	g_assert_true(g_str_has_prefix(name, "erssi-auto-" ID "-20"));
 	g_assert_true(g_str_has_suffix(name, ".tar.gz"));
-	g_assert_true(backup_auto_name_valid(name));
+	g_assert_true(backup_auto_name_valid(name, ID));
+	g_assert_true(backup_auto_name_valid(name, NULL));
+	g_assert_false(backup_auto_name_valid(name, OTHER));
 	g_free(name);
-	g_assert_true(backup_auto_name_valid("erssi-auto-20261030-120000.tar.gz"));
-	g_assert_false(backup_auto_name_valid(NULL));
-	g_assert_false(backup_auto_name_valid(""));
-	g_assert_false(backup_auto_name_valid("erssi-backup-20261030-120000.tar.gz"));
-	g_assert_false(backup_auto_name_valid("erssi-auto-20261030-120000.tar.xz"));
-	g_assert_false(backup_auto_name_valid("erssi-auto-20261030-120000.tar.gz~"));
-	g_assert_false(backup_auto_name_valid("xerssi-auto-20261030-120000.tar.gz"));
-	g_assert_false(backup_auto_name_valid("erssi-auto-2026103-1200000.tar.gz"));
-	g_assert_false(backup_auto_name_valid("erssi-auto-2026103a-120000.tar.gz"));
-	g_assert_false(backup_auto_name_valid("erssi-auto-20261030_120000.tar.gz"));
-	g_assert_false(backup_auto_name_valid(".erssi-backup.AbC123"));
+	g_assert_true(backup_auto_name_valid("erssi-auto-" ID "-20261030-120000.tar.gz", ID));
+	g_assert_true(backup_auto_name_valid("erssi-auto-" OTHER "-20261030-120000.tar.gz", NULL));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" OTHER "-20261030-120000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid(NULL, ID));
+	g_assert_false(backup_auto_name_valid("", ID));
+	/* the names without an id (never released) are not automatic ones */
+	g_assert_false(backup_auto_name_valid("erssi-auto-20261030-120000.tar.gz", NULL));
+	g_assert_false(backup_auto_name_valid("erssi-auto-0123ABCD-20261030-120000.tar.gz", NULL));
+	g_assert_false(backup_auto_name_valid("erssi-auto-0123abcg-20261030-120000.tar.gz", NULL));
+	g_assert_false(backup_auto_name_valid("erssi-auto-0123abc-020261030-120000.tar.gz", NULL));
+	g_assert_false(backup_auto_name_valid("erssi-backup-" ID "-20261030-120000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" ID "-20261030-120000.tar.xz", ID));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" ID "-20261030-120000.tar.gz~", ID));
+	g_assert_false(backup_auto_name_valid("xerssi-auto-" ID "-20261030-120000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" ID "-2026103-1200000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" ID "-2026103a-120000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid("erssi-auto-" ID "-20261030_120000.tar.gz", ID));
+	g_assert_false(backup_auto_name_valid(".erssi-backup.AbC123", NULL));
+
+	/* the id of a home: 8 hex digits of the SHA-1 of its real path, the
+	   same through a link */
+	dir = g_build_filename(test_tmpdir, "idhome", NULL);
+	link = g_build_filename(test_tmpdir, "idlink", NULL);
+	g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
+	g_assert_cmpint(symlink(dir, link), ==, 0);
+	name = realpath(dir, NULL);
+	g_assert_nonnull(name);
+	sum = g_compute_checksum_for_string(G_CHECKSUM_SHA1, name, -1);
+	free(name);
+	id = backup_auto_home_id(dir);
+	g_assert_cmpint(strlen(id), ==, BACKUP_AUTO_ID_LEN);
+	g_assert_true(strncmp(sum, id, BACKUP_AUTO_ID_LEN) == 0);
+	g_free(id);
+	id = backup_auto_home_id(link);
+	g_assert_true(strncmp(sum, id, BACKUP_AUTO_ID_LEN) == 0);
+	g_free(id);
+	g_free(sum);
+	/* another home, another id */
+	id = backup_auto_home_id(test_tmpdir);
+	sum = backup_auto_home_id(dir);
+	g_assert_cmpstr(id, !=, sum);
+	g_free(id);
+	g_free(sum);
+	g_free(dir);
+	g_free(link);
 }
 
 static void assert_strv(char **got, const char *const *want)
@@ -107,55 +146,63 @@ static void assert_strv(char **got, const char *const *want)
 	g_strfreev(got);
 }
 
+#define NEWEST "erssi-auto-" ID "-20261030-120000.tar.gz"
+
 static void test_rotate(void)
 {
 	static const char *const names[] = {
-		"erssi-auto-20261025-120000.tar.gz",
+		"erssi-auto-" ID "-20261025-120000.tar.gz",
 		"notes.txt",
-		"erssi-auto-20261029-120000.tar.gz",
+		"erssi-auto-" ID "-20261029-120000.tar.gz",
 		"erssi-backup-20200101-000000.tar.gz",
-		"erssi-auto-20261027-120000.tar.gz",
-		"erssi-auto-20261030-120000.tar.gz",
-		"erssi-auto-20261028-120000.tar.gz",
-		"my-erssi-auto-20200101-000000.tar.gz",
-		"erssi-auto-20261026-120000.tar.gz",
+		"erssi-auto-" ID "-20261027-120000.tar.gz",
+		"erssi-auto-" ID "-20261030-120000.tar.gz",
+		"erssi-auto-" ID "-20261028-120000.tar.gz",
+		"my-erssi-auto-" ID "-20200101-000000.tar.gz",
+		/* another home's, and the old names without an id */
+		"erssi-auto-" OTHER "-20200101-000000.tar.gz",
+		"erssi-auto-20200101-000000.tar.gz",
+		"erssi-auto-" ID "-20261026-120000.tar.gz",
 		NULL
 	};
 	static const char *const keep3[] = {
-		"erssi-auto-20261027-120000.tar.gz",
-		"erssi-auto-20261026-120000.tar.gz",
-		"erssi-auto-20261025-120000.tar.gz",
+		"erssi-auto-" ID "-20261027-120000.tar.gz",
+		"erssi-auto-" ID "-20261026-120000.tar.gz",
+		"erssi-auto-" ID "-20261025-120000.tar.gz",
 		NULL
 	};
 	static const char *const keep4_no_newest[] = {
-		"erssi-auto-20261026-120000.tar.gz",
-		"erssi-auto-20261025-120000.tar.gz",
+		"erssi-auto-" ID "-20261026-120000.tar.gz",
+		"erssi-auto-" ID "-20261025-120000.tar.gz",
 		NULL
 	};
 	static const char *const keep1_old_newest[] = {
-		"erssi-auto-20261030-120000.tar.gz",
-		"erssi-auto-20261029-120000.tar.gz",
-		"erssi-auto-20261028-120000.tar.gz",
-		"erssi-auto-20261027-120000.tar.gz",
-		"erssi-auto-20261026-120000.tar.gz",
+		"erssi-auto-" ID "-20261030-120000.tar.gz",
+		"erssi-auto-" ID "-20261029-120000.tar.gz",
+		"erssi-auto-" ID "-20261028-120000.tar.gz",
+		"erssi-auto-" ID "-20261027-120000.tar.gz",
+		"erssi-auto-" ID "-20261026-120000.tar.gz",
 		NULL
 	};
 	static const char *const none[] = { NULL };
 
 	/* the newest three, the one just made among them */
-	assert_strv(backup_auto_rotate(names, 3, "erssi-auto-20261030-120000.tar.gz"), keep3);
+	assert_strv(backup_auto_rotate(names, ID, 3, NEWEST), keep3);
 	/* nothing just made: the newest four by name */
-	assert_strv(backup_auto_rotate(names, 4, NULL), keep4_no_newest);
+	assert_strv(backup_auto_rotate(names, ID, 4, NULL), keep4_no_newest);
 	/* a clock that went back gave the new one the oldest name: it stays,
 	   and the others go */
-	assert_strv(backup_auto_rotate(names, 1, "erssi-auto-20261025-120000.tar.gz"),
+	assert_strv(backup_auto_rotate(names, ID, 1, "erssi-auto-" ID "-20261025-120000.tar.gz"),
 	            keep1_old_newest);
-	assert_strv(backup_auto_rotate(names, 7, "erssi-auto-20261030-120000.tar.gz"), none);
-	assert_strv(backup_auto_rotate(names, 6, "erssi-auto-20261030-120000.tar.gz"), none);
+	assert_strv(backup_auto_rotate(names, ID, 7, NEWEST), none);
+	assert_strv(backup_auto_rotate(names, ID, 6, NEWEST), none);
 	/* 0 or less: nothing is removed */
-	assert_strv(backup_auto_rotate(names, 0, "erssi-auto-20261030-120000.tar.gz"), none);
-	assert_strv(backup_auto_rotate(names, -1, NULL), none);
-	assert_strv(backup_auto_rotate(NULL, 3, NULL), none);
+	assert_strv(backup_auto_rotate(names, ID, 0, NEWEST), none);
+	assert_strv(backup_auto_rotate(names, ID, -1, NULL), none);
+	assert_strv(backup_auto_rotate(NULL, ID, 3, NULL), none);
+	assert_strv(backup_auto_rotate(names, NULL, 1, NULL), none);
+	/* another home: its one backup is the newest of its own */
+	assert_strv(backup_auto_rotate(names, OTHER, 1, NULL), none);
 }
 
 static void test_dir_reason(void)
@@ -358,6 +405,17 @@ static void touch(const char *name)
 	g_free(path);
 }
 
+/* the automatic name of STAMP (YYYYMMDD-HHMMSS) of the home ID */
+static const char *of(const char *id, const char *stamp)
+{
+	static char buf[4][128];
+	static int n;
+
+	n = (n + 1) % 4;
+	g_snprintf(buf[n], sizeof(buf[n]), "erssi-auto-%s-%s.tar.gz", id, stamp);
+	return buf[n];
+}
+
 static gboolean exists(const char *name)
 {
 	char *path = g_build_filename(backups, name, NULL);
@@ -380,7 +438,8 @@ static int auto_files(void)
 		char *path = g_build_filename(backups, name, NULL);
 		struct stat st;
 
-		if (backup_auto_name_valid(name) && lstat(path, &st) == 0 && S_ISREG(st.st_mode))
+		if (backup_auto_name_valid(name, home_id) && lstat(path, &st) == 0 &&
+		    S_ISREG(st.st_mode))
 			n++;
 		g_free(path);
 	}
@@ -400,22 +459,28 @@ static void reset(void)
 }
 
 /* Due at the start (no backup yet): the timer runs the installer with
- * --backup <backup_dir>/erssi-auto-*.tar.gz --home <home>, one line says
- * so, and rotation keeps the newest backup_keep automatic backups -
- * nothing else in the directory, and no link. The next tick within the
- * day runs nothing, also after the setting went off and on (a restart). */
+ * --backup <backup_dir>/erssi-auto-<id>-*.tar.gz --home <home>, one line
+ * says so, and rotation keeps the newest backup_keep automatic backups of
+ * this home - nothing else in the directory, no link, and none of another
+ * home that shares it. The next tick within the day runs nothing, also
+ * after the setting went off and on (a restart). */
 static void test_scheduled_and_rotation(void)
 {
 	char *runs_text = NULL, *link, *state = NULL, *expect;
 
 	reset();
-	touch("erssi-auto-20200101-000000.tar.gz");
-	touch("erssi-auto-20200102-000000.tar.gz");
-	touch("erssi-auto-20200103-000000.tar.gz");
-	touch("erssi-auto-20200104-000000.tar.gz");
+	touch(of(home_id, "20200101-000000"));
+	touch(of(home_id, "20200102-000000"));
+	touch(of(home_id, "20200103-000000"));
+	touch(of(home_id, "20200104-000000"));
+	/* another erssi home with this backup_dir: older and newer ones */
+	touch(of("fedc9876", "20190101-000000"));
+	touch(of("fedc9876", "20200102-000000"));
+	touch(of("fedc9876", "20300101-000000"));
+	touch(of("fedc9876", "20300102-000000"));
 	touch("erssi-backup-20200101-000000.tar.gz");
 	touch("hand.tar.gz");
-	link = g_build_filename(backups, "erssi-auto-19990101-000000.tar.gz", NULL);
+	link = g_build_filename(backups, of(home_id, "19990101-000000"), NULL);
 	g_assert_cmpint(symlink("hand.tar.gz", link), ==, 0);
 	g_free(link);
 
@@ -426,7 +491,7 @@ static void test_scheduled_and_rotation(void)
 	wait_backup();
 	g_assert_cmpint(runs(), ==, 1);
 	g_assert_true(g_file_get_contents(runs_file, &runs_text, NULL, NULL));
-	expect = g_strdup_printf("--backup %s/erssi-auto-", backups);
+	expect = g_strdup_printf("--backup %s/erssi-auto-%s-", backups, home_id);
 	g_assert_nonnull(strstr(runs_text, expect));
 	g_free(expect);
 	expect = g_strdup_printf(" --home %s ", get_irssi_dir());
@@ -439,13 +504,18 @@ static void test_scheduled_and_rotation(void)
 	g_assert_nonnull(strstr(printed->str, "/erssi-auto-"));
 	/* the new one and the two newest old ones */
 	g_assert_cmpint(auto_files(), ==, 3);
-	g_assert_true(exists("erssi-auto-20200104-000000.tar.gz"));
-	g_assert_true(exists("erssi-auto-20200103-000000.tar.gz"));
-	g_assert_false(exists("erssi-auto-20200102-000000.tar.gz"));
-	g_assert_false(exists("erssi-auto-20200101-000000.tar.gz"));
+	g_assert_true(exists(of(home_id, "20200104-000000")));
+	g_assert_true(exists(of(home_id, "20200103-000000")));
+	g_assert_false(exists(of(home_id, "20200102-000000")));
+	g_assert_false(exists(of(home_id, "20200101-000000")));
 	g_assert_true(exists("erssi-backup-20200101-000000.tar.gz"));
 	g_assert_true(exists("hand.tar.gz"));
-	g_assert_true(exists("erssi-auto-19990101-000000.tar.gz"));
+	g_assert_true(exists(of(home_id, "19990101-000000")));
+	/* the other home's: all four, though older and more than backup_keep */
+	g_assert_true(exists(of("fedc9876", "20190101-000000")));
+	g_assert_true(exists(of("fedc9876", "20200102-000000")));
+	g_assert_true(exists(of("fedc9876", "20300101-000000")));
+	g_assert_true(exists(of("fedc9876", "20300102-000000")));
 
 	g_assert_true(g_file_get_contents(state_file, &state, NULL, NULL));
 	g_assert_nonnull(strstr(state, "last_file="));
@@ -615,6 +685,7 @@ int main(int argc, char **argv)
 	fe_common_core_init();
 	signal_emit("irssi init finished", 0);
 	state_file = g_build_filename(get_irssi_dir(), "backup-auto.state", NULL);
+	home_id = backup_auto_home_id(get_irssi_dir());
 
 	printed = g_string_new("");
 	signal_add("print text", (SIGNAL_FUNC) sig_print_text);

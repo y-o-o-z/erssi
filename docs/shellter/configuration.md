@@ -173,20 +173,23 @@ setup. It is off by default:
   as `erssi --backup FILE` ([Moving to another box](install.md#moving-to-another-box)),
   in the background: erssi goes on while it runs, one runs at a time, one
   that takes longer than 15 minutes is stopped. The file is
-  `backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz`, mode 0600, without the
-  IRC logs; `backup_dir` is made (mode 0700) when it is not there.
+  `backup_dir/erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz`, mode 0600, without
+  the IRC logs; `backup_dir` is made (mode 0700) when it is not there.
+  `ID` is the first 8 hex digits of the SHA-1 of the real path of the
+  erssi home, so several homes can share one `backup_dir`.
 - **When** — a day (a week) after the last backup that worked, the first
   one a minute after the start at the earliest. Its time is kept in
   `~/.erssi/backup-auto.state` (mode 0600), so a restart or `/upgrade`
   makes no extra backup and a day missed while erssi did not run is made
   up at the next start; several erssi with the same home share it.
 - **Rotation** — after each backup that worked, the newest `backup_keep`
-  files named `erssi-auto-YYYYMMDD-HHMMSS.tar.gz` in `backup_dir` stay
-  and older ones of that name are removed. Nothing else there is ever
-  removed: not your own files, not `erssi --backup` files
-  (`erssi-backup-*`), not links. Rename a backup to keep it for good.
+  files named `erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz` with this home's `ID`
+  in `backup_dir` stay and older ones of that name are removed. Nothing
+  else there is ever removed: not your own files, not `erssi --backup`
+  files (`erssi-backup-*`), not links, not the backups of another erssi
+  home. Rename a backup to keep it for good.
 - **What it says** — one line per backup in the Notices window
-  (`Backup: ~/erssi-backups/erssi-auto-20261101-120000.tar.gz (48 KB)`).
+  (`Backup: ~/erssi-backups/erssi-auto-3f2a91c0-20261101-120000.tar.gz (48 KB)`).
   A backup that fails is said once, with the reason, and tried again an
   hour later; the same failure again is not said again, and `/backup`
   shows it. A backup that runs when erssi quits or `/upgrade`s is

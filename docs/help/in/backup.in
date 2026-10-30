@@ -20,10 +20,13 @@
     (shellter-install.sh --backup) in the background, so erssi goes on
     while it runs; one backup runs at a time.
 
-    The file is backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz, of mode
+    The file is backup_dir/erssi-auto-ID-YYYYMMDD-HHMMSS.tar.gz, of mode
     0600: it holds your private keys and passwords, so keep it private.
-    After each backup the newest backup_keep files of that name are kept
-    and older ones removed; other files in backup_dir are never touched.
+    ID is 8 hex digits made from the path of the erssi home, so that two
+    erssi homes can share a backup_dir. After each backup the newest
+    backup_keep files of that name with this home's ID are kept and older
+    ones removed; other files in backup_dir, and the backups of another
+    home, are never touched.
     Restore one from a shell with erssi --restore FILE.
 
     erssi backs up by itself only with backup_auto daily or weekly

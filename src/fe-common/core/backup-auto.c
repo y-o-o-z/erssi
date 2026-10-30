@@ -83,33 +83,54 @@ gint64 backup_auto_due_in(gint64 now, BACKUP_AUTO_MODE mode, gint64 last_success
 	return next > now ? next - now : 0;
 }
 
-char *backup_auto_name(gint64 t)
+char *backup_auto_home_id(const char *home)
+{
+	char *real = realpath(home, NULL), *path, *sum, *id;
+
+	path = real != NULL ? g_strdup(real) : g_canonicalize_filename(home, "/");
+	free(real);
+	sum = g_compute_checksum_for_string(G_CHECKSUM_SHA1, path, -1);
+	id = g_strndup(sum, BACKUP_AUTO_ID_LEN);
+	g_free(sum);
+	g_free(path);
+	return id;
+}
+
+char *backup_auto_name(const char *id, gint64 t)
 {
 	GDateTime *dt = g_date_time_new_from_unix_local(t);
-	char *name;
+	char *stamp, *name;
 
-	if (dt == NULL)
-		return g_strdup(BACKUP_NAME_PREFIX "19700101-000000" BACKUP_NAME_SUFFIX);
-	name = g_date_time_format(dt, BACKUP_NAME_PREFIX "%Y%m%d-%H%M%S" BACKUP_NAME_SUFFIX);
-	g_date_time_unref(dt);
+	stamp = dt != NULL ? g_date_time_format(dt, "%Y%m%d-%H%M%S") : NULL;
+	name = g_strconcat(BACKUP_NAME_PREFIX, id, "-", stamp != NULL ? stamp : "19700101-000000",
+	                   BACKUP_NAME_SUFFIX, NULL);
+	g_free(stamp);
+	if (dt != NULL)
+		g_date_time_unref(dt);
 	return name;
 }
 
-gboolean backup_auto_name_valid(const char *name)
+gboolean backup_auto_name_valid(const char *name, const char *id)
 {
-	/* the part between prefix and suffix: YYYYMMDD-HHMMSS */
-	static const char shape[] = "dddddddd-dddddd";
+	/* the part between prefix and suffix: <id>-YYYYMMDD-HHMMSS, the id
+	   lowercase hex */
+	static const char shape[] = "xxxxxxxx-dddddddd-dddddd";
 	gsize plen = strlen(BACKUP_NAME_PREFIX), i;
 
+	G_STATIC_ASSERT(sizeof(shape) - 1 == BACKUP_AUTO_ID_LEN + 16);
 	if (name == NULL || strlen(name) != plen + strlen(shape) + strlen(BACKUP_NAME_SUFFIX))
 		return FALSE;
 	if (strncmp(name, BACKUP_NAME_PREFIX, plen) != 0 ||
 	    strcmp(name + plen + strlen(shape), BACKUP_NAME_SUFFIX) != 0)
 		return FALSE;
+	if (id != NULL && (strlen(id) != BACKUP_AUTO_ID_LEN ||
+	                   strncmp(name + plen, id, BACKUP_AUTO_ID_LEN) != 0))
+		return FALSE;
 	for (i = 0; shape[i] != '\0'; i++) {
 		char c = name[plen + i];
 
-		if (shape[i] == 'd' ? !g_ascii_isdigit(c) : c != shape[i])
+		if (shape[i] == 'd' ? !g_ascii_isdigit(c) :
+		    shape[i] == 'x' ? !g_ascii_isxdigit(c) || g_ascii_isupper(c) : c != shape[i])
 			return FALSE;
 	}
 	return TRUE;
@@ -120,14 +141,15 @@ static int name_newer_first(gconstpointer a, gconstpointer b)
 	return -strcmp(*(const char *const *) a, *(const char *const *) b);
 }
 
-char **backup_auto_rotate(const char *const *names, int keep, const char *newest)
+char **backup_auto_rotate(const char *const *names, const char *id, int keep,
+                          const char *newest)
 {
 	GPtrArray *found = g_ptr_array_new(), *out = g_ptr_array_new();
-	gboolean has_newest = backup_auto_name_valid(newest);
+	gboolean has_newest = backup_auto_name_valid(newest, id);
 	guint i, skip;
 
-	for (; names != NULL && *names != NULL && keep >= 1; names++) {
-		if (backup_auto_name_valid(*names) && g_strcmp0(*names, newest) != 0)
+	for (; id != NULL && names != NULL && *names != NULL && keep >= 1; names++) {
+		if (backup_auto_name_valid(*names, id) && g_strcmp0(*names, newest) != 0)
 			g_ptr_array_add(found, (char *) *names);
 	}
 	g_ptr_array_sort(found, name_newer_first);
@@ -466,12 +488,14 @@ static void say_once(const char *reason)
 		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, TXT_BACKUP_UNAVAILABLE, reason);
 }
 
-/* the automatic backups of DIR beyond backup_keep removed: regular files
-   of the automatic name only, never one behind a link */
+/* the automatic backups of this home in DIR beyond backup_keep removed:
+   regular files of the automatic name with this home's id only (another
+   home's backups in the same directory are its own), never one behind a
+   link */
 static void rotate(const char *dir, const char *newest)
 {
 	GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
-	char **doomed, **r;
+	char **doomed, **r, *id;
 	const char *name;
 	GDir *d;
 
@@ -480,14 +504,16 @@ static void rotate(const char *dir, const char *newest)
 		g_ptr_array_free(names, TRUE);
 		return;
 	}
+	id = backup_auto_home_id(get_irssi_dir());
 	while ((name = g_dir_read_name(d)) != NULL) {
-		if (backup_auto_name_valid(name))
+		if (backup_auto_name_valid(name, id))
 			g_ptr_array_add(names, g_strdup(name));
 	}
 	g_dir_close(d);
 	g_ptr_array_add(names, NULL);
-	doomed = backup_auto_rotate((const char *const *) names->pdata,
+	doomed = backup_auto_rotate((const char *const *) names->pdata, id,
 	                            settings_get_int("backup_keep"), newest);
+	g_free(id);
 	for (r = doomed; *r != NULL; r++) {
 		char *path = g_build_filename(dir, *r, NULL);
 		struct stat st;
@@ -575,7 +601,7 @@ static void backup_start(gboolean manual)
 	const char *argv[12];
 	GError *error = NULL;
 	BACKUP_RUN *run;
-	char *installer, *reason, *dir, *name;
+	char *installer, *reason, *dir, *name, *id;
 	gint64 now;
 	int i;
 
@@ -626,16 +652,18 @@ static void backup_start(gboolean manual)
 	run->started = now;
 	run->dir = dir;
 	/* two in one second (/BACKUP NOW twice): the next second's name */
+	id = backup_auto_home_id(get_irssi_dir());
 	for (i = 0; i < 60; i++) {
 		struct stat st;
 
-		name = backup_auto_name(now + i);
+		name = backup_auto_name(id, now + i);
 		g_free(run->file);
 		run->file = g_build_filename(dir, name, NULL);
 		g_free(name);
 		if (lstat(run->file, &st) != 0)
 			break;
 	}
+	g_free(id);
 
 	installer = update_check_installer();
 	argv[0] = "/bin/sh";
