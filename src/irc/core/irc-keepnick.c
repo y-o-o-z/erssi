@@ -1155,16 +1155,20 @@ static void sig_script_destroyed(PERL_SCRIPT_REC *script)
 /* ---- settings ---- */
 
 /* the shortest keepnick_check_time; ERSSI_TEST_KEEPNICK_MIN_MS (for the
-   tests, at least 100) lowers it, so that a check comes every second */
+   tests: a whole number of ms, at least 1000) lowers it, so that a check
+   comes every second; anything else leaves it */
 static int check_time_min(void)
 {
 	const char *env = g_getenv("ERSSI_TEST_KEEPNICK_MIN_MS");
-	int min;
+	char *end;
+	gint64 min;
 
 	if (env == NULL || *env == '\0')
 		return CHECK_TIME_MIN;
-	min = atoi(env);
-	return min >= 100 && min < CHECK_TIME_MIN ? min : CHECK_TIME_MIN;
+	min = g_ascii_strtoll(env, &end, 10);
+	if (*end != '\0' || min < 1000 || min >= CHECK_TIME_MIN)
+		return CHECK_TIME_MIN;
+	return (int) min;
 }
 
 static void read_settings(void)
