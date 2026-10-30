@@ -6,6 +6,7 @@ Back to the [README](../../README.md).
 - [Settings](#settings)
 - [tmux](#tmux)
 - [Update notice](#update-notice)
+- [Automatic backups](#automatic-backups)
 - [Web client](#web-client)
 - [End-to-end encryption](#end-to-end-encryption)
 
@@ -127,6 +128,53 @@ installed from another `--repo`):
   erssi cannot start programs, so there is no check: a check that runs
   when the mode is entered is stopped first, and erssi says why there is
   none from then on; `erssi --check-update` from a shell still works.
+
+## Automatic backups
+
+erssi can back up its home by itself, once a day or once a week, so a
+lost box or a broken config does not cost you the E2E keyring and your
+setup. It is off by default:
+
+```
+/set backup_auto daily                   # or weekly; off stops it
+/set backup_dir ~/erssi-backups          # the default; must be outside ~/.erssi
+/set backup_keep 7                       # automatic backups kept; 0 keeps all
+/backup                                  # last backup, next one, last failure
+/backup now                              # one now (also with backup_auto off)
+```
+
+- **What runs** — the installer that was installed with erssi
+  (`shellter-install.sh --backup FILE --home <home>`), the same backup
+  as `erssi --backup FILE` ([Moving to another box](install.md#moving-to-another-box)),
+  in the background: erssi goes on while it runs, one runs at a time, one
+  that takes longer than 15 minutes is stopped. The file is
+  `backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz`, mode 0600, without the
+  IRC logs; `backup_dir` is made (mode 0700) when it is not there.
+- **When** — a day (a week) after the last backup that worked, the first
+  one a minute after the start at the earliest. Its time is kept in
+  `~/.erssi/backup-auto.state` (mode 0600), so a restart or `/upgrade`
+  makes no extra backup and a day missed while erssi did not run is made
+  up at the next start; several erssi with the same home share it.
+- **Rotation** — after each backup that worked, the newest `backup_keep`
+  files named `erssi-auto-YYYYMMDD-HHMMSS.tar.gz` in `backup_dir` stay
+  and older ones of that name are removed. Nothing else there is ever
+  removed: not your own files, not `erssi --backup` files
+  (`erssi-backup-*`), not links. Rename a backup to keep it for good.
+- **What it says** — one line per backup in the Notices window
+  (`Backup: ~/erssi-backups/erssi-auto-20261101-120000.tar.gz (48 KB)`).
+  A backup that fails is said once, with the reason, and tried again an
+  hour later; the same failure again is not said again, and `/backup`
+  shows it. A backup that runs when erssi quits or `/upgrade`s is
+  stopped (the installer removes its half-written file) and tried again
+  an hour later.
+- **Where it does nothing** — `backup_dir` inside the erssi home (each
+  backup would hold the ones before it: refused, with a notice), an erssi
+  that the installer did not install (no `shellter-install.sh` installed
+  with it) and Capsicum capability mode. Turning the setting on says why.
+- **Keep the files private** — they hold your private keys and
+  passwords, unencrypted ([security.md](security.md#backups)). A
+  `backup_dir` on another disk survives a lost disk; on a synced or
+  shared folder, others may read it.
 
 ## Web client
 

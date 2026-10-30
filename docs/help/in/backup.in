@@ -1,0 +1,40 @@
+%9Syntax:%9
+
+@SYNTAX:backup@
+
+%9Parameters:%9
+
+    NOW:         Makes a backup now, into backup_dir, also when
+                 backup_auto is off, and says how it went.
+
+    Without an argument: whether automatic backups are on, where they
+    go and how many are kept, when the last one was made and its file,
+    why the last try failed, and when the next one is due.
+
+%9Description:%9
+
+    Backs up the erssi home (config, themes, scripts, the E2E keyring,
+    OTR and fe-web keys, credentials and the Mentions log; not the IRC
+    logs) into one file, the same backup as erssi --backup FILE. erssi
+    runs the installer that was installed with it
+    (shellter-install.sh --backup) in the background, so erssi goes on
+    while it runs; one backup runs at a time.
+
+    The file is backup_dir/erssi-auto-YYYYMMDD-HHMMSS.tar.gz, of mode
+    0600: it holds your private keys and passwords, so keep it private.
+    After each backup the newest backup_keep files of that name are kept
+    and older ones removed; other files in backup_dir are never touched.
+    Restore one from a shell with erssi --restore FILE.
+
+    erssi backs up by itself only with backup_auto daily or weekly
+    (/HELP backup_auto). An erssi that the installer did not install has
+    nothing to run, and in Capsicum capability mode no program can be
+    started; /BACKUP says why.
+
+%9Examples:%9
+
+    /BACKUP
+    /BACKUP NOW
+    /SET backup_auto daily
+
+%9See also:%9 BACKUP_AUTO, BACKUP_DIR, BACKUP_KEEP

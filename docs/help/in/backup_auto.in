@@ -1,0 +1,34 @@
+%9Setting:%9
+
+    backup_auto (off, daily or weekly; default: off)
+
+%9Description:%9
+
+    Backs up the erssi home by itself, once a day or once a week, into
+    backup_dir (/HELP backup_dir), the same backup /BACKUP NOW makes
+    (/HELP backup). One line in the window of client messages (the
+    Notices window of erssi) says where each backup went:
+
+        Backup: ~/erssi-backups/erssi-auto-20261101-120000.tar.gz (48 KB)
+
+    The next backup is due a day (a week) after the last one that
+    worked. The time of the last one is kept in ~/.erssi/backup-auto.state
+    (mode 0600), so a restart or /UPGRADE makes no extra backup, and a
+    day missed while erssi did not run is made up a minute after the
+    next start.
+
+    A backup that fails is said once, with the reason, and tried again
+    an hour later; the same failure again is not said again. /BACKUP
+    shows why the last one failed. A backup that runs when erssi quits
+    or /UPGRADEs is stopped, and also tried again an hour later.
+
+    With backup_dir inside the erssi home, with no installer installed
+    with erssi and in Capsicum capability mode no backup is made, and
+    turning the setting on says why.
+
+%9Examples:%9
+
+    /SET backup_auto daily
+    /SET backup_auto off
+
+%9See also:%9 BACKUP, BACKUP_DIR, BACKUP_KEEP

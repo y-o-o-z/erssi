@@ -1,0 +1,18 @@
+%9Setting:%9
+
+    backup_keep (integer; default: 7)
+
+%9Description:%9
+
+    How many automatic backups stay in backup_dir. After each backup
+    that worked, the newest backup_keep files named
+    erssi-auto-YYYYMMDD-HHMMSS.tar.gz are kept and older ones of that
+    name removed. Files of any other name are never removed, nor links:
+    put a backup you want to keep under another name. 0 keeps them all.
+
+%9Examples:%9
+
+    /SET backup_keep 7
+    /SET backup_keep 0
+
+%9See also:%9 BACKUP, BACKUP_AUTO, BACKUP_DIR

@@ -1,3 +1,20 @@
+shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.0
+
+	+ Backups
+	  - automatic backups from inside erssi: /SET backup_auto daily (or
+	    weekly) runs erssi --backup in the background into backup_dir
+	    (default ~/erssi-backups, which must be outside the erssi home)
+	    as erssi-auto-YYYYMMDD-HHMMSS.tar.gz, mode 0600. After each one
+	    the newest backup_keep (default 7) files of that name are kept;
+	    nothing else in backup_dir is ever removed. The time of the
+	    last backup is kept in ~/.erssi/backup-auto.state, so a restart
+	    or /UPGRADE makes no extra one and a missed day is made up at
+	    the next start. One line per backup in the Notices window; a
+	    failure is said once and tried again an hour later
+	  - /BACKUP shows the setting, the last backup and its file, the
+	    next one and why the last try failed; /BACKUP NOW makes one now
+
 shellter-v2026.10.8 2026-10-30  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.8
 
