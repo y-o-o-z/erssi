@@ -91,7 +91,9 @@ Connections over plain text stay up; those over TLS cannot be handed to the
 new process, so they reconnect once ("[TLS] Client upgrade").
 
 In erssi, `/set update_check on` checks once a day in the background and
-says when a new signed release is out; it installs nothing
+says when a new signed release is out, with a short summary; it installs
+nothing by itself. `/update install` runs the same update in the
+background from inside erssi, and `/upgrade` loads it
 ([Update notice](docs/shellter/configuration.md#update-notice)).
 
 From 2026.10.2 or older, and from 1.3.9 or older (which have no
@@ -120,7 +122,7 @@ changed: [NEWS](NEWS).
 
 - **Ready-made binaries for more systems** — Debian 12 and Ubuntu 24.04 join Debian 13 and FreeBSD 14 and 15.
 - **Packages you can rebuild yourself** — the packages are reproducible: `sh utils/build-binary.sh --verify PACKAGE` builds one again from its signed tag and says whether it is the same, byte for byte.
-- **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so in the Notices window; nothing is installed by itself.
+- **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so in the Notices window, with a short summary; nothing is installed by itself, and `/update install` installs it from inside erssi.
 - **Clickable links** — addresses in messages are OSC 8 links in terminals that support them, also when they wrap over several lines; the link is always the text you see.
 - **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file; `erssi --restore` checks it and puts it back.
 - **Installs that do not stop for nothing** — a source install runs the tests of erssi, not those of the release tools, and names what to do when a test fails; a box without `ssh-keygen` is told which one package gives the ready-made binary.

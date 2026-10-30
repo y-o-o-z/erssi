@@ -83,6 +83,8 @@ installed from another `--repo`):
 /set update_check on                     # check once a day
 /update                                  # what the last check found
 /update check                            # check now
+/update install                          # install the newest release, in the background
+/update install -upgrade                 # ... and /upgrade once it is installed
 /statusbar additem -after lag update info   # show [update 2026.11.1] while there is one
 ```
 
@@ -104,8 +106,12 @@ installed from another `--repo`):
   several erssi with the same home share it.
 - **What it says** — one line, once for each new release, in the
   window of client messages, the Notices window:
-  `erssi 2026.11.1 is available (signed). Update from a shell: erssi
-  --update, then /upgrade`. The shipped config marks no activity for
+  `erssi 2026.11.1 is available (signed). Install it: /update install
+  (or erssi --update in a shell), then /upgrade`, and under it up to
+  three lines of what the release brings, from its signed tag (releases
+  from 2026.11.0 on; control characters are removed before anything is
+  shown). The summary is kept in the state file, and `/update` shows it
+  again. The shipped config marks no activity for
   client messages, so the line is easy to miss from another window: the
   `update` statusbar item shows the new version while there is one and
   takes no space otherwise. It is not in the shipped statusbars; the
@@ -113,8 +119,26 @@ installed from another `--repo`):
   check (no network, GitHub down) is not shown; after three in a row, one
   line says so, and `/update` shows why the last one failed. A release tag that moved to another commit is shown at
   once: report it.
-- **What it does not do** — install anything. The update is made from a
-  shell (`erssi --update`), and `/upgrade` loads it.
+- **What it does not do** — install anything by itself. Only
+  `/update install`, given by you, installs (below).
+- **`/update install`** — checks first, and when a newer signed release
+  is there runs the same installer with `--update` (what `erssi --update`
+  runs) in the background, with no terminal, so it asks nothing; erssi
+  goes on meanwhile. The Notices window shows its steps, warnings and
+  error; everything it prints goes to `~/.erssi/update-install.log`
+  (mode 0600), named in the messages. A ready-made package installs in
+  seconds, a source build can take 20 minutes or more; after an hour it
+  is stopped. At the end erssi says which release is installed and that
+  `/upgrade` loads it (TLS connections reconnect once); when erssi was
+  started from another path than the install's `bin/erssi`, it names the
+  binary to give `/upgrade`. `-upgrade` runs `/upgrade` itself once the
+  install succeeded. Nothing is installed when erssi is the newest
+  release; one install runs at a time (the installer's lock on the
+  prefix, and the log is locked against another erssi with the same
+  home); an install whose conf names another updater (`UPDATE_COMMAND`)
+  is refused - update it that way. As root, missing system packages stop
+  it (from a shell, `erssi --update` asks). `/quit` or `/upgrade` while
+  it runs stops it; the release in use stays as it was.
 - **Where it does nothing** — an erssi that the installer did not install
   (a distribution package, a build of your own: no `shellter-install.sh`
   installed with it, or no `shellter-install.conf` in its prefix), one
@@ -124,9 +148,10 @@ installed from another `--repo`):
   says it once; it still asks the installer every day, which answers
   from the conf without contacting anything, so the check finds releases
   again once the conf names no other tool. In Capsicum capability mode
-  erssi cannot start programs, so there is no check: a check that runs
-  when the mode is entered is stopped first, and erssi says why there is
-  none from then on; `erssi --check-update` from a shell still works.
+  erssi cannot start programs, so there is no check and no install: one
+  that runs when the mode is entered is stopped first, and erssi says why
+  there is none from then on; `erssi --check-update` and `erssi --update`
+  from a shell still work.
 
 ## Web client
 

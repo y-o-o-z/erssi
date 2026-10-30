@@ -174,10 +174,26 @@ The installer runs in a session of its own, with no terminal (stdin is
 `/dev/null`, git may not ask for a password), and is stopped with its
 children after two minutes. erssi keeps at most 64 KB of its output and
 takes only one line in the expected form, with version numbers made of
-digits and dots; anything else is an error. What erssi shows of an error
-is printable ASCII, at most 200 bytes. `~/.erssi/update-check.state`
-holds only times, version numbers and that reason; it is written as a
-whole (mode 0600) and read only when it is a regular file of your own.
+digits and dots, and after "update" at most three "summary" lines;
+anything else is an error. What erssi shows of an error is printable
+ASCII, at most 200 bytes. The summary comes from the message of the
+release tag whose signature was checked; erssi removes control and
+format characters from it (escape codes, bidi and zero-width marks) and
+keeps at most 200 bytes of valid UTF-8 per line, so nothing from the
+network reaches the terminal as a control sequence.
+`~/.erssi/update-check.state` holds only times, version numbers, that
+reason and the summary; it is written as a whole (mode 0600) and read
+only when it is a regular file of your own, and the summary is cleaned
+again when it is read.
+
+`/update install` is the same installer with `--update`, the same
+signature checks as `erssi --update`, started only by that command. It
+runs without a terminal in a session of its own and is stopped after an
+hour. Its output goes to `~/.erssi/update-install.log`, created mode 0600
+(a link there is not followed) and locked while it runs; erssi shows only
+the installer's step, warning and error lines, cleaned as the summary.
+An install whose conf names another updater (`UPDATE_COMMAND`) is
+refused rather than running that command.
 
 ## Configuration
 
