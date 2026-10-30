@@ -576,7 +576,7 @@ it once erssi works.
 **Not while erssi runs.** `--restore` refuses while an erssi runs on that
 home: one from 2026.10.7 on holds the lock on `erssi.lock` (checked with
 perl, `flock` or FreeBSD's `lockf`), and an older one is found in the
-process list (`ps`): an erssi process of yours whose `--home` is that
+process list (`ps`, or `/proc` on a Linux without `ps`): an erssi process of yours whose `--home` is that
 home, or that has no `--home` and runs with a `HOME` whose `.erssi` it is
 (its `HOME` read from `/proc` on Linux, elsewhere taken to be yours). The
 two renames run while `--restore` holds the exclusive lock of the old

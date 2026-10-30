@@ -311,6 +311,14 @@ die_log() {   # message - with the end of the build log
     exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+# 0 when the text files $1 and $2 are the same, byte for byte (text: no
+# NUL). Not cmp: a minimal system (AlmaLinux, Rocky) has no diffutils
+same_text() {
+    [ -f "$1" ] && [ -f "$2" ] || return 1
+    [ "$(wc -c < "$1")" = "$(wc -c < "$2")" ] || return 1
+    # the dot keeps trailing line breaks from being stripped
+    [ "$(cat "$1"; echo .)" = "$(cat "$2"; echo .)" ]
+}
 spinner_frame() {   # i
     if [ "$UTF8" = 1 ]; then
         case $(($1 % 10)) in
@@ -1392,7 +1400,7 @@ binary_install() {
     step "Installing"
     REUSED=0 ASIDE=""
     if [ -e "$RELS/$V" ] || [ -L "$RELS/$V" ]; then
-        if cmp -s "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
+        if same_text "$RELS/$V/MANIFEST" "$T/MANIFEST"; then
             # the same package (a release tree only ever arrives whole, by
             # one rename): kept as it is - never replaced under a running
             # erssi, and previous keeps pointing to it
@@ -2130,11 +2138,23 @@ bk_lock_held() {
 # erssi without --home uses ~/.erssi of its own HOME: from its environment
 # where /proc shows it (Linux), otherwise taken to be this HOME
 bk_erssi_pids() {
-    have ps || return 0
     me=$(id -u)
     # an erssi by its command name or its argv[0] (Linux names a process
     # after the link it was started through, FreeBSD after the file)
-    ps -A -o pid= -o uid= -o comm= -o args= > "$BK_WORK/ps" 2>/dev/null || return 1
+    if have ps; then
+        ps -A -o pid= -o uid= -o comm= -o args= > "$BK_WORK/ps" 2>/dev/null || return 1
+    elif [ -r "${SHELLTER_PROC:-/proc}/self/status" ]; then
+        # no ps (a minimal Linux without procps): the same from /proc
+        for d in "${SHELLTER_PROC:-/proc}"/[0-9]*; do
+            [ -r "$d/status" ] || continue
+            u=$(awk '$1 == "Uid:" { print $2; exit }' "$d/status" 2>/dev/null) || continue
+            c=$(cat "$d/comm" 2>/dev/null) || continue
+            a=$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null) || a=""
+            printf '%s %s %s %s\n' "${d##*/}" "$u" "${c:-?}" "${a:-?}"
+        done > "$BK_WORK/ps"
+    else
+        return 1
+    fi
     while read -r pid uid comm args; do
         [ "$uid" = "$me" ] || continue
         a0=${args%% *}
@@ -2394,7 +2414,7 @@ do_restore() {
     (cd "$H" && find . -type d ! -path . -print) | sed 's|^\./||' | LC_ALL=C sort > "$BK_WORK/got.d"
     awk -F '\t' '$1 == "f" { print $3 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.f"
     awk -F '\t' '$1 == "d" { print $2 }' "$M" | LC_ALL=C sort > "$BK_WORK/want.d"
-    if ! cmp -s "$BK_WORK/got.f" "$BK_WORK/want.f" || ! cmp -s "$BK_WORK/got.d" "$BK_WORK/want.d"; then
+    if ! same_text "$BK_WORK/got.f" "$BK_WORK/want.f" || ! same_text "$BK_WORK/got.d" "$BK_WORK/want.d"; then
         bk_fail "the files in $BK_FILE are not those its MANIFEST lists (damaged, or not made by erssi --backup)"
     fi
     nf=$(wc -l < "$BK_WORK/want.f" | tr -d ' ')
@@ -2492,7 +2512,7 @@ do_restore() {
         # an erssi older than 2026.10.7 holds no lock: the process list
         pslist=1
         bk_erssi_pids "$T" "$BK_HOME_ABS" "$(tilde "$BK_HOME_ABS")" > "$BK_WORK/pids" || pslist=0
-        have ps || pslist=0
+        have ps || [ -r "${SHELLTER_PROC:-/proc}/self/status" ] || pslist=0
         pids=$(tr '\n' ' ' < "$BK_WORK/pids")
         pids=${pids% }
         [ -z "$pids" ] || bk_fail "an erssi is running on $(tilde "$T") (pid $pids) - /quit it first"

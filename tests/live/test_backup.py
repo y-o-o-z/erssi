@@ -14,6 +14,7 @@ test's install, so those steps run only in a relocatable build.
 Usage: test_backup.py <build dir> [<source dir>]"""
 import fcntl
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -125,9 +126,19 @@ def main():
         a = st["alice"]
         pid = a.proc.pid
         lock = a.home / "erssi.lock"
+        cmdline = Path(f"/proc/{pid}/cmdline")
+        if not cmdline.exists() and shutil.which("ps") is None:
+            raise harness.SkipCase("neither /proc nor ps to tell that /upgrade ran")
         a.type("/upgrade")
 
         def upgraded():
+            # the arguments of the process: from /proc where there is one
+            # (a minimal Linux has no ps), otherwise from ps (FreeBSD)
+            if cmdline.exists():
+                try:
+                    return b"--session" in cmdline.read_bytes()
+                except OSError:
+                    return False
             r = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True)
             return "--session" in r.stdout
         assert harness.wait_until(upgraded, 20), "erssi did not run again with --session after /upgrade"

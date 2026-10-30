@@ -85,6 +85,8 @@ run_env() {
         sh "$INSTALLER" "$@"
     ) > "$W/out" 2>&1 || RC=$?
 }
+# the same text, byte for byte; not cmp, which a minimal system lacks
+same() { [ -f "$1" ] && [ -f "$2" ] && [ "$(cat "$1"; echo .)" = "$(cat "$2"; echo .)" ]; }
 said() { grep -q -- "$1" "$W/out"; }
 show() { sed 's/^/    | /' "$W/out"; }
 # shellcheck disable=SC2012 # the mode string, of names the test made
@@ -248,14 +250,14 @@ round-trip)
     content "$E" > "$W/want"
     # the lock file it held while it swapped the home stays there
     content "$W/new/.erssi" | grep -v ' ./erssi.lock$' > "$W/got"
-    check "the restored home has the same files, contents and links" cmp -s "$W/want" "$W/got"
-    [ "$FAILED" = 0 ] || diff "$W/want" "$W/got"
+    check "the restored home has the same files, contents and links" same "$W/want" "$W/got"
+    [ "$FAILED" = 0 ] || ! command -v diff >/dev/null 2>&1 || diff "$W/want" "$W/got"
     check "the home is 0700" [ "$(mode_of "$W/new/.erssi")" = "drwx------" ]
     bad=$(tree "$W/new/.erssi" | awk '$1 == "d" && $2 != "drwx------" || $1 == "f" && $2 != "-rw-------" && $2 != "-rwx------"')
     check "every directory is 0700, every file 0600 or 0700" [ -z "$bad" ]
     check "the keyring is 0600 (was 0644)" [ "$(mode_of "$W/new/.erssi/rpe2e/keyring.json")" = "-rw-------" ]
     check "the script stays executable, 0700" [ "$(mode_of "$W/new/.erssi/scripts/hello.pl")" = "-rwx------" ]
-    check "the autorun link works" cmp -s "$W/new/.erssi/scripts/autorun/hello.pl" "$E/scripts/hello.pl"
+    check "the autorun link works" same "$W/new/.erssi/scripts/autorun/hello.pl" "$E/scripts/hello.pl"
     check "no temporary directory is left" [ -z "$(find "$W/new" -name '.erssi-restore.*')" ]
     check "restore used only the options of both tars" sh -c "! grep -q BAD '$W/tar.opts'"
     ;;
@@ -268,7 +270,7 @@ xz)
     check "it is xz" [ "$(od -An -tx1 -N6 "$W/b.tar.xz" | tr -d ' \n')" = fd377a585a00 ]
     run --restore "$W/b.tar.xz" --home "$W/new/.erssi"
     check "and restored" [ "$RC" = 0 ]
-    check "with the keyring" cmp -s "$E/rpe2e/keyring.json" "$W/new/.erssi/rpe2e/keyring.json"
+    check "with the keyring" same "$E/rpe2e/keyring.json" "$W/new/.erssi/rpe2e/keyring.json"
     run --backup "$W/b.zip"
     check "another file name is refused" [ "$RC" != 0 ]
     check "nothing is written then" [ ! -e "$W/b.zip" ]
@@ -286,7 +288,7 @@ logs)
     check "the channel log is in it" sh -c "gzip -dc '$W/with.tar.gz' | '$REAL_TAR' -tf - | grep -q 'logs/IRCnet/#chan.log'"
     check "the debug log too" sh -c "gzip -dc '$W/with.tar.gz' | '$REAL_TAR' -tf - | grep -q 'sidepanels.log'"
     run --restore "$W/with.tar.gz" --home "$W/new/.erssi"
-    check "and it is restored" cmp -s "$E/logs/IRCnet/#chan.log" "$W/new/.erssi/logs/IRCnet/#chan.log"
+    check "and it is restored" same "$E/logs/IRCnet/#chan.log" "$W/new/.erssi/logs/IRCnet/#chan.log"
     run --restore "$W/with.tar.gz" --with-logs --home "$W/new2/.erssi"
     check "--with-logs is refused with --restore" [ "$RC" = 2 ]
     ;;
@@ -335,9 +337,10 @@ links)
     if [ "$RC" != 0 ]; then show; fi
     check "and it restores" [ "$RC" = 0 ]
     check "the followed directory is a directory now" sh -c "[ -d '$W/new/.erssi/scripts/lib' ] && [ ! -L '$W/new/.erssi/scripts/lib' ]"
-    check "with its file" cmp -s "$W/outside/lib/ext.pl" "$W/new/.erssi/scripts/lib/ext.pl"
+    check "with its file" same "$W/outside/lib/ext.pl" "$W/new/.erssi/scripts/lib/ext.pl"
     check "both names of one outside file are files" sh -c "[ -f '$W/new/.erssi/one.txt' ] && [ -f '$W/new/.erssi/two.txt' ] && [ ! -L '$W/new/.erssi/two.txt' ]"
-    check "a hard link becomes a file of its own" sh -c "[ -f '$W/new/.erssi/config.hard' ] && cmp -s '$E/config' '$W/new/.erssi/config.hard'"
+    check "a hard link becomes a file of its own" [ -f "$W/new/.erssi/config.hard" ] && [ ! -L "$W/new/.erssi/config.hard" ]
+    check "with the contents" same "$E/config" "$W/new/.erssi/config.hard"
     check "an absolute link into the home becomes a relative one" [ "$(readlink "$W/new/.erssi/startup.abs")" = startup ]
     ;;
 
@@ -354,7 +357,7 @@ bad-archives)
         check "$kind: refused" [ "$RC" != 0 ]
         check "$kind: says nothing was changed" said "nothing was changed"
         tree "$E" > "$W/after"
-        check "$kind: the home is as it was" cmp -s "$W/before" "$W/after"
+        check "$kind: the home is as it was" same "$W/before" "$W/after"
         check "$kind: no home was moved aside, no temporary directory left" \
             [ -z "$(find "$HOME" -maxdepth 1 \( -name '.erssi.before-restore-*' -o -name '.erssi-restore.*' \))" ]
         check "$kind: nothing written outside" sh -c "[ ! -e '$W/outside' ] && [ ! -e '$HOME/escaped' ] && [ ! -e '$W/escaped' ] && [ ! -e /tmp/erssi-backup-test-absolute ]"
@@ -379,12 +382,12 @@ running)
     check "restore is refused while the lock is held" [ "$RC" != 0 ]
     check "it says an erssi is running" said "an erssi is running on"
     tree "$W/target" > "$W/after"
-    check "the home is as it was" cmp -s "$W/before" "$W/after"
+    check "the home is as it was" same "$W/before" "$W/after"
     # the same check with flock(1) or lockf(1) where there is no perl
     for tool in flock lockf; do
         command -v "$tool" >/dev/null 2>&1 || continue
         mkdir "$W/no-perl-$tool"
-        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env uname basename dirname touch "$tool"; do
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink env uname basename dirname touch "$tool"; do
             p=$(command -v "$t") && ln -s "$p" "$W/no-perl-$tool/$t"
         done
         run_env PATH="$W/shim:$W/no-perl-$tool" -- --restore "$W/b.tar.gz" --home "$W/target"
@@ -402,6 +405,15 @@ running)
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "restore is refused while an erssi process names the home" [ "$RC" != 0 ]
     check "it names the pid" said "pid $OLD"
+    if [ -r /proc/self/status ]; then
+        # no ps (a minimal Linux without procps): read from /proc
+        mkdir "$W/no-ps"
+        for t in sh awk sed grep date mktemp ls cut tr head tail sort rm mkdir cp mv ln chmod cat find gzip od wc df du id readlink env uname basename dirname touch perl; do
+            p=$(command -v "$t") && ln -s "$p" "$W/no-ps/$t"
+        done
+        run_env PATH="$W/shim:$W/no-ps" -- --restore "$W/b.tar.gz" --home "$W/target"
+        check "without ps, the process is found in /proc" [ "$RC" != 0 ] && said "pid $OLD"
+    fi
     kill "$OLD"; wait "$OLD" 2>/dev/null
     mkdir "$W/link"
     ln -s "$(command -v perl)" "$W/link/erssi"
@@ -471,9 +483,9 @@ names)
         RC=0; LC_ALL=$2 sh "$INSTALLER" --restore "$W/b.tar.gz" --home "$W/new/.erssi" > "$W/out" 2>&1 || RC=$?
         if [ "$RC" != 0 ]; then show; fi
         check "and restore with LC_ALL=$2 ($1 backup) succeeds" [ "$RC" = 0 ]
-        check "a Latin-2 name comes back byte for byte" cmp -s "$E/$L2" "$W/new/.erssi/$L2"
-        check "UTF-8 names too" cmp -s "$E/scripts/pełne/ąę.pl" "$W/new/.erssi/scripts/pełne/ąę.pl"
-        check "and the rest" cmp -s "$E/zażółć.txt" "$W/new/.erssi/zażółć.txt"
+        check "a Latin-2 name comes back byte for byte" same "$E/$L2" "$W/new/.erssi/$L2"
+        check "UTF-8 names too" same "$E/scripts/pełne/ąę.pl" "$W/new/.erssi/scripts/pełne/ąę.pl"
+        check "and the rest" same "$E/zażółć.txt" "$W/new/.erssi/zażółć.txt"
     done
     ;;
 
@@ -503,7 +515,7 @@ manifest-links)
         check "$kind: refused" [ "$RC" != 0 ]
         check "$kind: says nothing was changed" said "nothing was changed"
         tree "$E" > "$W/after"
-        check "$kind: the home is as it was" cmp -s "$W/before" "$W/after"
+        check "$kind: the home is as it was" same "$W/before" "$W/after"
         check "$kind: nothing made next to the home" [ ! -e "$HOME/f" ] && [ ! -L "$HOME/f" ] && [ ! -e "$W/f" ]
         check "$kind: no temporary directory left" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
     done
@@ -582,7 +594,7 @@ EOF2
     check "the archive as it was when copied is restored" [ "$RC" = 0 ]
     check "gzip never read the file itself" [ ! -e "$W/gzip.orig" ]
     check "nothing of the other archive is there" [ ! -L "$W/new/.erssi/link" ] && [ ! -e "$W/outside" ]
-    check "the home is the backed up one" cmp -s "$E/config" "$W/new/.erssi/config"
+    check "the home is the backed up one" same "$E/config" "$W/new/.erssi/config"
     ;;
 
 closed-dirs)
@@ -600,7 +612,7 @@ closed-dirs)
     check "refused when they do not match the MANIFEST" [ "$RC" != 0 ]
     check "and the temporary directory is removed all the same" [ -z "$(find "$HOME" -maxdepth 1 -name '.erssi-restore.*')" ]
     tree "$E" > "$W/after"
-    check "the home is as it was" cmp -s "$W/before" "$W/after"
+    check "the home is as it was" same "$W/before" "$W/after"
     # a TMPDIR of its own: other cases running at the same time use theirs
     mkdir "$W/tmpd"
     run_env TMPDIR="$W/tmpd" -- --restore "$W/closed-bad.tar.gz" --dry-run
@@ -641,7 +653,7 @@ EOF3
     for tool in flock lockf; do
         command -v "$tool" >/dev/null 2>&1 || continue
         mkdir "$W/no-perl-$tool"
-        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink cmp env uname basename dirname touch "$tool"; do
+        for t in sh awk sed grep date mktemp ls cut tr head sort rm mkdir cp ln chmod cat find gzip od wc df du id ps readlink env uname basename dirname touch "$tool"; do
             p=$(command -v "$t") && ln -s "$p" "$W/no-perl-$tool/$t"
         done
         : > "$W/mv.log"
@@ -653,6 +665,27 @@ EOF3
         check "the lock file of the home is still there" [ -f "$E/erssi.lock" ]
         check "no warning that it could not lock" sh -c "! grep -q 'could not be locked' '$W/out'"
     done
+    ;;
+
+no-diffutils)
+    # a minimal system (AlmaLinux 10, Rocky) has neither cmp nor diff:
+    # backup and restore with a PATH without them
+    make_home "$E"
+    mkdir "$W/base"
+    for t in sh awk sed grep date mktemp ls cut tr head tail sort rm mkdir rmdir cp mv ln chmod cat find gzip od wc df du id ps readlink env uname basename dirname touch perl flock lockf; do
+        p=$(command -v "$t") && ln -s "$p" "$W/base/$t"
+    done
+    check "no cmp or diff in that PATH" sh -c "[ ! -e '$W/base/cmp' ] && [ ! -e '$W/base/diff' ]"
+    run_env PATH="$W/shim:$W/base" -- --backup "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "backup without diffutils succeeds" [ "$RC" = 0 ]
+    run_env PATH="$W/shim:$W/base" -- --restore "$W/b.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "restore without diffutils succeeds" [ "$RC" = 0 ]
+    check "with the files" same "$E/rpe2e/keyring.json" "$W/new/.erssi/rpe2e/keyring.json"
+    check "nothing said about a missing command" sh -c "! grep -q 'not found' '$W/out'"
+    run_env PATH="$W/shim:$W/base" -- --restore "$W/b.tar.gz" --home "$W/new/.erssi"
+    check "over the restored home too" [ "$RC" = 0 ]
     ;;
 
 self-check)

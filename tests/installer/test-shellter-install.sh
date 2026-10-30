@@ -36,7 +36,7 @@ UNSHARE=$(find_tool unshare) || UNSHARE=""
 KEYGEN=$(find_tool ssh-keygen) || KEYGEN=""
 # what the binary cases need, as found before setup narrows PATH
 BIN_TOOLS=""
-for t in tar xz sha256sum find cmp perl; do
+for t in tar xz sha256sum find perl; do
     p=$(find_tool "$t") && BIN_TOOLS="$BIN_TOOLS $t=$p"
 done
 # hostile() writes its archives with Python's tarfile where perl has no
@@ -559,14 +559,14 @@ ptag() {
 }
 
 # ── binary packages ──────────────────────────────────────────────────
-# The release key of release_key, the real tar, xz, sha256sum, find and
-# cmp, and stand-ins: uname says Linux x86_64 ($FAKE_UNAME, $FAKE_UNAME_M),
+# The release key of release_key, the real tar, xz, sha256sum and find
+# (no cmp: a minimal system has no diffutils), and stand-ins: uname says Linux x86_64 ($FAKE_UNAME, $FAKE_UNAME_M),
 # freebsd-version $FAKE_FREEBSD_VERSION, os-release Debian 13, perl tells
 # the version $FAKE_PERL_V (5.40.1) and runs everything else for real,
 # and ldd reports the libraries in $FAKE_LDD_MISSING as not found.
 binary_tools() {
     release_key
-    for t in tar xz sha256sum find cmp perl; do
+    for t in tar xz sha256sum find perl; do
         p=$(printf '%s\n' "$BIN_TOOLS" | tr ' ' '\n' | sed -n "s|^$t=||p")
         [ -n "$p" ] || { echo "skip: no $t"; exit 77; }
         [ "$t" = perl ] || ln -s "$p" "$W/bin/$t"
@@ -2382,7 +2382,7 @@ binary-install)
     check "... PLATFORM" grep -qx PLATFORM=debian13-amd64 "$CONF"
     check "... the release" grep -qx REF=shellter-v2026.10.4 "$CONF"
     check "... --binary-base kept for --update" grep -qx "BINARY_BASE=$W/rel" "$CONF"
-    check "... the installer of the release copied" cmp -s "$P/share/irssi/shellter-install.sh" "$INSTALLER"
+    check "... the installer of the release copied" [ "$(cat "$P/share/irssi/shellter-install.sh")" = "$(cat "$INSTALLER")" ]
     check "... the MANIFEST kept" [ -f "$P/releases/2026.10.4/MANIFEST" ]
     check "... output ASCII only" ascii_only "$W/out"
     # the same release again: the tree in use is kept, nothing else changes
