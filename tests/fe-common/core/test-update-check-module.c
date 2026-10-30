@@ -34,6 +34,7 @@
 
 static GString *printed;
 static char *answer_file, *runs_file, *state_file, *install_file, *conf_file, *log_file;
+static char *old_file;
 static GString *upgraded;
 static int upgrades;
 
@@ -576,6 +577,40 @@ static void test_install_stopped_in_callback(void)
 	reset();
 }
 
+/* An installer without --summary (one before 2026.11.0, installed after
+ * this erssi started): its exit 2 is no failure - the check runs again at
+ * once without the option and takes the one line; the checks after it do
+ * not ask for the summary again. Run after the tests that want it. */
+static void test_installer_without_summary(void)
+{
+	reset();
+	g_assert_true(g_file_set_contents(old_file, "", -1, NULL));
+	answer("update 2026.10.6 9999.3.0", 0);
+	command("/update check");
+	wait_check();
+	g_assert_cmpint(runs(), ==, 2);
+	g_assert_cmpint(runs_with("--porcelain --summary --prefix"), ==, 1);
+	g_assert_cmpint(runs_with("--porcelain --prefix"), ==, 1);
+	g_assert_cmpstr(update_check_available(), ==, "9999.3.0");
+	g_assert_nonnull(strstr(printed->str, "erssi 9999.3.0 is available (signed)"));
+	g_assert_null(strstr(printed->str, "Update check failed"));
+	g_assert_cmpint(count(printed->str, "Update check: asking the installer"), ==, 1);
+	/* the next one asks without it at once */
+	command("/update check");
+	wait_check();
+	g_assert_cmpint(runs(), ==, 3);
+	g_assert_cmpint(runs_with("--porcelain --summary --prefix"), ==, 1);
+	/* /UPDATE INSTALL too */
+	answer("update 2026.10.6 9999.3.0", 0);
+	install_body("echo VERSION=9999.3.0 > \"$(dirname \"$0\")/shellter-install.conf\"\n");
+	command("/update install");
+	wait_install();
+	g_assert_cmpint(runs_with("--porcelain --summary --prefix"), ==, 1);
+	g_assert_cmpint(runs_with("--update --prefix"), ==, 1);
+	unlink(old_file);
+	reset();
+}
+
 static void test_newer(void)
 {
 	g_assert_true(update_check_newer("2026.11.0", "2026.10.6"));
@@ -602,8 +637,15 @@ int main(int argc, char **argv)
 	install_file = g_build_filename(test_home_dir, "installer.install", NULL);
 	conf_file = g_build_filename(test_home_dir, "shellter-install.conf", NULL);
 	installer = g_build_filename(test_home_dir, "shellter-install.sh", NULL);
+	old_file = g_build_filename(test_home_dir, "installer.old", NULL);
 	text = g_strdup_printf("#!/bin/sh\n"
 	                       "echo \"$$ $*\" >> '%s'\n"
+	                       /* an installer before 2026.11.0 while OLD_FILE is there */
+	                       "case \" $* \" in *' --summary '*)\n"
+	                       "    if [ -f '%s' ]; then\n"
+	                       "        echo 'shellter-install.sh: unknown option --summary (--help)' >&2; exit 2\n"
+	                       "    fi ;;\n"
+	                       "esac\n"
 	                       "case \" $* \" in *' --check '*) ;; *)\n"
 	                       "    [ -f '%s' ] || exit 1\n"
 	                       "    . '%s'; exit ;;\n"
@@ -612,7 +654,7 @@ int main(int argc, char **argv)
 	                       "if [ \"$line\" = hang ]; then sleep 300; fi\n"
 	                       "sed '$d' '%s'\n"
 	                       "exit \"$code\"\n",
-	                       runs_file, install_file, install_file, answer_file, answer_file,
+	                       runs_file, old_file, install_file, install_file, answer_file, answer_file,
 	                       answer_file);
 	g_assert_true(g_file_set_contents(installer, text, -1, NULL));
 	g_free(text);
@@ -646,6 +688,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/module/install_refused", test_install_refused);
 	g_test_add_func("/update_check/module/install_stopped_in_callback",
 	                test_install_stopped_in_callback);
+	/* after the tests that want the summary: the process asks no more */
+	g_test_add_func("/update_check/module/installer_without_summary",
+	                test_installer_without_summary);
 	/* last: capability mode stays on */
 	g_test_add_func("/update_check/module/capability_mode", test_capability_mode);
 	return g_test_run();

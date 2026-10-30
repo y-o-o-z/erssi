@@ -1318,6 +1318,14 @@ static void install_after_check(const UPDATE_ANSWER *answer)
 
 static void tick_schedule(gint64 seconds);
 
+/* An installer before 2026.11.0 (one installed after this erssi started:
+   a rollback) does not know --summary and exits 2 for it. Once it did,
+   this process asks without it (until a restart or /UPGRADE), and the
+   check is run again at once without it: the one line, no summary. */
+static gboolean no_summary, job_summary, retrying;
+
+static void check_start(int mode);
+
 static void check_done(const UPDATE_ANSWER *answer, const char *err_text, void *data)
 {
 	int mode = GPOINTER_TO_INT(data);
@@ -1325,6 +1333,15 @@ static void check_done(const UPDATE_ANSWER *answer, const char *err_text, void *
 
 	(void) err_text; /* the steps; erssi --check-update shows them */
 	job = NULL;
+	if (job_summary && answer->exit_code == 2) {
+		no_summary = TRUE;
+		if (mode != CHECK_INSTALL || installing) {
+			retrying = TRUE;
+			check_start(mode);
+			retrying = FALSE;
+		}
+		return;
+	}
 	/* another erssi with this home may have written it meanwhile */
 	state_reload();
 	switch (answer->kind) {
@@ -1401,6 +1418,7 @@ static void check_start(int mode)
 	GError *error = NULL;
 	char *installer, *reason;
 	gboolean test, manual = mode == CHECK_MANUAL;
+	int n = 5;
 
 	if (job != NULL || (installing && mode != CHECK_INSTALL)) {
 		if (manual)
@@ -1424,10 +1442,12 @@ static void check_start(int mode)
 	argv[4] = "--porcelain";
 	/* the summary lines only when asked: an erssi before 2026.11.0 that
 	   runs a newer installer takes exactly one line */
-	argv[5] = "--summary";
-	argv[6] = "--prefix";
-	argv[7] = get_install_prefix();
-	argv[8] = NULL;
+	if (!no_summary)
+		argv[n++] = "--summary";
+	argv[n++] = "--prefix";
+	argv[n++] = get_install_prefix();
+	argv[n] = NULL;
+	job_summary = !no_summary;
 
 	/* the start is what counts: a check cut short by /UPGRADE or /QUIT
 	   is not run again right after the next start */
@@ -1435,7 +1455,7 @@ static void check_start(int mode)
 	cached.last_check = (gint64) time(NULL);
 	state_store();
 
-	if (manual)
+	if (manual && !retrying)
 		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE, TXT_UPDATE_CHECKING);
 	job_mode = mode;
 	job = update_job_start_logged(argv, UPDATE_CHECK_TIMEOUT_MS,

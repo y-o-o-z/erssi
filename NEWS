@@ -17,7 +17,8 @@ shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    brings, from its signed tag: shellter-install.sh --update --check
 	    --porcelain --summary adds up to three lines "summary <text>"
 	    after its first line, which stays as it was (without --summary,
-	    as an older erssi runs it, the one line only). erssi removes
+	    as an older erssi runs it, the one line only; an older installer
+	    that refuses --summary is asked again without it). erssi removes
 	    control characters from it, keeps it in update-check.state and
 	    shows it again in /UPDATE
 
