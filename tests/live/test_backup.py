@@ -20,6 +20,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -126,22 +128,33 @@ def main():
         a = st["alice"]
         pid = a.proc.pid
         lock = a.home / "erssi.lock"
-        cmdline = Path(f"/proc/{pid}/cmdline")
-        if not cmdline.exists() and shutil.which("ps") is None:
-            raise harness.SkipCase("neither /proc nor ps to tell that /upgrade ran")
+        session = a.home / "session"
+        # /UPGRADE writes <home>/session and execs the new erssi, which
+        # reads it and removes it once it is up: the file seen and then
+        # gone, with the same process alive, is the upgrade done. (The
+        # arguments are no sign on FreeBSD: there ps shows arguments longer
+        # than kern.ps_arg_cache_limit from the process's argv, which GLib
+        # cuts down to the program name when it parses the options.)
+        seen = threading.Event()
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                if session.exists():
+                    seen.set()
+                    return
+                time.sleep(0.002)
+        t = threading.Thread(target=watch, daemon=True)
+        t.start()
         a.type("/upgrade")
 
         def upgraded():
-            # the arguments of the process: from /proc where there is one
-            # (a minimal Linux has no ps), otherwise from ps (FreeBSD)
-            if cmdline.exists():
-                try:
-                    return b"--session" in cmdline.read_bytes()
-                except OSError:
-                    return False
-            r = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True)
-            return "--session" in r.stdout
-        assert harness.wait_until(upgraded, 20), "erssi did not run again with --session after /upgrade"
+            return seen.is_set() and not session.exists() and a.proc.poll() is None
+        ok = harness.wait_until(upgraded, 20)
+        stop.set()
+        t.join()
+        assert seen.is_set(), "/upgrade wrote no session file"
+        assert ok, "erssi did not run again (the session file is still there, or erssi is gone)"
 
         def held():
             with open(lock, "r+") as f:
