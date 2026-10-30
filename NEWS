@@ -1,3 +1,25 @@
+shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.0
+
+	+ Install and update
+	  - /UPDATE INSTALL installs the newest signed release from inside
+	    erssi: it checks first, then runs the installer installed with
+	    erssi with --update (as erssi --update does) in the background,
+	    with no terminal, while erssi goes on. The Notices window shows
+	    its steps, warnings and error, everything goes to
+	    ~/.erssi/update-install.log (mode 0600), and at the end erssi says
+	    which release is installed and that /UPGRADE loads it (TLS
+	    connections reconnect once). /UPDATE INSTALL -upgrade runs
+	    /UPGRADE itself. Nothing is installed when erssi is the newest
+	    release, one install runs at a time, and nothing is ever
+	    installed without the command
+	  - the update notice shows a short summary of what a new release
+	    brings, from its signed tag: shellter-install.sh --update --check
+	    --porcelain adds up to three lines "summary <text>" after its
+	    first line, which stays as it was. erssi removes control
+	    characters from it, keeps it in update-check.state and shows it
+	    again in /UPDATE
+
 shellter-v2026.10.8 2026-10-30  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.8
 

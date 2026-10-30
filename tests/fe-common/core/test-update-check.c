@@ -1,6 +1,7 @@
 /* The update notice (src/fe-common/core/update-check.c): the parser of the
- * installer's --porcelain line, the state file, the timing, where the
- * install's conf is looked for, and the background job against stand-in
+ * installer's --porcelain answer and its summary, the state file, the
+ * timing, where the install's conf is looked for, the binary /UPGRADE
+ * runs after /UPDATE INSTALL, and the background job against stand-in
  * installers - one for each answer, one that prints garbage, one that
  * floods, one that hangs (stopped after the timeout, with its child) and
  * one that ignores SIGTERM (killed after the grace time). */
@@ -9,6 +10,7 @@
 #include <irssi/src/fe-common/core/update-check.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +78,15 @@ static void test_parse_answers(void)
 	parse("error\n", EXITED(1), &a);
 	g_assert_cmpint(a.kind, ==, UPDATE_ANSWER_ERROR);
 	g_assert_cmpstr(a.reason, ==, "no reason given");
+	g_assert_cmpint(a.exit_code, ==, 1);
+	update_answer_clear(&a);
+
+	/* the exit code, whatever the answer; -1 for a signal */
+	parse("garbage\n", EXITED(7), &a);
+	g_assert_cmpint(a.exit_code, ==, 7);
+	update_answer_clear(&a);
+	parse("", SIGTERM, &a);
+	g_assert_cmpint(a.exit_code, ==, -1);
 	update_answer_clear(&a);
 }
 
@@ -128,6 +139,86 @@ static void test_parse_garbage(void)
 	ERR("", SIGTERM, "the installer was stopped by signal 15");
 }
 
+static void test_parse_summary(void)
+{
+	const char *odd0 = "unexpected answer from the installer (exit code 0)";
+	UPDATE_ANSWER a;
+
+	parse("update 2026.10.6 2026.11.1\nsummary Inline images.\nsummary And more.\n", EXITED(0),
+	      &a);
+	g_assert_cmpint(a.kind, ==, UPDATE_ANSWER_UPDATE);
+	g_assert_cmpstr(a.newest, ==, "2026.11.1");
+	g_assert_cmpstr(a.summary, ==, "Inline images.\nAnd more.");
+	g_assert_cmpint(a.exit_code, ==, 0);
+	update_answer_clear(&a);
+
+	/* none: NULL; an empty line is skipped; a fourth is left out */
+	parse("update 1.0 2.0\n", EXITED(0), &a);
+	g_assert_null(a.summary);
+	update_answer_clear(&a);
+	parse("update 1.0 2.0\nsummary \nsummary  \033 \nsummary a\nsummary b\nsummary c\nsummary d\n",
+	      EXITED(0), &a);
+	g_assert_cmpstr(a.summary, ==, "a\nb\nc");
+	update_answer_clear(&a);
+
+	/* control characters gone, UTF-8 kept, bad bytes '?' */
+	parse("update 1.0 2.0\nsummary \033[31mred\033[0m \xc5\xbc\xc3\xb3\xc5\x82w \xff\r end \n",
+	      EXITED(0), &a);
+	g_assert_cmpstr(a.summary, ==, "[31mred[0m \xc5\xbc\xc3\xb3\xc5\x82w ? end");
+	update_answer_clear(&a);
+
+	/* only after "update", only "summary" lines */
+	ERR("current 1.0\nsummary x\n", EXITED(0), odd0);
+	ERR("update 1.0 2.0\nsummary x\nnotes y\n", EXITED(0), odd0);
+	ERR("update 1.0 2.0\nsummary\n", EXITED(0), odd0);
+	ERR("update 1.0 2.0\nsummary x", EXITED(0), odd0);
+	ERR("update 1.0 2.0\n\n", EXITED(0), odd0);
+	ERR("error x\nsummary y\n", EXITED(1), "unexpected answer from the installer (exit code 1)");
+}
+
+static void test_clean_summary(void)
+{
+	char *c, *long_text;
+	GString *str;
+
+#define CLEAN(t) update_check_clean_summary(t, strlen(t))
+	c = CLEAN("  plain   text\t here  ");
+	g_assert_cmpstr(c, ==, "plain text here");
+	g_free(c);
+	g_assert_null(CLEAN(""));
+	g_assert_null(CLEAN(" \033\a\x7f "));
+	/* C1, bidi override, zero-width space, line separator */
+	c = CLEAN("a\xc2\x9b" "2Jb\xe2\x80\xae" "c\xe2\x80\x8b" "d\xe2\x80\xa8" "e");
+	g_assert_cmpstr(c, ==, "a2Jbcde");
+	g_free(c);
+	/* NUL inside */
+	c = update_check_clean_summary("a\0b", 3);
+	g_assert_cmpstr(c, ==, "ab");
+	g_free(c);
+	/* at most 200 bytes, whole characters */
+	str = g_string_new(NULL);
+	while (str->len < 400)
+		g_string_append(str, "\xc5\xbc");
+	c = update_check_clean_summary(str->str, str->len);
+	g_assert_cmpuint(strlen(c), ==, 200);
+	g_assert_true(g_utf8_validate(c, -1, NULL));
+	g_free(c);
+	g_string_assign(str, "x");
+	while (str->len < 400)
+		g_string_append(str, "\xc5\xbc");
+	c = update_check_clean_summary(str->str, str->len);
+	g_assert_cmpuint(strlen(c), ==, 199);
+	g_assert_true(g_utf8_validate(c, -1, NULL));
+	g_free(c);
+	g_string_free(str, TRUE);
+	long_text = g_strnfill(300, 'x');
+	c = CLEAN(long_text);
+	g_assert_cmpuint(strlen(c), ==, UPDATE_SUMMARY_LINE);
+	g_free(c);
+	g_free(long_text);
+#undef CLEAN
+}
+
 static void test_parse_reason_cleaned(void)
 {
 	UPDATE_ANSWER a;
@@ -160,6 +251,7 @@ static void test_state_roundtrip(void)
 	st.failures = 2;
 	st.notified = g_strdup("2026.11.1");
 	st.available = g_strdup("2026.11.1");
+	st.summary = g_strdup("Inline images.\nAnd more.");
 	st.unmanaged = g_strdup("updated with: pkg upgrade erssi");
 	st.last_error = g_strdup("cannot reach https://github.com/y-o-o-z/erssi.git");
 	text = update_state_format(&st);
@@ -168,6 +260,8 @@ static void test_state_roundtrip(void)
 	g_assert_cmpint(back.failures, ==, 2);
 	g_assert_cmpstr(back.notified, ==, "2026.11.1");
 	g_assert_cmpstr(back.available, ==, "2026.11.1");
+	g_assert_cmpstr(back.summary, ==, "Inline images.\nAnd more.");
+	g_assert_nonnull(strstr(text, "\nsummary=Inline images.\nsummary=And more.\n"));
 	g_assert_cmpstr(back.unmanaged, ==, "updated with: pkg upgrade erssi");
 	g_assert_cmpstr(back.last_error, ==, "cannot reach https://github.com/y-o-o-z/erssi.git");
 	g_free(text);
@@ -176,12 +270,15 @@ static void test_state_roundtrip(void)
 
 	g_free(st.available);
 	st.available = NULL;
+	g_free(st.summary);
+	st.summary = NULL;
 	g_free(st.unmanaged);
 	st.unmanaged = NULL;
 	g_free(st.last_error);
 	st.last_error = NULL;
 	text = update_state_format(&st);
 	g_assert_null(strstr(text, "available="));
+	g_assert_null(strstr(text, "summary="));
 	g_assert_null(strstr(text, "unmanaged="));
 	g_assert_null(strstr(text, "last_error="));
 	update_state_parse(text, &back);
@@ -215,9 +312,80 @@ static void test_state_invalid(void)
 	g_assert_cmpstr(st.notified, ==, "2.0");
 	update_state_clear(&st);
 
+	/* a summary: cleaned, at most 3 lines, empty ones skipped */
+	update_state_parse("summary=a\033[2J\nsummary=\nsummary=b\nsummary=c\nsummary=d\n", &st);
+	g_assert_cmpstr(st.summary, ==, "a[2J\nb\nc");
+	update_state_clear(&st);
+
 	update_state_parse(NULL, &st);
 	g_assert_cmpint(st.last_check, ==, 0);
 	update_state_clear(&st);
+}
+
+/* the bin/erssi of the install's top; NULL when erssi runs it already */
+static void test_install_binary(void)
+{
+	char *dir = g_build_filename(test_tmpdir, "inst", NULL);
+	char *rel_old = g_build_filename(dir, "releases", "1.0", "bin", NULL);
+	char *rel_new = g_build_filename(dir, "releases", "2.0", "bin", NULL);
+	char *bin = g_build_filename(dir, "bin", NULL), *path, *p;
+	char *old_erssi = g_build_filename(rel_old, "erssi", NULL);
+	char *new_erssi = g_build_filename(rel_new, "erssi", NULL);
+	char *top_erssi = g_build_filename(bin, "erssi", NULL);
+	char *current = g_build_filename(dir, "current", NULL);
+	char *prefix = g_build_filename(dir, "releases", "1.0", NULL);
+
+	/* no current binary known: named */
+	p = update_install_binary("/home/u/.local/opt/erssi", NULL);
+	g_assert_cmpstr(p, ==, "/home/u/.local/opt/erssi/bin/erssi");
+	g_free(p);
+	p = update_install_binary("/home/u/.local/opt/erssi/releases/2026.11.0", NULL);
+	g_assert_cmpstr(p, ==, "/home/u/.local/opt/erssi/bin/erssi");
+	g_free(p);
+
+	/* a binary install switched to 2.0: erssi started through bin/erssi
+	   (or a link to it) runs the new one with a plain /UPGRADE; started
+	   from its release directory, it is named */
+	g_assert_cmpint(g_mkdir_with_parents(rel_old, 0700), ==, 0);
+	g_assert_cmpint(g_mkdir_with_parents(rel_new, 0700), ==, 0);
+	g_assert_cmpint(g_mkdir_with_parents(bin, 0700), ==, 0);
+	g_assert_true(g_file_set_contents(old_erssi, "", 0, NULL));
+	g_assert_true(g_file_set_contents(new_erssi, "", 0, NULL));
+	g_assert_cmpint(symlink("releases/2.0", current), ==, 0);
+	g_assert_cmpint(symlink("../current/bin/erssi", top_erssi), ==, 0);
+	g_assert_null(update_install_binary(prefix, top_erssi));
+	path = update_install_binary(prefix, old_erssi);
+	g_assert_cmpstr(path, ==, top_erssi);
+	g_free(path);
+	/* a source install: its bin/erssi replaced in place */
+	g_assert_null(update_install_binary(dir, top_erssi));
+
+	unlink(top_erssi);
+	unlink(current);
+	unlink(old_erssi);
+	unlink(new_erssi);
+	g_rmdir(rel_old);
+	g_rmdir(rel_new);
+	g_rmdir(bin);
+	g_free(prefix);
+	prefix = g_build_filename(dir, "releases", "1.0", NULL);
+	g_rmdir(prefix);
+	g_free(prefix);
+	prefix = g_build_filename(dir, "releases", "2.0", NULL);
+	g_rmdir(prefix);
+	g_free(prefix);
+	prefix = g_build_filename(dir, "releases", NULL);
+	g_rmdir(prefix);
+	g_rmdir(dir);
+	g_free(prefix);
+	g_free(current);
+	g_free(top_erssi);
+	g_free(new_erssi);
+	g_free(old_erssi);
+	g_free(bin);
+	g_free(rel_new);
+	g_free(rel_old);
+	g_free(dir);
 }
 
 static void test_state_file(void)
@@ -480,6 +648,9 @@ static void test_job_answers(void)
 	    "env | grep -Eq '^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|COMMON_DIR|NAMESPACE)=' &&"
 	    " exit 5\n"
 	    "[ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] || exit 6\n"
+	    /* no controlling terminal: the installer's question as root
+	       (read < /dev/tty) cannot be asked, so it cannot hang */
+	    "if (: < /dev/tty) 2>/dev/null; then exit 4; fi\n"
 	    "echo 'current 1.0'\n",
 	    10000, &r, &pid);
 	g_assert_cmpstr(r.answer.reason, ==, NULL);
@@ -491,6 +662,63 @@ static void test_job_answers(void)
 	g_unsetenv("GIT_OBJECT_DIRECTORY");
 	g_unsetenv("GIT_COMMON_DIR");
 	g_unsetenv("GIT_NAMESPACE");
+}
+
+typedef struct {
+	GString *lines;
+	RESULT *r;
+} LOGGED;
+
+static void logged_line(const char *line, gboolean from_stderr, void *data)
+{
+	LOGGED *l = data;
+
+	g_string_append_printf(l->lines, "%s:%s\n", from_stderr ? "err" : "out", line);
+}
+
+static void logged_done(const UPDATE_ANSWER *answer, const char *err, void *data)
+{
+	job_done(answer, err, ((LOGGED *) data)->r);
+}
+
+/* update_job_start_logged: all the output in the log, line by line to
+   the function (a last line without its \n too), the exit code */
+static void test_job_logged(void)
+{
+	char *path = script("install.sh", "echo one\necho two >&2\nprintf 'three'\nexit 5\n");
+	char *logp = g_build_filename(script_dir, "install.log", NULL), *text = NULL;
+	const char *argv[] = { "/bin/sh", path, NULL };
+	UPDATE_JOB *job;
+	RESULT r;
+	LOGGED l;
+	int fd;
+
+	memset(&r, 0, sizeof(r));
+	r.loop = g_main_loop_new(NULL, FALSE);
+	l.lines = g_string_new(NULL);
+	l.r = &r;
+	fd = open(logp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	g_assert_cmpint(fd, >=, 0);
+	job = update_job_start_logged(argv, 10000, fd, logged_line, logged_done, &l, NULL);
+	g_assert_nonnull(job);
+	g_main_loop_run(r.loop);
+	g_assert_true(r.done);
+	g_assert_cmpint(r.answer.kind, ==, UPDATE_ANSWER_ERROR);
+	close(fd);
+	g_assert_nonnull(strstr(l.lines->str, "out:one\n"));
+	g_assert_nonnull(strstr(l.lines->str, "err:two\n"));
+	g_assert_nonnull(strstr(l.lines->str, "out:three\n"));
+	g_assert_true(g_file_get_contents(logp, &text, NULL, NULL));
+	g_assert_nonnull(strstr(text, "one\n"));
+	g_assert_nonnull(strstr(text, "two\n"));
+	g_assert_nonnull(strstr(text, "three"));
+	g_free(text);
+	g_main_loop_unref(r.loop);
+	g_string_free(l.lines, TRUE);
+	result_clear(&r);
+	unlink(logp);
+	g_free(logp);
+	g_free(path);
 }
 
 static void test_job_garbage(void)
@@ -674,6 +902,9 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/parse_answers", test_parse_answers);
 	g_test_add_func("/update_check/parse_garbage", test_parse_garbage);
 	g_test_add_func("/update_check/parse_reason_cleaned", test_parse_reason_cleaned);
+	g_test_add_func("/update_check/parse_summary", test_parse_summary);
+	g_test_add_func("/update_check/clean_summary", test_clean_summary);
+	g_test_add_func("/update_check/install_binary", test_install_binary);
 	g_test_add_func("/update_check/state_roundtrip", test_state_roundtrip);
 	g_test_add_func("/update_check/state_invalid", test_state_invalid);
 	g_test_add_func("/update_check/state_file", test_state_file);
@@ -681,6 +912,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/update_check/conf_paths", test_conf_paths);
 	g_test_add_func("/update_check/job_answers", test_job_answers);
 	g_test_add_func("/update_check/job_garbage", test_job_garbage);
+	g_test_add_func("/update_check/job_logged", test_job_logged);
 	g_test_add_func("/update_check/job_timeout", test_job_timeout);
 	g_test_add_func("/update_check/job_cancel", test_job_cancel);
 	g_test_add_func("/update_check/job_cancel_after_exit", test_job_cancel_after_exit);

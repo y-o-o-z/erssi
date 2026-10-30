@@ -3,8 +3,8 @@
 (ERSSI_TEST_UPDATE_INSTALLER) that answers as shellter-install.sh
 --update --check --porcelain does and logs every run:
 
-- /UPDATE CHECK: the line "erssi X is available (signed). Update from a
-  shell: ..." and the "update" statusbar item; the state file is the
+- /UPDATE CHECK: the line "erssi X is available (signed). Install it:
+  /update install ..." and the "update" statusbar item; the state file is the
   user's own, mode 0600; an error and "current" are said too;
 - update_check on: the first check about a minute after the start, the
   line once per version, the statusbar item at once from the state
@@ -24,7 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness  # noqa: E402
 
 WAIT = 15
-AVAILABLE = "erssi 2099.1.0 is available (signed). Update from a shell: erssi --update, then /upgrade"
+AVAILABLE = ("erssi 2099.1.0 is available (signed). Install it: /update install "
+             "(or erssi --update in a shell), then /upgrade")
 
 
 def main():
@@ -97,7 +98,7 @@ def main():
         assert on_screen(e, "update 2099.1.0"), "\n".join(e.screen())
         # the line is in the Notices window, erssi's status window
         e.type_and_wait("/window goto Notices")
-        assert on_screen(e, "erssi 2099.1.0 is available (signed). Update from a shell:"), \
+        assert on_screen(e, "erssi 2099.1.0 is available (signed). Install it:"), \
             "\n".join(e.screen())
         e.type_and_wait("/window goto #test")
         assert len(runs(d)) == 1 and runs(d)[0].startswith("--update --check --porcelain --prefix /"), runs(d)

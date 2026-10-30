@@ -9,8 +9,9 @@
     window of client messages (the Notices window of erssi, the status
     window of irssi):
 
-        erssi 2026.11.1 is available (signed). Update from a shell:
-        erssi --update, then /UPGRADE
+        erssi 2026.11.1 is available (signed). Install it: /update
+        install (or erssi --update in a shell), then /upgrade
+          A short summary of what the release brings.
 
     It is off by default because each check contacts the erssi
     repository (github.com, unless erssi was installed from another
@@ -20,8 +21,11 @@
     (mode 0600), so a restart or /UPGRADE does not check again before the
     day is over; two erssi with the same home share it.
 
+    The summary (up to three lines) comes from the signed tag of the
+    release; it is kept in the state file and shown again by /UPDATE.
+
     The check is the one /UPDATE CHECK makes (/HELP update). Nothing is
-    installed. A check that fails (no network, GitHub down) is not shown;
+    installed: only /UPDATE INSTALL does, when you give it. A check that fails (no network, GitHub down) is not shown;
     after three failures in a row one line says so, and /UPDATE shows
     why the last one failed. A release tag that
     moved to another commit is shown at once: report it.
