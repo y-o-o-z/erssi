@@ -49,7 +49,7 @@ test('installer install.sh', find_program('sh'),
 # utils/release.sh with throwaway repositories, a throwaway signing key, a
 # local bare remote and a stand-in gh: no network, no chroot, no ssh
 # (test-release.sh SOURCE_ROOT CASE)
-foreach c : ['args', 'tag-message', 'check', 'dry-run', 'sums', 'upload', 'confirm']
+foreach c : ['args', 'tag-message', 'check', 'dry-run', 'sums', 'upload', 'confirm', 'retag']
   test('release ' + c, find_program('sh'),
     args : [files('test-release.sh'), meson.current_source_dir() / '..' / '..', c],
     timeout : 120, suite : 'tooling')

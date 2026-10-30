@@ -20,6 +20,9 @@
 #                made, the packages first, the sums last, nothing twice
 #   confirm      a release "downloaded" by the stand-in gh: good, and each
 #                way it can be wrong
+#   retag        packages built, verified and signed for a tag that was
+#                then made again on another commit: verify, sums and upload
+#                refuse them
 # Exit: 0 pass, 1 fail, 77 skip.
 # shellcheck disable=SC2016 # sh -c scripts take $1 themselves
 
@@ -73,12 +76,22 @@ printf '%s namespaces="git" %s\n' "$EMAIL" "$(cut -d' ' -f1,2 "$tmp/key.pub")" >
 printf '%s namespaces="erssi-release" %s\n' "$EMAIL" "$(cut -d' ' -f1,2 "$tmp/key.pub")" > "$tmp/release_signers"
 export RELEASE_MM_TMPDIR="$tmp/mm"
 
-# the stand-in gh: releases are directories in $tmp/gh/<tag>, every call
-# is a line of $tmp/gh.log
+# the stand-in gh: releases are directories in $tmp/gh/<tag>, the tags
+# are those of the bare repository $FAKE_GH_GIT (gh api .../git/ref/tags/
+# <tag> --jq .object.sha), every call is a line of $tmp/gh.log
 mkdir -p "$tmp/bin" "$tmp/gh" || exit 1
 cat > "$tmp/bin/gh" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE_GH_LOG"
+if [ "$1" = api ]; then
+    case $2 in
+        repos/*/git/ref/tags/*) ;;
+        *) echo "unexpected api call $2" >&2; exit 1 ;;
+    esac
+    git --git-dir="$FAKE_GH_GIT" rev-parse --verify -q "refs/tags/${2##*/git/ref/tags/}" ||
+        { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    exit 0
+fi
 [ "$1" = release ] || exit 1
 sub=$2 tag=$3
 shift 3
@@ -103,7 +116,7 @@ case $sub in
 esac
 EOF
 chmod 755 "$tmp/bin/gh"
-export FAKE_GH_LOG="$tmp/gh.log" FAKE_GH_RELEASES="$tmp/gh"
+export FAKE_GH_LOG="$tmp/gh.log" FAKE_GH_RELEASES="$tmp/gh" FAKE_GH_GIT="$tmp/repo.git"
 PATH=$tmp/bin:$PATH
 
 # run release.sh with the throwaway signers: RC, OUT
@@ -151,23 +164,24 @@ make_repo() {
 sha256_hex() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else sha256 -q; fi
 }
-# the release directory $1 of 2026.11.0: two packages (any bytes do for
-# these steps), marked as reproduced
-make_packages() {
-    rm -rf "$1" && mkdir -p "$1" || exit 1
-    for p in freebsd14-amd64 debian13-amd64; do
-        n=erssi-2026.11.0-$p.tar.xz
-        printf 'package %s\n' "$p" > "$1/$n"
-        mkdir -p "$1/logs/$p"
-        printf '%s  %s\n' "$(sha256_hex < "$1/$n")" "$n" > "$1/logs/$p/verified"
-    done
-}
 # a package $2 whose MANIFEST names commit $3, in directory $1
 fake_package() {
     t=${2%.tar.xz}
     mkdir -p "$tmp/pk/$t" && printf 'commit=%s\ntag=x\n' "$3" > "$tmp/pk/$t/MANIFEST" || exit 1
     (cd "$tmp/pk" && tar -cf - "$t") | xz -c > "$1/$2" || exit 1
     rm -rf "$tmp/pk"
+}
+# the release directory $1 of 2026.11.0: two packages of commit $2 (by
+# default the commit of $TAG in $R), marked as reproduced
+make_packages() {
+    rm -rf "$1" && mkdir -p "$1" || exit 1
+    c=${2:-$(git -C "$R" rev-parse "$TAG^{commit}")} || exit 1
+    for p in freebsd14-amd64 debian13-amd64; do
+        n=erssi-2026.11.0-$p.tar.xz
+        fake_package "$1" "$n" "$c"
+        mkdir -p "$1/logs/$p"
+        printf '%s  %s\n' "$(sha256_hex < "$1/$n")" "$n" > "$1/logs/$p/verified"
+    done
 }
 
 R=$tmp/repo
@@ -365,9 +379,20 @@ upload|confirm)
         expect "upload before the tag is pushed: refused" 1 "$TAG is not on origin yet - push it first"
         check "... gh never ran" [ ! -e "$tmp/gh.log" ]
         git -C "$R" push -q origin "$TAG" || exit 1
+        # --gh-repo that is not the repository of --remote
+        git init -q --bare "$tmp/empty.git" || exit 1
+        FAKE_GH_GIT=$tmp/empty.git run upload --repo "$R" "$TAG" "$D"
+        expect "upload: --gh-repo without the tag" 1 'y-o-o-z/erssi has no tag shellter-v2026.11.0, though origin has it'
+        git clone -q "$R.git" "$tmp/c2" && git -C "$tmp/c2" tag -d "$TAG" >/dev/null &&
+            git -C "$tmp/c2" tag -s -m "erssi Shellter Edition 2026.11.0 elsewhere" "$TAG" &&
+            git init -q --bare "$tmp/elsewhere.git" && git -C "$tmp/c2" push -q "$tmp/elsewhere.git" "$TAG" 2>/dev/null || exit 1
+        FAKE_GH_GIT=$tmp/elsewhere.git run upload --repo "$R" "$TAG" "$D"
+        expect "upload: --gh-repo with another tag object" 1 'on y-o-o-z/erssi is another tag object'
+        check "... nothing made or uploaded" sh -c '! grep -Eq "^release (create|upload)" "$1"' sh "$tmp/gh.log"
+        rm -f "$tmp/gh.log"
         run upload --repo "$R" "$TAG" "$D" --dry-run
         expect "upload --dry-run" 0 'would run: gh release create'
-        check "... only looked" sh -c '[ "$(cut -d" " -f2 "$1" | sort -u)" = view ] && [ ! -e "$2" ]' sh "$tmp/gh.log" "$tmp/gh/$TAG"
+        check "... only looked" sh -c '[ "$(grep -v "^api repos/y-o-o-z/erssi/git/ref/tags/$3 " "$1" | cut -d" " -f2 | sort -u)" = view ] && [ ! -e "$2" ]' sh "$tmp/gh.log" "$tmp/gh/$TAG" "$TAG"
         rm -f "$tmp/gh.log"
         run upload --repo "$R" "$TAG" "$D"
         expect "upload" 0 "upload $TAG: done"
@@ -408,10 +433,41 @@ upload|confirm)
         (cd "$G" && sort -k2r SHA256SUMS > s && mv s SHA256SUMS && rm -f SHA256SUMS.sig &&
             ssh-keygen -q -Y sign -n erssi-release -f "$tmp/key" SHA256SUMS) 2>/dev/null
         run confirm --repo "$R" "$TAG"; expect "confirm: a signed SHA256SUMS out of order" 1 'SHA256SUMS is not sorted'
-        cp "$D/SHA256SUMS" "$D/SHA256SUMS.sig" "$G/"
+        # the last line without its newline: its sum is checked all the same
+        (cd "$G" && printf '%s' "$(cat "$D/SHA256SUMS")" > SHA256SUMS && rm -f SHA256SUMS.sig &&
+            ssh-keygen -q -Y sign -n erssi-release -f "$tmp/key" SHA256SUMS) 2>/dev/null
+        check "... (the stand-in SHA256SUMS has no last newline)" sh -c '[ "$(tail -c 1 "$1" | od -An -c | tr -d " ")" != "\\n" ]' sh "$G/SHA256SUMS"
+        echo changed >> "$G/erssi-2026.11.0-freebsd14-amd64.tar.xz"
+        run confirm --repo "$R" "$TAG"; expect "confirm: the last sum line without its newline is checked" 1 'erssi-2026.11.0-freebsd14-amd64.tar.xz does not match its sum'
+        cp "$D/erssi-2026.11.0-freebsd14-amd64.tar.xz" "$D/SHA256SUMS" "$D/SHA256SUMS.sig" "$G/"
         run confirm --repo "$R" "$TAG"; expect "confirm: good again" 0 "confirm $TAG: ok"
         run confirm --repo "$R" shellter-v2026.11.9; expect "confirm: no such release" 1 'cannot download the assets of shellter-v2026.11.9'
     fi
+    ;;
+retag)
+    # built, verified and signed on commit A; then the tag is deleted and
+    # made again on commit B, and pushed
+    make_repo "$R" 2026.11.0 2026-11-02
+    A=$(git -C "$R" rev-parse "$TAG^{commit}")
+    D=$tmp/rel
+    make_packages "$D"
+    run sums --repo "$R" --key "$tmp/key" "$D"
+    [ "$RC" = 0 ] || { echo "FAIL - sums: $OUT"; exit 1; }
+    git -C "$R" commit -q -S --allow-empty -m "erssi Shellter Edition 2026.11.0, again" && git -C "$R" tag -d "$TAG" >/dev/null &&
+        git -C "$R" tag -s -F "$tmp/msg" "$TAG" && git -C "$R" push -q origin main "$TAG" 2>/dev/null || exit 1
+    B=$(git -C "$R" rev-parse "$TAG^{commit}")
+    check "the tag is on another commit now" [ "$A" != "$B" ]
+    run verify --repo "$R" "$D"
+    expect "verify: a package verified for the old commit is not kept" 1 "was built from $A, not from $B, the commit of $TAG"
+    run sums --repo "$R" --key "$tmp/key" "$D"
+    expect "sums: SHA256SUMS of the old commit is not kept" 1 "was built from $A, not from $B"
+    run upload --repo "$R" "$TAG" "$D"
+    expect "upload: packages of the old commit are refused" 1 "was built from $A, not from $B"
+    check "... gh never ran" [ ! -e "$tmp/gh.log" ]
+    # a directory that cannot go unquoted into a command line
+    mkdir -p "$tmp/a b" && cp -R "$D" "$tmp/a b/rel" || exit 1
+    run upload --repo "$R" "$TAG" "$tmp/a b/rel"
+    expect "upload: a directory with a blank is refused" 1 'may hold letters, digits and ._+/- only'
     ;;
 *) echo "FAIL - unknown case $CASE"; exit 1 ;;
 esac

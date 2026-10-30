@@ -34,8 +34,11 @@
 #   upload TAG DIR       the GitHub release of TAG (made from the tag
 #                        message when there is none), the packages first,
 #                        SHA256SUMS and SHA256SUMS.sig last; only when TAG
-#                        is on --remote. Assets already there stay as they
-#                        are (confirm checks them)
+#                        is on --remote and on --gh-repo as the same tag
+#                        object. Assets already there stay as they are
+#                        (confirm checks them). verify, sums and upload
+#                        take only packages whose MANIFEST names the
+#                        commit of the local tag
 #   confirm TAG          the assets of the GitHub release downloaded into a
 #                        new directory: the signature of SHA256SUMS and every
 #                        sum checked, nothing missing or extra
@@ -230,11 +233,20 @@ if [ "$STEP_NAME" != tag-message ] || [ -n "$REPO" ]; then
     REPO=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || die "$REPO is not a git repository"
 fi
 
-WORK='' BDIR=''
+WORK='' BDIR='' RHOST='' RDIR=''
+# the directory RDIR on host RHOST removed (after a build or a verify
+# there, and by the trap when one is stopped half way)
+remote_rm() {
+    [ -n "$RHOST" ] || return 0
+    # shellcheck disable=SC2086 # SSH: the command and its options
+    $SSH "$RHOST" "rm -rf $RDIR" >/dev/null 2>&1 </dev/null
+    RHOST=
+}
 # shellcheck disable=SC2317 # run by the trap
 cleanup() {
     [ -z "$WORK" ] || rm -rf "$WORK"
     [ -z "$BDIR" ] || rm -rf "$BDIR"
+    remote_rm
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -512,6 +524,7 @@ remote_dir() {
     RDIR=$(printf '%s\n' 'mktemp -d "${TMPDIR:-/tmp}/erssi-release.XXXXXX"' | $SSH "$1" sh -s) ||
         die "cannot make a directory on $1"
     safe_word "$RDIR" || die "$1 made the directory '$RDIR', which cannot be used"
+    RHOST=$1
 }
 # the bundle onto host $1 (RDIR/repo.bundle)
 remote_bundle() {
@@ -528,6 +541,14 @@ manifest() {
     top=$(xz -dc "$1" 2>/dev/null | tar -tf - 2>/dev/null | head -n 1)
     top=${top%%/*}
     xz -dc "$1" 2>/dev/null | tar -xOf - "$top/MANIFEST" 2>/dev/null | sed -n "s/^$2=//p"
+}
+# package DIR/$1 is built from COMMIT, the commit of the local tag: a
+# package left from a tag that was made again on another commit is never
+# verified, signed or uploaded under this one
+of_commit() {
+    c=$(manifest "$DIR/$1" commit)
+    [ "$c" = "$COMMIT" ] ||
+        die "$1 was built from ${c:-an unknown commit}, not from $COMMIT, the commit of $TAG - remove it and build again"
 }
 
 # ── build ────────────────────────────────────────────────────────────
@@ -586,8 +607,7 @@ build_one() {   # platform
                 $SSH "$t" "cat $RDIR/build.log" > "$L/build.log" 2>/dev/null
                 if [ "$rc" != 0 ] || ! grep -qx "$name" "$L/remote.out"; then
                     tail -n 5 "$L/build.log" "$L/remote.out" >&2 2>/dev/null
-                    # shellcheck disable=SC2086
-                    $SSH "$t" "rm -rf $RDIR" >/dev/null 2>&1
+                    remote_rm
                     die "$p: the build on $t failed (the logs: $L)"
                 fi
                 mkdir -p "$L/out" || die "cannot make $L/out"
@@ -597,8 +617,7 @@ build_one() {   # platform
                     die "$p: cannot copy $name from $t"
                 fi
                 mv "$L/out/$name.tmp" "$L/out/$name" || die "cannot write $L/out/$name"
-                # shellcheck disable=SC2086
-                $SSH "$t" "rm -rf $RDIR" >/dev/null 2>&1
+                remote_rm
             fi ;;
     esac
     [ "$DRY" = 1 ] && { say "would run: mv $L/out/$name $DIR/$name"; return 0; }
@@ -644,6 +663,7 @@ platform_of() { n=${1#erssi-"$VERSION"-}; printf '%s\n' "${n%.tar.xz}"; }
 verify_one() {   # package name
     name=$1 p=$(platform_of "$1")
     L=$DIR/logs/$p
+    of_commit "$name"
     sum=$(sha256_of "$DIR/$name") || die "cannot compute the sha256 of $name"
     if [ -f "$L/verified" ] && [ "$(cat "$L/verified")" = "$sum  $name" ]; then
         say "  $p: reproduced already (sha256 $sum) - kept"
@@ -683,8 +703,7 @@ verify_one() {   # package name
             log=$L/verify/verify.log
             # shellcheck disable=SC2086
             printf '%s\n' "$script" | $SSH "$t" sh -s > "$log" 2>&1
-            # shellcheck disable=SC2086
-            $SSH "$t" "rm -rf $RDIR" >/dev/null 2>&1
+            remote_rm
             rc=$(sed -n 's/^rc=//p' "$log" | tail -n 1) ;;
         *) die "$p: no way to build it again" ;;
     esac
@@ -738,7 +757,8 @@ sums_ok() {
     done
     [ "$good" = 1 ] || { PROBLEM="SHA256SUMS.sig is not a valid signature of SHA256SUMS by a key of $SIGNERS (namespace erssi-release)"; return 1; }
     awk '{print $2}' "$d/SHA256SUMS" | LC_ALL=C sort -c 2>/dev/null || { PROBLEM="SHA256SUMS is not sorted"; return 1; }
-    while IFS= read -r line; do
+    # the last line without its newline is read (and checked) too
+    while IFS= read -r line || [ -n "$line" ]; do
         sum=${line%%  *} f=${line#*  }
         printf '%s\n' "$sum" | grep -Eq '^[0-9a-f]{64}$' || { PROBLEM="SHA256SUMS: not a sum line: $line"; return 1; }
         case $f in
@@ -760,11 +780,13 @@ step_sums() {
         [ "$DRY" = 1 ] && { say "sums: no packages in $DIR yet - SHA256SUMS would be written and signed over them"; return 0; }
         die "no erssi-*.tar.xz in $DIR"
     fi
-    DIR=$(cd -- "$DIR" && pwd) || die "cannot use $DIR"
+    DIR=$(abs_dir "$DIR") || die "cannot use $DIR"
     say "sums $TAG: $(printf '%s\n' "$NAMES" | wc -l | tr -d ' ') packages in $DIR"
     have ssh-keygen || die "ssh-keygen is needed"
-    # only what verify reproduced is signed
+    local_tag
+    # only what verify reproduced, of the tag's commit, is signed
     for n in $NAMES; do
+        of_commit "$n"
         p=$(platform_of "$n")
         [ -f "$DIR/logs/$p/verified" ] || die "$n has not been built again (release.sh verify $DIR)"
         [ "$(cat "$DIR/logs/$p/verified")" = "$(sha256_of "$DIR/$n")  $n" ] ||
@@ -808,10 +830,22 @@ step_upload() {
     [ -n "$REMOTE_OBJ" ] || die "$TAG is not on $REMOTE yet - push it first (git push $REMOTE main $TAG): a release is uploaded only for a published tag"
     [ "$REMOTE_OBJ" = "$TAG_OBJ" ] || die "$TAG on $REMOTE is another tag object ($REMOTE_OBJ, here $TAG_OBJ) - nothing uploaded"
     packages || die "no erssi-*.tar.xz in $DIR"
-    DIR=$(cd -- "$DIR" && pwd) || die "cannot use $DIR"
+    DIR=$(abs_dir "$DIR") || die "cannot use $DIR"
+    for n in $NAMES; do of_commit "$n"; done
     sums_ok "$DIR" || die "$DIR: $PROBLEM - nothing uploaded (release.sh sums $DIR)"
     have gh || die "gh (the GitHub CLI) is needed"
     work
+    # --remote and --gh-repo must be the same repository: GitHub has the
+    # same tag object (read only, so with --dry-run too)
+    if ! gh_obj=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha 2>"$WORK/gh.err"); then
+        case $(cat "$WORK/gh.err") in
+            *"Not Found"*|*"not found"*) die "$GH_REPO has no tag $TAG, though $REMOTE has it - are --remote and --gh-repo the same repository? Nothing uploaded" ;;
+            *) die "gh cannot read the tag $TAG of $GH_REPO: $(tail -n 1 "$WORK/gh.err")" ;;
+        esac
+    fi
+    [ "$gh_obj" = "$TAG_OBJ" ] ||
+        die "$TAG on $GH_REPO is another tag object (${gh_obj:-none}, here and on $REMOTE $TAG_OBJ) - are --remote and --gh-repo the same repository? Nothing uploaded"
+    say "  $GH_REPO has the same tag object"
     if assets=$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' 2>"$WORK/gh.err"); then
         say "  the release $TAG is there"
     else
@@ -826,13 +860,12 @@ step_upload() {
     # the packages first: the installer reads SHA256SUMS first, and a
     # package it lists but cannot download means a source build
     for group in "$NAMES" "SHA256SUMS SHA256SUMS.sig"; do
-        todo=
+        set --
         for n in $group; do
-            if printf '%s\n' "$assets" | grep -qxF "$n"; then say "  $n is there - kept"; else todo="$todo $DIR/$n"; fi
+            if printf '%s\n' "$assets" | grep -qxF "$n"; then say "  $n is there - kept"; else set -- "$@" "$DIR/$n"; fi
         done
-        [ -n "$todo" ] || continue
-        # shellcheck disable=SC2086 # the paths: words without blanks
-        act gh release upload "$TAG" --repo "$GH_REPO" $todo || die "gh could not upload$todo"
+        [ $# -gt 0 ] || continue
+        act gh release upload "$TAG" --repo "$GH_REPO" "$@" || die "gh could not upload $*"
     done
     say "upload $TAG: done (release.sh confirm $TAG checks what GitHub serves)"
 }

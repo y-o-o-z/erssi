@@ -114,8 +114,14 @@ steps run:
   `logs/<platform>/verified` with its sha256. One that does not reproduce
   stops the release, with the files and the `MANIFEST` lines that differ.
 - **sums** signs only packages marked as reproduced with that sha256.
+- **verify**, **sums** and **upload** take only packages whose `MANIFEST`
+  names the commit of the local tag: packages left from a tag that was
+  deleted and made again on another commit are refused, also when they
+  were verified and signed before.
 - **upload** and **confirm** use `gh` (see [Signing and
-  uploading](#signing-and-uploading)).
+  uploading](#signing-and-uploading)). Before it uploads, **upload**
+  checks that `--gh-repo` has the tag as the same tag object as
+  `--remote`.
 
 The hosts, users and paths of the machines that build a release are
 options or environment variables, never part of the repository:

@@ -42,9 +42,10 @@ shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	    Debian 12 and Ubuntu 24.04 in new chroots, FreeBSD over ssh),
 	    verify (each package built again in a fresh environment, the
 	    same bytes), sums (SHA256SUMS signed), upload (only once the tag
-	    is on GitHub; the packages first, the sums last) and confirm (the
-	    assets downloaded again and checked). Each step checks what it
-	    needs and keeps what is done; all runs them in order, and
+	    is on GitHub as the same tag object; the packages first, the sums
+	    last) and confirm (the assets downloaded again and checked). Each
+	    step checks what it needs and keeps what is done, and takes only
+	    packages built from the tag's commit; all runs them in order, and
 	    --dry-run shows what they would run. The build hosts are options
 	    or environment variables, not part of the repository
 	  - release.sh tag-message prints the message of a release tag: the
