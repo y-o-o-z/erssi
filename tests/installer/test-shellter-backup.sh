@@ -405,6 +405,15 @@ running)
     run --restore "$W/b.tar.gz" --home "$W/target"
     check "restore is refused while an erssi process names the home" [ "$RC" != 0 ]
     check "it names the pid" said "pid $OLD"
+    if [ -r /proc/self/status ]; then
+        # no ps (a minimal Linux without procps): read from /proc
+        mkdir "$W/no-ps"
+        for t in sh awk sed grep date mktemp ls cut tr head tail sort rm mkdir cp mv ln chmod cat find gzip od wc df du id readlink env uname basename dirname touch perl; do
+            p=$(command -v "$t") && ln -s "$p" "$W/no-ps/$t"
+        done
+        run_env PATH="$W/shim:$W/no-ps" -- --restore "$W/b.tar.gz" --home "$W/target"
+        check "without ps, the process is found in /proc" [ "$RC" != 0 ] && said "pid $OLD"
+    fi
     kill "$OLD"; wait "$OLD" 2>/dev/null
     mkdir "$W/link"
     ln -s "$(command -v perl)" "$W/link/erssi"
