@@ -96,6 +96,14 @@ typedef void (*UPDATE_JOB_FUNC)(const UPDATE_ANSWER *answer, const char *stderr_
 
 UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB_FUNC done,
                              void *data, GError **error);
+/* the same, for a program that is not the update check: DONE gets the
+ * wait status and what it printed (NUL-terminated, 64 KiB at most of
+ * each), or with FAILURE set ("timed out after N s", "could not be
+ * waited for") no status to go by */
+typedef void (*UPDATE_JOB_RAW_FUNC)(const char *failure, int wait_status, const char *stdout_text,
+                                    const char *stderr_text, void *data);
+UPDATE_JOB *update_job_start_raw(const char *const *argv, int timeout_ms, UPDATE_JOB_RAW_FUNC done,
+                                 void *data, GError **error);
 /* the process group stopped (SIGTERM, up to 2 s, then SIGKILL) while
  * its process is still there, and the process reaped here; DONE is not
  * called, the job is freed. The job's process is reaped only by the job
@@ -110,6 +118,9 @@ int update_job_pid(UPDATE_JOB *job);
  * or by /UPDATE CHECK - when it is newer than this erssi, else NULL (for
  * the statusbar item; "update check changed" is emitted when it changes) */
 const char *update_check_available(void);
+/* the installer installed with this erssi (<PKGDATADIR>/shellter-install.sh,
+ * or ERSSI_TEST_UPDATE_INSTALLER for the tests), whether it is there or not */
+char *update_check_installer(void);
 /* TRUE when update_check can work in this installation (for the first-run
  * setup, which offers it only then) */
 gboolean update_check_possible(void);

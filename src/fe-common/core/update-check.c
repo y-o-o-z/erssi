@@ -316,6 +316,7 @@ struct _UPDATE_JOB {
 	gboolean exited, lost, timed_out;
 	int status, timeout_ms;
 	UPDATE_JOB_FUNC done;
+	UPDATE_JOB_RAW_FUNC raw;
 	void *data;
 };
 
@@ -363,6 +364,16 @@ static void job_finish(UPDATE_JOB *job)
 {
 	UPDATE_ANSWER answer;
 
+	if (job->raw != NULL) {
+		char *failure = job->timed_out ?
+		                g_strdup_printf("timed out after %d s", job->timeout_ms / 1000) :
+		                job->lost ? g_strdup("the installer could not be waited for") : NULL;
+
+		job->raw(failure, job->status, job->out->str, job->err->str, job->data);
+		g_free(failure);
+		job_free(job);
+		return;
+	}
 	if (job->timed_out || job->lost) {
 		memset(&answer, 0, sizeof(answer));
 		answer.kind = UPDATE_ANSWER_ERROR;
@@ -567,6 +578,17 @@ UPDATE_JOB *update_job_start(const char *const *argv, int timeout_ms, UPDATE_JOB
 	return job;
 }
 
+UPDATE_JOB *update_job_start_raw(const char *const *argv, int timeout_ms, UPDATE_JOB_RAW_FUNC done,
+                                 void *data, GError **error)
+{
+	UPDATE_JOB *job = update_job_start(argv, timeout_ms, NULL, data, error);
+
+	/* it finishes from the main loop only, after this */
+	if (job != NULL)
+		job->raw = done;
+	return job;
+}
+
 void update_job_cancel(UPDATE_JOB *job)
 {
 	int i, status;
@@ -649,6 +671,13 @@ static char *installer_path(gboolean *test)
 	if (*test)
 		return g_strdup(env);
 	return g_build_filename(get_install_path(PKGDATADIR), "shellter-install.sh", NULL);
+}
+
+char *update_check_installer(void)
+{
+	gboolean test;
+
+	return installer_path(&test);
 }
 
 /* NULL when a check can run here, else why not */
