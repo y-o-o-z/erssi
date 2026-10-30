@@ -10,7 +10,9 @@ Back to the [README](../../README.md).
 - [What the installer verifies](#what-the-installer-verifies)
 - [Files in ~/.erssi](#files-in-erssi)
 - [Moving to another box](#moving-to-another-box)
+- [Upgrading](#upgrading)
 - [Upgrading from 1.3.x](#upgrading-from-13x)
+- [When the install fails](#when-the-install-fails)
 - [Manual build](#manual-build)
 
 ## Install
@@ -597,6 +599,75 @@ read is named in the output and is in the backup as it was at that moment
 reading it). The listings and messages of tar are read in the C locale,
 so the language you run it in does not matter.
 
+## Upgrading
+
+`erssi --backup` before an upgrade keeps a copy of your setup to go back
+to (see [Moving to another box](#moving-to-another-box)).
+
+### From an older Shellter release
+
+```sh
+erssi --update           # in a shell: install the newest release
+/upgrade                 # in the running erssi: load it
+```
+
+`erssi --update` installs the new release next to the one in use, with the
+settings of your first install (see [Update](#update) for what it checks).
+A running erssi is not affected until you type `/upgrade`. It then loads
+the new version and keeps your windows and channels. Connections over
+plain text stay up. TLS connections cannot be handed over to the new
+process: each one reconnects once, and the channels see a quit
+"[TLS] Client upgrade" and a join. Quitting and starting erssi again works
+just as well.
+
+If you update twice without `/upgrade`, the running erssi still needs the
+release it was started from; `--keep` (2 by default) keeps it (see
+[Binary packages](#binary-packages)). 1.3.x has its own notes:
+[Upgrading from 1.3.x](#upgrading-from-13x).
+
+### From a distribution package or irssi
+
+erssi is its own program, `erssi`, with its own home, `~/.erssi`.
+An irssi package and `~/.irssi` stay as they are, and erssi never reads
+`~/.irssi`. To take your irssi setup along, copy `~/.irssi/config` (and
+`scripts/` and your themes) into `~/.erssi/` before erssi first starts
+there.
+
+An erssi installed by a package manager, or by erssi-org's packages,
+uses `~/.erssi` too, so the Shellter Edition starts with that
+configuration (the changes from 1.3.x are listed below). Which `erssi`
+runs is the first one in your `PATH`: `command -v erssi` should print
+`~/.local/bin/erssi`. Such an erssi has no installer of this edition, so
+its `--update` says "the installer … is missing - update with
+shellter-install.sh, the way erssi was installed": update it with its
+package manager, or remove it once the Shellter Edition works.
+
+### From a source install
+
+A source install made by the installer (`--source`, or a system without
+packages) is updated the same way, with `erssi --update`. When a package
+exists for your system, the update installs it into the same prefix:
+from then on the prefix has the layout of a binary install (`releases/`,
+`current`), and `--rollback` works. `--source` keeps building from source
+on every update (until `--binary`).
+
+A manual build ([Manual build](#manual-build)) is not managed by the
+installer. Build the newer tag the same way, or switch: install with the
+installer into its own prefix, then remove the manual build (`ninja -C
+Build uninstall` in its build directory).
+
+### Going back
+
+- A binary install: `--rollback` with the installer of the installed
+  release switches to the previous release, and again forward (see
+  [Binary packages](#binary-packages)). Then `/upgrade`.
+- Any install: `--ref shellter-vX.Y.Z` installs that release on purpose,
+  also an older one.
+- Your configuration: a newer release may add settings to
+  `~/.erssi/config` that an older one does not know; they stay there,
+  unused. `erssi --restore` brings back the backup made before the
+  upgrade.
+
 ## Upgrading from 1.3.x
 
 `erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.8. 1.3.9
@@ -627,6 +698,57 @@ start erssi adds what changed, once:
   key of a channel or query is blocked until `/e2e adopt` binds it to one
   network (see
   [End-to-end encryption](configuration.md#end-to-end-encryption)).
+
+## When the install fails
+
+Every step is one line; when a step fails the installer shows the end of
+its log, `~/.local/state/erssi/install.log`. The cases seen most often:
+
+- **"no ssh-keygen to check the signature of a binary package".** The
+  installer cannot check a package without ssh-keygen, so it builds from
+  source instead ("building from source instead"), and names the
+  package that would let it take the ready-made one. On Debian and Ubuntu
+  that is `sudo apt install openssh-client` (minimal images lack it), then
+  run the installer again. The same holds for a missing sha256sum, xz,
+  perl, or curl. `erssi --update` stops without ssh-keygen ("release
+  signatures cannot be checked here") and names the install command to
+  use instead.
+- **A Perl module is missing.** On minimal AlmaLinux or Debian, perl may
+  lack modules that only the tests of the release tools use, such as
+  `Archive::Tar`. A source install does not run those tests (`meson test
+  --no-suite tooling`, from 2026.10.7), so they no longer stop it. Without
+  `ExtUtils::Embed` erssi builds without Perl scripts, and the installer
+  says so ("Perl scripts not available - recommended: …", for example
+  `perl-devel perl-ExtUtils-Embed` on dnf).
+- **"packages that only the administrator can install".** On a user
+  account the installer lists what is missing, with the command to give
+  the administrator.
+- **"tests failed: … - nothing was installed".** The message names the
+  failed tests and where the full results are
+  (`~/.local/src/erssi/Build/meson-logs/testlog.txt`). Please report it
+  with that file (https://github.com/y-o-o-z/erssi/issues). Running the
+  installer again with `--no-test` installs the build anyway: use it only
+  as a last resort, and only for a test that cannot matter on your box. It
+  is kept for later updates until `--test`.
+- **The build is slow.** A source build takes about two minutes on a shell
+  box, and about 15 minutes on a small VPS with one CPU. The ready-made
+  packages take seconds: there are packages for Debian 12 and 13, Ubuntu
+  24.04, FreeBSD 14 and 15 (amd64). When the installer builds from source
+  on one of those, its output says why (see [Binary
+  packages](#binary-packages)).
+- **No network, or GitHub refuses.** The installer uses git and the
+  download URLs of the releases, not the GitHub API, so the API's rate
+  limit does not apply. When the repository cannot be reached it stops
+  with "cannot reach …" or "cannot download … - nothing was changed; try
+  again later". A package listed in the signed `SHA256SUMS` that cannot
+  be downloaded means a source build with a warning (`--binary` stops
+  instead). On a user account without network, pip cannot install meson
+  or ninja into the venv ("pip could not install …").
+- **"another installer is using …".** One installer at a time works on a
+  prefix and a source directory. A lock left by an installer that was
+  killed is taken over by the next run once that process is gone; the
+  message says why a lock was not taken over and names the directory to
+  remove if no installer is running (see [Options](#options)).
 
 ## Manual build
 
