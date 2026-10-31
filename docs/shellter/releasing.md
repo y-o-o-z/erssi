@@ -415,8 +415,8 @@ rm release_signers
 
 `release.sh upload shellter-vX DIR` uploads them to the GitHub release of
 the tag, which it makes first if there is none (`gh release create
---verify-tag --notes-from-tag`). **The tarballs go first, SHA256SUMS and
-SHA256SUMS.sig last.** The installer reads SHA256SUMS first. A tarball it
+--verify-tag`, with the tag message after its title line as the notes).
+**The tarballs go first, SHA256SUMS and SHA256SUMS.sig last.** The installer reads SHA256SUMS first. A tarball it
 lists but cannot download makes it build from source, with a warning
 (with `--binary` it refuses), so every install in between would take
 minutes instead of seconds. By hand:

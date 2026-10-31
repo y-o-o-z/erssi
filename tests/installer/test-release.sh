@@ -405,7 +405,7 @@ upload|confirm)
         rm -f "$tmp/gh.log"
         run upload --repo "$R" "$TAG" "$D"
         expect "upload" 0 "upload $TAG: done"
-        check "... the release made from the tag" grep -q "^release create $TAG --repo y-o-o-z/erssi --verify-tag --title erssi Shellter Edition 2026.11.0 --notes-from-tag\$" "$tmp/gh.log"
+        check "... the release made from the tag" grep -q "^release create $TAG --repo y-o-o-z/erssi --verify-tag --title erssi Shellter Edition 2026.11.0 --notes-file " "$tmp/gh.log"
         pk=$(grep -n "^release upload .*erssi-2026.11.0-debian13-amd64.tar.xz .*erssi-2026.11.0-freebsd14-amd64.tar.xz\$" "$tmp/gh.log" | cut -d: -f1)
         su=$(grep -n "^release upload .*/SHA256SUMS .*/SHA256SUMS.sig\$" "$tmp/gh.log" | cut -d: -f1)
         check "... the packages first, SHA256SUMS and its signature last" sh -c '[ -n "$1" ] && [ -n "$2" ] && [ "$1" -lt "$2" ]' sh "$pk" "$su"

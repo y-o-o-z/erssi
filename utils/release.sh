@@ -856,7 +856,11 @@ step_upload() {
             *) die "gh cannot read the release $TAG of $GH_REPO: $(tail -n 1 "$WORK/gh.err")" ;;
         esac
         assets=
-        act gh release create "$TAG" --repo "$GH_REPO" --verify-tag --title "erssi Shellter Edition $VERSION" --notes-from-tag ||
+        # the notes: the tag message after its title line (gh takes no
+        # --notes-from-tag together with --repo)
+        git -C "$REPO" cat-file tag "$TAG_OBJ" | sed '1,/^$/d; /^-----BEGIN .*SIGNATURE-----/,$d' | sed '1d; /./,$!d' > "$WORK/notes" ||
+            die "cannot read the message of $TAG"
+        act gh release create "$TAG" --repo "$GH_REPO" --verify-tag --title "erssi Shellter Edition $VERSION" --notes-file "$WORK/notes" ||
             die "gh could not make the release $TAG"
     fi
     # the packages first: the installer reads SHA256SUMS first, and a
