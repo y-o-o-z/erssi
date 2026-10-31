@@ -577,7 +577,7 @@ static void test_install_stopped_in_callback(void)
 	reset();
 }
 
-/* An installer without --summary (one before 2026.11.0, installed after
+/* An installer without --summary (one before 2026.10.9, installed after
  * this erssi started): its exit 2 is no failure - the check runs again at
  * once without the option and takes the one line; the checks after it do
  * not ask for the summary again. Run after the tests that want it. */
@@ -640,7 +640,7 @@ int main(int argc, char **argv)
 	old_file = g_build_filename(test_home_dir, "installer.old", NULL);
 	text = g_strdup_printf("#!/bin/sh\n"
 	                       "echo \"$$ $*\" >> '%s'\n"
-	                       /* an installer before 2026.11.0 while OLD_FILE is there */
+	                       /* an installer before 2026.10.9 while OLD_FILE is there */
 	                       "case \" $* \" in *' --summary '*)\n"
 	                       "    if [ -f '%s' ]; then\n"
 	                       "        echo 'shellter-install.sh: unknown option --summary (--help)' >&2; exit 2\n"

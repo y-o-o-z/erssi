@@ -110,7 +110,7 @@ installed from another `--repo`):
   `erssi 2026.11.1 is available (signed). Install it: /update install
   (or erssi --update in a shell), then /upgrade`, and under it up to
   three lines of what the release brings, from its signed tag (releases
-  from 2026.11.0 on; control characters are removed before anything is
+  from 2026.10.9 on; control characters are removed before anything is
   shown). The summary is kept in the state file, and `/update` shows it
   again. The shipped config marks no activity for
   client messages, so the line is easy to miss from another window: the

@@ -323,7 +323,7 @@ die_log() {   # message - with the end of the build log
     exit 1
 }
 # --porcelain --summary, after "update": the summary lines of the release
-# (RELEASE_SUMMARY). Only when asked: an erssi before 2026.11.0 that runs a
+# (RELEASE_SUMMARY). Only when asked: an erssi before 2026.10.9 that runs a
 # newer installer takes exactly one line
 porcelain_summary() {
     [ "${PORCELAIN:-0}" = 1 ] && [ "${SUMMARY:-0}" = 1 ] && [ -n "${RELEASE_SUMMARY:-}" ] || return 0
@@ -434,7 +434,7 @@ fetch_ref() {   # repository-dir ref
 # signature, its words on at most 3 lines of at most 200 bytes (a longer
 # text cut with "..."; a cut never splits a UTF-8 character), NUL bytes
 # removed and other control characters as spaces. Nothing when the message
-# has no such paragraph (the tags before 2026.11.0).
+# has no such paragraph (the tags before 2026.10.9).
 tag_summary() {
     git -C "$1" cat-file tag "$2" 2>/dev/null | LC_ALL=C tr -d '\000' |
         LC_ALL=C tr '\001-\011\013-\037\177' ' ' | LC_ALL=C awk '

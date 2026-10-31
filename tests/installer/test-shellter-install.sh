@@ -2157,7 +2157,7 @@ update-summary)
     # paragraph after the title), at most 3 lines of at most 200 bytes, no
     # control characters, no UTF-8 character cut in two; none from a tag
     # without it, and never from one that is not signed by the release
-    # key. Without --summary (an erssi before 2026.11.0) the one line only
+    # key. Without --summary (an erssi before 2026.10.9) the one line only
     release_key
     c1=$(release_commit 2026.10.1); rtag shellter-v2026.10.1 "$c1"
     c2=$(release_commit 2026.10.2)
@@ -2221,7 +2221,7 @@ update-summary)
         -c user.signingkey="$W/key" tag -f -s -F "$W/msg" shellter-v2026.10.2 "$c2" > /dev/null || exit 1
     porc --summary
     check "a NUL byte: removed" [ "$(sed -n 2p "$W/pout")" = "summary with a NUL: abcd." ]
-    # a title only (the tags before 2026.11.0): the one line
+    # a title only (the tags before 2026.10.9): the one line
     rtag shellter-v2026.10.2 "$c2"
     porc --summary
     check "no summary: the one line" one_line "update 2026.10.1 2026.10.2"

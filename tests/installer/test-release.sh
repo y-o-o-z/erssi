@@ -270,14 +270,14 @@ check)
     git -C "$R" tag -s -F "$tmp/msg" shellter-v2026.11.5 || exit 1
     run check --repo "$R" shellter-v2026.11.5; expect "a tag that meson.build and NEWS do not name" 1 'check-version'
 
-    # the message from 2026.11.0 on; an older release needs the title only
+    # the message from 2026.10.9 on; an older release needs the title only
     R2=$tmp/repo2
     make_repo "$R2" 2026.11.0 2026-11-02
     git -C "$R2" tag -d "$TAG" >/dev/null && git -C "$R2" tag -s -m "erssi Shellter Edition 2026.11.0" "$TAG" || exit 1
     run check --repo "$R2" "$TAG"; expect "a 2026.11 tag with the title only" 1 'is not the one from NEWS'
-    make_repo "$R2" 2026.10.9 2026-10-31
-    git -C "$R2" tag -d shellter-v2026.10.9 >/dev/null && git -C "$R2" tag -s -m "erssi Shellter Edition 2026.10.9" shellter-v2026.10.9 || exit 1
-    run check --repo "$R2" shellter-v2026.10.9; expect "a 2026.10 tag with the title only" 0 'check shellter-v2026.10.9: ok'
+    make_repo "$R2" 2026.10.7 2026-10-30
+    git -C "$R2" tag -d shellter-v2026.10.7 >/dev/null && git -C "$R2" tag -s -m "erssi Shellter Edition 2026.10.7" shellter-v2026.10.7 || exit 1
+    run check --repo "$R2" shellter-v2026.10.7; expect "a tag before 2026.10.9 with the title only" 0 'check shellter-v2026.10.7: ok'
     MAKE_README_VERSION=2026.10.8 make_repo "$R2" 2026.11.0 2026-11-02
     run check --repo "$R2" "$TAG"; expect "README.md that names another release" 1 'does not bring the docs'
     check "... names the line" says 'README.md: the release badge does not name 2026.11.0'

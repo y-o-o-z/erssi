@@ -1318,7 +1318,7 @@ static void install_after_check(const UPDATE_ANSWER *answer)
 
 static void tick_schedule(gint64 seconds);
 
-/* An installer before 2026.11.0 (one installed after this erssi started:
+/* An installer before 2026.10.9 (one installed after this erssi started:
    a rollback) does not know --summary and exits 2 for it. Once it did,
    this process asks without it (until a restart or /UPGRADE), and the
    check is run again at once without it: the one line, no summary. */
@@ -1440,7 +1440,7 @@ static void check_start(int mode)
 	argv[2] = "--update";
 	argv[3] = "--check";
 	argv[4] = "--porcelain";
-	/* the summary lines only when asked: an erssi before 2026.11.0 that
+	/* the summary lines only when asked: an erssi before 2026.10.9 that
 	   runs a newer installer takes exactly one line */
 	if (!no_summary)
 		argv[n++] = "--summary";

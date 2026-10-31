@@ -125,7 +125,7 @@ Not meant for erssi main.
   (`src/fe-ansi/irssi.c`, `ERSSI_PREFIX`), signed release tags,
   `utils/allowed_signers`, `utils/pre-push`,
   `.github/workflows/shellter-ci.yml` (switched off from 2026-10-04 and
-  removed in 2026.11.0; CI runs on the Shellter team's own server), and
+  removed in 2026.10.9; CI runs on the Shellter team's own server), and
   the removal of erssi-org's release, pages and packaging workflows. Commits: `c21ae4e3 67159a44
   d1836e0f a2932e97 3d062e72 6dbf4b63 fda5145d 64627a0d c5832501 3b90a145
   7f8f2280 17ccd17d 326aad4c 8c839cdf 9a679bde 7eb407bc 5810ba38 034b957e`.

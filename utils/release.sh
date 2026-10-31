@@ -9,7 +9,7 @@
 #                        by a key of --signers; meson.build, NEWS
 #                        (utils/check-version.sh), README.md and
 #                        docs/shellter/install.md of the tag name its
-#                        version; from 2026.11.0 the tag message is what
+#                        version; from 2026.10.9 the tag message is what
 #                        `tag-message` prints; the working tree is clean;
 #                        the tag is not on --remote yet, or is there as the
 #                        same tag object (a different one is refused)
@@ -372,9 +372,9 @@ step_check() {
         die "$TAG: the release commit does not bring the docs to $VERSION"
     fi
     say "  meson.build, NEWS, README.md and docs/shellter/install.md name $VERSION"
-    # the message: the title, and from 2026.11.0 the summary from NEWS
+    # the message: the title, and from 2026.10.9 the summary from NEWS
     msg=$(git -C "$REPO" cat-file tag "$TAG_OBJ" | sed '1,/^$/d; /^-----BEGIN .*SIGNATURE-----/,$d')
-    if version_ge "$VERSION" 2026.11.0; then
+    if version_ge "$VERSION" 2026.10.9; then
         want=$(git -C "$REPO" show "$COMMIT:NEWS" | tag_message "$VERSION") || die "$TAG: no tag message from its NEWS"
         [ "$msg" = "$want" ] || die "$TAG: the tag message is not the one from NEWS (release.sh tag-message $VERSION > msg; git tag -s -F msg $TAG)"
     else

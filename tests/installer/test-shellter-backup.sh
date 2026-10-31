@@ -392,7 +392,7 @@ running)
     rm -f "$W/target/erssi.lock"
     : > "$W/target/erssi.lock"
     tree "$W/target" > "$W/before"
-    # an erssi from 2026.11.0 on: the shared lock on erssi.lock, held
+    # an erssi from 2026.10.9 on: the shared lock on erssi.lock, held
     # until it is killed (however slow the checks below are)
     perl -e 'open(my $f, "<", $ARGV[0]) or die; flock($f, 1) or die; print "locked\n"; $| = 1; sleep 3600' "$W/target/erssi.lock" > "$W/locker" &
     LOCKER=$!; BG="$BG $LOCKER"

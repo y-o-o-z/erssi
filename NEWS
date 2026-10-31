@@ -1,5 +1,9 @@
-shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
-	erssi Shellter Edition 2026.11.0
+shellter-v2026.10.9 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.10.9
+
+	Update from inside erssi with /UPDATE INSTALL, a short summary of
+	each new release in the update notice, and automatic backups.
+	Release tools, and tests that hold under load.
 
 	+ Install and update
 	  - /UPDATE INSTALL installs the newest signed release from inside

@@ -271,8 +271,8 @@ sh ~/.local/opt/erssi/share/irssi/shellter-install.sh --update --check --porcela
 With `--summary`, up to three lines `summary <text>` may follow `update`:
 what the new release brings, from the message of its signed tag (the
 paragraph after the title line), on lines of at most 200 bytes without
-control characters. Tags before 2026.11.0 have none. Without
-`--summary` the one line is all, as an erssi before 2026.11.0 expects
+control characters. Tags before 2026.10.9 have none. Without
+`--summary` the one line is all, as an erssi before 2026.10.9 expects
 it. The first line is always one of the above.
 
 In a running erssi, `/update install` runs `--update` the same way in the
@@ -421,17 +421,17 @@ clone), with the same options:
 
 ```sh
 git -c gpg.program=false -c gpg.openpgp.program=false -c gpg.x509.program=false \
-    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.8
+    -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=utils/allowed_signers verify-tag shellter-v2026.10.9
 ```
 
 ### Checking a binary package yourself
 
 The release key for packages is the same key in the namespace
 `erssi-release` (in `utils/allowed_signers` it is listed for `git`). For
-release 2026.10.8 on Debian 13:
+release 2026.10.9 on Debian 13:
 
 ```sh
-v=2026.10.8 p=debian13-amd64
+v=2026.10.9 p=debian13-amd64
 base=https://github.com/y-o-o-z/erssi/releases/download/shellter-v$v
 curl -fsSLO "$base/SHA256SUMS" -fsSLO "$base/SHA256SUMS.sig" -fsSLO "$base/erssi-$v-$p.tar.xz"
 echo '136268860+y-o-o-z@users.noreply.github.com namespaces="erssi-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJmzPHTiL6dPEntggsVu9kJyAsY9KLaKNUW5kejyJOYS' > release_signers
@@ -445,9 +445,9 @@ tar -xJf "erssi-$v-$p.tar.xz" && cat "erssi-$v-$p/MANIFEST"
 136268860+y-o-o-z@users.noreply.github.com with ED25519 key
 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw` (the fingerprint you
 got another way, as above), `sha256sum` must print `OK`, and the
-`MANIFEST` must name `version=2026.10.8`, `tag=shellter-v2026.10.8`, your
+`MANIFEST` must name `version=2026.10.9`, `tag=shellter-v2026.10.9`, your
 platform and the commit of the release (`git rev-parse
-'shellter-v2026.10.8^{commit}'` in a clone with the verified tag, or the
+'shellter-v2026.10.9^{commit}'` in a clone with the verified tag, or the
 `RELEASES` line of a checked installer).
 
 ### Rebuilding a binary package yourself
@@ -686,7 +686,7 @@ Build uninstall` in its build directory).
 
 ## Upgrading from 1.3.x
 
-`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.8. 1.3.9
+`erssi --update` on 1.3.10 or a 2026.10 release finds 2026.10.9. 1.3.9
 and older have no `--update`: run the install command above again (with
 the same `--prefix` and `--src` if you gave any), which builds the new
 release in the same places. Your `~/.erssi/config` is kept; at the first

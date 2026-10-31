@@ -55,10 +55,10 @@ prints what a step would run and changes nothing (its checks still run).
    git tag -s -F ../tag-message shellter-vX
    ```
 
-   From 2026.11.0 the message is the title line `erssi Shellter Edition
+   From 2026.10.9 the message is the title line `erssi Shellter Edition
    X`, a blank line and the intro paragraph of the release's `NEWS` entry,
    wrapped at 72 columns. The GitHub release takes its notes from it.
-   Before 2026.11.0 the message was the title line only.
+   Before 2026.10.9 the message was the title line only.
 3. `sh utils/release.sh check shellter-vX` checks the tag: an annotated tag
    of that name, signed by the release key (`utils/allowed_signers`), on a
    signed commit; `meson.build`, `NEWS` (`utils/check-version.sh`),
