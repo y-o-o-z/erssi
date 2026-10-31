@@ -505,8 +505,9 @@ STAMP=$(epoch_date "$SOURCE_DATE_EPOCH" '%Y%m%d%H%M.%S') || die "cannot format t
 BUILD=$WORK/build
 say "configuring"
 # every feature of the release, required; the paths of the work directory
-# kept out of the binary (__FILE__ in assertions)
-if ! meson setup "$BUILD" "$SRC" --prefix="$BUILD_PREFIX" -Drelocatable=true -Dbuildtype=release \
+# kept out of the binary (__FILE__ in assertions); libdir fixed, as meson's
+# default depends on the host (lib/<multiarch> with dpkg-dev, else lib64)
+if ! meson setup "$BUILD" "$SRC" --prefix="$BUILD_PREFIX" --libdir=lib -Drelocatable=true -Dbuildtype=release \
         -Dwith-perl=yes -Dwith-otr=yes -Dwith-proxy=yes -Dwith-fe-web=yes -Dwith-e2e=yes \
         -Dwith-image-preview=yes -Ddisable-utf8proc=no \
         "-Dc_args=-ffile-prefix-map=$SRC/=erssi/ -ffile-prefix-map=$BUILD/=build/" > "$WORK/setup.log" 2>&1; then
