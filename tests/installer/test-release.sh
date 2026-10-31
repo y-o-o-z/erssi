@@ -122,6 +122,8 @@ printf '#!/bin/sh\necho "fake mmdebstrap must not run" >&2\nexit 99\n' > "$tmp/b
 chmod 755 "$tmp/bin/mmdebstrap"
 export FAKE_GH_LOG="$tmp/gh.log" FAKE_GH_RELEASES="$tmp/gh" FAKE_GH_GIT="$tmp/repo.git"
 PATH=$tmp/bin:$PATH
+# the same platform on every host: Debian 13 is built "on this host"
+export RELEASE_HOST_PLATFORM=debian13-amd64
 
 # run release.sh with the throwaway signers: RC, OUT
 run() {
@@ -288,7 +290,7 @@ dry-run)
     expect "build --dry-run" 0 "build $TAG: done"
     check "... Debian 12 in a bookworm chroot" sh -c 'grep "would run:.*mmdebstrap" "$1" | grep -q " bookworm /dev/null"' sh "$tmp/out"
     check "... Ubuntu 24.04 in noble, with universe and its key" sh -c 'grep "would run:.*mmdebstrap" "$1" | grep -- "--components=main,universe" | grep -q " noble /dev/null http://archive.ubuntu.com/ubuntu"' sh "$tmp/out"
-    check "... Debian 13 on this host or in a trixie chroot" sh -c 'grep -q "debian13-amd64: on this host" "$1" || grep -q "debian13-amd64: in a new chroot (trixie)" "$1"' sh "$tmp/out"
+    check "... Debian 13 on this host" grep -q "debian13-amd64: on this host" "$tmp/out"
     check "... the tag from a bundle of the local tag" sh -c 'grep -q "would run: git bundle create .* refs/tags/$2" "$1" && grep -q "fetch -q ~/repo.bundle refs/tags/$2:refs/tags/$2" "$1"' sh "$tmp/out" "$TAG"
     check "... the tag's own build-binary.sh, as builder" sh -c 'grep -q "su builder -c .*sh ~/erssi/utils/build-binary.sh --repo ~/erssi --out ~/out $2" "$1"' sh "$tmp/out" "$TAG"
     check "... FreeBSD 15 over ssh" sh -c 'grep -q "would run: ssh builder@example sh -s" "$1" && grep -q "would run: ssh builder@example cat .*/out/erssi-2026.11.0-freebsd15-amd64.tar.xz" "$1"' sh "$tmp/out"

@@ -138,6 +138,7 @@ options or environment variables, never part of the repository:
 | `--freebsd14-verify HOST`, `--freebsd15-verify HOST` | `RELEASE_FREEBSD14_VERIFY`, `RELEASE_FREEBSD15_VERIFY` | the build host |
 | `--mm-tmpdir DIR` | `RELEASE_MM_TMPDIR` | `/var/tmp/<user>-mm` |
 | | `RELEASE_SSH` | `ssh` (for example `ssh -p 2222`) |
+| | `RELEASE_HOST_PLATFORM` | this host's platform (for example `debian13-amd64`), built on the host instead of in a chroot |
 | | `RELEASE_UBUNTU_MIRROR`, `RELEASE_UBUNTU_KEYRING`, `RELEASE_DEBIAN_MIRROR` | as in the recipes below |
 
 A host is a destination ssh takes (`user@host`, or a `Host` of

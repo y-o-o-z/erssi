@@ -394,8 +394,10 @@ step_check() {
 }
 
 # ── the platforms ────────────────────────────────────────────────────
-# this host's platform, as build-binary.sh names it
+# this host's platform, as build-binary.sh names it (RELEASE_HOST_PLATFORM
+# sets it, as the tests do)
 host_platform() {
+    if [ -n "${RELEASE_HOST_PLATFORM:-}" ]; then printf '%s\n' "$RELEASE_HOST_PLATFORM"; return 0; fi
     case $(uname -s) in
         Linux)
             [ -r /etc/os-release ] || return 1
