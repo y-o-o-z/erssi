@@ -64,7 +64,9 @@ shellter-v2026.10.9 2026-10-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	  - the packages keep their modules in lib/ on every system: the
 	    directory was meson's default, which depends on the host, so a
 	    Debian 13 package built where dpkg-dev is installed did not come
-	    out the same in a clean chroot
+	    out the same in a clean chroot; irssi-config.h no longer says
+	    whether the host has <term.h> (HAVE_TERM_H, used nowhere), for
+	    the same reason
 
 	+ Documentation
 	  - install.md: Upgrading (from an older release with erssi --update
