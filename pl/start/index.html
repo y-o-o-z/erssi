@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pierwsze kroki · erssi Shellter Edition</title>
+<meta name="description" content="Od instalacji do pierwszej rozmowy w erssi Shellter Edition: instalacja, tmux, IRCnet, okna i mysz, szyfrowanie, aktualizacje, kopie zapasowe i motywy.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta property="og:title" content="Pierwsze kroki z erssi Shellter Edition">
+<meta property="og:description" content="Od instalacji do pierwszej rozmowy w IRCnecie, krok po kroku.">
+<meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
+<meta property="og:url" content="https://erssi.shellter.me/pl/start/">
+<link rel="alternate" hreflang="en" href="https://erssi.shellter.me/start/">
+<link rel="alternate" hreflang="pl" href="https://erssi.shellter.me/pl/start/">
+<link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../../fonts/Geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../../site.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
+</svg>
+<a class="skip" href="#content">Przejdź do treści</a>
+
+<header class="bar" data-bar>
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="erssi Shellter Edition, strona główna">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#f59e0b"/><path d="M9 11l6 5-6 5" fill="none" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 22h7" stroke="#0b0d10" stroke-width="2.6" stroke-linecap="round"/></svg>
+      <span>erssi <small>Shellter Edition</small></span>
+    </a>
+    <nav class="nav" aria-label="Sekcje">
+      <a href="../#features">Funkcje</a>
+      <a href="../#install">Instalacja</a>
+      <a href="./" aria-current="page">Pierwsze kroki</a>
+      <a href="../#new">Co nowego</a>
+    </nav>
+    <div class="right">
+      <span class="lang"><a href="../../start/" hreflang="en" lang="en">EN</a><a href="./" aria-current="page" hreflang="pl" lang="pl">PL</a></span>
+      <a class="btn gh" href="https://github.com/y-o-o-z/erssi"><svg class="icon"><use href="#i-github"/></svg><span>GitHub</span></a>
+    </div>
+  </div>
+</header>
+
+<main id="content">
+  <div class="page-head">
+    <div class="wrap">
+      <h1>Pierwsze <em>kroki</em></h1>
+      <p>Od instalacji do pierwszej rozmowy w IRCnecie, w ośmiu krokach. Każde polecenie wpisane w erssi ma też swoją stronę w <code>/help</code>.</p>
+    </div>
+  </div>
+
+  <div class="wrap guide">
+    <nav class="toc" aria-label="Kroki">
+      <ol>
+        <li><a href="#install">Instalacja</a></li>
+        <li><a href="#tmux">Start w tmuksie</a></li>
+        <li><a href="#connect">IRCnet i kanały</a></li>
+        <li><a href="#windows">Okna, panele, mysz</a></li>
+        <li><a href="#e2e">Szyfrowanie</a></li>
+        <li><a href="#update">Aktualizacja</a></li>
+        <li><a href="#backup">Kopie zapasowe</a></li>
+        <li><a href="#theme">Jasny albo ciemny</a></li>
+      </ol>
+    </nav>
+
+    <div class="gsteps">
+      <section class="gstep" id="install" aria-labelledby="h-install">
+        <h2 id="h-install">Zainstaluj</h2>
+        <p>Uruchom to na swoim koncie shellowym, bez roota. Instalator sprawdza podpis wydania i paczkę, zanim cokolwiek zmieni. Na Debianie 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15 bierze gotową binarkę (kilka sekund), gdzie indziej buduje erssi ze źródeł.</p>
+<pre><span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install.sh | sh</pre>
+        <p>Na końcu instalator wypisuje, gdzie jest erssi. Jeśli powie, że <code>~/.local/bin</code> nie jest w <code>PATH</code>, dopisz to do <code>~/.profile</code> i zaloguj się ponownie:</p>
+<pre>export PATH="$HOME/.local/bin:$PATH"</pre>
+      </section>
+
+      <section class="gstep" id="tmux" aria-labelledby="h-tmux">
+        <h2 id="h-tmux">Uruchom w tmuksie</h2>
+        <p>W tmuksie erssi działa dalej, gdy się wylogujesz, a Ty wracasz do tej samej sesji, także z telefonu.</p>
+<pre><span class="p">$ </span>tmux new -s irc erssi        <span class="c"># pierwszy start</span>
+<span class="p">$ </span>tmux attach -t irc           <span class="c"># powrót do sesji</span></pre>
+        <p>Odłączasz się przez <kbd>Ctrl-b</kbd>, a potem <kbd>d</kbd>. Przy pierwszym starcie erssi pyta o sieć, nick, konto SASL, motyw i o to, czy raz dziennie sprawdzać nowe wydania. <kbd>Enter</kbd> zostawia wartość w nawiasie, a <code>erssi --setup</code> zada te pytania jeszcze raz.</p>
+      </section>
+
+      <section class="gstep" id="connect" aria-labelledby="h-connect">
+        <h2 id="h-connect">Połącz się z IRCnetem</h2>
+        <p>Jeśli sieć wybrano przy pierwszym starcie, erssi łączy się sam. W innym wypadku:</p>
+<pre>/connect IRCnet
+/join #shellter</pre>
+        <p><code>/nick</code> zmienia nick, a <code>/keepnick</code> odbierze Twój, gdy tylko się zwolni. Prywatne wiadomości i podświetlenia trafiają też do okna <b>Mentions</b>, więc nic Ci nie umknie.</p>
+      </section>
+
+      <section class="gstep" id="windows" aria-labelledby="h-windows">
+        <h2 id="h-windows">Okna, panele i mysz</h2>
+        <p>Każdy kanał i każda rozmowa to osobne okno. Lista okien jest w lewym panelu, nicki kanału w prawym.</p>
+        <ul>
+          <li><kbd>Alt-1</kbd>…<kbd>Alt-0</kbd> przełączają na okna 1–10, a <kbd>Ctrl-n</kbd> i <kbd>Ctrl-p</kbd> na następne i poprzednie.</li>
+          <li><b>Kliknięcie</b> w liście okien przełącza okno, kliknięcie nicka otwiera z nim rozmowę, kółko myszy przewija tekst.</li>
+          <li><b>Przeciągnięcie</b> w poziomie w oknie rozmowy przechodzi do sąsiedniego okna (<code>/set mouse_gestures off</code> to wyłącza).</li>
+          <li><code>/window close</code> zamyka okno, <code>/set sidepanel_left off</code> i <code>/set sidepanel_right off</code> chowają panele.</li>
+        </ul>
+        <p class="tip">erssi obsługuje mysz sam, więc żeby zaznaczyć tekst, przytrzymaj <kbd>Shift</kbd> (na macOS <kbd>Option</kbd> albo <kbd>Fn</kbd>) przy przeciąganiu. Link otworzysz kliknięciem z <kbd>Ctrl</kbd>, <kbd>Ctrl-Shift</kbd> albo <kbd>Cmd</kbd>, zależnie od terminala.</p>
+      </section>
+
+      <section class="gstep" id="e2e" aria-labelledby="h-e2e">
+        <h2 id="h-e2e">Szyfruj rozmowę</h2>
+        <p>Szyfrowanie end-to-end jest wbudowane i zgodne z repartee oraz jego skryptami. Włączają je obie strony, w oknie rozmowy albo na kanale:</p>
+<pre>/e2e on</pre>
+        <p>Gdy druga osoba poprosi o Twój klucz, erssi pokaże to w oknie. Zaakceptuj ją; od tej chwili erssi sam odpowiada na jej kolejne prośby:</p>
+<pre>/e2e accept</pre>
+        <figure class="crop e2e">
+          <img src="../../images/e2e-query.webp" width="1400" height="802" loading="lazy" alt="Prawdziwa rozmowa w erssi między yooz i kofany: pierwszej zaszyfrowanej wiadomości nie da się odczytać i erssi prosi o klucz, kofany zostaje zaakceptowany przez /e2e accept, potem każda linia jest czytelna, a pasek statusu pokazuje E2E.">
+          <figcaption>Pierwsza wiadomość prosi o klucz, jedno <code>/e2e accept</code>, potem wszystko jest czytelne.</figcaption>
+        </figure>
+        <p><code>/e2e status</code> pokazuje Twój odcisk klucza, a <code>/e2e list</code> osoby w oknie. Szyfrowanie chroni treść, nie to, kto z kim rozmawia.</p>
+      </section>
+
+      <section class="gstep" id="update" aria-labelledby="h-update">
+        <h2 id="h-update">Aktualizuj z wnętrza erssi</h2>
+        <p>Gdy wyjdzie nowe wydanie, erssi napisze o nim krótko w oknie Notices. Instalujesz je w tle, w trakcie rozmowy, a potem wczytujesz do działającego erssi:</p>
+<pre>/update install
+/upgrade</pre>
+        <p><code>/upgrade</code> zachowuje okna i kanały; połączenia TLS zostaną raz nawiązane od nowa. <code>/update install -upgrade</code> zrobi oba kroki naraz, a <code>/update</code> pokaże, kiedy ostatnio sprawdzano wydania i co znaleziono. Z powłoki to samo robi <code>erssi --update</code>.</p>
+      </section>
+
+      <section class="gstep" id="backup" aria-labelledby="h-backup">
+        <h2 id="h-backup">Włącz kopie zapasowe</h2>
+        <p>Jedna kopia obejmuje konfigurację, motywy, skrypty, klucze E2E i hasła (bez logów IRC). Tak włączysz kopię raz dziennie; zostaje siedem ostatnich:</p>
+<pre>/set backup_auto daily
+/backup now   <span class="c"># kopia od razu</span></pre>
+        <p>Z powłoki, na przykład przy przeprowadzce na inny serwer:</p>
+<pre><span class="p">$ </span>erssi --backup ~/erssi.tar.gz
+<span class="p">$ </span>erssi --restore ~/erssi.tar.gz</pre>
+        <p class="tip">Kopia zawiera Twoje klucze prywatne i hasła, dlatego ma prawa 0600. Trzymaj ją tylko u siebie.</p>
+      </section>
+
+      <section class="gstep" id="theme" aria-labelledby="h-theme">
+        <h2 id="h-theme">Jasny albo ciemny</h2>
+        <p>Motyw <code>shellter</code> jest dla ciemnych terminali, <code>shellter-light</code> dla jasnych. Zmiana działa od razu, a <code>/save</code> ją zapisuje:</p>
+<pre>/set theme shellter-light
+/save</pre>
+      </section>
+
+      <section class="gstep" aria-labelledby="h-help">
+        <h2 id="h-help">Gdy coś nie działa</h2>
+        <p><code>/help</code> opisuje każde polecenie, na przykład <code>/help e2e</code> albo <code>/help update</code>. Jeśli instalacja się nie uda, zajrzyj do <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/install.md#when-the-install-fails">„When the install fails”</a> (po angielsku). Zapytaj też na <b>#shellter</b> w IRCnecie albo <a href="https://github.com/y-o-o-z/erssi/issues">zgłoś problem</a>.</p>
+      </section>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="legal">
+      <span>erssi Shellter Edition 2026.10.9 · GPL-2.0-or-later · zespół Shellter, <a href="https://shellter.me">shellter.me</a></span>
+      <span><a href="../../start/" hreflang="en" lang="en">English</a> · <a href="./" aria-current="page">Polski</a></span>
+    </div>
+  </div>
+</footer>
+
+<script src="../../site.js" defer></script>
+</body>
+</html>

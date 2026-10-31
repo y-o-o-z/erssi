@@ -352,3 +352,49 @@ footer { border-top: 1px solid var(--border); padding: 56px 0 40px; color: var(-
 .crop.e2e img { display: block; width: 100%; height: auto; border-radius: var(--r-sm); border: 1px solid var(--border); background: #0b0d10; }
 .crop.e2e figcaption { color: var(--faint); font-size: 0.875rem; margin-top: 8px; }
 
+
+/* ── getting started (start/) ───────────────────────────────────── */
+.page-head { padding: clamp(56px, 8vw, 96px) 0 clamp(32px, 4vw, 48px); border-bottom: 1px solid var(--border); }
+.page-head h1 { font-size: clamp(2.25rem, 4.6vw, 3.25rem); line-height: 1.08; letter-spacing: -0.035em; margin-bottom: 16px; }
+.page-head p { color: var(--muted); font-size: 1.125rem; max-width: 640px; }
+.guide { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: clamp(32px, 6vw, 80px); padding-top: clamp(40px, 6vw, 72px); padding-bottom: clamp(72px, 10vw, 120px); }
+.toc { position: sticky; top: 96px; align-self: start; }
+.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: t; }
+.toc li { counter-increment: t; }
+.toc a { text-decoration: none; display: grid; grid-template-columns: 26px minmax(0, 1fr); padding: 6px 10px; border-radius: var(--r-sm); color: var(--muted); font-size: 0.9375rem; }
+.toc a::before { content: counter(t); font: 500 0.8125rem/1.7 var(--mono); color: var(--faint); }
+.toc a:hover { background: var(--surface); color: var(--text); }
+.gsteps { display: grid; gap: 0; counter-reset: g; min-width: 0; }
+.gstep { counter-increment: g; padding: 0 0 48px; display: grid; gap: 14px; min-width: 0; }
+.gstep + .gstep { border-top: 1px solid var(--border); padding-top: 44px; }
+.gstep h2 { font-size: clamp(1.5rem, 2.6vw, 1.875rem); letter-spacing: -0.025em; display: flex; align-items: baseline; gap: 14px; }
+.gstep h2::before {
+  content: counter(g); flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--amber); color: var(--amber-ink); font: 600 0.9375rem/1 var(--mono); transform: translateY(-3px);
+}
+.gstep p, .gstep li { color: var(--muted); max-width: 68ch; }
+.gstep ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.gstep b { color: var(--text); font-weight: 600; }
+.gstep pre {
+  margin: 4px 0 0; padding: 14px 18px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--border);
+  font: 400 0.875rem/1.7 var(--mono); color: var(--text); overflow-x: auto;
+}
+.gstep pre .c { color: var(--faint); }
+.gstep pre .p { color: var(--amber-text); user-select: none; }
+.gstep .crop.e2e { max-width: 760px; }
+.gstep .tip { border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); background: var(--amber-wash); padding: 14px 18px; border-radius: var(--r-sm); color: var(--text); font-size: 0.9625rem; max-width: 68ch; }
+.gstep kbd { font: 500 0.8125rem/1 var(--mono); padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border-2); border-bottom-width: 2px; background: var(--surface-2); color: var(--text); white-space: nowrap; }
+.nav a[aria-current="page"] { color: var(--text); }
+@media (max-width: 1000px) {
+  .guide { grid-template-columns: minmax(0, 1fr); }
+  .toc { position: static; }
+  .toc ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .toc ol { grid-template-columns: minmax(0, 1fr); }
+  .gstep pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+/* explicit colours: a host page's own heading styles do not win */
+.page-head h1, .gstep h2 { color: var(--text); }
+.page-head h1 em { font-style: normal; color: var(--amber-text); }
