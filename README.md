@@ -20,7 +20,7 @@ also updates, and a security review of the parts that face the network.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/erssi-shellter-light.png">
-  <img src="docs/images/erssi-shellter.png" alt="erssi Shellter Edition 2026.10.6 in #shellter on IRCnet, shellter theme: the window list on the left; in the middle yooz (yooz@ircnet.pl) and kofany (kofany@irc.al) join and get op, then people on the channel talk about the release under one separator; the nick list by rank on the right; the statusbar below">
+  <img src="docs/images/erssi-shellter.png" alt="erssi Shellter Edition 2026.10.9 in #shellter on IRCnet, shellter theme: the window list on the left; in the middle yooz (yooz@staff.shellter.me) and kofany (kofany@irc.al) join and get op, then people on the channel talk about the release under one separator; the nick list by rank on the right; the statusbar below">
 </picture>
 
 <sub>A real erssi with the real nicks of #shellter; the lines they say were written for the picture.</sub>
