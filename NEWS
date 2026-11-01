@@ -1,3 +1,25 @@
+shellter-v2026.11.0 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.0
+
+	An erssi installed for the whole system is updated by its
+	administrator: erssi never runs the installer of another user.
+
+	+ Install and update
+	  - erssi --update, erssi --check-update, /UPDATE CHECK and /UPDATE
+	    INSTALL refuse an erssi whose installer is not the user's (a
+	    system install made by root, into /usr/local or elsewhere): they
+	    say "this erssi was installed by another user (... is not yours)
+	    - they update it, for a system install its administrator" and
+	    run nothing. Before, erssi --update and erssi --check-update ran
+	    that installer as the user (which then stopped at the prefix of
+	    another user), and /UPDATE went only by the owner of
+	    shellter-install.conf. An erssi in the user's own prefix
+	    (~/.local) updates as before
+
+	+ Documentation
+	  - README, docs/shellter/install.md and /HELP update say who updates
+	    a system install; the README screenshots are of 2026.10.9
+
 shellter-v2026.10.9 2026-10-31  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.10.9
 
