@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.10.9.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.0.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.10.9">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.0">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -188,7 +188,7 @@
         </div>
         <div class="step">
           <h3>3. Update when a release comes out</h3>
-          <p>Then <code>/upgrade</code> in the running erssi keeps your windows; TLS connections reconnect once.</p>
+          <p>Then <code>/upgrade</code> in the running erssi keeps your windows; TLS connections reconnect once. An erssi installed for the whole system is updated by its administrator.</p>
           <pre>erssi --check-update
 erssi --update</pre>
         </div>
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.10.9</pre>
+    verify-tag shellter-v2026.11.0</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.10.9">
-        <header><b>shellter-v2026.10.9</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.11.0">
+        <header><b>shellter-v2026.11.0</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>e9f354f59</dd></div>
+          <div><dt>Commit</dt><dd>99510979b</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="fb8a28debcf0f026ad7cf85c4543931d962f855b1bc4776a5f8a0089eac2508c">sha256 fb8a28de…9eac2508c</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="76b811108dd9881f5d3e60870326f49964e8e108590a22fc3d61316d074f3b3b">sha256 76b81110…d074f3b3b</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="b91b4261e216eee3e913d8f0cbbb2bdc9df08c6b8d5788ab24de35153accc5d0">sha256 b91b4261…53accc5d0</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="24c79cb4451336f6bc6c5e0551ba9dd11b1136aaec2eac1498fd627690521290">sha256 24c79cb4…690521290</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="cbd39d1990a9c74e9b7d01a5cb5d95f2d53a1e43800cfcbc21557a2bc0578e81">sha256 cbd39d19…bc0578e81</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="3cc4f3d251d32857c608fbc07564b981af399e92642f64d7b28fd3df159cef51">sha256 3cc4f3d2…f159cef51</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="a839a816896838b2530c87b94cbb6b19e478312e15378d2d6118391654498353">sha256 a839a816…654498353</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="18a04d0581b91ca7d7ccee96bd397ca6fadc16d8942369bff8ae93b62a81cf58">sha256 18a04d05…62a81cf58</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="7b7c120482ced821d299769b5f38da16bb3cc07a6c768753d63cd947bb1955da">sha256 7b7c1204…7bb1955da</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="f21220b13b0104c4017f0f87bf725c0fcb27827f8696fb95a99bd4c51edfad02">sha256 f21220b1…51edfad02</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,10 +241,11 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.10.9</h2>
-        <p>Released on 31 October 2026.</p>
+        <h2 id="h-new">New in 2026.11.0</h2>
+        <p>Released on 1 November 2026. The rest of this list came with 2026.10.9, a day earlier.</p>
       </div>
       <ul class="changes">
+        <li><span class="tag">update</span><p><b>System installs stay the administrator’s.</b> An erssi installed for the whole system is updated by its administrator: <code>erssi --update</code> and <code>/update</code> say so and never run an installer that is not yours.</p></li>
         <li><span class="tag">update</span><p><b>Update from inside erssi.</b> <code>/update install</code> installs the newest signed release in the background while you chat, then says to load it with <code>/upgrade</code>. TLS connections reconnect once.</p></li>
         <li><span class="tag">update</span><p><b>What is in a release.</b> The update notice and <code>/update</code> show a short summary of the new release, taken from its signed tag.</p></li>
         <li><span class="tag">backup</span><p><b>Backups on their own.</b> <code>/set backup_auto daily</code> (or weekly) makes a backup of your whole setup outside your home directory and keeps the last seven. <code>/backup now</code> makes one at once.</p></li>
@@ -252,7 +253,7 @@ erssi --update</pre>
         <li><span class="tag">tests</span><p><b>Tests that hold under load.</b> The tests run again and again while the machine is busy, and on FreeBSD 14 and 15 every night.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.10.9">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.0">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -317,7 +318,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.10.9 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.0 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>
