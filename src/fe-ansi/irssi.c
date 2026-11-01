@@ -699,11 +699,20 @@ int main(int argc, char **argv)
 		/* the installer of this release, installed with it: it finds the
 		 * newest release signed by the key it carries, builds and installs
 		 * it into this prefix (or runs the updater named in its config) */
-		char *installer = g_strconcat(get_install_path(PKGDATADIR), "/shellter-install.sh", NULL);
+		char *installer = update_check_installer();
 
 		if (access(installer, R_OK) != 0) {
 			fprintf(stderr, "erssi: the installer %s is missing - update with "
 			        "shellter-install.sh, the way erssi was installed\n", installer);
+			g_free(installer);
+			return 1;
+		}
+		/* an install of another user (a system install made by root) is
+		 * theirs to update: their installer is never run as this user */
+		if (stat(installer, &statbuf) == 0 && statbuf.st_uid != geteuid()) {
+			fprintf(stderr, "erssi: this erssi was installed by another user (%s is not "
+			        "yours) - they update it, for a system install its administrator\n",
+			        installer);
 			g_free(installer);
 			return 1;
 		}

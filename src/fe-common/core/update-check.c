@@ -971,6 +971,7 @@ static char *unavailable_reason(void)
 	char *installer, **confs, **c, *reason = NULL;
 	const char *foreign = NULL;
 	gboolean test, found = FALSE;
+	struct stat ist;
 
 #ifdef HAVE_CAPSICUM
 	if (capsicum_enabled())
@@ -986,11 +987,20 @@ static char *unavailable_reason(void)
 		g_free(installer);
 		return reason;
 	}
+	/* the installer updates only an install of the user's own (a system
+	   install made by root is root's to update), and erssi never runs an
+	   installer that is not the user's */
+	if (stat(installer, &ist) == 0 && ist.st_uid != geteuid()) {
+		reason = g_strdup_printf("this erssi was installed by another user (%s is not "
+		                         "yours) - they update it, for a system install its "
+		                         "administrator",
+		                         installer);
+		g_free(installer);
+		return reason;
+	}
 	g_free(installer);
 	if (test)
 		return NULL;
-	/* the installer updates only an install of the user's own (a system
-	   install made by root is root's to update) */
 	confs = update_check_conf_paths(get_install_prefix());
 	for (c = confs; *c != NULL && !found; c++) {
 		struct stat st;
@@ -1004,7 +1014,8 @@ static char *unavailable_reason(void)
 	}
 	if (!found && foreign != NULL)
 		reason = g_strdup_printf("this erssi was installed by another user (%s is not "
-		                         "yours) - they update it",
+		                         "yours) - they update it, for a system install its "
+		                         "administrator",
 		                         foreign);
 	else if (!found)
 		reason = g_strdup_printf("this erssi was not installed with shellter-install.sh "

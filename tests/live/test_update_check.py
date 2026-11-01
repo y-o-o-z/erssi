@@ -11,10 +11,16 @@
   file at the next start, and no check again after /UPGRADE within the
   day;
 - an installer that is not there: turning the setting on says why, and
-  /UPDATE CHECK runs nothing.
+  /UPDATE CHECK runs nothing;
+- an installer of another user (a system install made by root): /UPDATE
+  CHECK, /UPDATE INSTALL, erssi --update and erssi --check-update say who
+  updates it and run nothing; the user's own installer is run by
+  erssi --update and erssi --check-update.
 Usage: test_update_check.py <build dir> [<source dir>]"""
+import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -172,8 +178,45 @@ def main():
         assert runs(d) == []
         finish(e)
 
+    def t_foreign():
+        # a file of root's that erssi would run if it ran a foreign installer
+        theirs = Path("/bin/sh").resolve()
+        if theirs.stat().st_uid == os.geteuid():
+            raise harness.SkipCase(f"{theirs} is this user's")
+        foreign = f"this erssi was installed by another user ({theirs} is not yours) - they update it"
+        e = harness.Erssi(st["inst"], work, "dave", harness.config(st["port"], "dave"),
+                          env={"ERSSI_TEST_UPDATE_INSTALLER": str(theirs)})
+        e.start(160, 40)
+        e.wait_ready()
+        e.type_and_wait("/update check")
+        assert wait_log(e, "Update check: " + foreign), log_text(e)[-2000:]
+        e.type_and_wait("/update install")
+        assert harness.wait_until(lambda: log_text(e).count(foreign) == 2, WAIT), \
+            log_text(e)[-2000:]
+        finish(e)
+
+        def cli(installer, *args):
+            home = Path(tempfile.mkdtemp(prefix="cli-home.", dir=work))
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+                   "ERSSI_TEST_UPDATE_INSTALLER": str(installer)}
+            r = subprocess.run([str(st["inst"].erssi), *args], capture_output=True, text=True,
+                               timeout=WAIT, env=env, stdin=subprocess.DEVNULL)
+            assert list(home.iterdir()) == [], f"{args} wrote to the home"
+            return r
+
+        for args in (["--update"], ["--check-update"]):
+            r = cli(theirs, *args)
+            assert r.returncode == 1 and r.stdout == "", (args, r.returncode, r.stdout, r.stderr)
+            assert r.stderr == f"erssi: {foreign}, for a system install its administrator\n", r.stderr
+        # the user's own installer is run, with the prefix of this erssi
+        d = installer("own")
+        r = cli(d / "shellter-install.sh", "--update")
+        assert r.returncode == 0 and runs(d)[-1].startswith("--update --prefix /"), (r, runs(d))
+        r = cli(d / "shellter-install.sh", "--check-update")
+        assert r.returncode == 0 and runs(d)[-1].endswith(" --check"), (r, runs(d))
+
     try:
-        harness.main([t_install, t_check_command, t_daily, t_no_installer])
+        harness.main([t_install, t_check_command, t_daily, t_no_installer, t_foreign])
     finally:
         if "ircd" in st:
             st["ircd"].stop()

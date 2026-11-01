@@ -254,6 +254,13 @@ plus TLS). The signature is checked as for an update. erssi itself can
 run this check once a day and say when a new release is there:
 `/set update_check on` ([Update notice](configuration.md#update-notice)).
 
+These are for an erssi you installed yourself. An erssi installed for the
+whole system (by root, into `/usr/local` or with a package) is updated by
+the system administrator: as a user, `erssi --update`, `erssi
+--check-update`, `/update check` and `/update install` refuse it ("this
+erssi was installed by another user ... they update it") and never run
+an installer that is not yours.
+
 For a program, the installer of the installed release answers in one line
 on stdout (the steps go to stderr):
 

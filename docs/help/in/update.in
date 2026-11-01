@@ -56,7 +56,10 @@
     erssi checks by itself only with update_check on (/HELP update_check).
     An erssi that the installer did not install (a distribution package,
     a build of your own) has nothing to run: the check says so, and you
-    update it the way it was installed. In Capsicum capability mode no
+    update it the way it was installed. An erssi installed by another
+    user (a system install made by root) is theirs to update: erssi does
+    not run their installer, here or with erssi --update in a shell, and
+    says who updates it. In Capsicum capability mode no
     program can be started, so there is no check and no install either;
     erssi --check-update and erssi --update from a shell still work.
 
