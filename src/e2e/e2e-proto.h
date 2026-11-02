@@ -277,6 +277,7 @@ typedef struct {
 #define E2E_REFUSE_KEYRING   "cannot encrypt — keyring read failed; message NOT sent (E2E stays on)"
 #define E2E_REFUSE_ENCRYPT   "encryption failed — message NOT sent as plaintext (use /e2e off to send cleartext)"
 #define E2E_REFUSE_TOO_LONG  "the encrypted line would be longer than the server allows (target name too long) — message NOT sent"
+#define E2E_REFUSE_NOT_SAVED "the new key could not be saved (the disk or the quota is full?) — message NOT sent; send it again once the keyring can be written"
 #define E2E_REFUSE_LOST      "cannot encrypt — the keyring was corrupt and is moved aside, E2E state is lost; message NOT sent. /e2e reset starts a new keyring"
 #define E2E_REFUSE_LEGACY "E2E for %s was set up before erssi kept networks apart, and erssi uses several networks — message NOT sent. /e2e adopt in this window binds it to %s; /e2e off turns it off here"
 

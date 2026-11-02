@@ -381,6 +381,32 @@ def main():
         assert seen, chan_log(a)[start:]
         assert "/e2e on" not in chan_log(a)[start:], chan_log(a)[start:]
 
+    def t_save_fails():
+        """a new key that cannot be saved (a full disk, the quota) is not
+        used: the line is not sent and alice is told why; once the keyring
+        can be written again the next line goes out and bob reads it"""
+        a, k = st["alice"], st["bob"]
+        rdir = a.home / "rpe2e"
+        start = len(chan_log(k))
+        a.type_and_wait("/window goto #test", "/e2e rotate")
+        wire_off = (work / "wire.log").stat().st_size
+        off = log_size(a)
+        rdir.chmod(0o500)
+        try:
+            if os.access(rdir, os.W_OK):
+                raise harness.SkipCase("the directory stays writable (run as root?)")
+            say(a, "sent with a key not saved")
+            told = wait_log(a, off, "could not be saved")
+        finally:
+            rdir.chmod(0o700)
+        wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
+        assert told, log_since(a, off)
+        assert "alice PRIVMSG #test" not in wire, wire
+        assert "REKEY" not in wire, wire
+        say(a, "sent once it is saved")
+        assert wait_chan(k, "sent once it is saved", start), chan_log(k)[start:]
+        assert "sent with a key not saved" not in chan_log(k)[start:], chan_log(k)[start:]
+
     def t_reset_force():
         """/e2e reset on a keyring that is fine refuses and names -force;
         -force starts over, keeps the old file and says what peers do"""
@@ -508,6 +534,10 @@ def main():
         a.type_and_wait("/load e2e")
         out = log_since(a, off)
         assert "moved aside" in out or "corrupt" in out, out
+        # sent at once, not from irssi's flood queue (that case is below):
+        # the self-WHOIS of each /load e2e before (t_special_files loads it
+        # four times) can leave the flood count at its limit for a moment
+        time.sleep(1)
         start = len(chan_log(a))
         a.type_and_wait("/window goto #test", "refused while lost")
         assert harness.wait_until(lambda: "was NOT delivered" in chan_log(a)[start:], WAIT), chan_log(a)[start:]
@@ -553,7 +583,7 @@ def main():
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
                       t_accept_live_nick, t_bot_lines, t_plain_marked, t_plain_impostor,
-                      t_replay_after_restart, t_unreadable_keyring, t_reset_force,
+                      t_replay_after_restart, t_unreadable_keyring, t_save_fails, t_reset_force,
                       t_import_identity, t_special_files, t_corrupt_keyring, t_wire])
     finally:
         cleanup()

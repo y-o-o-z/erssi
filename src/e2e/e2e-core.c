@@ -1763,6 +1763,14 @@ static void native_gate(SERVER_REC *server, GString *str)
 		res.action = E2E_GATE_REFUSE;
 		res.message = g_strdup(E2E_REFUSE_TOO_LONG);
 	}
+	/* a new key, or a rotation, that cannot be saved (a full disk, the
+	   quota) is not used: lost at the next load, it would leave the line
+	   unreadable to us and start another rotation for the peers */
+	if (res.action == E2E_GATE_CIPHER && res.save_needed && !e2e_save(kr)) {
+		e2e_gate_result_clear(&res);
+		res.action = E2E_GATE_REFUSE;
+		res.message = g_strdup(E2E_REFUSE_NOT_SAVED);
+	}
 
 	switch (res.action) {
 	case E2E_GATE_PASS:
@@ -1776,8 +1784,6 @@ static void native_gate(SERVER_REC *server, GString *str)
 		gate_refuse(server, str, target, body, res.message);
 		break;
 	case E2E_GATE_CIPHER:
-		if (res.save_needed)
-			e2e_save(kr);
 		for (i = 0; res.warnings != NULL && i < res.warnings->len; i++)
 			e2e_print_warning(e2e_notice_item(server, res.ctx, target), "%s",
 			                  (char *) g_ptr_array_index(res.warnings, i));
