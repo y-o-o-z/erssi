@@ -48,6 +48,7 @@ static const char SAMPLE[] =
     "  SILC = { type = \"SILC\"; };\n"
     "  Empty = { type = \"IRC\"; };\n"
     "  zunverified = { type = \"IRC\"; };\n"
+    "  zzmixed = { type = \"IRC\"; };\n"
     "};\n"
     "servers = (\n"
     "  { address = \"irc.atw-inter.net\"; chatnet = \"IRCnet\"; port = \"6667\"; },\n"
@@ -56,7 +57,11 @@ static const char SAMPLE[] =
     " use_tls = \"yes\"; },\n"
     "  { address = \"silc.example.org\"; chatnet = \"SILC\"; port = \"706\"; },\n"
     "  { address = \"irc.example.org\"; chatnet = \"zunverified\"; port = \"9999\";"
-    " use_tls = \"yes\"; tls_verify = \"no\"; }\n"
+    " use_tls = \"yes\"; tls_verify = \"no\"; },\n"
+    /* verified TLS first, a plaintext fallback after it */
+    "  { address = \"tls.example.com\"; chatnet = \"zzmixed\"; port = \"6697\";"
+    " use_tls = \"yes\"; },\n"
+    "  { address = \"plain.example.com\"; chatnet = \"zzmixed\"; port = \"6667\"; }\n"
     ");\n";
 
 static CONFIG_REC *sample_config(void)
@@ -215,7 +220,7 @@ static void test_networks(void)
 	GPtrArray *nets = firstrun_networks(config);
 	FIRSTRUN_NETWORK *n;
 
-	g_assert_cmpuint(nets->len, ==, 3);
+	g_assert_cmpuint(nets->len, ==, 4);
 	n = g_ptr_array_index(nets, 0);
 	g_assert_cmpstr(n->chatnet, ==, "IRCnet");
 	g_assert_cmpstr(n->address, ==, "irc.atw-inter.net");
@@ -231,6 +236,14 @@ static void test_networks(void)
 	g_assert_cmpstr(n->chatnet, ==, "zunverified");
 	g_assert_true(n->tls);
 	g_assert_false(n->tls_verify);
+	g_assert_false(n->sasl_safe);
+	/* listed by its first server, but not every server is verified TLS */
+	n = g_ptr_array_index(nets, 3);
+	g_assert_cmpstr(n->chatnet, ==, "zzmixed");
+	g_assert_true(n->tls);
+	g_assert_true(n->tls_verify);
+	g_assert_false(n->sasl_safe);
+	g_assert_true(((FIRSTRUN_NETWORK *) g_ptr_array_index(nets, 1))->sasl_safe);
 	g_ptr_array_free(nets, TRUE);
 	config_close(config);
 }
@@ -291,6 +304,23 @@ static void test_ask_unverified_tls_no_sasl(void)
 
 	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
 	g_assert_cmpstr(a.chatnet, ==, "zunverified");
+	g_assert_null(a.sasl_user);
+	g_assert_null(strstr(out, "SASL account"));
+	g_free(out);
+	firstrun_answers_clear(&a);
+}
+
+/* a network with a plaintext server besides its TLS one: the password
+   would go there too (SASL is set for the whole network) - not asked */
+static void test_ask_mixed_tls_no_sasl(void)
+{
+	const char *const lines[] = { "", "4", "nick1", "", NULL };
+	FIRSTRUN_ANSWERS a;
+	SCRIPT s;
+	char *out;
+
+	g_assert_cmpint(run_ask(lines, (char **) THEMES, &a, &s, &out), ==, FIRSTRUN_DONE);
+	g_assert_cmpstr(a.chatnet, ==, "zzmixed");
 	g_assert_null(a.sasl_user);
 	g_assert_null(strstr(out, "SASL account"));
 	g_free(out);
@@ -1457,6 +1487,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/firstrun/ask_update_offered", test_ask_update_offered);
 	g_test_add_func("/firstrun/ask_update_not_offered", test_ask_update_not_offered);
 	g_test_add_func("/firstrun/networks", test_networks);
+	g_test_add_func("/firstrun/ask_mixed_tls_no_sasl", test_ask_mixed_tls_no_sasl);
 	g_test_add_func("/firstrun/ask_full", test_ask_full);
 	g_test_add_func("/firstrun/ask_defaults_plaintext", test_ask_defaults_plaintext);
 	g_test_add_func("/firstrun/ask_none", test_ask_none);

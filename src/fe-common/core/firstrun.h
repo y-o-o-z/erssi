@@ -12,6 +12,7 @@ typedef struct {
 	int port;
 	gboolean tls;
 	gboolean tls_verify; /* same rule as core: tls_verify, else ssl_verify, default yes */
+	gboolean sasl_safe; /* every server of the network: TLS, verified */
 } FIRSTRUN_NETWORK;
 
 /* What the user answered. chatnet NULL = no network (connect later). sasl_user and

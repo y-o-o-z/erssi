@@ -83,6 +83,42 @@ static CONFIG_NODE *first_server_of(CONFIG_REC *config, const char *chatnet)
 	return NULL;
 }
 
+static gboolean server_tls(CONFIG_NODE *server)
+{
+	return config_node_get_bool(server, "use_tls", FALSE) ||
+	       config_node_get_bool(server, "use_ssl", FALSE);
+}
+
+/* the precedence of servers-setup.c */
+static gboolean server_tls_verify(CONFIG_NODE *server)
+{
+	return config_node_find(server, "tls_verify") != NULL ?
+	           config_node_get_bool(server, "tls_verify", TRUE) :
+	           config_node_get_bool(server, "ssl_verify", TRUE);
+}
+
+/* SASL is set for the whole network: its password goes to whichever of
+   its servers erssi connects to, so all of them must be verified TLS */
+static gboolean all_servers_verified(CONFIG_REC *config, const char *chatnet)
+{
+	CONFIG_NODE *servers = config_node_traverse(config, "servers", FALSE);
+	GSList *tmp;
+
+	if (servers == NULL || servers->value == NULL)
+		return FALSE;
+	for (tmp = config_node_first(servers->value); tmp != NULL; tmp = config_node_next(tmp)) {
+		CONFIG_NODE *node = tmp->data;
+		const char *net = config_node_get_str(node, "chatnet", NULL);
+
+		if (node->type != NODE_TYPE_BLOCK || net == NULL ||
+		    g_ascii_strcasecmp(net, chatnet) != 0)
+			continue;
+		if (!server_tls(node) || !server_tls_verify(node))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 GPtrArray *firstrun_networks(CONFIG_REC *config)
 {
 	GPtrArray *list = g_ptr_array_new_with_free_func(network_free);
@@ -117,12 +153,9 @@ GPtrArray *firstrun_networks(CONFIG_REC *config)
 		n->chatnet = g_strdup(node->key);
 		n->address = g_strdup(address);
 		n->port = config_node_get_int(server, "port", 6667);
-		n->tls = config_node_get_bool(server, "use_tls", FALSE) ||
-		         config_node_get_bool(server, "use_ssl", FALSE);
-		/* the precedence of servers-setup.c */
-		n->tls_verify = config_node_find(server, "tls_verify") != NULL ?
-		                    config_node_get_bool(server, "tls_verify", TRUE) :
-		                    config_node_get_bool(server, "ssl_verify", TRUE);
+		n->tls = server_tls(server);
+		n->tls_verify = server_tls_verify(server);
+		n->sasl_safe = all_servers_verified(config, node->key);
 		g_ptr_array_add(list, n);
 	}
 	g_ptr_array_sort(list, network_cmp);
@@ -303,8 +336,9 @@ FIRSTRUN_RESULT firstrun_ask(FILE *out, FIRSTRUN_READ_FUNC read, void *ctx, GPtr
 		PROMPT(out, "  not a valid nick (letters, digits, - _ [ ] \\ ` ^ { | }, up to 30)\n");
 	}
 
-	/* SASL: only over verified TLS, so the password never travels where a MITM can read it */
-	if (chosen != NULL && chosen->tls && chosen->tls_verify) {
+	/* SASL: only over verified TLS, to every server of the network, so the
+	   password never travels where a MITM can read it */
+	if (chosen != NULL && chosen->sasl_safe) {
 		for (tries = 0; tries < FIRSTRUN_MAX_TRIES; tries++) {
 			PROMPT(out, "SASL account on %s (empty = none): ", chosen->chatnet);
 			line = read(ctx, FALSE);
