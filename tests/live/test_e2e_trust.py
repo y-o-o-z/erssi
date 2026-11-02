@@ -388,24 +388,34 @@ def main():
         a, k = st["alice"], st["bob"]
         rdir = a.home / "rpe2e"
         start = len(chan_log(k))
-        a.type_and_wait("/window goto #test", "/e2e rotate")
-        wire_off = (work / "wire.log").stat().st_size
-        off = log_size(a)
-        rdir.chmod(0o500)
-        try:
-            if os.access(rdir, os.W_OK):
-                raise harness.SkipCase("the directory stays writable (run as root?)")
-            say(a, "sent with a key not saved")
-            told = wait_log(a, off, "could not be saved")
-        finally:
-            rdir.chmod(0o700)
+        # the module's minute timer (prune_prev_keys) makes rpe2e 0700
+        # again: a try it overlapped is not a test of the refusal - again,
+        # with a rotation due again (that try may have made it)
+        for attempt in range(3):
+            a.type_and_wait("/window goto #test", "/e2e rotate")
+            text = f"sent with a key not saved {attempt}"
+            wire_off = (work / "wire.log").stat().st_size
+            off = log_size(a)
+            rdir.chmod(0o500)
+            try:
+                if os.access(rdir, os.W_OK):
+                    raise harness.SkipCase("the directory stays writable (run as root?)")
+                say(a, text)
+                told = wait_log(a, off, "could not be saved")
+                kept = (rdir.stat().st_mode & 0o777) == 0o500
+            finally:
+                rdir.chmod(0o700)
+            if kept:
+                break
+        else:
+            raise AssertionError("rpe2e was made writable again in every try")
         wire = (work / "wire.log").read_bytes()[wire_off:].decode(errors="replace")
         assert told, log_since(a, off)
         assert "alice PRIVMSG #test" not in wire, wire
         assert "REKEY" not in wire, wire
         say(a, "sent once it is saved")
         assert wait_chan(k, "sent once it is saved", start), chan_log(k)[start:]
-        assert "sent with a key not saved" not in chan_log(k)[start:], chan_log(k)[start:]
+        assert text not in chan_log(k)[start:], chan_log(k)[start:]
 
     def t_reset_force():
         """/e2e reset on a keyring that is fine refuses and names -force;
