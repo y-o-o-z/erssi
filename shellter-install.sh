@@ -2079,15 +2079,19 @@ bk_read_pass() {
     elif [ -t 0 ]; then
         # ^C at the prompt: the terminal echoes again, then the usual exit
         trap 'stty echo 2>/dev/null; '"$INT_TRAP" HUP INT TERM
-        # no echo before the prompt: what is typed as soon as it shows is
-        # not echoed either
+        # no echo from before the first prompt to after the last read:
+        # what is typed as soon as a prompt shows, or ahead of the next
+        # one, is not echoed either
         stty -echo 2>/dev/null; printf '  Passphrase: ' >&2
-        IFS= read -r BK_PASS || BK_PASS=""; stty echo 2>/dev/null
+        IFS= read -r BK_PASS || BK_PASS=""
         printf '\n' >&2
         if [ "${1:-}" = new ] && [ -n "$BK_PASS" ]; then
-            stty -echo 2>/dev/null; printf '  The same again: ' >&2
-            IFS= read -r again || again=""; stty echo 2>/dev/null
+            printf '  The same again: ' >&2
+            IFS= read -r again || again=""
             printf '\n' >&2
+        fi
+        stty echo 2>/dev/null
+        if [ "${1:-}" = new ] && [ -n "$BK_PASS" ]; then
             [ "$again" = "$BK_PASS" ] || bk_fail "the two passphrases differ"
             again=""
         fi
@@ -2097,6 +2101,10 @@ bk_read_pass() {
         bk_fail "an encrypted backup needs its passphrase: run it in a terminal, or give --passphrase-file FILE (a file only you can read)"
     fi
     [ -n "$BK_PASS" ] || bk_fail "the passphrase is empty"
+    # openssl -pass reads at most 1023 bytes of it (LC_ALL=C: ${#} counts
+    # bytes): a longer one would quietly be its start only
+    [ "${#BK_PASS}" -le 1023 ] ||
+        bk_fail "the passphrase is longer than 1023 bytes - openssl would use only its start"
 }
 
 do_backup() {

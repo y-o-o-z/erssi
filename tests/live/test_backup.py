@@ -274,8 +274,9 @@ def main():
         c = st["carol"]
         enc = work / "carol.tar.gz.enc"
         secret = "a long pass phrase 42"
+        # both typed at once, ahead of the second prompt: no echo either
         rc, out = run_pty(c, ["--backup", str(enc), "--encrypt"],
-                          [("Passphrase:", secret), ("The same again:", secret)])
+                          [("Passphrase:", secret + "\r" + secret)])
         assert rc == 0, f"--backup --encrypt: exit {rc}:\n{out}"
         assert secret not in out, f"the passphrase was echoed:\n{out}"
         assert enc.read_bytes()[:8] == b"Salted__", "not openssl's format"

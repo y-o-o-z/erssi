@@ -754,6 +754,14 @@ encrypted)
     printf 'p\n' > "$W/!"; chmod 644 "$W/!"
     RC=0; (cd "$W" && sh "$INSTALLER" --backup "$W/bang.tar.gz.enc" --encrypt --passphrase-file '!') > "$W/out" 2>&1 || RC=$?
     check "a passphrase file named ! that others can read is refused" refused_saying "chmod 600"
+    # openssl takes only the first 1023 bytes of it: a longer one would
+    # quietly be another passphrase
+    awk 'BEGIN { while (i++ < 1100) printf "a"; print "" }' > "$W/long"; chmod 600 "$W/long"
+    run --backup "$W/l.tar.gz.enc" --encrypt --passphrase-file "$W/long"
+    check "a passphrase over 1023 bytes is refused" refused_saying "1023"
+    awk 'BEGIN { while (i++ < 1023) printf "a"; print "" }' > "$W/long"
+    run --backup "$W/l1023.tar.gz.enc" --encrypt --passphrase-file "$W/long"
+    check "one of 1023 bytes is taken" [ "$RC" = 0 ]
     : > "$W/empty"; chmod 600 "$W/empty"
     run --backup "$W/d.tar.gz.enc" --encrypt --passphrase-file "$W/empty"
     check "an empty passphrase is refused" refused_saying "empty"
