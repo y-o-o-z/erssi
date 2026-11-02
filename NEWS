@@ -1,3 +1,59 @@
+shellter-v2026.11.1 2026-11-xx  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.1
+
+	Backups can be encrypted with a passphrase (erssi --backup
+	--encrypt), erssi warns when the disk or the quota is nearly full,
+	and a review of 2026.11.0 brought fixes for the mouse, E2E, the
+	first-run setup and backups.
+
+	+ Backups
+	  - erssi --backup --encrypt: the backup encrypted with a passphrase,
+	    asked twice on the terminal without echo, or the first line of
+	    --passphrase-file FILE (a file only you can read). OpenSSL's
+	    format, AES-256-CBC with the key made by PBKDF2 (600000 rounds of
+	    SHA-256); the name ends in .tar.gz.enc. The passphrase never goes
+	    on a command line or into an environment, and the archive is
+	    never in the clear next to the file. erssi --restore knows such
+	    a file and asks for its passphrase; a wrong one, or a damaged
+	    file, changes nothing. Without the passphrase nobody can restore
+	    it
+	  - a file or directory below a link out of the home that cannot be
+	    read (a scripts directory shared by the administrator) is left
+	    out with a note instead of failing every backup; any other error
+	    still stops it, and so does an unreadable file of the home itself
+	  - a restore with homes of earlier restores still there
+	    (<home>.before-restore-*, each with old keys and passwords) lists
+	    them all with their size and the rm -rf that removes each; the
+	    printed commands quote the path
+
+	+ Disk space
+	  - disk_warn (default 20M, 0 = off): a warning in the Notices window
+	    when less is left for the home, of its file system or of the
+	    user's disk quota (read on Linux 5.14 and later and on FreeBSD),
+	    after the start and every 10 minutes, again every 6 hours while
+	    it stays low
+
+	+ Mouse and terminal
+	  - a mouse report cut off on the way (a slow link, a phone) or
+	    malformed no longer swallows every key typed after it
+	  - mouse reports in the old encoding (ESC [ M, from a terminal
+	    without SGR mode) are clicks and the wheel, not text in the
+	    input line; only while the mouse is on, as ESC [ M is F1 in the
+	    scoansi terminfo
+	  - with the screen split, the wheel scrolls the window under the
+	    pointer, not the active one
+
+	+ E2E
+	  - a new key or a rotation that cannot be saved (a full disk, the
+	    quota) is not used: the line is marked [NOT SENT] with the
+	    reason, instead of going out with a key lost at the next load
+
+	+ Setup
+	  - erssi --setup asks for a SASL account only when every server of
+	    the network uses TLS with a verified certificate: SASL is set
+	    for the whole network, and a plaintext server after the first
+	    would have got the password
+
 shellter-v2026.11.0 2026-11-01  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.0
 

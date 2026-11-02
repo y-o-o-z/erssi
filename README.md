@@ -2,7 +2,7 @@
 
 **Your shell, your shelter — on IRCnet.**
 
-[![Release](https://img.shields.io/badge/release-2026.11.0-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
+[![Release](https://img.shields.io/badge/release-2026.11.1-f59e0b.svg)](https://github.com/y-o-o-z/erssi/releases)
 [![erssi](https://img.shields.io/badge/based_on-erssi_1.3.1-30363d.svg)](https://github.com/erssi-org/erssi)
 [![irssi](https://img.shields.io/badge/core-irssi_1.4.5-30363d.svg)](https://github.com/irssi/irssi)
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](COPYING)
@@ -64,7 +64,8 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
   `--no-test`, `--clean`, `--yes`, `--binary`/`--source`, `--keep`,
   `--dry-run`, `--rollback`, `--uninstall`, `--backup`, `--restore`.
 - Moving to another box: `erssi --backup` puts your home (config,
-  scripts, E2E keyring, keys) into one private file, `erssi --restore FILE`
+  scripts, E2E keyring, keys) into one private file, `erssi --backup
+  --encrypt` into one that only your passphrase opens, `erssi --restore FILE`
   puts it back
   ([details](docs/shellter/install.md#moving-to-another-box)).
 - erssi keeps its configuration in `~/.erssi/`, so it runs side by side
@@ -113,7 +114,7 @@ like system config files, what changes when upgrading from 1.3.x):
 
 | Component | Version |
 |---|---|
-| **erssi Shellter Edition 2026.11.0** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
+| **erssi Shellter Edition 2026.11.1** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
 | **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.6`). |
 
@@ -129,7 +130,8 @@ changed: [NEWS](NEWS).
 - **Packages you can rebuild yourself** — the packages are reproducible: `sh utils/build-binary.sh --verify PACKAGE` builds one again from its signed tag and says whether it is the same, byte for byte.
 - **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so in the Notices window, with a short summary; nothing is installed by itself, and `/update install` installs it from inside erssi.
 - **Clickable links** — addresses in messages are OSC 8 links in terminals that support them, also when they wrap over several lines; the link is always the text you see.
-- **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file; `erssi --restore` checks it and puts it back.
+- **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file (with `--encrypt`, one only your passphrase opens); `erssi --restore` checks it and puts it back.
+- **Disk space** — erssi warns before the disk or your quota fills up and logs, keys and backups stop saving (`disk_warn`).
 - **Installs that do not stop for nothing** — a source install runs the tests of erssi, not those of the release tools, and names what to do when a test fails; a box without `ssh-keygen` is told which one package gives the ready-made binary.
 
 **Ready-made binaries**
