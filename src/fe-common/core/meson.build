@@ -9,6 +9,7 @@ endif
 fe_common_core_sources = [
   files(
     'backup-auto.c',
+    'disk-space.c',
     'chat-completion.c',
     'command-history.c',
     'completion.c',
@@ -83,6 +84,7 @@ libfuzzer_fe_common_core_a = static_library('fuzzer_fe_common_core',
 install_headers(
   files(
     'backup-auto.h',
+    'disk-space.h',
     'chat-completion.h',
     'command-history.h',
     'completion.h',

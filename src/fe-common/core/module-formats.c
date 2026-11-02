@@ -376,6 +376,11 @@ FORMAT_REC fecommon_core_formats[] = {
 	{ "backup_next", "Backup: next one $0", 1, { 0 } },
 	{ "backup_last_failed", "Backup: the last try $0 failed: $1 ($2 in a row)", 3, { 0, 0, 1 } },
 
+	/* ---- */
+	{ NULL, "Disk space", 0 },
+
+	{ "disk_low", "{hilight Disk:} only $0 left $1 - logs, the E2E keyring and backups may fail to save: free some space (/SET disk_warn 0 turns this off)", 2, { 0, 0 } },
+
 	{ NULL, NULL, 0 }
 	/* clang-format on */
 };

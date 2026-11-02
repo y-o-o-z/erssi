@@ -29,6 +29,7 @@ install_data(
     'devoice',
     'die',
     'disconnect',
+    'disk_warn',
     'e2e',
     'echo',
     'eval',

@@ -52,6 +52,7 @@
 #include <irssi/src/fe-common/core/shellter-defaults.h>
 #include <irssi/src/fe-common/core/update-check.h>
 #include <irssi/src/fe-common/core/backup-auto.h>
+#include <irssi/src/fe-common/core/disk-space.h>
 
 #include <signal.h>
 
@@ -221,6 +222,7 @@ void fe_common_core_init(void)
 	fe_recode_init();
 	update_check_init();
 	backup_auto_init();
+	disk_space_init();
 
 	settings_check();
 
@@ -267,6 +269,7 @@ void fe_common_core_deinit(void)
 	fe_messages_deinit();
 	fe_ignore_messages_deinit();
 	fe_recode_deinit();
+	disk_space_deinit();
 	backup_auto_deinit();
 	update_check_deinit();
 

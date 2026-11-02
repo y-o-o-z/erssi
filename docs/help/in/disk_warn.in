@@ -1,0 +1,21 @@
+%9Setting:%9
+
+    disk_warn (size; default: 20M)
+
+%9Description:%9
+
+    erssi says in the Notices window when less than disk_warn is left for
+    its home: the free space of the home's file system, or what your disk
+    quota there leaves (the soft limit if one is set), the smaller one. It
+    looks a few seconds after the start and every 10 minutes, and says it
+    again every 6 hours while it stays low. A full disk or quota stops
+    logs, the E2E keyring (a message that needs a new key is not sent)
+    and backups. 0 turns the warning off.
+
+%9Examples:%9
+
+    /SET disk_warn 20M
+    /SET disk_warn 100M
+    /SET disk_warn 0
+
+%9See also:%9 BACKUP, BACKUP_AUTO

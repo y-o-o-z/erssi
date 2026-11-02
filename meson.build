@@ -663,6 +663,14 @@ foreach h : headers
     conf.set('HAVE_' + h.underscorify().to_upper(), 1, description : 'Define to 1 if you have the <' + h + '> header file.')
   endif
 endforeach
+# the user's disk quota, for the disk space warning: Linux (quotactl_fd,
+# 5.14 and later) and FreeBSD (quotactl on a path)
+if cc.has_header('linux/quota.h') and cc.has_header_symbol('sys/syscall.h', 'SYS_quotactl_fd')
+  conf.set('HAVE_QUOTACTL_FD', 1, description : 'Linux quotactl_fd(2) and <linux/quota.h>')
+endif
+if cc.has_header('ufs/ufs/quota.h', prefix : '#include <sys/types.h>') and cc.has_function('quotactl')
+  conf.set('HAVE_UFS_QUOTACTL', 1, description : 'BSD quotactl(2) on a path and <ufs/ufs/quota.h>')
+endif
 
 conf.set('HAVE_LIBUTF8PROC', have_libutf8proc)
 conf.set_quoted('PACKAGE_VERSION', package_version)

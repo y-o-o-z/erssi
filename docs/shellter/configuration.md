@@ -204,6 +204,24 @@ setup. It is off by default:
   `backup_dir` on another disk survives a lost disk; on a synced or
   shared folder, others may read it.
 
+## Disk space
+
+On a shell account a full disk quota is what quietly breaks things: logs
+stop, the E2E keyring cannot be saved (a message that needs a new key is
+then not sent), backups fail. erssi looks at what is left for its home a
+few seconds after the start and every 10 minutes, and says so in the
+Notices window when it is less than `disk_warn`:
+
+```
+/set disk_warn 20M      # the default; 0 turns the warning off
+```
+
+What is left is the smaller of the free space of the home's file system
+and what your disk quota there leaves (the soft limit if one is set,
+else the hard one), read with quotactl on Linux 5.14 and later and on
+FreeBSD; where the quota cannot be read, only the free space counts. It
+is said again every 6 hours while it stays low.
+
 ## Web client
 
 fe-web lets a web client show the same erssi session in a browser, with

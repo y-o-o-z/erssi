@@ -464,3 +464,24 @@ test('test-backup-auto test', test_test_backup_auto,
   args : ['--tap'],
   protocol : 'tap',
   timeout : 60)
+
+test_test_disk_space = executable('test-disk-space',
+  files(
+    'test-disk-space.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-disk-space test', test_test_disk_space,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
