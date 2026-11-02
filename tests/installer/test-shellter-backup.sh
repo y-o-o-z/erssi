@@ -479,8 +479,25 @@ aside)
     check "a second restore succeeds" [ "$RC" = 0 ]
     check "the first home set aside is kept" [ -d "$first" ]
     check "it is named after the second restore" said "~/${first##*/} ("
-    check "with the command that removes it" said "rm -rf ~/${first##*/}\$"
+    check "with the command that removes it" said "rm -rf ~/'${first##*/}'\$"
     check "and how many there are" said "2 homes set aside by restores"
+    # a home whose name has a space and a quote: the printed commands
+    # remove that home and nothing else when copied
+    make_home "$HOME/IRC d'x"
+    run --backup "$W/q.tar.gz" --home "$HOME/IRC d'x"
+    run --restore "$W/q.tar.gz" --home "$HOME/IRC d'x"
+    run --restore "$W/q.tar.gz" --home "$HOME/IRC d'x"
+    if [ "$RC" != 0 ]; then show; fi
+    # each printed command, as the shell reads it: one word, that home
+    grep -m1 '  rm -rf ' "$W/out" | sed 's/.*rm -rf //' > "$W/cmd1"
+    sed -n 's/.*(rm -rf \(.*\))\.$/\1/p' "$W/out" > "$W/cmd2"
+    for c in cmd1 cmd2; do
+        check "$c names that one home, quoted" sh -c '
+            [ -s "$1" ] || exit 1
+            eval "set -- $(cat "$1")"
+            [ $# = 1 ] && [ -d "$1" ] || exit 1
+            case "$1" in *"/IRC d'"'"'x.before-restore-"*) ;; *) exit 1 ;; esac' sh "$W/$c"
+    done
     # not an erssi home: never moved aside
     mkdir -p "$W/docs"; printf 'x\n' > "$W/docs/letter"
     run --restore "$W/b.tar.gz" --home "$W/docs"

@@ -269,6 +269,15 @@ header() {   # what
 }
 field() { printf '  %s%-9s%s %s\n' "$D" "$1" "$N" "$2"; }
 tilde() { case "$1" in "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;; *) printf '%s' "$1" ;; esac; }
+# a path for a command the user copies: one shell word, ~/ kept outside the
+# quotes so that it still expands
+# shellcheck disable=SC2088 # a literal ~ for the user to copy
+shell_path() {
+    case "$1" in
+        "$HOME"/*) printf "~/'%s'" "$(printf '%s' "${1#"$HOME"/}" | sed "s/'/'\\\\''/g")" ;;
+        *) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")" ;;
+    esac
+}
 now() { date +%s; }
 elapsed() {  # seconds -> "47s" / "2m 04s"
     if [ "$1" -lt 60 ]; then printf '%ds' "$1"; else printf '%dm %02ds' $(($1 / 60)) $(($1 % 60)); fi
@@ -2668,7 +2677,7 @@ do_restore() {
     printf '\n  Restored %s files into %s.\n' "$nf" "$(tilde "$T")"
     if [ -n "$KEPT" ]; then
         printf '  The home before is in %s - it holds your old keys and passwords:\n' "$(tilde "$KEPT")"
-        printf '  remove it once erssi works (rm -rf %s).\n' "$(tilde "$KEPT")"
+        printf '  remove it once erssi works (rm -rf %s).\n' "$(shell_path "$KEPT")"
     fi
     bk_list_aside "$T"
     printf '\n'
@@ -2688,7 +2697,7 @@ bk_list_aside() {
     for a in "$1".before-restore-*; do
         if [ -d "$a" ] && [ ! -L "$a" ]; then
             kb=$(du -sk "$a" 2>/dev/null | awk '{print $1}') || kb=""
-            printf '    %s (%s KB)   rm -rf %s\n' "$(tilde "$a")" "${kb:-?}" "$(tilde "$a")"
+            printf '    %s (%s KB)   rm -rf %s\n' "$(tilde "$a")" "${kb:-?}" "$(shell_path "$a")"
         fi
     done
 }
