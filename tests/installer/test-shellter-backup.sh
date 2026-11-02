@@ -743,6 +743,17 @@ encrypted)
     check "a passphrase file others can read is refused" refused_saying "chmod 600"
     check "and nothing is written" [ ! -e "$W/c.tar.gz.enc" ]
     chmod 600 "$W/pass"
+    # one others can write: they could put a passphrase of theirs in it
+    for m in 602 620; do
+        chmod "$m" "$W/pass"
+        run --backup "$W/w$m.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
+        check "a passphrase file of mode $m is refused" refused_saying "chmod 600"
+    done
+    chmod 600 "$W/pass"
+    # a relative name that find would take for an expression
+    printf 'p\n' > "$W/!"; chmod 644 "$W/!"
+    RC=0; (cd "$W" && sh "$INSTALLER" --backup "$W/bang.tar.gz.enc" --encrypt --passphrase-file '!') > "$W/out" 2>&1 || RC=$?
+    check "a passphrase file named ! that others can read is refused" refused_saying "chmod 600"
     : > "$W/empty"; chmod 600 "$W/empty"
     run --backup "$W/d.tar.gz.enc" --encrypt --passphrase-file "$W/empty"
     check "an empty passphrase is refused" refused_saying "empty"
@@ -780,6 +791,12 @@ encrypted)
     cat > "$W/spy/openssl" <<EOF2
 #!/bin/sh
 env > "$W/spy/env.\$\$"
+# while it encrypts: is an unencrypted archive next to the backup?
+case " \$* " in *" -e "*)
+    for f in "$W"/.erssi-backup.*; do
+        [ -f "\$f" ] && [ "\$(od -An -tx1 -N2 "\$f" | tr -d ' ')" = 1f8b ] && echo "\$f" >> "$W/spy/plain"
+    done ;;
+esac
 case " \$* " in *" -d "*) [ -z "\${SPY_FAIL_D:-}" ] || { "$(command -v openssl)" "\$@"; exit 1; } ;; esac
 exec "$(command -v openssl)" "\$@"
 EOF2
@@ -788,6 +805,7 @@ EOF2
     check "a backup with BK_PASS exported succeeds" [ "$RC" = 0 ]
     check "openssl ran" sh -c "ls '$W/spy'/env.* >/dev/null 2>&1"
     check "the passphrase is in no child's environment" sh -c "! grep -l 'horse' '$W/spy'/env.*"
+    check "no unencrypted archive next to it while it is encrypted" [ ! -e "$W/spy/plain" ]
     run_env PATH="$W/spy:$PATH" SPY_FAIL_D=1 -- --backup "$W/h.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
     check "a backup whose check by openssl fails is not written" [ "$RC" != 0 ]
     check "no file then" [ ! -e "$W/h.tar.gz.enc" ]

@@ -2067,8 +2067,13 @@ bk_read_pass() {
         fi
         [ "$(owner "$BK_PASSFILE")" = "$(id -u)" ] ||
             bk_fail "the passphrase file $(tilde "$BK_PASSFILE") is not yours"
-        [ -z "$(find "$BK_PASSFILE" -prune \( -perm -040 -o -perm -004 \) -print)" ] ||
-            bk_fail "others can read the passphrase file $(tilde "$BK_PASSFILE") - chmod 600 it"
+        # read or written by others: they would know the passphrase, or put
+        # one of theirs in it. ./ first: find takes a name like ! for an
+        # expression
+        case "$BK_PASSFILE" in /*) pf=$BK_PASSFILE ;; *) pf=./$BK_PASSFILE ;; esac
+        open=$(find "$pf" -prune \( -perm -040 -o -perm -004 -o -perm -020 -o -perm -002 \) -print) ||
+            bk_fail "cannot check the passphrase file $(tilde "$BK_PASSFILE")"
+        [ -z "$open" ] || bk_fail "others can read or write the passphrase file $(tilde "$BK_PASSFILE") - chmod 600 it"
         BK_PASS=""
         IFS= read -r BK_PASS < "$BK_PASSFILE" || [ -n "$BK_PASS" ] || BK_PASS=""
     elif [ -t 0 ]; then
@@ -2226,7 +2231,14 @@ do_backup() {
     # a new file of mode 0600 next to FILE, linked to FILE only once it is
     # complete: FILE is never half written, never readable by others, and
     # an existing one is never replaced (ln fails)
-    BK_TMPF=$(mktemp "$fphys/.erssi-backup.XXXXXX") || die "cannot create a file in $fdir"
+    # encrypted: the archive in the clear only in the private work
+    # directory, never next to the file (a synced or shared folder)
+    if [ "$BK_ENCRYPT" = 1 ]; then
+        BK_TMPF=$BK_WORK/plain
+        : > "$BK_TMPF" || die "cannot create a file in $BK_WORK"
+    else
+        BK_TMPF=$(mktemp "$fphys/.erssi-backup.XXXXXX") || die "cannot create a file in $fdir"
+    fi
     chmod 600 "$BK_TMPF"
     # tar -h stores what the staged links point to: the files of the home.
     # One file under two names (a hard link, or two links to one file)
