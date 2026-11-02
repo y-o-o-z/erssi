@@ -340,7 +340,8 @@ int get_auto_create_separators(void) { return sp_auto_create_separators; }
  * =============================================================================
  */
 
-static gboolean is_in_chat_area(int x, int y)
+/* the main window whose text area holds x,y, or NULL */
+static MAIN_WINDOW_REC *chat_area_mainwin(int x, int y)
 {
 	GSList *tmp;
 
@@ -360,12 +361,17 @@ static gboolean is_in_chat_area(int x, int y)
 		    y >= chat_y && y < chat_y + chat_h) {
 			sp_logf("MOUSE: is_in_chat_area(%d,%d) = TRUE (chat area: %d,%d %dx%d)",
 			        x, y, chat_x, chat_y, chat_w, chat_h);
-			return TRUE;
+			return mw;
 		}
 	}
 
 	sp_logf("MOUSE: is_in_chat_area(%d,%d) = FALSE", x, y);
-	return FALSE;
+	return NULL;
+}
+
+static gboolean is_in_chat_area(int x, int y)
+{
+	return chat_area_mainwin(x, y) != NULL;
 }
 
 static gboolean chat_area_validator(int x, int y, gpointer user_data)
@@ -470,8 +476,11 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 		int delta = (dir == 0) ? -3 : 3;
 		int px, py, pw, ph;
 
-		/* Handle chat area scrolling first if enabled */
-		if (mouse_scroll_chat && is_in_chat_area(event->x, event->y)) {
+		MAIN_WINDOW_REC *mw = mouse_scroll_chat ? chat_area_mainwin(event->x, event->y) : NULL;
+
+		/* Handle chat area scrolling first if enabled: the window under
+		   the pointer, which need not be the active one */
+		if (mw != NULL && mw->active != NULL) {
 			const char *str;
 			double count;
 			int scroll_lines;
@@ -484,17 +493,17 @@ static gboolean handle_application_mouse_event(const GuiMouseEvent *event, gpoin
 			if (count == 0)
 				count = 1;
 			else if (count < 0)
-				count = active_mainwin->height - active_mainwin->statusbar_lines + count;
+				count = mw->height - mw->statusbar_lines + count;
 			else if (count < 1)
 				count = 1.0 / count;
 
 			if (*str == '/' || *str == '.') {
-				count = (active_mainwin->height - active_mainwin->statusbar_lines) / count;
+				count = (mw->height - mw->statusbar_lines) / count;
 			}
 			scroll_lines = (int) count;
 
-			/* Scroll active window using same function as PageUp/PageDown */
-			gui_window_scroll(active_win, delta < 0 ? -scroll_lines : scroll_lines);
+			/* the same scroll as PageUp/PageDown */
+			gui_window_scroll(mw->active, delta < 0 ? -scroll_lines : scroll_lines);
 			return TRUE;
 		}
 

@@ -120,13 +120,30 @@ def main():
         text = log_since(off)
         assert "200~" not in text and "201~" not in text and "/echo" not in text, text
 
+    def t_wheel_split():
+        # the wheel scrolls the split window under the pointer, not the
+        # active one
+        alice = st["alice"]
+        off = log_size()
+        alice.type('/script exec Irssi::print("wheel-$_") for 1..120')
+        assert wait_log_since(off, "wheel-120"), "script exec printed nothing:\n" + log_since(off)
+        alice.type_and_wait("/window new split")
+        rows, ok = alice.wait_screen(lambda r: any("wheel-120" in row for row in r), WAIT)
+        assert ok, "wheel-120 not on the screen:\n" + "\n".join(rows)
+        y = next(i for i, row in enumerate(rows) if "wheel-120" in row)
+        x = rows[y].index("wheel-120")
+        alice.write_raw(b"\x1b[<64;%d;%dM" % (x + 1, y + 1))
+        rows, ok = alice.wait_screen(lambda r: not any("wheel-120" in row for row in r), WAIT)
+        assert ok, "the window under the pointer did not scroll:\n" + "\n".join(rows)
+        alice.type_and_wait("/window close")
+
     def t_sanitizers():
         alice = st["alice"]
         alice.quit()
         assert alice.sanitizer_reports() == [], alice.sanitizer_reports()
 
     try:
-        harness.main([t_install, t_start, t_keys, t_mouse_and_paste, t_sanitizers])
+        harness.main([t_install, t_start, t_keys, t_mouse_and_paste, t_wheel_split, t_sanitizers])
     finally:
         if "alice" in st:
             st["alice"].kill()
