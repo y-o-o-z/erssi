@@ -640,6 +640,38 @@ closed-dirs)
     check "a dry run leaves nothing in the temporary directory either" [ -z "$(find "$W/tmpd" ! -path "$W/tmpd")" ]
     ;;
 
+unreadable-outside)
+    # a link out of the home to a directory shared by someone else, with
+    # files and a directory not readable by the user: left out with a
+    # note, the rest backed up. Root reads everything: nothing to test
+    if [ "$(id -u)" = 0 ]; then pass "skipped as root"; exit 0; fi
+    make_home "$E"
+    mkdir -p "$W/shared/sub" "$W/shared/closed"
+    printf 'shared\n' > "$W/shared/ok.pl"
+    printf 'theirs\n' > "$W/shared/secret.pl"
+    printf 'deeper\n' > "$W/shared/closed/x.pl"
+    chmod 000 "$W/shared/secret.pl" "$W/shared/closed"
+    ln -s "$W/shared" "$E/scripts/shared"
+    run --backup "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "a backup with unreadable files out of the home succeeds" [ "$RC" = 0 ]
+    check "the unreadable file is left out, with a note" said "left out: scripts/shared/secret.pl"
+    check "the unreadable directory is left out, with a note" said "left out: scripts/shared/closed"
+    run --restore "$W/b.tar.gz" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "and it restores" [ "$RC" = 0 ]
+    check "with the readable file" same "$W/shared/ok.pl" "$W/new/.erssi/scripts/shared/ok.pl"
+    check "and without the unreadable one" [ ! -e "$W/new/.erssi/scripts/shared/secret.pl" ]
+    chmod 600 "$W/shared/secret.pl"; chmod 700 "$W/shared/closed"
+    # a file of the home itself that cannot be read: the backup would
+    # quietly lack the user's own data, so it stops
+    chmod 000 "$E/config"
+    run --backup "$W/c.tar.gz"
+    chmod 600 "$E/config"
+    check "an unreadable file of the home still stops the backup" [ "$RC" != 0 ]
+    check "and writes nothing" [ ! -e "$W/c.tar.gz" ]
+    ;;
+
 swap-locked)
     # the two renames run while the restore holds the exclusive lock of
     # the old home's erssi.lock and of the new one's: a stand-in mv looks

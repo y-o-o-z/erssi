@@ -1936,7 +1936,12 @@ bk_entry() {
             printf 'l\t%s\t%s\t%s\n' "$p" "$(bk_rel "$(bk_dir_of "$p")" "$r")" "$r" >> "$BK_WORK/links"
             return 0
         fi
-        # out of the home (or through another link): what it points to
+        # out of the home (or through another link): what it points to;
+        # what is not the user's to read is left out, not the backup
+        if { [ -d "$f" ] && { [ ! -r "$f" ] || [ ! -x "$f" ]; }; } || { [ -f "$f" ] && [ ! -r "$f" ]; }; then
+            bk_note "left out: $p (a link to ${t:-?}, which cannot be read)"
+            return 0
+        fi
         if [ -d "$f" ]; then
             ph=$(cd -P "$f" 2>/dev/null && pwd) || ph=""
             if [ -z "$ph" ] || grep -qxF "$ph" "$BK_WORK/visited" 2>/dev/null; then
@@ -1954,6 +1959,9 @@ bk_entry() {
         else
             bk_note "left out: $p (a link to something that is neither a file nor a directory)"
         fi
+    elif [ "$BK_OUT" = 1 ] && { { [ -d "$f" ] && { [ ! -r "$f" ] || [ ! -x "$f" ]; }; } || { [ -f "$f" ] && [ ! -r "$f" ]; }; }; then
+        # below a link out of the home: someone else's
+        bk_note "left out: $p (cannot be read)"
     elif [ -d "$f" ]; then
         mkdir "$BK_STAGE/$p" || die "cannot stage $p"
         printf 'd\t%s\n' "$p" >> "$BK_WORK/entries"
@@ -1972,6 +1980,10 @@ bk_walk() {
     (
         # a list of its own for each level: $$ is the same in every subshell
         BK_DEPTH=$((BK_DEPTH + 1))
+        # below a link out of the home ($1 is set only there): what cannot
+        # be read is someone else's, and is left out
+        BK_OUT=0
+        [ -z "$1" ] || BK_OUT=1
         lst=$BK_WORK/list.$BK_DEPTH
         d=$BK_ROOT${1:+/$1}
         cd "$d" || die "cannot enter $(tilde "$d")"
@@ -1982,7 +1994,8 @@ bk_walk() {
         elif [ -z "$1" ]; then
             find . -path ./image_cache -prune -o -print
         else
-            find . -print
+            # a directory it cannot enter is listed, and left out below
+            find . -print 2>/dev/null || [ -s "$lst" ]
         fi > "$lst" || die "cannot list $(tilde "$d")"
         while IFS= read -r x; do
             [ "$x" != . ] || continue
