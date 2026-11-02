@@ -27,6 +27,12 @@ typedef enum {
 guint64 disk_space_left(gboolean fs_ok, guint64 fs_avail, gboolean quota_ok, guint64 limit,
                         guint64 used, DISK_LEFT_KIND *kind);
 
+/* the bytes free for the user of a file system of BLOCKS blocks of
+ * FRSIZE bytes, BAVAIL of them available: none when BAVAIL is more than
+ * the whole (FreeBSD's UFS reports it negative once the reserve is used
+ * too, and statvfs copies that into its unsigned field) */
+guint64 disk_space_fs_avail(guint64 bavail, guint64 blocks, guint64 frsize);
+
 /* whether to warn now: LOW now, and either not low at the last look
  * (WAS_LOW) or the last warning (LAST_WARNED, 0 = none) DISK_SPACE_REPEAT
  * ago or more */

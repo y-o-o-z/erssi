@@ -61,6 +61,11 @@ guint64 disk_space_left(gboolean fs_ok, guint64 fs_avail, gboolean quota_ok, gui
 	return 0;
 }
 
+guint64 disk_space_fs_avail(guint64 bavail, guint64 blocks, guint64 frsize)
+{
+	return bavail > blocks ? 0 : bavail * frsize;
+}
+
 gboolean disk_space_warn_due(gint64 now, gboolean low, gboolean was_low_before, gint64 last)
 {
 	if (!low)
@@ -123,8 +128,9 @@ static guint64 home_left(DISK_LEFT_KIND *kind)
 	}
 	fs_ok = statvfs(dir, &vfs) == 0;
 	quota_ok = read_quota(dir, &limit, &used);
-	return disk_space_left(fs_ok, fs_ok ? (guint64) vfs.f_bavail * vfs.f_frsize : 0, quota_ok,
-	                       limit, used, kind);
+	return disk_space_left(fs_ok,
+	                       fs_ok ? disk_space_fs_avail(vfs.f_bavail, vfs.f_blocks, vfs.f_frsize) : 0,
+	                       quota_ok, limit, used, kind);
 }
 
 void disk_space_check_now(void)

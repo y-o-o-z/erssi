@@ -43,6 +43,16 @@ static void test_left_unknown(void)
 	g_assert_cmpint(kind, ==, DISK_LEFT_UNKNOWN);
 }
 
+/* FreeBSD's UFS reports negative available blocks once the reserve is
+   used too; statvfs copies them into its unsigned field */
+static void test_fs_avail(void)
+{
+	g_assert_cmpuint(disk_space_fs_avail(100, 1000, 4096), ==, 409600);
+	g_assert_cmpuint(disk_space_fs_avail(1000, 1000, 512), ==, 512000);
+	g_assert_cmpuint(disk_space_fs_avail((guint64) -5, 1000, 4096), ==, 0);
+	g_assert_cmpuint(disk_space_fs_avail(1001, 1000, 4096), ==, 0);
+}
+
 static void test_warn_due(void)
 {
 	gint64 now = 1800000000;
@@ -67,6 +77,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/disk-space/left-fs-only", test_left_fs_only);
 	g_test_add_func("/disk-space/left-quota-smaller", test_left_quota_smaller);
 	g_test_add_func("/disk-space/left-unknown", test_left_unknown);
+	g_test_add_func("/disk-space/fs-avail", test_fs_avail);
 	g_test_add_func("/disk-space/warn-due", test_warn_due);
 	return g_test_run();
 }
