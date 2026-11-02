@@ -276,7 +276,7 @@ def main():
         a.start(200, 50)
         a.wait_ready()
         a.type_and_wait("/alias wn echo active=$winname$C$Q refnum=$winref")
-        assert wn() == "Mentions"
+        assert harness.wait_until(lambda: wn() == "Mentions", WAIT), wn()
         wait_selected("Mentions", "after a start without joins")
 
     def t_active_read_as_bool():
@@ -301,7 +301,10 @@ def main():
             a.start(200, 50)
             a.wait_ready()
             a.type_and_wait("/alias wn echo active=$winname$C$Q refnum=$winref")
-            assert wn() == want, f'active = "{word}" not read as active: {wn()}'
+            # the start-up selection can come after the first /wn on a
+            # loaded box: the window becomes active, not at once
+            assert harness.wait_until(lambda: wn() == want, WAIT), \
+                f'active = "{word}" not read as active: {wn()}'
             goto("Mentions")  # for the next word
 
     def t_sanitizers():
