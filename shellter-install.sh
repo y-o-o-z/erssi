@@ -7,7 +7,9 @@
 #                          [--binary|--source] [--binary-base URL] [--keep N]
 #                          [--dry-run] [--rollback] [--uninstall]
 #   sh shellter-install.sh --backup [FILE] [--home DIR] [--with-logs]
+#                          [--encrypt [--passphrase-file FILE]]
 #   sh shellter-install.sh --restore FILE [--home DIR] [--dry-run]
+#                          [--passphrase-file FILE]
 #   erssi --backup [FILE] / erssi --restore FILE (= the same, installed with erssi)
 #   erssi --update          (= this installer, installed with erssi: --update)
 #   erssi --check-update    (= --update --check)
@@ -167,6 +169,15 @@ erssi Shellter Edition - install and update
                  it holds private keys and passwords: keep it private
   --with-logs    with --backup: take the IRC logs in logs/ too (left out
                  by default, but for the Mentions log)
+  --encrypt      with --backup: encrypt the file with a passphrase (openssl,
+                 AES-256, the key from the passphrase by PBKDF2), asked twice
+                 on the terminal; FILE then ends in .tar.gz.enc (default
+                 ./erssi-backup-YYYYMMDD-HHMMSS.tar.gz.enc). Without the
+                 passphrase nobody can read it - nor restore it
+  --passphrase-file FILE
+                 with --backup --encrypt or --restore: the passphrase, the
+                 first line of FILE (yours, readable by you only), instead
+                 of asking; --restore knows an encrypted backup by itself
   --restore FILE restore the home from FILE: every entry is checked first,
                  the home is moved aside (<home>.before-restore-<time>) and
                  the backup moved into its place; refused while an erssi
@@ -2032,6 +2043,55 @@ bk_walk() {
     ) || exit 1
 }
 
+# ── encrypted backups (--encrypt) ──
+# openssl enc, AES-256-CBC with a key made from the passphrase by PBKDF2
+# (salted, 600000 rounds of SHA-256): the "Salted__" format every OpenSSL
+# from 1.1.1 reads. CBC itself does not tell a damaged file: gzip's and
+# xz's checksums of the archive inside do, and every entry is then checked
+# as in any backup. The passphrase never goes on a command line: printf is
+# a builtin, and openssl reads it from its stdin.
+BK_ITER=600000
+bk_openssl_ok() {
+    have openssl || bk_fail "openssl is not installed - it is needed for an encrypted backup"
+    openssl enc -help 2>&1 | grep -q pbkdf2 ||
+        bk_fail "this openssl has no -pbkdf2 (older than OpenSSL 1.1.1) - it cannot read or write an encrypted backup"
+}
+# the passphrase into BK_PASS: from --passphrase-file (the first line of a
+# file only the user can read), else asked on the terminal (twice when
+# $1 is "new")
+bk_read_pass() {
+    if [ -n "$BK_PASSFILE" ]; then
+        if [ ! -f "$BK_PASSFILE" ] || [ -L "$BK_PASSFILE" ]; then
+            bk_fail "the passphrase file $(tilde "$BK_PASSFILE") is not a regular file"
+        fi
+        [ "$(owner "$BK_PASSFILE")" = "$(id -u)" ] ||
+            bk_fail "the passphrase file $(tilde "$BK_PASSFILE") is not yours"
+        [ -z "$(find "$BK_PASSFILE" -prune \( -perm -040 -o -perm -004 \) -print)" ] ||
+            bk_fail "others can read the passphrase file $(tilde "$BK_PASSFILE") - chmod 600 it"
+        BK_PASS=""
+        IFS= read -r BK_PASS < "$BK_PASSFILE" || [ -n "$BK_PASS" ] || BK_PASS=""
+    elif [ -t 0 ]; then
+        # ^C at the prompt: the terminal echoes again
+        trap 'stty echo 2>/dev/null; exit 130' INT TERM
+        # no echo before the prompt: what is typed as soon as it shows is
+        # not echoed either
+        stty -echo 2>/dev/null; printf '  Passphrase: ' >&2
+        IFS= read -r BK_PASS || BK_PASS=""; stty echo 2>/dev/null
+        printf '\n' >&2
+        if [ "$1" = new ] && [ -n "$BK_PASS" ]; then
+            stty -echo 2>/dev/null; printf '  The same again: ' >&2
+            IFS= read -r again || again=""; stty echo 2>/dev/null
+            printf '\n' >&2
+            [ "$again" = "$BK_PASS" ] || bk_fail "the two passphrases differ"
+            again=""
+        fi
+        trap - INT TERM
+    else
+        bk_fail "an encrypted backup needs its passphrase: run it in a terminal, or give --passphrase-file FILE (a file only you can read)"
+    fi
+    [ -n "$BK_PASS" ] || bk_fail "the passphrase is empty"
+}
+
 do_backup() {
     umask 077
     # every tool byte by byte, and tar's messages untranslated (they are
@@ -2046,12 +2106,22 @@ do_backup() {
         case "$dir/" in "$BK_PHYS"/*) dir=$HOME ;; esac
         [ -w "$dir" ] || dir=$HOME
         BK_FILE=$dir/erssi-backup-$stamp.tar.gz
+        [ "$BK_ENCRYPT" = 0 ] || BK_FILE=$BK_FILE.enc
     fi
-    case "$BK_FILE" in
-        *.tar.gz|*.tgz) BK_COMP=gzip ;;
-        *.tar.xz|*.txz) BK_COMP=xz; have xz || die "xz is not installed - use a FILE ending in .tar.gz" ;;
-        *) die "the backup file must end in .tar.gz (or .tar.xz): $BK_FILE" ;;
-    esac
+    if [ "$BK_ENCRYPT" = 1 ]; then
+        case "$BK_FILE" in
+            *.tar.gz.enc|*.tgz.enc) BK_COMP=gzip ;;
+            *.tar.xz.enc|*.txz.enc) BK_COMP=xz; have xz || die "xz is not installed - use a FILE ending in .tar.gz.enc" ;;
+            *) die "an encrypted backup's name must end in .tar.gz.enc (or .tar.xz.enc): $BK_FILE" ;;
+        esac
+    else
+        case "$BK_FILE" in
+            *.tar.gz|*.tgz) BK_COMP=gzip ;;
+            *.tar.xz|*.txz) BK_COMP=xz; have xz || die "xz is not installed - use a FILE ending in .tar.gz" ;;
+            *.enc) die "a name ending in .enc is for an encrypted backup - add --encrypt: $BK_FILE" ;;
+            *) die "the backup file must end in .tar.gz (or .tar.xz): $BK_FILE" ;;
+        esac
+    fi
     have "$BK_COMP" || die "$BK_COMP is not installed"
     case "$BK_FILE" in /*) ;; *) BK_FILE=$(pwd)/$BK_FILE ;; esac
     if [ -e "$BK_FILE" ] || [ -L "$BK_FILE" ]; then
@@ -2063,6 +2133,11 @@ do_backup() {
         "$BK_PHYS"/*) die "the backup file would be inside the home it backs up - put it elsewhere, e.g. ~/erssi-backup-$stamp.tar.gz" ;;
     esac
 
+    if [ "$BK_ENCRYPT" = 1 ]; then
+        bk_openssl_ok
+        bk_read_pass new
+    fi
+
     header "backup"
     field "home" "$(tilde "$BK_ROOT")"
     field "file" "$(tilde "$BK_FILE")"
@@ -2071,7 +2146,7 @@ do_backup() {
 
     BK_WORK=$(mktemp -d "${TMPDIR:-/tmp}/erssi-backup.XXXXXX") || die "cannot create a temporary directory"
     BK_TMPF=""
-    trap 'rm -rf "$BK_WORK"; [ -z "$BK_TMPF" ] || rm -f "$BK_TMPF"' EXIT
+    trap 'rm -rf "$BK_WORK"; [ -z "$BK_TMPF" ] || rm -f "$BK_TMPF"; [ -z "$BK_TMPE" ] || rm -f "$BK_TMPE"' EXIT
     BK_TOP=erssi-backup-$stamp
     BK_STAGE=$BK_WORK/$BK_TOP/home
     mkdir -p "$BK_STAGE" || die "cannot create a temporary directory"
@@ -2191,6 +2266,18 @@ do_backup() {
     if ! bk_check_archive "$BK_TMPF"; then
         die "the backup does not pass the checks of --restore: $BK_WHY - nothing was written (report it)"
     fi
+    if [ "$BK_ENCRYPT" = 1 ]; then
+        BK_TMPE=$(mktemp "$fphys/.erssi-backup.XXXXXX") || die "cannot create a file in $fdir"
+        chmod 600 "$BK_TMPE"
+        printf '%s' "$BK_PASS" | openssl enc -e -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 -salt \
+            -pass stdin -in "$BK_TMPF" -out "$BK_TMPE" 2> "$BK_WORK/enc.err" ||
+            die "encrypting the backup failed ($(head -n 1 "$BK_WORK/enc.err")) - nothing was written"
+        # it opens again with the same passphrase, to the same archive
+        printf '%s' "$BK_PASS" | openssl enc -d -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 \
+            -pass stdin -in "$BK_TMPE" 2>/dev/null | "$BK_COMP" -t 2>/dev/null ||
+            die "the encrypted backup does not open again - nothing was written (report it)"
+        rm -f "$BK_TMPF"; BK_TMPF=$BK_TMPE; BK_TMPE=""
+    fi
     if ! ln "$BK_TMPF" "$BK_FILE" 2>/dev/null; then
         if [ -e "$BK_FILE" ] || [ -L "$BK_FILE" ]; then
             die "$(tilde "$BK_FILE") appeared meanwhile - refusing to overwrite it"
@@ -2199,12 +2286,21 @@ do_backup() {
         mv "$BK_TMPF" "$BK_FILE" || die "cannot write $(tilde "$BK_FILE")"
     fi
     rm -f "$BK_TMPF"; BK_TMPF=""
-    done_ "$(bk_size "$(bk_bytes "$BK_FILE")") $S_SEP $BK_COMP $S_SEP mode 0600"
-    printf '\n  %s%sKeep this file private.%s It holds your private keys and passwords: the\n' "$B" "$A" "$N"
-    printf '  E2E keyring, OTR and fe-web keys, and the passwords of your networks\n'
-    printf '  (config, .credentials). It is readable only by you - keep it so, and do\n'
-    printf '  not put it where others can read it.\n\n'
+    if [ "$BK_ENCRYPT" = 1 ]; then
+        done_ "$(bk_size "$(bk_bytes "$BK_FILE")") $S_SEP $BK_COMP $S_SEP encrypted $S_SEP mode 0600"
+        printf '\n  %s%sEncrypted with your passphrase.%s Without it this file cannot be read -\n' "$B" "$A" "$N"
+        printf '  by anyone, and not by you either: there is no other way to restore it.\n'
+        printf '  Keep the passphrase somewhere safe, apart from the file.\n\n'
+    else
+        done_ "$(bk_size "$(bk_bytes "$BK_FILE")") $S_SEP $BK_COMP $S_SEP mode 0600"
+        printf '\n  %s%sKeep this file private.%s It holds your private keys and passwords: the\n' "$B" "$A" "$N"
+        printf '  E2E keyring, OTR and fe-web keys, and the passwords of your networks\n'
+        printf '  (config, .credentials). It is readable only by you - keep it so, and do\n'
+        printf '  not put it where others can read it (erssi --backup --encrypt makes one\n'
+        printf '  that needs a passphrase).\n\n'
+    fi
     printf '  On the new box: erssi --restore %s\n\n' "$(basename "$BK_FILE")"
+    BK_PASS=""
     exit 0
 }
 
@@ -2409,12 +2505,20 @@ do_restore() {
     [ -f "$BK_FILE" ] || bk_fail "there is no backup file $BK_FILE"
     [ -r "$BK_FILE" ] || bk_fail "cannot read $BK_FILE"
     magic=$(od -An -tx1 -N6 "$BK_FILE" 2>/dev/null | tr -d ' \n') || magic=""
+    BK_ENC=0
     case "$magic" in
         1f8b*) BK_COMP=gzip ;;
         fd377a585a00) BK_COMP=xz ;;
+        53616c746564) BK_ENC=1 BK_COMP="" ;;   # "Salted": erssi --backup --encrypt
         *) bk_fail "$BK_FILE is not an erssi backup (not a .tar.gz or .tar.xz file)" ;;
     esac
-    have "$BK_COMP" || bk_fail "$BK_COMP is not installed, it is needed to read $BK_FILE"
+    if [ "$BK_ENC" = 1 ]; then
+        bk_openssl_ok
+        bk_read_pass
+    else
+        [ -z "$BK_PASSFILE" ] || bk_fail "$BK_FILE is not encrypted - leave out --passphrase-file"
+        have "$BK_COMP" || bk_fail "$BK_COMP is not installed, it is needed to read $BK_FILE"
+    fi
 
     # the home: where a link there points (its directory stays a link)
     T=${BK_HOME%/}
@@ -2463,12 +2567,30 @@ do_restore() {
     # what is checked is what is unpacked: a copy of the archive there,
     # read once; the file itself may change from here on
     BK_ARC=$BK_NEW/archive
-    cp "$BK_FILE" "$BK_ARC" || bk_fail "cannot copy $BK_FILE (no space next to the home?)"
-    magic=$(od -An -tx1 -N6 "$BK_ARC" 2>/dev/null | tr -d ' \n') || magic=""
-    case "$BK_COMP $magic" in
-        "gzip 1f8b"*|"xz fd377a585a00") ;;
-        *) bk_fail "$BK_FILE changed while it was read" ;;
-    esac
+    if [ "$BK_ENC" = 1 ]; then
+        # the archive inside, decrypted; a wrong passphrase mostly fails
+        # here, else on the archive's own checksum below
+        ( umask 077; printf '%s' "$BK_PASS" | openssl enc -d -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 \
+            -pass stdin -in "$BK_FILE" -out "$BK_ARC" ) 2>/dev/null ||
+            bk_fail "$BK_FILE does not open: the wrong passphrase, or the file is damaged"
+        BK_PASS=""
+        magic=$(od -An -tx1 -N6 "$BK_ARC" 2>/dev/null | tr -d ' \n') || magic=""
+        case "$magic" in
+            1f8b*) BK_COMP=gzip ;;
+            fd377a585a00) BK_COMP=xz ;;
+            *) bk_fail "$BK_FILE does not open: the wrong passphrase, or the file is damaged" ;;
+        esac
+        have "$BK_COMP" || bk_fail "$BK_COMP is not installed, it is needed to read $BK_FILE"
+        "$BK_COMP" -t "$BK_ARC" 2>/dev/null ||
+            bk_fail "$BK_FILE does not open: the wrong passphrase, or the file is damaged"
+    else
+        cp "$BK_FILE" "$BK_ARC" || bk_fail "cannot copy $BK_FILE (no space next to the home?)"
+        magic=$(od -An -tx1 -N6 "$BK_ARC" 2>/dev/null | tr -d ' \n') || magic=""
+        case "$BK_COMP $magic" in
+            "gzip 1f8b"*|"xz fd377a585a00") ;;
+            *) bk_fail "$BK_FILE changed while it was read" ;;
+        esac
+    fi
     bk_check_archive "$BK_ARC" || bk_fail "$(printf '%s' "$BK_WHY" | sed "s|$BK_ARC|$BK_FILE|")"
     n=$BK_N
     # it must fit: the unpacked size against the free space next to the home
@@ -2739,6 +2861,7 @@ USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 BK_NL='
 ' BK_LOCKS="" KEPT_TRY=""
 BK_FILE="" BK_HOME="" BK_LOGS=0 BK_ERSSI_V="" BK_CONFIG="" BK_DEPTH=0 BK_WORK="" BK_NEW="" BK_TMPF=""
+BK_ENCRYPT=0 BK_PASSFILE="" BK_PASS="" BK_TMPE="" BK_ENC=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) optval "$1" "${2:-}" DIR; PREFIX=$2; shift 2 ;;
@@ -2767,6 +2890,8 @@ while [ $# -gt 0 ]; do
         --restore) optval "$1" "${2:-}" FILE; ACTION=restore; BK_FILE=$2; shift 2 ;;
         --home) optval "$1" "${2:-}" DIR; BK_HOME=$2; shift 2 ;;
         --with-logs) BK_LOGS=1; shift ;;
+        --encrypt) BK_ENCRYPT=1; shift ;;
+        --passphrase-file) optval "$1" "${2:-}" FILE; BK_PASSFILE=$2; shift 2 ;;
         # from erssi --backup / --restore: its version and its --config
         --erssi-version) optval "$1" "${2:-}" VERSION; BK_ERSSI_V=$2; shift 2 ;;
         --config) optval "$1" "${2:-}" FILE; BK_CONFIG=$2; shift 2 ;;
@@ -2788,6 +2913,9 @@ case "$PREFIX" in
     *) echo "shellter-install.sh: --prefix / is the whole system - give a directory of its own, e.g. --prefix /opt/erssi (--help)" >&2; exit 2 ;;
 esac
 [ "$CHECK" = 0 ] || [ "$UPDATE" = 1 ] || { echo "shellter-install.sh: --check goes with --update (--help)" >&2; exit 2; }
+[ "$BK_ENCRYPT" = 0 ] || [ "$ACTION" = backup ] || { echo "shellter-install.sh: --encrypt goes with --backup (--help)" >&2; exit 2; }
+[ -z "$BK_PASSFILE" ] || [ "$ACTION" = restore ] || [ "$BK_ENCRYPT" = 1 ] ||
+    { echo "shellter-install.sh: --passphrase-file goes with --backup --encrypt or --restore (--help)" >&2; exit 2; }
 [ "$PORCELAIN" = 0 ] || [ "$CHECK" = 1 ] || { echo "shellter-install.sh: --porcelain goes with --update --check (--help)" >&2; exit 2; }
 [ "$SUMMARY" = 0 ] || [ "$PORCELAIN" = 1 ] || { echo "shellter-install.sh: --summary goes with --update --check --porcelain (--help)" >&2; exit 2; }
 # --porcelain: stdout is for the one line (fd 3); everything else to stderr

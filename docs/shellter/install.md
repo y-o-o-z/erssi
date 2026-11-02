@@ -180,8 +180,9 @@ nothing and asks you to install once more, which records the files.
 | `--dry-run` | Check what would be installed (for a package: download and verify it into a temporary directory) and say what would change; change nothing. |
 | `--rollback` | Switch a binary install back to the previous release (again: forward). |
 | `--uninstall` | Remove what the installer put into the prefix, and `~/.local/bin/erssi`; anything else there and `~/.erssi` stay. |
-| `--backup [FILE]` | Put the erssi home into one file (see [Moving to another box](#moving-to-another-box)); with `--with-logs` the IRC logs too. |
-| `--restore FILE` | Restore the erssi home from such a file; with `--dry-run` only list what it would restore. |
+| `--backup [FILE]` | Put the erssi home into one file (see [Moving to another box](#moving-to-another-box)); with `--with-logs` the IRC logs too, with `--encrypt` encrypted with a passphrase. |
+| `--restore FILE` | Restore the erssi home from such a file (an encrypted one asks for its passphrase); with `--dry-run` only list what it would restore. |
+| `--passphrase-file FILE` | With `--backup --encrypt` or `--restore`: the passphrase, the first line of FILE (yours, readable by you only), instead of asking. |
 | `--home DIR` | The erssi home for `--backup` and `--restore` (default `~/.erssi`). |
 
 `--src`, `--repo`, `--no-test`/`--test`, `--clean`/`--no-clean`, `--source`,
@@ -510,6 +511,7 @@ lock goes with the process.
 ```sh
 erssi --backup                      # ./erssi-backup-20261101-120000.tar.gz
 erssi --backup ~/erssi.tar.gz --with-logs
+erssi --backup --encrypt            # ./erssi-backup-20261101-120000.tar.gz.enc, asks for a passphrase
 erssi --restore erssi-backup-20261101-120000.tar.gz --dry-run   # what it would restore
 erssi --restore erssi-backup-20261101-120000.tar.gz
 ```
@@ -527,6 +529,18 @@ curl -fsSL https://raw.githubusercontent.com/y-o-o-z/erssi/main/shellter-install
 
 Losing the E2E keyring means a new key exchange with everyone, and people
 see your key change: the backup keeps it.
+
+**Encrypted.** `--encrypt` encrypts the backup with a passphrase you type
+twice (no echo), so the file can be kept or copied where others might see
+it: OpenSSL's format (`openssl enc`, AES-256-CBC, the key made from the
+passphrase by PBKDF2 with 600000 rounds of SHA-256), the name ending in
+`.tar.gz.enc`. `--restore` knows such a file and asks for the passphrase;
+a wrong one, or a damaged file, changes nothing. Without the passphrase
+nobody can read the backup, and nobody can restore it either: keep the
+passphrase apart from the file. In a script, `--passphrase-file FILE`
+gives it from the first line of a file only you can read. It needs
+OpenSSL 1.1.1 or newer (every supported system has it). The automatic
+backups (`backup_auto`) are not encrypted.
 
 erssi can also make this backup by itself, once a day or a week, into a
 directory of its own, keeping the newest few: `/set backup_auto daily`

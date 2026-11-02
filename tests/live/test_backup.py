@@ -94,11 +94,16 @@ def main():
         a = harness.Erssi(st["inst"], work, "help")
         rc, out = run(a, "--help")
         assert rc == 0, f"--help: exit {rc}: {out}"
-        for opt in ("--backup", "--restore=FILE", "--with-logs", "--dry-run"):
+        for opt in ("--backup", "--restore=FILE", "--with-logs", "--dry-run", "--encrypt",
+                    "--passphrase-file=FILE"):
             assert opt in out, f"--help does not name {opt}:\n{out}"
         for opt in ("--with-logs", "--dry-run"):
             rc, out = run(a, opt)
             assert rc != 0 and "goes with --backup or --restore" in out, f"{opt} alone: exit {rc}: {out}"
+        rc, out = run(a, "--encrypt")
+        assert rc != 0 and "--encrypt goes with --backup" in out, f"--encrypt alone: exit {rc}: {out}"
+        rc, out = run(a, "--restore", str(work / "x.tar.gz"), "--encrypt")
+        assert rc != 0 and "--encrypt goes with --backup" in out, f"--restore --encrypt: exit {rc}: {out}"
 
     def t_start():
         a = harness.Erssi(st["inst"], work, "alice", harness.config(1, "alice"), args=("--noconnect",))
@@ -222,9 +227,67 @@ def main():
         c.wait_ready()
         c.quit()
 
+    def run_pty(e, args, answers, timeout=60):
+        """erssi with --home of E and ARGS in a terminal; each time the
+        output ends in a prompt of ANSWERS (prompt -> text), the text and
+        Enter are typed. The exit code and all the terminal showed."""
+        import pty
+        import select
+        import time
+        e.home_dir.mkdir(parents=True, exist_ok=True)
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.chdir(str(e.home_dir))
+            os.execve(str(st["inst"].erssi), [str(st["inst"].erssi), f"--home={e.home}", *args],
+                      e.child_env())
+        out = b""
+        seen = 0  # the output up to the last answer
+        end = time.time() + timeout
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if not r:
+                continue
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                break  # the terminal closed: erssi is done
+            if not data:
+                break
+            out += data
+            if answers and answers[0][0].encode() in out[seen:]:
+                os.write(fd, answers[0][1].encode() + b"\r")
+                answers = answers[1:]
+                seen = len(out)
+        _, status = os.waitpid(pid, 0)
+        os.close(fd)
+        return os.waitstatus_to_exitcode(status), out.decode(errors="replace")
+
+    def t_encrypted():
+        """erssi --backup --encrypt asks for the passphrase twice on the
+        terminal, without echo; --restore with --passphrase-file opens it"""
+        relocatable()
+        if shutil.which("openssl") is None:
+            raise harness.SkipCase("no openssl")
+        c = st["carol"]
+        enc = work / "carol.tar.gz.enc"
+        secret = "a long pass phrase 42"
+        rc, out = run_pty(c, ["--backup", str(enc), "--encrypt"],
+                          [("Passphrase:", secret), ("The same again:", secret)])
+        assert rc == 0, f"--backup --encrypt: exit {rc}:\n{out}"
+        assert secret not in out, f"the passphrase was echoed:\n{out}"
+        assert enc.read_bytes()[:8] == b"Salted__", "not openssl's format"
+        assert stat.S_IMODE(enc.stat().st_mode) == 0o600, "the encrypted backup is not 0600"
+        pf = work / "pass"
+        pf.write_text(secret + "\n")
+        pf.chmod(0o600)
+        d = harness.Erssi(st["inst"], work, "dave")
+        rc, out = run(d, "--restore", str(enc), "--passphrase-file", str(pf))
+        assert rc == 0, f"--restore of the encrypted backup: exit {rc}:\n{out}"
+        assert files(d.home)["config"][2] == (c.home / "config").read_bytes(), "config differs"
+
     try:
         harness.main([t_install, t_help, t_start, t_upgrade_keeps_lock, t_backup_while_running,
-                      t_restore_refused_while_running, t_restore_new_home])
+                      t_restore_refused_while_running, t_restore_new_home, t_encrypted])
     finally:
         for name in ("alice", "carol"):
             if name in st:

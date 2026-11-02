@@ -584,10 +584,10 @@ static void firstrun_run_tty(void)
  * does both (shellter-install.sh --backup / --restore, POSIX sh like
  * --update), with the home this erssi would use. Returns only on error. */
 static int run_backup(const char *backup_file, const char *restore_file, gboolean with_logs,
-                      gboolean dry_run)
+                      gboolean dry_run, gboolean encrypt, const char *passphrase_file)
 {
 	char *installer, *home_config;
-	const char *argv[16];
+	const char *argv[20];
 	int n = 0;
 
 	installer = g_strconcat(get_install_path(PKGDATADIR), "/shellter-install.sh", NULL);
@@ -625,6 +625,12 @@ static int run_backup(const char *backup_file, const char *restore_file, gboolea
 		argv[n++] = "--with-logs";
 	if (dry_run)
 		argv[n++] = "--dry-run";
+	if (encrypt)
+		argv[n++] = "--encrypt";
+	if (passphrase_file != NULL) {
+		argv[n++] = "--passphrase-file";
+		argv[n++] = passphrase_file;
+	}
 	argv[n] = NULL;
 	execv("/bin/sh", (char **) argv);
 	fprintf(stderr, "erssi: cannot run %s: %s\n", installer, g_strerror(errno));
@@ -646,8 +652,8 @@ static void check_files(void)
 int main(int argc, char **argv)
 {
 	static int version = 0, update = 0, check_update = 0, setup = 0, print_prefix = 0;
-	static int backup = 0, with_logs = 0, dry_run = 0;
-	static char *restore_file = NULL, **rest = NULL;
+	static int backup = 0, with_logs = 0, dry_run = 0, encrypt = 0;
+	static char *restore_file = NULL, *passphrase_file = NULL, **rest = NULL;
 	static GOptionEntry options[] = {
 		{ "version", 'v', 0, G_OPTION_ARG_NONE, &version, "Display erssi version", NULL },
 		{ "update", 0, 0, G_OPTION_ARG_NONE, &update,
@@ -665,6 +671,11 @@ int main(int argc, char **argv)
 		  "With --backup: take the IRC logs too", NULL },
 		{ "dry-run", 0, 0, G_OPTION_ARG_NONE, &dry_run,
 		  "With --backup or --restore: show what would be done, change nothing", NULL },
+		{ "encrypt", 0, 0, G_OPTION_ARG_NONE, &encrypt,
+		  "With --backup: encrypt it with a passphrase (asked, or --passphrase-file)", NULL },
+		{ "passphrase-file", 0, 0, G_OPTION_ARG_FILENAME, &passphrase_file,
+		  "With --backup --encrypt or --restore: the passphrase, the first line of FILE",
+		  "FILE" },
 		/* the FILE of --backup */
 		{ G_OPTION_REMAINING, 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_FILENAME_ARRAY, &rest,
 		  NULL, NULL },
@@ -723,6 +734,14 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (encrypt && !backup) {
+		fprintf(stderr, "erssi: --encrypt goes with --backup\n");
+		return 1;
+	}
+	if (passphrase_file != NULL && !encrypt && restore_file == NULL) {
+		fprintf(stderr, "erssi: --passphrase-file goes with --backup --encrypt or --restore\n");
+		return 1;
+	}
 	if (backup || restore_file != NULL) {
 		if (backup && restore_file != NULL) {
 			fprintf(stderr, "erssi: --backup or --restore, not both\n");
@@ -736,7 +755,7 @@ int main(int argc, char **argv)
 		 * nothing is read or written there yet */
 		core_preinit(argv[0]);
 		return run_backup(rest != NULL ? rest[0] : NULL, restore_file, with_logs,
-		                  dry_run);
+		                  dry_run, encrypt, passphrase_file);
 	}
 	if (with_logs || dry_run) {
 		fprintf(stderr, "erssi: --%s goes with --backup or --restore\n",

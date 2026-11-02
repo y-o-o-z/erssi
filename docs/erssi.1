@@ -10,10 +10,10 @@ erssi \- a modular IRC client for the terminal (erssi Shellter Edition)
 \-\-update | \-\-check\-update | \-\-print\-prefix | \-v | \-?
 .br
 .B erssi
-[\-\-home=PATH] \-\-backup [FILE] [\-\-with\-logs] [\-\-dry\-run]
+[\-\-home=PATH] \-\-backup [FILE] [\-\-with\-logs] [\-\-encrypt] [\-\-passphrase\-file=FILE] [\-\-dry\-run]
 .br
 .B erssi
-[\-\-home=PATH] \-\-restore=FILE [\-\-dry\-run]
+[\-\-home=PATH] \-\-restore=FILE [\-\-passphrase\-file=FILE] [\-\-dry\-run]
 .SH DESCRIPTION
 .B erssi
 is a fullscreen Internet Relay Chat client for the terminal, a fork of
@@ -133,6 +133,27 @@ with
 take the IRC logs in
 .I logs/
 too.
+.TP
+.B "\-\-encrypt"
+with
+.BR \-\-backup :
+encrypt the file with a passphrase, asked twice on the terminal (openssl,
+AES-256, the key made from the passphrase by PBKDF2);
+.I FILE
+then ends in
+.IR .tar.gz.enc .
+Without the passphrase the backup cannot be read, nor restored.
+.B \-\-restore
+knows an encrypted backup by itself and asks for its passphrase.
+.TP
+.BI "\-\-passphrase\-file=" FILE
+with
+.B "\-\-backup \-\-encrypt"
+or
+.BR \-\-restore :
+take the passphrase from the first line of
+.I FILE
+(a file of yours that only you can read) instead of asking.
 .TP
 .B "\-\-dry\-run"
 with

@@ -35,7 +35,7 @@ endforeach
 # directory (test-shellter-backup.sh SOURCE_ROOT CASE)
 foreach c : ['round-trip', 'xz', 'logs', 'overwrite', 'links', 'bad-archives', 'running', 'aside',
     'names', 'locale-hardlink', 'self-check', 'manifest-links', 'file-changed', 'lock-unknown', 'archive-swapped', 'closed-dirs', 'swap-locked', 'no-diffutils',
-    'unreadable-outside']
+    'unreadable-outside', 'encrypted']
   test('installer backup ' + c, find_program('sh'),
     args : [files('test-shellter-backup.sh'), meson.current_source_dir() / '..' / '..', c],
     env : test_env, timeout : 120, suite : 'tooling')

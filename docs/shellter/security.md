@@ -255,12 +255,17 @@ the `/upgrade` session and `/cat` follows links as irssi always has.
 be you: the E2E identity key and session keys (`rpe2e/keyring.json`), the
 OTR keys, the fe-web key, and the passwords of your networks, SASL
 accounts and fe-web (in `config` and `.credentials`, in plain text). It is
-not encrypted. It is written with mode 0600 from its first byte (a file of
+not encrypted unless made with `--encrypt`. It is written with mode 0600 from its first byte (a file of
 its own under another name, renamed only once complete), and the output
 says it must be kept private. Keep it so: not in a web directory, not in a
 shared or synced folder others can read, not on a box whose root you do not
 trust; copy it with `scp`/`sftp`, and remove it once the move is done. To
-keep it for longer, encrypt it, e.g. `age -p` or `gpg -c`. The automatic
+keep it for longer, make it encrypted: `erssi --backup --encrypt` (a
+passphrase, AES-256 with a key made by PBKDF2; the passphrase never goes
+on a command line), or encrypt it yourself, e.g. `age -p` or `gpg -c`. The
+encryption keeps the file unreadable without the passphrase; a damaged or
+changed file is told by the checksum of the archive inside and the checks
+of `--restore`. The automatic
 backups (`backup_auto`) are the same files, kept in `backup_dir` (made
 with mode 0700): choose a directory only you can read. Someone who got
 a copy should be treated as having your keyring: `/e2e reset -force` and

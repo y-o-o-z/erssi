@@ -107,6 +107,9 @@ run_env() {
 same() { [ -f "$1" ] && [ -f "$2" ] && [ "$(cat "$1"; echo .)" = "$(cat "$2"; echo .)" ]; }
 said() { grep -q -- "$1" "$W/out"; }
 show() { sed 's/^/    | /' "$W/out"; }
+# the last run failed, and said $1 ("check ... [ ] && said" would check
+# only the [ ])
+refused_saying() { [ "$RC" != 0 ] && said "$1"; }
 # shellcheck disable=SC2012 # the mode string, of names the test made
 mode_of() { ls -ld "$1" | cut -c1-10; }
 
@@ -712,6 +715,67 @@ EOF2
     chmod 600 "$E/config"
     check "an unreadable file of the home still stops the backup" [ "$RC" != 0 ]
     check "and writes nothing" [ ! -e "$W/c.tar.gz" ]
+    ;;
+
+encrypted)
+    # --encrypt: the archive in openssl's format, with a passphrase from
+    # a file of the user's (or the terminal); --restore knows it by itself
+    if ! command -v openssl >/dev/null 2>&1; then pass "skipped: no openssl"; exit 0; fi
+    make_home "$E"
+    printf 'correct horse battery\n' > "$W/pass"; chmod 600 "$W/pass"
+    printf 'wrong one\n' > "$W/bad"; chmod 600 "$W/bad"
+    run --backup "$W/b.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
+    if [ "$RC" != 0 ]; then show; fi
+    check "an encrypted backup succeeds" [ "$RC" = 0 ]
+    check "it is openssl's format" [ "$(head -c 8 "$W/b.tar.gz.enc" 2>/dev/null)" = Salted__ ]
+    check "of mode 0600" [ "$(ls -l "$W/b.tar.gz.enc" | cut -c1-10)" = -rw------- ]
+    check "no gzip archive in the clear" sh -c "! gzip -t '$W/b.tar.gz.enc' 2>/dev/null"
+    check "no secret of the home in it" sh -c "! grep -q 'secret\|net = pass' '$W/b.tar.gz.enc'"
+    check "no plain archive left next to it" [ -z "$(find "$W" -maxdepth 1 -name '.erssi-backup.*')" ]
+    check "it says it is encrypted" said "encrypted"
+    check "the passphrase is not printed" sh -c "! grep -q 'horse' '$W/out'"
+    # the name: .enc after the archive's own
+    run --backup "$W/plain.tar.gz" --encrypt --passphrase-file "$W/pass"
+    check "a name without .enc is refused" refused_saying ".tar.gz.enc"
+    # the passphrase file is the user's alone
+    chmod 644 "$W/pass"
+    run --backup "$W/c.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
+    check "a passphrase file others can read is refused" refused_saying "chmod 600"
+    check "and nothing is written" [ ! -e "$W/c.tar.gz.enc" ]
+    chmod 600 "$W/pass"
+    : > "$W/empty"; chmod 600 "$W/empty"
+    run --backup "$W/d.tar.gz.enc" --encrypt --passphrase-file "$W/empty"
+    check "an empty passphrase is refused" refused_saying "empty"
+    check "and nothing is written" [ ! -e "$W/d.tar.gz.enc" ]
+    # no terminal and no file: nothing to ask
+    run --backup "$W/e.tar.gz.enc" --encrypt < /dev/null
+    check "without a terminal it needs --passphrase-file" refused_saying "passphrase-file"
+    # restore: the wrong passphrase changes nothing
+    tree "$E" > "$W/before"
+    run --restore "$W/b.tar.gz.enc" --passphrase-file "$W/bad"
+    check "the wrong passphrase is refused" refused_saying "wrong passphrase"
+    tree "$E" > "$W/after"
+    check "and the home is as it was" same "$W/before" "$W/after"
+    run --restore "$W/b.tar.gz.enc" < /dev/null
+    check "an encrypted backup without a terminal needs --passphrase-file" refused_saying "passphrase-file"
+    run --restore "$W/b.tar.gz.enc" --passphrase-file "$W/pass" --dry-run
+    check "a dry run reads it" [ "$RC" = 0 ]
+    check "and lists its files" said "rpe2e/keyring.json"
+    run --restore "$W/b.tar.gz.enc" --passphrase-file "$W/pass" --home "$W/new/.erssi"
+    if [ "$RC" != 0 ]; then show; fi
+    check "the right passphrase restores it" [ "$RC" = 0 ]
+    check "with its files" same "$E/rpe2e/keyring.json" "$W/new/.erssi/rpe2e/keyring.json"
+    check "and its links" [ "$(readlink "$W/new/.erssi/scripts/autorun/hello.pl")" = ../hello.pl ]
+    check "no decrypted archive left behind" [ -z "$(find "$W/new" -maxdepth 1 -name '.erssi-restore.*')" ]
+    # a damaged one: refused, not half restored
+    cp "$W/b.tar.gz.enc" "$W/bad.tar.gz.enc"
+    printf 'XXXXXXXX' | dd of="$W/bad.tar.gz.enc" bs=1 seek=200 conv=notrunc 2>/dev/null
+    run --restore "$W/bad.tar.gz.enc" --passphrase-file "$W/pass" --home "$W/new2/.erssi"
+    check "a damaged encrypted backup is refused" [ "$RC" != 0 ]
+    check "and nothing is restored" [ ! -e "$W/new2/.erssi" ]
+    # --passphrase-file alone does not encrypt
+    run --backup "$W/f.tar.gz" --passphrase-file "$W/pass"
+    check "--passphrase-file without --encrypt is refused" refused_saying "--encrypt"
     ;;
 
 swap-locked)
