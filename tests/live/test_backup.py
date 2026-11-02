@@ -227,7 +227,7 @@ def main():
         c.wait_ready()
         c.quit()
 
-    def run_pty(e, args, answers, timeout=60):
+    def run_pty(e, args, answers, timeout=60, env=None):
         """erssi with --home of E and ARGS in a terminal; each time the
         output ends in a prompt of ANSWERS (prompt -> text), the text and
         Enter are typed. The exit code and all the terminal showed."""
@@ -239,7 +239,7 @@ def main():
         if pid == 0:
             os.chdir(str(e.home_dir))
             os.execve(str(st["inst"].erssi), [str(st["inst"].erssi), f"--home={e.home}", *args],
-                      e.child_env())
+                      {**e.child_env(), **(env or {})})
         out = b""
         seen = 0  # the output up to the last answer
         end = time.time() + timeout
@@ -258,6 +258,9 @@ def main():
                 os.write(fd, answers[0][1].encode() + b"\r")
                 answers = answers[1:]
                 seen = len(out)
+        else:
+            # stuck (waiting for input it never got): not past the timeout
+            os.kill(pid, 9)
         _, status = os.waitpid(pid, 0)
         os.close(fd)
         return os.waitstatus_to_exitcode(status), out.decode(errors="replace")
@@ -284,6 +287,30 @@ def main():
         rc, out = run(d, "--restore", str(enc), "--passphrase-file", str(pf))
         assert rc == 0, f"--restore of the encrypted backup: exit {rc}:\n{out}"
         assert files(d.home)["config"][2] == (c.home / "config").read_bytes(), "config differs"
+        # the passphrase asked on the terminal by --restore
+        f = harness.Erssi(st["inst"], work, "frank")
+        rc, out = run_pty(f, ["--restore", str(enc)], [("Passphrase:", secret)])
+        assert rc == 0, f"--restore asking for the passphrase: exit {rc}:\n{out}"
+        assert secret not in out, f"the passphrase was echoed:\n{out}"
+        assert files(f.home)["config"][2] == (c.home / "config").read_bytes(), "config differs"
+        # ^C while it encrypts (after the prompt): the unencrypted archive
+        # next to the file goes with the rest
+        spy = work / "spy"
+        spy.mkdir()
+        real = shutil.which("openssl")
+        (spy / "openssl").write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\" -e \"*) kill -INT $PPID; sleep 2 ;; esac\n"
+            f"exec {real} \"$@\"\n")
+        (spy / "openssl").chmod(0o755)
+        out_dir = work / "intr"
+        out_dir.mkdir()
+        rc, out = run_pty(c, ["--backup", str(out_dir / "x.tar.gz.enc"), "--encrypt"],
+                          [("Passphrase:", secret), ("The same again:", secret)],
+                          env={"PATH": f"{spy}:{c.child_env()['PATH']}"})
+        assert rc != 0 and "Interrupted" in out, f"^C while encrypting: exit {rc}:\n{out}"
+        left = sorted(p.name for p in out_dir.iterdir())
+        assert left == [], f"left after ^C: {left}"
 
     try:
         harness.main([t_install, t_help, t_start, t_upgrade_keeps_lock, t_backup_while_running,

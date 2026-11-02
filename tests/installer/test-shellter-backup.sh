@@ -773,6 +773,25 @@ encrypted)
     run --restore "$W/bad.tar.gz.enc" --passphrase-file "$W/pass" --home "$W/new2/.erssi"
     check "a damaged encrypted backup is refused" [ "$RC" != 0 ]
     check "and nothing is restored" [ ! -e "$W/new2/.erssi" ]
+    # the passphrase reaches no child's environment, also when the
+    # caller exported a variable of that name; openssl's exit status
+    # counts when the new file is checked
+    mkdir "$W/spy"
+    cat > "$W/spy/openssl" <<EOF2
+#!/bin/sh
+env > "$W/spy/env.\$\$"
+case " \$* " in *" -d "*) [ -z "\${SPY_FAIL_D:-}" ] || { "$(command -v openssl)" "\$@"; exit 1; } ;; esac
+exec "$(command -v openssl)" "\$@"
+EOF2
+    chmod 755 "$W/spy/openssl"
+    run_env PATH="$W/spy:$PATH" BK_PASS=exported again=exported -- --backup "$W/g.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
+    check "a backup with BK_PASS exported succeeds" [ "$RC" = 0 ]
+    check "openssl ran" sh -c "ls '$W/spy'/env.* >/dev/null 2>&1"
+    check "the passphrase is in no child's environment" sh -c "! grep -l 'horse' '$W/spy'/env.*"
+    run_env PATH="$W/spy:$PATH" SPY_FAIL_D=1 -- --backup "$W/h.tar.gz.enc" --encrypt --passphrase-file "$W/pass"
+    check "a backup whose check by openssl fails is not written" [ "$RC" != 0 ]
+    check "no file then" [ ! -e "$W/h.tar.gz.enc" ]
+    check "and nothing left next to it" [ -z "$(find "$W" -maxdepth 1 -name '.erssi-backup.*')" ]
     # --passphrase-file alone does not encrypt
     run --backup "$W/f.tar.gz" --passphrase-file "$W/pass"
     check "--passphrase-file without --encrypt is refused" refused_saying "--encrypt"

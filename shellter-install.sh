@@ -2058,7 +2058,8 @@ bk_openssl_ok() {
 }
 # the passphrase into BK_PASS: from --passphrase-file (the first line of a
 # file only the user can read), else asked on the terminal (twice when
-# $1 is "new")
+# $1 is "new"). Neither BK_PASS nor again is ever exported (unset at the
+# start)
 bk_read_pass() {
     if [ -n "$BK_PASSFILE" ]; then
         if [ ! -f "$BK_PASSFILE" ] || [ -L "$BK_PASSFILE" ]; then
@@ -2071,21 +2072,22 @@ bk_read_pass() {
         BK_PASS=""
         IFS= read -r BK_PASS < "$BK_PASSFILE" || [ -n "$BK_PASS" ] || BK_PASS=""
     elif [ -t 0 ]; then
-        # ^C at the prompt: the terminal echoes again
-        trap 'stty echo 2>/dev/null; exit 130' INT TERM
+        # ^C at the prompt: the terminal echoes again, then the usual exit
+        trap 'stty echo 2>/dev/null; '"$INT_TRAP" HUP INT TERM
         # no echo before the prompt: what is typed as soon as it shows is
         # not echoed either
         stty -echo 2>/dev/null; printf '  Passphrase: ' >&2
         IFS= read -r BK_PASS || BK_PASS=""; stty echo 2>/dev/null
         printf '\n' >&2
-        if [ "$1" = new ] && [ -n "$BK_PASS" ]; then
+        if [ "${1:-}" = new ] && [ -n "$BK_PASS" ]; then
             stty -echo 2>/dev/null; printf '  The same again: ' >&2
             IFS= read -r again || again=""; stty echo 2>/dev/null
             printf '\n' >&2
             [ "$again" = "$BK_PASS" ] || bk_fail "the two passphrases differ"
             again=""
         fi
-        trap - INT TERM
+        # shellcheck disable=SC2064 # INT_TRAP's text is the handler
+        trap "$INT_TRAP" HUP INT TERM
     else
         bk_fail "an encrypted backup needs its passphrase: run it in a terminal, or give --passphrase-file FILE (a file only you can read)"
     fi
@@ -2272,10 +2274,14 @@ do_backup() {
         printf '%s' "$BK_PASS" | openssl enc -e -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 -salt \
             -pass stdin -in "$BK_TMPF" -out "$BK_TMPE" 2> "$BK_WORK/enc.err" ||
             die "encrypting the backup failed ($(head -n 1 "$BK_WORK/enc.err")) - nothing was written"
-        # it opens again with the same passphrase, to the same archive
-        printf '%s' "$BK_PASS" | openssl enc -d -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 \
-            -pass stdin -in "$BK_TMPE" 2>/dev/null | "$BK_COMP" -t 2>/dev/null ||
-            die "the encrypted backup does not open again - nothing was written (report it)"
+        # it opens again with the same passphrase, to the same archive:
+        # openssl's own status too (a bad last block can fail it after the
+        # whole archive came out)
+        orc=1
+        { printf '%s' "$BK_PASS" | openssl enc -d -aes-256-cbc -pbkdf2 -iter "$BK_ITER" -md sha256 \
+            -pass stdin -in "$BK_TMPE" 2>/dev/null; echo $? > "$BK_WORK/dec.rc"; } | "$BK_COMP" -t 2>/dev/null &&
+            orc=$(cat "$BK_WORK/dec.rc" 2>/dev/null) || orc=1
+        [ "$orc" = 0 ] || die "the encrypted backup does not open again - nothing was written (report it)"
         rm -f "$BK_TMPF"; BK_TMPF=$BK_TMPE; BK_TMPE=""
     fi
     if ! ln "$BK_TMPF" "$BK_FILE" 2>/dev/null; then
@@ -2861,6 +2867,9 @@ USE="" KEEP="" BINARY_BASE="" DRY_RUN=0 ACTION=""
 BK_NL='
 ' BK_LOCKS="" KEPT_TRY=""
 BK_FILE="" BK_HOME="" BK_LOGS=0 BK_ERSSI_V="" BK_CONFIG="" BK_DEPTH=0 BK_WORK="" BK_NEW="" BK_TMPF=""
+# a passphrase is never exported, also not when the caller exported a
+# variable of that name (an assignment keeps the export)
+unset BK_PASS again
 BK_ENCRYPT=0 BK_PASSFILE="" BK_PASS="" BK_TMPE="" BK_ENC=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -2962,7 +2971,10 @@ ui_init
 JOB=""
 # Ctrl-C: stop the step running in the background too (Python and meson
 # started from a script ignore SIGINT), then leave
-trap 'if [ -n "$JOB" ]; then kill -TERM "$JOB" 2>/dev/null; wait "$JOB" 2>/dev/null; fi; [ "$IN_STEP" = 1 ] && printf "\n"; printf "\n  Interrupted.\n\n" >&2; exit 130' HUP INT TERM
+# shellcheck disable=SC2016 # expanded when the trap runs
+INT_TRAP='if [ -n "$JOB" ]; then kill -TERM "$JOB" 2>/dev/null; wait "$JOB" 2>/dev/null; fi; [ "$IN_STEP" = 1 ] && printf "\n"; printf "\n  Interrupted.\n\n" >&2; exit 130'
+# shellcheck disable=SC2064 # INT_TRAP's text is the handler
+trap "$INT_TRAP" HUP INT TERM
 # shellcheck disable=SC2012 # find -printf is not POSIX; ls -n is
 owner() { ls -ldn "$1" 2>/dev/null | awk '{print $3}'; }
 ROOT=0
