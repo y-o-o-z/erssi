@@ -1091,7 +1091,9 @@ static void test_tcp_shared_queue_order(void)
 	setup();
 	tcp_listen();
 	fe_web_sock_diag_set_func(diag_fails);
-	fe_web_fuzz_spend_shared_tokens();
+	/* none for about 5 s, not 0: at 50 a second the next token comes
+	   20 ms later, and a loaded box took longer than that to take A */
+	fe_web_fuzz_set_shared_tokens(-250);
 	fe_web_fuzz_spend_proc_budget();
 	a = connect_from("127.0.0.1", &fda);
 	g_assert_cmpstr(a->peer_key, ==, "ip:loopback");
