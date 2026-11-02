@@ -191,12 +191,69 @@ static void test_lone_esc_delivered(void)
 	close(pipe_in);
 }
 
+/* the keys of the chunk, each one as a number */
+static GArray *read_keys(const char *chunk, size_t len)
+{
+	GArray *keys = g_array_new(FALSE, FALSE, sizeof(unichar));
+	int lines = 0;
+
+	g_assert_cmpint(write(pipe_in, chunk, len), ==, (int) len);
+	term_gets(keys, &lines);
+	return keys;
+}
+
+static void assert_keys(GArray *keys, const unichar *want, guint n)
+{
+	guint i;
+
+	g_assert_cmpuint(keys->len, ==, n);
+	for (i = 0; i < n; i++)
+		g_assert_cmpuint(g_array_index(keys, unichar, i), ==, want[i]);
+	g_array_free(keys, TRUE);
+}
+
+/* A mouse report in the old encoding (ESC [ M Cb Cx Cy) carries its three
+ * values as bytes, 0x80 and up past column or row 95: they are three keys,
+ * even where two of them make a UTF-8 character (C2 80), and also when the
+ * report comes in two reads. */
+static void test_x10_mouse_bytes(void)
+{
+	static const unichar want[] = { 0x1b, '[', 'M', 0x20, 0xc2, 0x80, 'z' };
+	int fds[2];
+
+	g_assert_cmpint(pipe(fds), ==, 0);
+	g_assert_cmpint(dup2(fds[0], STDIN_FILENO), ==, STDIN_FILENO);
+	close(fds[0]);
+	pipe_in = fds[1];
+
+	ansi_term = g_new0(ANSI_TERM, 1);
+	ansi_term->out = fopen("/dev/null", "w");
+	g_assert_nonnull(ansi_term->out);
+	term_set_input_type(TERM_TYPE_UTF8);
+
+	assert_keys(read_keys("\033[M\x20\xc2\x80z", 7), want, 7);
+	assert_keys(read_keys("\033[M\x20\xc2", 5), NULL, 0);
+	assert_keys(read_keys("\x80z", 2), want, 7);
+	/* a UTF-8 character typed after a report is still one key */
+	{
+		static const unichar want2[] = { 0x1b, '[', 'M', 0x20, 0x21, 0x21, 0xe9 };
+
+		assert_keys(read_keys("\033[M\x20\x21\x21\xc3\xa9", 8), want2, 7);
+	}
+
+	fclose(ansi_term->out);
+	g_free(ansi_term);
+	ansi_term = NULL;
+	close(pipe_in);
+}
+
 int main(int argc, char **argv)
 {
 	g_test_init(&argc, &argv, NULL);
 
 	g_test_add_func("/term/input/focus-report-split", test_focus_report_split);
 	g_test_add_func("/term/input/lone-esc-delivered", test_lone_esc_delivered);
+	g_test_add_func("/term/input/x10-mouse-bytes", test_x10_mouse_bytes);
 
 	test_home_setup();
 

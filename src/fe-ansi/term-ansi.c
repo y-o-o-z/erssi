@@ -1772,6 +1772,25 @@ void term_gets(GArray *buffer, int *line_count)
 		}
 		for (i = 0; i < end; ) {
 			unichar key;
+
+			/* a mouse report in the old encoding, ESC [ M and three
+			 * bytes (GNU screen 4): the bytes are values, not text,
+			 * and two of them can look like one UTF-8 character */
+			if (end - i >= 3 && memcmp(inbuf + i, "\033[M", 3) == 0) {
+				int k;
+
+				if (end - i < 6) {
+					if (!flush)
+						break; /* the rest comes with the next read */
+				} else {
+					for (k = 0; k < 6; k++) {
+						key = inbuf[i + k];
+						g_array_append_val(buffer, key);
+					}
+					i += 6;
+					continue;
+				}
+			}
 			char_len = input_func(inbuf + i, end - i, &key);
 			if (char_len < 0)
 				break;

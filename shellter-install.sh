@@ -1974,6 +1974,13 @@ bk_entry() {
     fi
 }
 
+# true when find's errors in file $1 are all "Permission denied"; the
+# others go to stderr
+bk_only_denied() {
+    [ -s "$1" ] || return 1
+    ! grep -v ': Permission denied$' "$1" >&2
+}
+
 # the entries below the home-relative directory $1 ("" for the home), in
 # a subshell of their own: a link out of the home recurses into it
 bk_walk() {
@@ -1994,9 +2001,11 @@ bk_walk() {
         elif [ -z "$1" ]; then
             find . -path ./image_cache -prune -o -print
         else
-            # a directory it cannot enter is listed, and left out below
-            find . -print 2>/dev/null || [ -s "$lst" ]
+            # a directory it cannot enter is listed, and left out below;
+            # any other error stops the backup
+            find . -print 2> "$lst.err" || bk_only_denied "$lst.err"
         fi > "$lst" || die "cannot list $(tilde "$d")"
+        rm -f "$lst.err"
         while IFS= read -r x; do
             [ "$x" != . ] || continue
             x=${x#./}

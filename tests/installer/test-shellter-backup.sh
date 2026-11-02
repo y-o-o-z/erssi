@@ -662,6 +662,20 @@ unreadable-outside)
     check "and it restores" [ "$RC" = 0 ]
     check "with the readable file" same "$W/shared/ok.pl" "$W/new/.erssi/scripts/shared/ok.pl"
     check "and without the unreadable one" [ ! -e "$W/new/.erssi/scripts/shared/secret.pl" ]
+    # any other error of that listing (here a made-up I/O error) still
+    # stops the backup
+    mkdir "$W/badfind"
+    cat > "$W/badfind/find" <<EOF2
+#!/bin/sh
+"$(command -v find)" "\$@"; rc=\$?
+case "\$PWD" in */scripts/shared) echo "find: ./sub: Input/output error" >&2; exit 1 ;; esac
+exit \$rc
+EOF2
+    chmod 755 "$W/badfind/find"
+    run_env PATH="$W/badfind:$PATH" -- --backup "$W/d.tar.gz"
+    check "another error listing a followed directory stops the backup" [ "$RC" != 0 ]
+    check "and says what it was" said "Input/output error"
+    check "and writes nothing" [ ! -e "$W/d.tar.gz" ]
     chmod 600 "$W/shared/secret.pl"; chmod 700 "$W/shared/closed"
     # a file of the home itself that cannot be read: the backup would
     # quietly lack the user's own data, so it stops
