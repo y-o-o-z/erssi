@@ -232,8 +232,14 @@ static void test_x10_mouse_bytes(void)
 	term_set_input_type(TERM_TYPE_UTF8);
 
 	assert_keys(read_keys("\033[M\x20\xc2\x80z", 7), want, 7);
-	assert_keys(read_keys("\033[M\x20\xc2", 5), NULL, 0);
-	assert_keys(read_keys("\x80z", 2), want, 7);
+	/* in two reads: ESC [ are keys at once, the rest waits for the end */
+	{
+		static const unichar a[] = { 0x1b, '[' };
+		static const unichar b[] = { 'M', 0x20, 0xc2, 0x80, 'z' };
+
+		assert_keys(read_keys("\033[M\x20\xc2", 5), a, 2);
+		assert_keys(read_keys("\x80z", 2), b, 5);
+	}
 	/* split inside ESC [ M itself, the start handed on as keys at once */
 	{
 		static const unichar a[] = { 0x1b, '[' };
@@ -245,6 +251,25 @@ static void test_x10_mouse_bytes(void)
 		assert_keys(read_keys("M\x20\xc2\x80z", 5), b, 5);
 		assert_keys(read_keys("\033", 1), c, 1);
 		assert_keys(read_keys("[M\x20\xc2\x80", 5), d, 5);
+	}
+	/* in three reads: ESC [, then part of the rest, held, then the end */
+	{
+		static const unichar a[] = { 0x1b, '[' };
+		static const unichar b[] = { 'M', 0x20, 0xc2, 0x80, 'z' };
+
+		assert_keys(read_keys("\033[", 2), a, 2);
+		assert_keys(read_keys("M\x20\xc2", 3), NULL, 0);
+		assert_keys(read_keys("\x80z", 2), b, 5);
+	}
+	/* in three reads: ESC, [, then the rest */
+	{
+		static const unichar a[] = { 0x1b };
+		static const unichar b[] = { '[' };
+		static const unichar c[] = { 'M', 0x20, 0xc2, 0x80, 'z' };
+
+		assert_keys(read_keys("\033", 1), a, 1);
+		assert_keys(read_keys("[", 1), b, 1);
+		assert_keys(read_keys("M\x20\xc2\x80z", 5), c, 5);
 	}
 	/* a UTF-8 character typed after a report is still one key */
 	{

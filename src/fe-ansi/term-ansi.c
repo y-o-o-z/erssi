@@ -127,7 +127,7 @@ int term_color256map[] = {
 static INPUT_FUNC input_func;
 static unsigned char inbuf[512];
 static int inbuf_pos;
-static int x10_carried; /* bytes of ESC [ M the last read ended with */
+static int x10_prefix; /* the keys handed on last: 1 ESC, 2 ESC [ */
 static int force_colors;
 static int resize_dirty;
 static int curs_x, curs_y;
@@ -1777,21 +1777,20 @@ void term_gets(GArray *buffer, int *line_count)
 			/* a mouse report in the old encoding, ESC [ M and three
 			 * bytes (GNU screen 4): the bytes are values, not text,
 			 * and two of them can look like one UTF-8 character.
-			 * The read before may have ended inside ESC [ M */
-			int pre = i == 0 ? x10_carried : 0;
+			 * ESC and [ may have come in reads before */
+			if (x10_prefix == 2 && inbuf[i] == 'M') {
+				int k;
 
-			if (end - i >= 3 - pre && memcmp(inbuf + i, "\033[M" + pre, 3 - pre) == 0) {
-				int k, need = 6 - pre;
-
-				if (end - i < need) {
+				if (end - i < 4) {
 					if (!flush)
 						break; /* the rest comes with the next read */
 				} else {
-					for (k = 0; k < need; k++) {
+					for (k = 0; k < 4; k++) {
 						key = inbuf[i + k];
 						g_array_append_val(buffer, key);
 					}
-					i += need;
+					x10_prefix = 0;
+					i += 4;
 					continue;
 				}
 			}
@@ -1801,16 +1800,10 @@ void term_gets(GArray *buffer, int *line_count)
 			g_array_append_val(buffer, key);
 			if (key == '\r' || key == '\n')
 				(*line_count)++;
+			x10_prefix = key == 0x1b ? 1 : x10_prefix == 1 && key == '[' ? 2 : 0;
 
 			i += char_len;
 		}
-
-		/* how much of ESC [ M ended what was handed on */
-		x10_carried = 0;
-		if (i == end && i >= 2 && memcmp(inbuf + i - 2, "\033[", 2) == 0)
-			x10_carried = 2;
-		else if (i == end && i >= 1 && inbuf[i - 1] == 0x1b)
-			x10_carried = 1;
 
 		if (i >= inbuf_pos)
 			inbuf_pos = 0;
