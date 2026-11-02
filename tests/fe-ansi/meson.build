@@ -469,3 +469,26 @@ test('test-debug-log test', test_test_debug_log,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+test_test_gui_mouse = executable('test-gui-mouse',
+  files(
+    '../../src/fe-ansi/gui-mouse.c',
+    'test-gui-mouse.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-ansi' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep,
+)
+
+test('test-gui-mouse test', test_test_gui_mouse,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')
