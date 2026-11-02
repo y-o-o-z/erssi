@@ -2670,8 +2670,27 @@ do_restore() {
         printf '  The home before is in %s - it holds your old keys and passwords:\n' "$(tilde "$KEPT")"
         printf '  remove it once erssi works (rm -rf %s).\n' "$(tilde "$KEPT")"
     fi
+    bk_list_aside "$T"
     printf '\n'
     exit 0
+}
+
+# the homes earlier restores set aside next to home $1 (<home>.before-
+# restore-<time>), when there is more than one: nothing removes them, and
+# each holds old keys and passwords
+bk_list_aside() {
+    n=0
+    for a in "$1".before-restore-*; do
+        [ -d "$a" ] && [ ! -L "$a" ] && n=$((n + 1))
+    done
+    [ "$n" -gt 1 ] || return 0
+    printf '\n  %s homes set aside by restores are here, each with old keys and passwords:\n' "$n"
+    for a in "$1".before-restore-*; do
+        if [ -d "$a" ] && [ ! -L "$a" ]; then
+            kb=$(du -sk "$a" 2>/dev/null | awk '{print $1}') || kb=""
+            printf '    %s (%s KB)   rm -rf %s\n' "$(tilde "$a")" "${kb:-?}" "$(tilde "$a")"
+        fi
+    done
 }
 
 # a --keep (or KEEP=) number without leading zeros, at most 9999; nothing

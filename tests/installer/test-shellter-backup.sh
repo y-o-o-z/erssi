@@ -470,6 +470,17 @@ aside)
     check "the old home keeps its files" grep -q 'changed after' "$aside/config"
     check "the restored home has the backed up config" sh -c "! grep -q 'changed after' '$E/config'"
     check "and not the file made after the backup" [ ! -e "$E/only-here" ]
+    # a second restore: the home before the first is still there, and is
+    # named with its size and how to remove it (each holds old keys and
+    # passwords; nothing removes them on its own)
+    first=$aside
+    run --restore "$W/b.tar.gz"
+    if [ "$RC" != 0 ]; then show; fi
+    check "a second restore succeeds" [ "$RC" = 0 ]
+    check "the first home set aside is kept" [ -d "$first" ]
+    check "it is named after the second restore" said "~/${first##*/} ("
+    check "with the command that removes it" said "rm -rf ~/${first##*/}\$"
+    check "and how many there are" said "2 homes set aside by restores"
     # not an erssi home: never moved aside
     mkdir -p "$W/docs"; printf 'x\n' > "$W/docs/letter"
     run --restore "$W/b.tar.gz" --home "$W/docs"
