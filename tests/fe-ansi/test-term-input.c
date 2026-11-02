@@ -234,6 +234,18 @@ static void test_x10_mouse_bytes(void)
 	assert_keys(read_keys("\033[M\x20\xc2\x80z", 7), want, 7);
 	assert_keys(read_keys("\033[M\x20\xc2", 5), NULL, 0);
 	assert_keys(read_keys("\x80z", 2), want, 7);
+	/* split inside ESC [ M itself, the start handed on as keys at once */
+	{
+		static const unichar a[] = { 0x1b, '[' };
+		static const unichar b[] = { 'M', 0x20, 0xc2, 0x80, 'z' };
+		static const unichar c[] = { 0x1b };
+		static const unichar d[] = { '[', 'M', 0x20, 0xc2, 0x80 };
+
+		assert_keys(read_keys("\033[", 2), a, 2);
+		assert_keys(read_keys("M\x20\xc2\x80z", 5), b, 5);
+		assert_keys(read_keys("\033", 1), c, 1);
+		assert_keys(read_keys("[M\x20\xc2\x80", 5), d, 5);
+	}
 	/* a UTF-8 character typed after a report is still one key */
 	{
 		static const unichar want2[] = { 0x1b, '[', 'M', 0x20, 0x21, 0x21, 0xe9 };
