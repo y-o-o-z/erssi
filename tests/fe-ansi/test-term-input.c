@@ -9,10 +9,12 @@
 #include <irssi/src/core/signals.h>
 #include <irssi/src/fe-ansi/term.h>
 #include <irssi/src/fe-ansi/term-ansi.h>
+#include <irssi/src/fe-ansi/gui-mouse.h>
 
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "../test-home.h"
 
 #define MODULE_NAME "tests"
@@ -212,6 +214,25 @@ static void assert_keys(GArray *keys, const unichar *want, guint n)
 	g_array_free(keys, TRUE);
 }
 
+/* mouse tracking on or off, its escape codes kept out of the TAP output */
+static void mouse_tracking(gboolean on)
+{
+	int out = dup(STDOUT_FILENO), null = open("/dev/null", O_WRONLY);
+
+	g_assert_cmpint(out, >=, 0);
+	g_assert_cmpint(null, >=, 0);
+	fflush(stdout);
+	dup2(null, STDOUT_FILENO);
+	if (on)
+		gui_mouse_enable_tracking();
+	else
+		gui_mouse_disable_tracking();
+	fflush(stdout);
+	dup2(out, STDOUT_FILENO);
+	close(out);
+	close(null);
+}
+
 /* A mouse report in the old encoding (ESC [ M Cb Cx Cy) carries its three
  * values as bytes, 0x80 and up past column or row 95: they are three keys,
  * even where two of them make a UTF-8 character (C2 80), and also when the
@@ -231,6 +252,18 @@ static void test_x10_mouse_bytes(void)
 	g_assert_nonnull(ansi_term->out);
 	term_set_input_type(TERM_TYPE_UTF8);
 
+	/* without mouse tracking ESC [ M is a key (F1 of scoansi): it is
+	   not held, and the UTF-8 after it is text */
+	{
+		static const unichar f1[] = { 0x1b, '[', 'M' };
+		static const unichar text[] = { 0x1b, '[', 'M', 0xe9 };
+
+		g_assert_false(gui_mouse_is_tracking_enabled());
+		assert_keys(read_keys("\033[M", 3), f1, 3);
+		assert_keys(read_keys("\033[M\xc3\xa9", 5), text, 4);
+	}
+
+	mouse_tracking(TRUE);
 	assert_keys(read_keys("\033[M\x20\xc2\x80z", 7), want, 7);
 	/* in two reads: ESC [ are keys at once, the rest waits for the end */
 	{
@@ -277,6 +310,7 @@ static void test_x10_mouse_bytes(void)
 
 		assert_keys(read_keys("\033[M\x20\x21\x21\xc3\xa9", 8), want2, 7);
 	}
+	mouse_tracking(FALSE);
 
 	fclose(ansi_term->out);
 	g_free(ansi_term);

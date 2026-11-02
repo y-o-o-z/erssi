@@ -21,6 +21,7 @@
 
 #include "term-ansi.h"
 #include "term-notify.h"
+#include "gui-mouse.h"
 
 #include <signal.h>
 #include <string.h>
@@ -1777,8 +1778,9 @@ void term_gets(GArray *buffer, int *line_count)
 			/* a mouse report in the old encoding, ESC [ M and three
 			 * bytes (GNU screen 4): the bytes are values, not text,
 			 * and two of them can look like one UTF-8 character.
-			 * ESC and [ may have come in reads before */
-			if (x10_prefix == 2 && inbuf[i] == 'M') {
+			 * ESC and [ may have come in reads before. Only with the
+			 * mouse on: else ESC [ M is a key (F1 of scoansi) */
+			if (x10_prefix == 2 && inbuf[i] == 'M' && gui_mouse_is_tracking_enabled()) {
 				int k;
 
 				if (end - i < 4) {
