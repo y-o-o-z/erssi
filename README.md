@@ -20,7 +20,7 @@ also updates, and a security review of the parts that face the network.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/erssi-shellter-light.png">
-  <img src="docs/images/erssi-shellter.png" alt="erssi Shellter Edition 2026.10.9 in #shellter on IRCnet, shellter theme: the window list on the left; in the middle yooz (yooz@staff.shellter.me) and kofany (kofany@irc.al) join and get op, then people on the channel talk about the release under one separator; the nick list by rank on the right; the statusbar below">
+  <img src="docs/images/erssi-shellter.png" alt="erssi Shellter Edition in #shellter on IRCnet, shellter theme: the window list on the left; in the middle yooz (yooz@staff.shellter.me) and kofany (kofany@irc.al) join and get op, then people on the channel talk about the release under one separator; the nick list by rank on the right; the statusbar below">
 </picture>
 
 <sub>A real erssi with the real nicks of #shellter; the lines they say were written for the picture.</sub>
@@ -116,7 +116,7 @@ like system config files, what changes when upgrading from 1.3.x):
 |---|---|
 | **erssi Shellter Edition 2026.11.2** | erssi 1.3.1 (erssi-org, 2026-04-06) with the changes below. Versions are calendar versions YEAR.MONTH.PATCH (2026.10.0 is the first; 1.3.2 to 1.3.10 came before). Release notes: [NEWS](NEWS). |
 | **irssi core** | irssi 1.4.5 plus later changes from irssi `master`, as merged by erssi-org. |
-| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.10.6`). |
+| **Perl scripts** | `Irssi::version()` returns the release date, so scripts that require irssi 1.4.5 or newer load. `$J` is erssi Shellter Edition's own calendar version (for example `2026.11.2`). |
 
 ## What this edition adds
 
@@ -124,21 +124,26 @@ Every command has a page in `/help`. The full lists:
 [docs/shellter/features.md](docs/shellter/features.md); what each release
 changed: [NEWS](NEWS).
 
-**New in 2026.10.7**
+**New in 2026.11**
 
-- **Ready-made binaries for more systems** — Debian 12 and Ubuntu 24.04 join Debian 13 and FreeBSD 14 and 15.
-- **Packages you can rebuild yourself** — the packages are reproducible: `sh utils/build-binary.sh --verify PACKAGE` builds one again from its signed tag and says whether it is the same, byte for byte.
-- **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so in the Notices window, with a short summary; nothing is installed by itself, and `/update install` installs it from inside erssi.
-- **Clickable links** — addresses in messages are OSC 8 links in terminals that support them, also when they wrap over several lines; the link is always the text you see.
-- **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file (with `--encrypt`, one only your passphrase opens); `erssi --restore` checks it and puts it back.
-- **Disk space** — erssi warns before the disk or your quota fills up and logs, keys and backups stop saving (`disk_warn`).
-- **Installs that do not stop for nothing** — a source install runs the tests of erssi, not those of the release tools, and names what to do when a test fails; a box without `ssh-keygen` is told which one package gives the ready-made binary.
+- **Encrypted backups** — `erssi --backup --encrypt` asks for a passphrase and writes a backup only that passphrase opens; `erssi --restore` knows it and asks for it.
+- **Told before the disk fills up** — erssi warns when little is left of the disk or your quota, before logs, keys and backups stop saving (`disk_warn`); also in a hardened systemd service (2026.11.2).
+- **The mouse on a slow link** — a mouse report cut off on the way no longer eats the keys typed after it; with the screen split, the wheel scrolls the window under the pointer.
+- **Safe on a full quota** — an E2E message that needs a new key that cannot be saved is not sent but marked `[NOT SENT]`; `erssi --setup` asks for SASL only when every server of the network uses verified TLS.
+- **System installs stay the administrator's** — erssi updates only an erssi you installed yourself and never runs an installer that is not yours.
 
 **Ready-made binaries**
 
 - **Installed in seconds** — on Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15 (amd64) the installer and `erssi --update` install the release's signed package instead of building it.
 - **Checked before anything changes** — the signature on `SHA256SUMS`, the package's checksum and its manifest must all match, or nothing is installed.
 - **Releases side by side** — each release in its own directory, `current` switched in one step, `--rollback` to the previous one.
+- **Packages you can rebuild yourself** — `sh utils/build-binary.sh --verify PACKAGE` builds one again from its signed tag and says whether it is the same, byte for byte.
+
+**Updates and backups**
+
+- **Told when a release is out** — `/set update_check on` checks once a day, in the background, for a newer signed release and says so with a short summary; `/update install` installs it from inside erssi and `/upgrade` loads it.
+- **Moving to another box** — `erssi --backup` puts your whole setup, E2E keyring included, into one private file; `erssi --restore` checks it and puts it back.
+- **Automatic backups** — `/set backup_auto daily` (or `weekly`) makes one in the background and keeps the newest seven; `/backup now` makes one at once.
 
 **Encryption you can rely on**
 
@@ -165,6 +170,7 @@ changed: [NEWS](NEWS).
 - **Rank colours** — `@`, `+`, `%` and `~`/`&` in their own colours, in messages and in the nick list.
 - **Clean windows** — WHOIS replies go to the network window; a quit or nick change marks only the windows where that nick is.
 - **Every terminal** — 24-bit colour where the terminal shows it, the nearest 256-colour entry where it does not.
+- **Clickable links** — addresses in messages are OSC 8 links in terminals that support them, also when they wrap over several lines; the link is always the text you see.
 
 **Help, scripts, reliability**
 
@@ -269,7 +275,7 @@ next to a commit) with a one-line result:
 | `erssi-ci/shellcheck` | shellcheck on the shell scripts |
 | `erssi-ci/installer` | the installer's tests, and that every release it records points to its commit and is signed |
 | `erssi-ci/e2e-live` | live E2E interop with `rpe2e.pl` |
-| `erssi-ci/fuzz` | libFuzzer runs on the fe-web and E2E parsers |
+| `erssi-ci/fuzz` | libFuzzer runs on what fe-web and the E2E module read from the network, irssi's own parsers and the image decoder |
 
 A status shows "pending" until its job has run, which after a history
 rewrite, when every release tag is tested again, can take hours. Pull

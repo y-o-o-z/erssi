@@ -86,7 +86,7 @@ installed from another `--repo`):
 /update check                            # check now
 /update install                          # install the newest release, in the background
 /update install -upgrade                 # ... and /upgrade once it is installed
-/statusbar additem -after lag update info   # show [update 2026.11.1] while there is one
+/statusbar additem -after lag update info   # show [update 2026.11.2] while there is one
 ```
 
 - **What runs** — the installer that was installed with erssi
@@ -107,7 +107,7 @@ installed from another `--repo`):
   several erssi with the same home share it.
 - **What it says** — one line, once for each new release, in the
   window of client messages, the Notices window:
-  `erssi 2026.11.1 is available (signed). Install it: /update install
+  `erssi 2026.11.2 is available (signed). Install it: /update install
   (or erssi --update in a shell), then /upgrade`, and under it up to
   three lines of what the release brings, from its signed tag (releases
   from 2026.10.9 on; control characters are removed before anything is
@@ -219,8 +219,11 @@ Notices window when it is less than `disk_warn`:
 What is left is the smaller of the free space of the home's file system
 and what your disk quota there leaves (the soft limit if one is set,
 else the hard one), read with quotactl on Linux 5.14 and later and on
-FreeBSD; where the quota cannot be read, only the free space counts. It
-is said again every 6 hours while it stays low.
+FreeBSD; where the quota cannot be read, only the free space counts. Under
+a seccomp filter (a hardened systemd service, a container) the quota call
+is tried once in a child first, as `SystemCallFilter=@system-service`
+kills a process that makes it. The warning is said again every 6 hours
+while it stays low.
 
 ## Web client
 

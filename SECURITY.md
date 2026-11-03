@@ -20,8 +20,8 @@ that key and the commit of every release it records:
   2.34) only the commit is checked, with a warning.
 - Any other `--ref` (a branch, a commit) is built unverified, with a
   warning.
-- A ready-made binary package (2026.10.4 and newer, Debian 13 and FreeBSD
-  14) is installed only if the release's `SHA256SUMS` carries a valid
+- A ready-made binary package (2026.10.4 and newer; Debian 12 and 13,
+  Ubuntu 24.04, FreeBSD 14 and 15, amd64) is installed only if the release's `SHA256SUMS` carries a valid
   signature by the release key in the namespace `erssi-release`, the
   package matches its checksum there, and its manifest names the release,
   the recorded commit (on `erssi --update`: the commit of the signed

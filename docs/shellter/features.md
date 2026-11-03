@@ -176,7 +176,12 @@ loaded on demand (`/script load <name>`, or a symlink in
   erssi runs `erssi --backup` by itself in the background into
   `backup_dir` (`~/erssi-backups`) and keeps the newest `backup_keep` (7);
   `/backup` shows the state, `/backup now` makes one
-  ([configuration.md](configuration.md#automatic-backups)).
+  ([configuration.md](configuration.md#automatic-backups)). `erssi --backup
+  --encrypt` makes one that only a passphrase opens.
+- **Disk space** — erssi warns in the Notices window when little is left
+  of the disk or your quota for its home, before logs, the E2E keyring
+  and backups stop saving (`disk_warn`, 20M by default;
+  [configuration.md](configuration.md#disk-space)).
 - **FreeBSD** — tested on FreeBSD 14.5 and 15.1: builds with the base system's
   OpenSSL and passes the test suite; `/connect` works inside Capsicum
   capability mode (`/search` does not run there). See
