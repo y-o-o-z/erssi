@@ -38,6 +38,20 @@ guint64 disk_space_fs_avail(guint64 bavail, guint64 blocks, guint64 frsize);
  * ago or more */
 gboolean disk_space_warn_due(gint64 now, gboolean low, gboolean was_low, gint64 last_warned);
 
+/* the user's quota on the file system of DIR: its limit (the soft one if
+ * set) and what is used, in bytes; FALSE when there is none or it cannot
+ * be read */
+gboolean disk_space_read_quota(const char *dir, guint64 *limit, guint64 *used);
+
+#ifdef HAVE_QUOTACTL_FD
+/* the quotactl_fd command that reads the user's quota */
+unsigned int disk_space_quota_cmd(void);
+
+/* whether the quota calls may be made: no seccomp filter, or one that
+ * lets them through (tried once, in a child) */
+gboolean disk_space_quota_calls_allowed(void);
+#endif
+
 /* one look now, as the timer does */
 void disk_space_check_now(void);
 

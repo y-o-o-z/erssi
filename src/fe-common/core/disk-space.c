@@ -26,13 +26,16 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/statvfs.h>
 
 #ifdef HAVE_QUOTACTL_FD
 #include <linux/quota.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #endif
 #ifdef HAVE_UFS_QUOTACTL
 #include <sys/param.h>
@@ -75,18 +78,93 @@ gboolean disk_space_warn_due(gint64 now, gboolean low, gboolean was_low_before, 
 	return now - last >= DISK_SPACE_REPEAT;
 }
 
+#ifdef HAVE_QUOTACTL_FD
+unsigned int disk_space_quota_cmd(void)
+{
+	/* QCMD shifts Q_GETQUOTA (0x800007) out of an int: the same bits,
+	   unsigned */
+	return (unsigned int) Q_GETQUOTA << SUBCMDSHIFT | (USRQUOTA & SUBCMDMASK);
+}
+
+/* the seccomp filters on: 0 for none (the Seccomp: line of
+   /proc/self/status), else their number (Seccomp_filters:, Linux 5.9 and
+   later), -1 for some of an unknown number or nothing to read. systemd's
+   SystemCallFilter=@system-service leaves out the quota calls (@privileged)
+   and kills the process that makes one */
+static int seccomp_filters(void)
+{
+	char *status, *line;
+	int n = -1;
+
+	if (!g_file_get_contents("/proc/self/status", &status, NULL, NULL))
+		return -1;
+	line = strstr(status, "\nSeccomp:");
+	if (line != NULL && atoi(line + strlen("\nSeccomp:")) == 0)
+		n = 0;
+	else if ((line = strstr(status, "\nSeccomp_filters:")) != NULL)
+		n = atoi(line + strlen("\nSeccomp_filters:"));
+	g_free(status);
+	return n;
+}
+
+/* the quota call made once in a child: a filter that kills on it kills
+   the child, not erssi */
+static gboolean quota_call_survives(void)
+{
+	struct if_dqblk q;
+	struct rlimit no_core = { 0, 0 };
+	int fd, status;
+	pid_t pid;
+
+	fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd == -1)
+		return FALSE;
+	pid = fork();
+	if (pid == 0) {
+		setrlimit(RLIMIT_CORE, &no_core);
+		syscall(SYS_quotactl_fd, fd, disk_space_quota_cmd(), (int) getuid(), &q);
+		_exit(0);
+	}
+	close(fd);
+	if (pid == -1)
+		return FALSE;
+	while (waitpid(pid, &status, 0) == -1)
+		if (errno != EINTR)
+			return FALSE;
+	return WIFEXITED(status);
+}
+
+gboolean disk_space_quota_calls_allowed(void)
+{
+	/* tried again when another filter comes on */
+	static int tried_under = 0;
+	static gboolean survives;
+	int filters = seccomp_filters();
+
+	if (filters == 0)
+		return TRUE;
+	if (filters == -1 || filters != tried_under) {
+		survives = quota_call_survives();
+		tried_under = filters;
+	}
+	return survives;
+}
+#endif
+
 /* the user's quota on the file system of DIR: its limit (the soft one if
    set: past it the grace time runs out) and what is used, in bytes */
-static gboolean read_quota(const char *dir, guint64 *limit, guint64 *used)
+gboolean disk_space_read_quota(const char *dir, guint64 *limit, guint64 *used)
 {
 #if defined(HAVE_QUOTACTL_FD)
 	struct if_dqblk q;
 	int fd, rc;
 
+	if (!disk_space_quota_calls_allowed())
+		return FALSE;
 	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (fd == -1)
 		return FALSE;
-	rc = syscall(SYS_quotactl_fd, fd, QCMD(Q_GETQUOTA, USRQUOTA), (int) getuid(), &q);
+	rc = syscall(SYS_quotactl_fd, fd, disk_space_quota_cmd(), (int) getuid(), &q);
 	close(fd);
 	if (rc != 0 || (q.dqb_valid & (QIF_BLIMITS | QIF_SPACE)) != (QIF_BLIMITS | QIF_SPACE))
 		return FALSE;
@@ -127,7 +205,7 @@ static guint64 home_left(DISK_LEFT_KIND *kind)
 		return n;
 	}
 	fs_ok = statvfs(dir, &vfs) == 0;
-	quota_ok = read_quota(dir, &limit, &used);
+	quota_ok = disk_space_read_quota(dir, &limit, &used);
 	return disk_space_left(fs_ok,
 	                       fs_ok ? disk_space_fs_avail(vfs.f_bavail, vfs.f_blocks, vfs.f_frsize) : 0,
 	                       quota_ok, limit, used, kind);
