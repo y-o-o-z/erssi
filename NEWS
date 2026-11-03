@@ -1,3 +1,20 @@
+shellter-v2026.11.2 2026-11-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.2
+
+	A fix for the disk space warning of 2026.11.1: under a seccomp
+	filter that kills on the quota calls, as systemd's
+	SystemCallFilter=@system-service does, erssi was killed at its
+	first look at the disk.
+
+	+ Disk space
+	  - disk_warn under a seccomp filter (a hardened systemd service, a
+	    container): the quota call is tried once in a child, again when
+	    another filter comes on, and the quota is read only when the
+	    child lived; the free space of the file system is checked as
+	    before. 2026.11.1 died with SIGSYS there
+	  - the quota command no longer shifts Q_GETQUOTA out of an int
+	    (undefined behaviour, found by UBSan)
+
 shellter-v2026.11.1 2026-11-02  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.1
 
