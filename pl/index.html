@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.0.">
+<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.1.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.0">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.1">
 <meta property="og:description" content="Nowoczesne irssi, dostrojone do IRCnetu. Podpisane wydania, bez roota, jedna linia instalacji.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/pl/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.0</pre>
+    verify-tag shellter-v2026.11.1</pre>
         <p>Uruchom to w klonie repozytorium; gpg jest wyłączony, żeby liczył się tylko klucz SSH. Musi zgłosić poprawny podpis z odciskiem podanym obok. Porównaj go z takim, który masz z innego źródła, na przykład pytając na #shellter.</p>
         <p>Części, które rozmawiają z siecią, są przeglądane, fuzzowane i testowane pod sanitizerami. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Co jest chronione, a co nie</a> (po angielsku).</p>
       </div>
-      <div class="release" aria-label="Wydanie 2026.11.0">
-        <header><b>shellter-v2026.11.0</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
+      <div class="release" aria-label="Wydanie 2026.11.1">
+        <header><b>shellter-v2026.11.1</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>99510979b</dd></div>
+          <div><dt>Commit</dt><dd>a7a1aa007</dd></div>
           <div><dt>Klucz wydań</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>poprawny podpis, przestrzeń nazw erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="3cc4f3d251d32857c608fbc07564b981af399e92642f64d7b28fd3df159cef51">sha256 3cc4f3d2…f159cef51</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="a839a816896838b2530c87b94cbb6b19e478312e15378d2d6118391654498353">sha256 a839a816…654498353</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="18a04d0581b91ca7d7ccee96bd397ca6fadc16d8942369bff8ae93b62a81cf58">sha256 18a04d05…62a81cf58</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="7b7c120482ced821d299769b5f38da16bb3cc07a6c768753d63cd947bb1955da">sha256 7b7c1204…7bb1955da</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="f21220b13b0104c4017f0f87bf725c0fcb27827f8696fb95a99bd4c51edfad02">sha256 f21220b1…51edfad02</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="903bc11c8b2917df87c97e01218377ad60d157043d0b91220cd89e4f494e0bdc">sha256 903bc11c…f494e0bdc</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="dc7a5a5161deafcf61f48fc01bffcaded82788b7a1acab5da7b62cc19455a330">sha256 dc7a5a51…19455a330</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="857f08dfe324da1be1bbfaebb7798f5203af4f485598292c4665ee0d97fc28a9">sha256 857f08df…d97fc28a9</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="d1331fbfa738911cb4d1bc8287b8a0ad310055fdc6a8efeb2e5cdc57f85069b6">sha256 d1331fbf…7f85069b6</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="7f3f76ad13d1fedf4ce9748b10556cd57970cfffac97b5cb16c40c27acfcc40c">sha256 7f3f76ad…7acfcc40c</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 z 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,19 +241,19 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">Nowości w 2026.11.0</h2>
-        <p>Wydane 1 listopada 2026. Reszta tej listy przyszła z 2026.10.9, dzień wcześniej.</p>
+        <h2 id="h-new">Nowości w 2026.11.1</h2>
+        <p>Wydane 2 listopada 2026. Reszta tej listy przyszła z 2026.11.0, dzień wcześniej.</p>
       </div>
       <ul class="changes">
+        <li><span class="tag">kopia</span><p><b>Szyfrowane kopie zapasowe.</b> <code>erssi --backup --encrypt</code> pyta o hasło i zapisuje kopię, którą otwiera tylko ono, więc może leżeć tam, gdzie inni mogą ją zobaczyć. <code>erssi --restore</code> ją rozpoznaje i pyta o hasło.</p></li>
+        <li><span class="tag">dysk</span><p><b>Ostrzeżenie, zanim skończy się miejsce.</b> erssi mówi, gdy zostaje mało miejsca na dysku albo w Twojej quocie, zanim logi, klucze i kopie przestaną się zapisywać (<code>/set disk_warn</code>).</p></li>
+        <li><span class="tag">mysz</span><p><b>Mysz na słabym łączu.</b> Ucięty po drodze raport myszy nie zjada już tego, co piszesz po nim, a przy podzielonym ekranie kółko przewija okno pod kursorem.</p></li>
+        <li><span class="tag">e2e</span><p><b>Bezpiecznie przy pełnej quocie.</b> Wiadomość, która potrzebuje nowego klucza, a ten nie da się zapisać, nie wychodzi, tylko jest oznaczona, a <code>erssi --setup</code> pyta o SASL tylko wtedy, gdy każdy serwer sieci ma sprawdzony TLS.</p></li>
         <li><span class="tag">aktualizacje</span><p><b>Instalacja systemowa należy do administratora.</b> erssi zainstalowane dla całego systemu aktualizuje administrator: <code>erssi --update</code> i <code>/update</code> powiedzą to i nigdy nie uruchomią instalatora, który nie jest Twój.</p></li>
         <li><span class="tag">aktualizacje</span><p><b>Aktualizacja z wnętrza erssi.</b> <code>/update install</code> instaluje najnowsze podpisane wydanie w tle, gdy rozmawiasz, a potem mówi, żeby wczytać je przez <code>/upgrade</code>. Połączenia TLS łączą się raz na nowo.</p></li>
-        <li><span class="tag">aktualizacje</span><p><b>Co jest w wydaniu.</b> Powiadomienie o aktualizacji i <code>/update</code> pokazują krótkie podsumowanie nowego wydania, wzięte z jego podpisanego taga.</p></li>
-        <li><span class="tag">kopia</span><p><b>Kopie zapasowe same.</b> <code>/set backup_auto daily</code> (albo weekly) robi kopię całej konfiguracji poza katalogiem domowym i trzyma siedem ostatnich. <code>/backup now</code> robi ją od razu.</p></li>
-        <li><span class="tag">wydanie</span><p><b>Wydania jednym narzędziem.</b> Każda paczka jest budowana z podpisanego taga przed publikacją, budowana drugi raz, żeby sprawdzić, że wyszła taka sama, i dopiero wtedy podpisana i wgrana.</p></li>
-        <li><span class="tag">testy</span><p><b>Testy odporne na obciążenie.</b> Testy idą wiele razy pod obciążeniem maszyny, a co noc także na FreeBSD 14 i 15.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.0">Informacje o wydaniu</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.1">Informacje o wydaniu</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Wszystkie zmiany od 2026.10.0</a>
       </div>
     </div>
@@ -318,7 +318,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.0 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.1 · GPL-2.0-or-later</span>
       <span><a href="../" hreflang="en" lang="en">English</a> · <a href="./" aria-current="page">Polski</a></span>
     </div>
   </div>
