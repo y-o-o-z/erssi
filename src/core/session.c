@@ -158,7 +158,7 @@ static void session_release_servers(void)
 static void cmd_upgrade(const char *data)
 {
 	CONFIG_REC *session;
-	char *session_file, *str, *name, *error = NULL;
+	char *session_file, *name, *error = NULL;
 	char *binary;
 
 	if (*data == '\0')
@@ -207,14 +207,16 @@ static void cmd_upgrade(const char *data)
         config_close(session);
 	session_release_servers();
 
-	/* data may contain some other program as well, like
-	   /UPGRADE /usr/bin/screen irssi */
-	str = g_strdup_printf("%s --noconnect --session=%s --home=%s --config=%s",
-			      binary, session_file, get_irssi_dir(), get_irssi_config());
-	g_free(binary);
+	/* each path one argument: a space in the binary's, the home's or
+	   the config's path must not split it (the exec would fail now,
+	   with the servers already let go) */
+	session_args = g_new0(char *, 6);
+	session_args[0] = binary;
+	session_args[1] = g_strdup("--noconnect");
+	session_args[2] = g_strdup_printf("--session=%s", session_file);
+	session_args[3] = g_strdup_printf("--home=%s", get_irssi_dir());
+	session_args[4] = g_strdup_printf("--config=%s", get_irssi_config());
 	g_free(session_file);
-        session_args = g_strsplit(str, " ", -1);
-        g_free(str);
 
 	signal_emit("gui exit", 0);
 }

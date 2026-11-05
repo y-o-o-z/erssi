@@ -9,7 +9,7 @@ if python3_prog.found()
   live_env = environment()
   live_env.set('HOME', meson.build_root() / 'test-home')
   live_env.set('PYTHONDONTWRITEBYTECODE', '1')
-  foreach t : ['harness', 'help', 'mentions', 'mentions_migrate', 'notify', 'keys', 'firstrun', 'search', 'layout', 'window_close', 'query_window', 'connect_existing', 'panel_widths', 'nicklist_bands', 'layout_restore', 'keepnick', 'debug_logs', 'panel_draw', 'e2e_trust', 'e2e_flood', 'credential_warning', 'panel_rows', 'relocatable', 'early_dialog', 'backup', 'backup_auto', 'update_check', 'hyperlinks', 'disk_space']
+  foreach t : ['harness', 'help', 'mentions', 'mentions_migrate', 'notify', 'keys', 'firstrun', 'search', 'layout', 'window_close', 'query_window', 'connect_existing', 'panel_widths', 'nicklist_bands', 'layout_restore', 'keepnick', 'debug_logs', 'panel_draw', 'e2e_trust', 'e2e_flood', 'credential_warning', 'panel_rows', 'relocatable', 'early_dialog', 'backup', 'backup_auto', 'update_check', 'hyperlinks', 'disk_space', 'upgrade_paths']
     # keepnick waits out real check timers and a nick delay (about 170 s),
     # e2e_flood irssi's real flood queue (about 150 s), backup_auto the
     # first minute after a start and after an /UPGRADE (about 140 s)
