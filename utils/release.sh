@@ -472,7 +472,18 @@ mm_tmpdir() {
     [ -n "$MM_TMPDIR" ] || MM_TMPDIR=/var/tmp/$(id -un)-mm
     safe_word "$MM_TMPDIR" || die "$MM_TMPDIR: a path for build and verify may hold letters, digits and ._+/- only"
     [ "$DRY" = 1 ] && return 0
-    [ -d "$MM_TMPDIR" ] || mkdir -m 755 "$MM_TMPDIR" || die "cannot make $MM_TMPDIR"
+    [ -d "$MM_TMPDIR" ] || [ -L "$MM_TMPDIR" ] || mkdir -m 755 "$MM_TMPDIR" || die "cannot make $MM_TMPDIR"
+    # the bundle the chroots build from goes there: a directory someone
+    # else could rename or fill (the default is in /var/tmp, where anyone
+    # may make it first) would let them swap the tag that is built
+    [ ! -L "$MM_TMPDIR" ] || die "$MM_TMPDIR is a symbolic link - give a directory of yours with --mm-tmpdir"
+    [ -d "$MM_TMPDIR" ] || die "$MM_TMPDIR is not a directory"
+    # shellcheck disable=SC2012,SC2046 # owner and mode of one directory, as words: ls -ldn is POSIX, find -printf is not
+    set -- $(ls -ldn "$MM_TMPDIR" 2>/dev/null)
+    [ "${3:-}" = "$(id -u)" ] || die "$MM_TMPDIR belongs to another user - remove it or give a directory of yours with --mm-tmpdir"
+    case ${1:-} in
+        ?????w????*|????????w?*) die "$MM_TMPDIR is writable by other users - chmod 755 $MM_TMPDIR" ;;
+    esac
 }
 # the tag as a git bundle, readable in a chroot: BUNDLE
 make_bundle() {

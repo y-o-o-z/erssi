@@ -453,6 +453,26 @@ upload|confirm)
         run confirm --repo "$R" shellter-v2026.11.9; expect "confirm: no such release" 1 'cannot download the assets of shellter-v2026.11.9'
     fi
     ;;
+mm-tmpdir)
+    # the TMPDIR of mmdebstrap holds the bundle the chroots build from:
+    # one that others may write to, or a link, is refused before anything
+    # is put there (and before mmdebstrap runs)
+    make_repo "$R" 2026.11.0 2026-11-02
+    for m in 777 775 1777; do
+        rm -rf "$tmp/mm"; mkdir "$tmp/mm"; chmod "$m" "$tmp/mm"
+        run build --repo "$R" "$TAG" --out "$tmp/out-$m" --platforms debian12-amd64
+        expect "an mmdebstrap TMPDIR of mode $m: refused" 1 "$tmp/mm is writable by other users"
+        check "... nothing put into it" sh -c '[ -z "$(ls -A "$1")" ]' sh "$tmp/mm"
+    done
+    rm -rf "$tmp/mm" "$tmp/mm-real"; mkdir -m 755 "$tmp/mm-real"; ln -s mm-real "$tmp/mm"
+    run build --repo "$R" "$TAG" --out "$tmp/out-link" --platforms debian12-amd64
+    expect "an mmdebstrap TMPDIR that is a link: refused" 1 "$tmp/mm is a symbolic link"
+    check "... nothing put into it" sh -c '[ -z "$(ls -A "$1")" ]' sh "$tmp/mm-real"
+    # its own, 0755: taken (mmdebstrap, the stand-in, runs and fails)
+    rm -f "$tmp/mm"; mkdir -m 755 "$tmp/mm"
+    run build --repo "$R" "$TAG" --out "$tmp/out-ok" --platforms debian12-amd64
+    check "an own 0755 TMPDIR: taken" sh -c '! grep -q "writable by other users\|symbolic link" "$1" && grep -q "fake mmdebstrap must not run" "$1"' sh "$tmp/out"
+    ;;
 retag)
     # built, verified and signed on commit A; then the tag is deleted and
     # made again on commit B, and pushed
