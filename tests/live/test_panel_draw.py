@@ -130,7 +130,11 @@ def main():
             redraw(e)
             rows = e.screen()
             # the borders where the panels end
-            assert rows[2][want - 1] == "|" and rows[2][COLS - want] == "|", (width, rows[2])
+            # on a failure (seen once in a while under load, not
+            # explained yet): what is at both border columns of the first
+            # rows, and the layout erssi has then
+            assert rows[2][want - 1] == "|" and rows[2][COLS - want] == "|", \
+                (width, [(r[:want], r[COLS - want - 2:]) for r in rows[:6]], main_area(e))
         # 0 hides the panel, as before
         e.type_and_wait("/set sidepanel_left_width 0")
         assert harness.wait_until(lambda: main_area(e) == (0, COLS - 15), WAIT, interval=0.2), main_area(e)
