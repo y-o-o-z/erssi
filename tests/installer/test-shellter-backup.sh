@@ -901,6 +901,39 @@ self-check)
     check "no temporary file is left" [ -z "$(find "$W" -maxdepth 1 -name '.erssi-backup.*')" ]
     ;;
 
+root-foreign-erssi)
+    # --backup and --restore as root, with --prefix of another user's
+    # install: that user's bin/erssi is never run (as root it would run
+    # what they put there); the version is then unknown. As the user
+    # it is asked for its version, as before.
+    make_home "$E"
+    mkdir -p "$W/alice/opt/bin"
+    printf '#!/bin/sh\n: > "%s/ran"\necho "erssi 2026.11.9 (x)"\n' "$W" > "$W/alice/opt/bin/erssi"
+    chmod 755 "$W/alice/opt/bin/erssi"
+    run --backup "$W/user.tar.gz" --prefix "$W/alice/opt"
+    check "as the user: backed up" [ "$RC" = 0 ]
+    check "... its erssi asked for the version" [ -e "$W/ran" ]
+    rm -f "$W/ran"
+    mkdir -p "$W/rootshim"
+    # shellcheck disable=SC2016 # stand-in scripts
+    printf '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec %s "$@"\n' "$(command -v id)" > "$W/rootshim/id"
+    # the home of root (HOME) is root's: ls -ldn shows uid 0 for it
+    # shellcheck disable=SC2016
+    printf '#!/bin/sh\nif [ "$1" = -ldn ] && [ "$2" = "%s" ]; then\n    %s -ldn "$2" | awk %s\nelse\n    exec %s "$@"\nfi\n' \
+        "$HOME" "$(command -v ls)" "'{\$3 = \"0\"; print}'" "$(command -v ls)" > "$W/rootshim/ls"
+    chmod 755 "$W/rootshim/id" "$W/rootshim/ls"
+    run_env PATH="$W/rootshim:$PATH" -- --backup "$W/root.tar.gz" --prefix "$W/alice/opt"
+    if [ "$RC" != 0 ]; then show; fi
+    check "as root: backed up" [ "$RC" = 0 ]
+    check "... the other user's erssi was not run" [ ! -e "$W/ran" ]
+    gzip -dc "$W/root.tar.gz" | "$REAL_TAR" -xOf - --wildcards '*/MANIFEST' > "$W/manifest" 2>/dev/null
+    check "... the MANIFEST says the version is unknown" grep -qx 'version unknown' "$W/manifest"
+    run_env PATH="$W/rootshim:$PATH" -- --restore "$W/root.tar.gz" --home "$W/new/.erssi" --prefix "$W/alice/opt"
+    if [ "$RC" != 0 ]; then show; fi
+    check "as root: restored" [ "$RC" = 0 ]
+    check "... the other user's erssi was not run" [ ! -e "$W/ran" ]
+    ;;
+
 *) echo "unknown case $CASE"; exit 1 ;;
 esac
 [ "$FAILED" = 0 ]

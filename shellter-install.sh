@@ -3015,7 +3015,11 @@ fi
 # the version of the installed erssi, for the MANIFEST and to compare
 case "$ACTION" in
     backup|restore)
-        if [ -z "$BK_ERSSI_V" ] && [ -x "$PREFIX/bin/erssi" ]; then
+        # never as root: the prefix may be another user's (backup and
+        # restore are not refused for that, above), and root would run
+        # what they put there; the version is then unknown, or the one
+        # --erssi-version names (erssi --backup gives it)
+        if [ -z "$BK_ERSSI_V" ] && [ "$ROOT" = 0 ] && [ -x "$PREFIX/bin/erssi" ]; then
             BK_ERSSI_V=$("$PREFIX/bin/erssi" --version 2>/dev/null | awk '{print $2}') || BK_ERSSI_V=""
         fi
         if [ "$ACTION" = backup ]; then do_backup; else do_restore; fi ;;
