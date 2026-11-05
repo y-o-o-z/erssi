@@ -2075,7 +2075,7 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 			else if (e2e_drop_queued_privmsgs() > 0)
 				e2e_print_item(item, "lines still waiting to be sent (messages typed while the keyring was lost, parts of encrypted messages) were dropped");
 		} else {
-			saved = e2e_save(kr);
+			saved = e2e_save_replacing(kr);
 		}
 	} else {
 		saved = FALSE;

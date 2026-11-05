@@ -689,6 +689,12 @@ E2E_JSON *e2e_load(void)
 	return e2e_load_full(NULL);
 }
 
+gboolean e2e_save_replacing(const E2E_JSON *kr)
+{
+	load_base_state = BASE_UNKNOWN;
+	return e2e_save(kr);
+}
+
 void e2e_keyring_written_here(void)
 {
 	e2e_keyring_cache_clear(&keyring_cache);

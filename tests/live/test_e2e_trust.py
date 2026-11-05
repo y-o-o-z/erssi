@@ -530,6 +530,14 @@ def main():
         ring.write_text(good)
         os.chmod(ring, 0o600)
         assert "damaged" in log_since(a, off) and not dest.exists(), log_since(a, off)
+        # the file written behind erssi's back (as another erssi would),
+        # then an import: it replaces the file, whatever it holds now
+        ring.write_text(good)
+        os.chmod(ring, 0o600)
+        off = log_size(a)
+        a.type_and_wait(f"/e2e import {exp}")
+        assert wait_log(a, off, "imported keyring"), log_since(a, off)
+        assert "changed by another erssi" not in log_since(a, off), log_since(a, off)
 
     def t_special_files():
         """/e2e import of a FIFO, a device, a directory or a symlink

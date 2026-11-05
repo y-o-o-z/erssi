@@ -582,7 +582,9 @@ static void prune_pending_inbound(E2E_JSON *kr, const E2E_NET *net)
 			break;
 		e2e_json_remove(pending, k);
 		row = e2e_json_get(e2e_json_get(kr, "incoming"), k);
-		if (row != NULL && !e2e_session_has_key(row))
+		/* a keyless row the request left goes with it - not one that
+		   stands for the user's decline (is_revoked) */
+		if (row != NULL && !e2e_session_has_key(row) && !is_revoked(row))
 			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
 		g_free(k);
 	}
@@ -2558,6 +2560,25 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 		    !e2e_session_has_key(e2e_json_get(e2e_json_get(kr, "incoming"), k)))
 			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
 		g_free(k);
+		/* the user's word undoes their decline: a session of theirs
+		   here is trusted again, a keyless row that stood for the
+		   decline goes (the answer to the reciprocal request is then
+		   taken) */
+		for (i = 0; i < 2; i++) {
+			E2E_JSON *row;
+
+			if (ctxs[i] == NULL || (i == 1 && strcmp(ctxs[1], ctx) == 0))
+				continue;
+			k = pipe_key(handle, ctxs[i]);
+			row = e2e_json_get(e2e_json_get(kr, "incoming"), k);
+			if (is_revoked(row)) {
+				if (e2e_session_has_key(row))
+					e2e_json_set_string(row, "status", "trusted");
+				else
+					e2e_json_remove(e2e_json_get(kr, "incoming"), k);
+			}
+			g_free(k);
+		}
 		fp_hex = e2e_fingerprint_hex(pub);
 		mark_accepted(kr, handle, ctx, fp_hex, "accept");
 		confirm_peer(kr, fp_hex);
@@ -2685,7 +2706,7 @@ guint e2e_prune_old_requests(E2E_JSON *kr)
 		if (is_fresh(e2e_json_get_int(row, "received_at", 0), E2E_PENDING_INBOUND_TTL))
 			continue;
 		sess = e2e_json_get(e2e_json_get(kr, "incoming"), k);
-		if (sess != NULL && !e2e_session_has_key(sess))
+		if (sess != NULL && !e2e_session_has_key(sess) && !is_revoked(sess))
 			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
 		e2e_json_remove(pending, k);
 		n++;

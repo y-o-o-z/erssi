@@ -1349,7 +1349,7 @@ static void test_decline_survives_peer(void)
 static void test_decline_before_session(void)
 {
 	PEER a, m;
-	char *wire, *mine, *rsp = NULL, *recip = NULL, *error = NULL;
+	char *wire, *mine, *req, *rsp = NULL, *recip = NULL, *error = NULL;
 	E2E_JSON *row;
 	E2E_IN_RESULT r;
 
@@ -1378,6 +1378,45 @@ static void test_decline_before_session(void)
 	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
 	g_assert_false(e2e_session_has_key(row));
+	/* a new request of his waits; a day later the old requests are
+	   cleaned up - the row that stands for the decline stays */
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#d|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#d", ALICE, &error);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", MAL "|#d", NULL));
+	fake_now += 25 * 3600;
+	g_assert_cmpuint(e2e_prune_old_requests(a.kr), ==, 1);
+	fake_now -= 25 * 3600;
+	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_free(req);
+	/* /e2e accept of his next request: the decline is undone - the
+	   answer to the reciprocal request is taken, he is read again */
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#d|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#d", ALICE, &error);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_cmpint(e2e_accept(a.kr, &a.id, MAL, "#d", NULL, ALICE, &rsp, &recip), ==,
+	                E2E_ACCEPT_SENT);
+	g_assert_nonnull(recip);
+	g_free(rsp);
+	rsp = NULL;
+	{
+		char *recip2 = NULL;
+
+		deliver_keyreq(&m, &a, recip, MAL, &rsp, &recip2);
+		g_free(recip2);
+	}
+	g_assert_nonnull(rsp);
+	g_assert_true(deliver_keyrsp(&a, &m, rsp));
+	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "trusted");
+	g_assert_true(e2e_session_has_key(row));
+	g_free(req);
+
 	/* without the key of a request (none known), nothing stands in */
 	e2e_decline_session(a.kr, MAL, "#none", NULL);
 	g_assert_null(path_get(a.kr, "incoming", MAL "|#none", NULL));
