@@ -334,7 +334,10 @@ def main():
         off_c = log_size(c)
         d.type_and_wait("/msg carol readable now")
         assert wait_log(c, off_c, "readable now"), log_since(c, off_c)
-        c.type_and_wait("/window goto dave", "/e2e decline dave")
+        # from a window with no channel or query, as the status window
+        # (the server, not an item, says where the query's rows are)
+        c.type_and_wait("/window new hide", "/window server E2E", "/e2e decline dave@127.0.0.1")
+        c.type_and_wait("/window close")
         assert wait_log(c, off_c, "declined dave"), log_since(c, off_c)
         off_c = log_size(c)
         d.type_and_wait("/msg carol after the decline")

@@ -1230,10 +1230,22 @@ static void test_no_key_no_trust(void)
 	                E2E_ACCEPT_NO_KEY);
 	g_assert_null(rsp);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), !=, "trusted");
-	/* /e2e unrevoke: the same */
+	/* /e2e unrevoke: no key is made trusted - the keyless row goes,
+	   so that his next message asks for a real one */
 	e2e_json_set_string(row, "status", "revoked");
-	g_assert_cmpint(e2e_unrevoke(a.kr, MAL, "#c", NULL), ==, 0);
-	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_assert_cmpint(e2e_unrevoke(a.kr, MAL, "#c", NULL), ==, 1);
+	g_assert_null(path_get(a.kr, "incoming", MAL "|#c", NULL));
+	enable(&a, "#c", "normal");
+	g_free(req);
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#c|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	g_assert_nonnull(req);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
+	g_assert_nonnull(row);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "pending");
+	/* that request is declined again: on with the rest as before */
+	e2e_json_remove(e2e_json_get(a.kr, "pending_inbound"), MAL "|#c");
 
 	/* even marked trusted, an all-zero key decrypts nothing (anyone
 	   could encrypt under it), and the peer is asked for a real one */
@@ -1424,6 +1436,69 @@ static void test_decline_before_session(void)
 	g_free(recip);
 	g_free(wire);
 	g_free(mine);
+	peer_free(&a);
+	peer_free(&m);
+}
+
+/* the row that stands for a decline is kept when a flood of strangers'
+   requests makes room among the peers nobody accepted; a declined
+   peer's request in a quiet channel is dropped, as any stranger's */
+static void test_decline_survives_flood(void)
+{
+	PEER a, m;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+	E2E_JSON *row;
+	int i;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&m, "mallory", MAL, -1);
+	enable(&a, "#c", "normal");
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_free(req);
+	/* what /e2e decline leaves */
+	e2e_json_remove(e2e_json_get(a.kr, "pending_inbound"), MAL "|#c");
+	e2e_decline_session(a.kr, MAL, "#c", m.id.fp_hex);
+	e2e_stop_giving_key(a.kr, MAL, "#c");
+	for (i = 0; i < E2E_MAX_UNACCEPTED_PEERS + 40; i++) {
+		E2E_JSON *kr = e2e_keyring_new();
+		E2E_IDENTITY id;
+		gboolean created;
+		char *handle, *body;
+
+		g_assert_true(e2e_identity_get(kr, &id, TRUE, &created, &error));
+		handle = g_strdup_printf("u%d@h%d", i, i);
+		req = e2e_build_keyreq(kr, &id, "#c", ALICE, &error);
+		body = unframe(req);
+		fake_now++;
+		free_budgets(a.stamps);
+		e2e_handle_keyreq(a.kr, &a.id, a.stamps, NULL, handle, "u", body, ALICE, &rsp, &recip);
+		g_free(body);
+		g_free(req);
+		g_free(handle);
+		e2e_identity_wipe(&id);
+		e2e_json_free(kr);
+	}
+	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	/* auto-accept now: still no key for him */
+	enable(&a, "#c", "auto-accept");
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#c|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	free_budgets(a.stamps);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_free(req);
+	/* quiet: dropped, nothing stored */
+	enable(&a, "#c", "quiet");
+	e2e_json_remove(e2e_json_get(a.kr, "pending_inbound"), MAL "|#c");
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#c|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	free_budgets(a.stamps);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_null(path_get(a.kr, "pending_inbound", MAL "|#c", NULL));
+	g_free(req);
 	peer_free(&a);
 	peer_free(&m);
 }
@@ -8124,6 +8199,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
 	add_func("/e2e/proto/decline-survives-peer", test_decline_survives_peer);
 	add_func("/e2e/proto/decline-before-session", test_decline_before_session);
+	add_func("/e2e/proto/decline-survives-flood", test_decline_survives_flood);
 	add_func("/e2e/proto/control-characters", test_control_characters);
 	add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
 	add_func("/e2e/proto/rekey-replay", test_rekey_replay);

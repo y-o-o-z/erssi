@@ -680,6 +680,18 @@ static void prune_unaccepted_peers(E2E_JSON *kr, const char *keep)
 			g_hash_table_add(kept, (char *) fp);
 	}
 	g_ptr_array_unref(keys);
+	/* and those the user declined or revoked somewhere: the row that
+	   says so goes with the peer, and a flood of strangers must not
+	   undo the user's decision */
+	keys = e2e_json_keys(e2e_json_get(kr, "incoming"));
+	for (i = 0; i < keys->len; i++) {
+		const E2E_JSON *row = e2e_json_get(e2e_json_get(kr, "incoming"), g_ptr_array_index(keys, i));
+		const char *fp = e2e_json_get_string(row, "fp");
+
+		if (fp != NULL && is_revoked(row))
+			g_hash_table_add(kept, (char *) fp);
+	}
+	g_ptr_array_unref(keys);
 
 	candidates = e2e_json_new(E2E_JSON_OBJECT);
 	keys = e2e_json_keys(peers);
@@ -1948,6 +1960,17 @@ static gboolean accepted_or_twin(const E2E_JSON *kr, const E2E_NET *net, const c
 	return ok;
 }
 
+/* accepted_or_twin(), unless the user declined or revoked them here
+   (sess): then an older bare acceptance of a legacy row is no acceptance,
+   only one given here since */
+static gboolean accepted_here(const E2E_JSON *kr, const E2E_NET *net, const char *handle,
+                              const char *ctx, const char *fp_hex, const E2E_JSON *sess)
+{
+	if (is_revoked(sess))
+		return e2e_peer_accepted(kr, handle, ctx, fp_hex);
+	return accepted_or_twin(kr, net, handle, ctx, fp_hex);
+}
+
 /* "@<handle>" on net: the config of a DM with handle, where it is (an old
    one is not taken over); NULL: E2E cannot be on there - an old row on
    several networks */
@@ -2194,21 +2217,23 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		mode = "auto-accept";
 	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
 	trusted = is_trusted(sess);
-	/* declined or revoked by the user, not accepted since: no mode and
-	   no autotrust rule answers them - only /e2e accept does */
-	if (is_revoked(sess) && !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
+	/* declined or revoked by the user, not accepted since: neither
+	   auto-accept mode nor an autotrust rule answers them - only /e2e
+	   accept does (quiet stays quiet) */
+	if (is_revoked(sess) && strcmp(mode, "auto-accept") == 0 &&
+	    !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess))
 		mode = "normal";
 	/* quiet: a stranger's request is dropped silently - before anything
 	   of theirs is stored (a peer slot, a keyring write) */
 	if (strcmp(mode, "quiet") == 0 && !trusted &&
-	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
+	    !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess))
 		goto out;
 	/* what costs a write or a KEYRSP now: people the user did not
 	   confirm share a budget (a flood of clones is no flood of writes
 	   and NOTICEs, and never stops the others), and a KEYRSP needs room
 	   under the ceiling of everyone's */
 	confirmed = change == CHANGE_KNOWN && user_confirmed(kr, sender_handle, fp_hex);
-	answer = strcmp(mode, "auto-accept") == 0 || accepted_or_twin(kr, net, sender_handle, ctx, fp_hex);
+	answer = strcmp(mode, "auto-accept") == 0 || accepted_here(kr, net, sender_handle, ctx, fp_hex, sess);
 	if ((!confirmed && !inbound_budget(outgoing_stamps, TRUE)) ||
 	    (answer && !ceiling(outgoing_stamps, TRUE)))
 		goto out;
@@ -2223,7 +2248,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   KEYREQ to anyone who sends a wire (rpe2e.pl and repartee answer
 	   then, see the header). */
 	if (strcmp(mode, "auto-accept") != 0 &&
-	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex)) {
+	    !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess)) {
 		/* waits for /e2e accept; a session with their key is kept,
 		   and so is a revoked one: a pending placeholder there would
 		   let the next wire ask them for their key, and their answer
@@ -2248,7 +2273,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		goto out;
 	}
 	*rsp = e2e_build_keyrsp_for_req(kr, id, ctx, sender_handle, req->pub, req->eph);
-	if (*rsp != NULL && !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
+	if (*rsp != NULL && !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess))
 		mark_accepted(kr, sender_handle, ctx, fp_hex,
 		              autotrust ? "autotrust" : "auto-accept");
 	*reciprocal = maybe_build_reciprocal_keyreq(kr, id, outgoing_stamps, net, ctx,
@@ -2636,6 +2661,13 @@ int e2e_unrevoke(E2E_JSON *kr, const char *handle, const char *ctx, const char *
 		g_free(k);
 		if (e2e_session_has_key(row)) {
 			e2e_json_set_string(row, "status", "trusted");
+			n++;
+		} else if (is_revoked(row)) {
+			/* a keyless row that stood for a decline: gone, the next
+			   message of theirs asks for their key again */
+			k = pipe_key(handle, ctxs[i]);
+			e2e_json_remove(e2e_json_get(kr, "incoming"), k);
+			g_free(k);
 			n++;
 		}
 	}

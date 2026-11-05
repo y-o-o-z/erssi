@@ -1334,8 +1334,8 @@ static void cancel_requests(E2E_JSON *kr, const char *handle, const char *ctx, c
 /* /e2e decline of handle in ctx, picked already: its request goes, its
    session is revoked, its acceptance forgotten and it is no recipient of
    our key any more; saved, told */
-static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *handle,
-                           const char *nick)
+static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, const char *ctx,
+                           const char *handle, const char *nick)
 {
 	gboolean had;
 	char *k, *own, *fp = NULL;
@@ -1357,7 +1357,9 @@ static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, con
 	   row of "@<peer>" holds no key: both are revoked, as /e2e revoke
 	   does; and a request of ours still out is cancelled, its answer
 	   would be no decision of the user's */
-	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, item != NULL ? item->server : NULL, ctx) : NULL;
+	/* the server the decline is for: also from the status window,
+	   which has no item */
+	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, server != NULL ? server : item != NULL ? item->server : NULL, ctx) : NULL;
 	e2e_decline_session(kr, handle, ctx, fp);
 	if (own != NULL && strcmp(own, ctx) != 0)
 		e2e_decline_session(kr, handle, own, fp);
@@ -1417,7 +1419,7 @@ void e2e_do_decline(SERVER_REC *server, WI_ITEM_REC *item, const char *who)
 	}
 	handle = pick_handle(kr, server, item, ctx, who, "decline", &nick);
 	if (handle != NULL)
-		decline_handle(kr, item, ctx, handle, nick);
+		decline_handle(kr, server, item, ctx, handle, nick);
 out:
 	g_free(nick);
 	g_free(handle);
@@ -1541,7 +1543,7 @@ void e2e_web_action(SERVER_REC *server, const char *target, gboolean accept, con
 	if (accept)
 		reason = accept_handle(kr, server, item, ctx, picked, nick);
 	else
-		decline_handle(kr, item, ctx, picked, nick);
+		decline_handle(kr, server, item, ctx, picked, nick);
 	g_free(nick);
 	g_free(picked);
 out:
