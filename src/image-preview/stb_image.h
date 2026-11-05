@@ -4185,6 +4185,7 @@ typedef struct
    char *zout_start;
    char *zout_end;
    int   z_expandable;
+   unsigned int zout_max; // erssi: the output never grows past this
 
    stbi__zhuffman z_length, z_distance;
 } stbi__zbuf;
@@ -4279,10 +4280,14 @@ static int stbi__zexpand(stbi__zbuf *z, char *zout, int n)  // need to make room
    cur   = (unsigned int) (z->zout - z->zout_start);
    limit = old_limit = (unsigned) (z->zout_end - z->zout_start);
    if (UINT_MAX - cur < (unsigned) n) return stbi__err("outofmem", "Out of memory");
+   // erssi: a few hundred KB of deflate data can expand to gigabytes;
+   // a PNG's data is no larger than its header says (zout_max)
+   if (cur + n > z->zout_max) return stbi__err("too large", "Corrupt PNG");
    while (cur + n > limit) {
       if(limit > UINT_MAX / 2) return stbi__err("outofmem", "Out of memory");
       limit *= 2;
    }
+   if (limit > z->zout_max) limit = z->zout_max;
    q = (char *) STBI_REALLOC_SIZED(z->zout_start, old_limit, limit);
    STBI_NOTUSED(old_limit);
    if (q == NULL) return stbi__err("outofmem", "Out of memory");
@@ -4513,6 +4518,7 @@ static int stbi__do_zlib(stbi__zbuf *a, char *obuf, int olen, int exp, int parse
    a->zout       = obuf;
    a->zout_end   = obuf + olen;
    a->z_expandable = exp;
+   a->zout_max   = UINT_MAX;
 
    return stbi__parse_zlib(a, parse_header);
 }
@@ -4546,6 +4552,28 @@ STBIDEF char *stbi_zlib_decode_malloc_guesssize_headerflag(const char *buffer, i
    a.zbuffer = (stbi_uc *) buffer;
    a.zbuffer_end = (stbi_uc *) buffer + len;
    if (stbi__do_zlib(&a, p, initial_size, 1, parse_header)) {
+      if (outlen) *outlen = (int) (a.zout - a.zout_start);
+      return a.zout_start;
+   } else {
+      STBI_FREE(a.zout_start);
+      return NULL;
+   }
+}
+
+// erssi: the PNG's data inflated into at most max bytes
+static char *stbi__zlib_decode_png(const char *buffer, int len, int initial_size, unsigned int max, int *outlen, int parse_header)
+{
+   stbi__zbuf a;
+   char *p = (char *) stbi__malloc(initial_size);
+   if (p == NULL) return NULL;
+   a.zbuffer = (stbi_uc *) buffer;
+   a.zbuffer_end = (stbi_uc *) buffer + len;
+   a.zout_start = p;
+   a.zout       = p;
+   a.zout_end   = p + initial_size;
+   a.z_expandable = 1;
+   a.zout_max   = max;
+   if (stbi__parse_zlib(&a, parse_header)) {
       if (outlen) *outlen = (int) (a.zout - a.zout_start);
       return a.zout_start;
    } else {
@@ -5204,7 +5232,11 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             // initial guess for decoded data size to avoid unnecessary reallocs
             bpl = (s->img_x * z->depth + 7) / 8; // bytes per line, per component
             raw_len = bpl * s->img_y * s->img_n /* pixels */ + s->img_y /* filter mode per row */;
-            z->expanded = (stbi_uc *) stbi_zlib_decode_malloc_guesssize_headerflag((char *) z->idata, ioff, raw_len, (int *) &raw_len, !is_iphone);
+            // erssi: no more than the image needs - an interlaced one has
+            // up to 7 passes, each with a filter byte per row and a
+            // partial byte per row and component
+            z->expanded = (stbi_uc *) stbi__zlib_decode_png((char *) z->idata, ioff, raw_len,
+                  raw_len + 7u * (s->img_y + 8) * (1 + s->img_n * 2), (int *) &raw_len, !is_iphone);
             if (z->expanded == NULL) return 0; // zlib should set error
             STBI_FREE(z->idata); z->idata = NULL;
             if ((req_comp == s->img_n+1 && req_comp != 3 && !pal_img_n) || has_trans)

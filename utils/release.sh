@@ -472,10 +472,31 @@ mm_tmpdir() {
     [ -n "$MM_TMPDIR" ] || MM_TMPDIR=/var/tmp/$(id -un)-mm
     safe_word "$MM_TMPDIR" || die "$MM_TMPDIR: a path for build and verify may hold letters, digits and ._+/- only"
     [ "$DRY" = 1 ] && return 0
-    [ -d "$MM_TMPDIR" ] || [ -L "$MM_TMPDIR" ] || mkdir -m 755 "$MM_TMPDIR" || die "cannot make $MM_TMPDIR"
+    # "dir/" names what a link "dir" points to: the checks are of the
+    # name itself
+    while :; do case $MM_TMPDIR in ?*/) MM_TMPDIR=${MM_TMPDIR%/} ;; *) break ;; esac; done
+    case $MM_TMPDIR in /*) ;; *) die "$MM_TMPDIR: give --mm-tmpdir as an absolute path" ;; esac
+    [ "$MM_TMPDIR" != / ] || die "--mm-tmpdir / is the whole system"
     # the bundle the chroots build from goes there: a directory someone
     # else could rename or fill (the default is in /var/tmp, where anyone
-    # may make it first) would let them swap the tag that is built
+    # may make it first) would let them swap the tag that is built. So
+    # could whoever may rename a directory above it: each one is the
+    # releaser's or root's, no link, and open to others only with the
+    # sticky bit (as /var/tmp)
+    up=$(dirname -- "$MM_TMPDIR")
+    while :; do
+        [ ! -L "$up" ] || die "$up (above $MM_TMPDIR) is a symbolic link - give a path without links with --mm-tmpdir"
+        # shellcheck disable=SC2012,SC2046 # as below
+        set -- $(ls -ldn "$up" 2>/dev/null)
+        case ${3:-} in 0|"$(id -u)") ;; *) die "$up (above $MM_TMPDIR) belongs to another user - give a --mm-tmpdir under directories of yours or root's" ;; esac
+        case ${1:-} in
+            ?????w???[tT]*|????????w[tT]*) ;;
+            ?????w????*|????????w?*) die "$up (above $MM_TMPDIR) is writable by other users - give a --mm-tmpdir under directories only you or root can change" ;;
+        esac
+        [ "$up" = / ] && break
+        up=$(dirname -- "$up")
+    done
+    [ -d "$MM_TMPDIR" ] || [ -L "$MM_TMPDIR" ] || mkdir -m 755 "$MM_TMPDIR" || die "cannot make $MM_TMPDIR"
     [ ! -L "$MM_TMPDIR" ] || die "$MM_TMPDIR is a symbolic link - give a directory of yours with --mm-tmpdir"
     [ -d "$MM_TMPDIR" ] || die "$MM_TMPDIR is not a directory"
     # shellcheck disable=SC2012,SC2046 # owner and mode of one directory, as words: ls -ldn is POSIX, find -printf is not

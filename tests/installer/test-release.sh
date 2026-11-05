@@ -468,6 +468,23 @@ mm-tmpdir)
     run build --repo "$R" "$TAG" --out "$tmp/out-link" --platforms debian12-amd64
     expect "an mmdebstrap TMPDIR that is a link: refused" 1 "$tmp/mm is a symbolic link"
     check "... nothing put into it" sh -c '[ -z "$(ls -A "$1")" ]' sh "$tmp/mm-real"
+    # the same link named with a slash at the end (what it points to)
+    run build --repo "$R" "$TAG" --out "$tmp/out-slash" --platforms debian12-amd64 --mm-tmpdir "$tmp/mm/"
+    expect "... named with a / at the end: refused too" 1 "$tmp/mm is a symbolic link"
+    # a link above it
+    rm -f "$tmp/mm"; mkdir -m 755 "$tmp/mm-real/inner"; ln -s mm-real "$tmp/mm-up"
+    run build --repo "$R" "$TAG" --out "$tmp/out-up" --platforms debian12-amd64 --mm-tmpdir "$tmp/mm-up/inner"
+    expect "a link above it: refused" 1 "$tmp/mm-up (above $tmp/mm-up/inner) is a symbolic link"
+    # a directory above it that others may write to (no sticky bit)
+    mkdir -m 777 "$tmp/open"; mkdir -m 755 "$tmp/open/mm"; chmod 777 "$tmp/open"
+    run build --repo "$R" "$TAG" --out "$tmp/out-open" --platforms debian12-amd64 --mm-tmpdir "$tmp/open/mm"
+    expect "an open directory above it: refused" 1 "$tmp/open (above $tmp/open/mm) is writable by other users"
+    # with the sticky bit (as /var/tmp): taken
+    chmod 1777 "$tmp/open"
+    run build --repo "$R" "$TAG" --out "$tmp/out-sticky" --platforms debian12-amd64 --mm-tmpdir "$tmp/open/mm"
+    check "... with the sticky bit: taken" sh -c '! grep -q "writable by other users" "$1" && grep -q "fake mmdebstrap must not run" "$1"' sh "$tmp/out"
+    run build --repo "$R" "$TAG" --out "$tmp/out-rel" --platforms debian12-amd64 --mm-tmpdir mm-rel
+    expect "a relative --mm-tmpdir: refused" 1 "give --mm-tmpdir as an absolute path"
     # its own, 0755: taken (mmdebstrap, the stand-in, runs and fails)
     rm -f "$tmp/mm"; mkdir -m 755 "$tmp/mm"
     run build --repo "$R" "$TAG" --out "$tmp/out-ok" --platforms debian12-amd64

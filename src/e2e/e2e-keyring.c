@@ -534,8 +534,11 @@ gboolean e2e_write_file_atomic(const char *path, const char *data, size_t len,
 	return e2e_write_file_atomic_stat(path, data, len, what, NULL, error);
 }
 
-static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
-                              struct stat *written, char **error)
+static int keyring_lock(const char *path, int how, char **error);
+static void keyring_unlock(int fd);
+
+static gboolean keyring_write_unlocked(const char *path, const E2E_JSON *kr, gboolean fresh,
+                                       struct stat *written, char **error)
 {
 	struct stat st;
 	E2E_LOAD_STATUS status;
@@ -642,7 +645,23 @@ gboolean e2e_keyring_save_based(const char *path, const E2E_JSON *kr, const stru
 		                         path);
 		return FALSE;
 	}
-	ok = keyring_write(path, kr, FALSE, written, error);
+	ok = keyring_write_unlocked(path, kr, FALSE, written, error);
+	keyring_unlock(fd);
+	return ok;
+}
+
+/* every write of the keyring under the exclusive lock: a reader under
+   the shared one (e2e_keyring_read_lock()) never pairs old contents with
+   the stamp of a newer file */
+static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fresh,
+                              struct stat *written, char **error)
+{
+	int fd = keyring_lock(path, LOCK_EX, error);
+	gboolean ok;
+
+	if (fd == -2)
+		return FALSE;
+	ok = keyring_write_unlocked(path, kr, fresh, written, error);
 	keyring_unlock(fd);
 	return ok;
 }

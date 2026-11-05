@@ -126,6 +126,30 @@ enum { BASE_UNKNOWN, BASE_NONE, BASE_FILE };
 static int load_base_state = BASE_UNKNOWN;
 static struct stat load_base;
 
+/* what the load just done (status) read: the file now, under the read
+   lock the load ran under, so no write came between */
+static void note_load_base(E2E_LOAD_STATUS status)
+{
+	if (status != E2E_LOAD_OK)
+		load_base_state = BASE_UNKNOWN;
+	else if (lstat(keyring_file, &load_base) == 0)
+		load_base_state = BASE_FILE;
+	else
+		load_base_state = errno == ENOENT ? BASE_NONE : BASE_UNKNOWN;
+}
+
+/* e2e_keyring_load_checked() of the keyring file, its base noted for the
+   next e2e_save() */
+static E2E_JSON *load_checked_base(E2E_LOAD_STATUS *status, char **error)
+{
+	int lock = e2e_keyring_read_lock(keyring_file);
+	E2E_JSON *kr = e2e_keyring_load_checked(keyring_file, status, error);
+
+	note_load_base(*status);
+	e2e_keyring_read_unlock(lock);
+	return kr;
+}
+
 static gboolean script_seen;
 static guint script_check_id;
 /* rpe2e.pl loaded on a keyring with rows of the network scope: told once
@@ -419,7 +443,7 @@ static void warn_scoped_for_script(void)
 		return;
 	scoped_stat = st;
 	scoped_stat_valid = TRUE;
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	if (status == E2E_LOAD_OK && e2e_keyring_has_scoped(kr)) {
 		scoped_warned = TRUE;
 		printformat(NULL, NULL, MSGLEVEL_CLIENTERROR | MSGLEVEL_HILIGHT, TXT_E2E_MESSAGE,
@@ -629,12 +653,7 @@ E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
 	lock = e2e_keyring_read_lock(keyring_file);
 	kr = e2e_keyring_cache_load(&keyring_cache, keyring_file, &status, &notice);
 	/* what was read, for e2e_save(): under the lock, no write between */
-	if (status != E2E_LOAD_OK)
-		load_base_state = BASE_UNKNOWN;
-	else if (lstat(keyring_file, &load_base) == 0)
-		load_base_state = BASE_FILE;
-	else
-		load_base_state = errno == ENOENT ? BASE_NONE : BASE_UNKNOWN;
+	note_load_base(status);
 	e2e_keyring_read_unlock(lock);
 	/* the keys REKEYs replaced, once their grace is over, leave the
 	   file too */
@@ -894,7 +913,7 @@ gboolean e2e_window_info_for(SERVER_REC *server, WI_ITEM_REC *item, E2E_WIN_INFO
 	if (!info_item(item) || keyring_file == NULL)
 		return FALSE;
 	/* rpe2e.pl's _load_keyring_checked: a damaged file is left alone */
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	ret = e2e_window_info_with(kr, status == E2E_LOAD_OK, item, out);
 	e2e_json_free(kr);
@@ -1365,7 +1384,7 @@ static gboolean gate_multiline(SERVER_REC *server, GString *str, gsize len)
 	if (memchr(str->str, '\r', len) == NULL && memchr(str->str, '\n', len) == NULL &&
 	    memchr(str->str, '\0', len) == NULL)
 		return FALSE;
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	e2e_server_net(server, &net);
 	msg = e2e_gate_multiline(kr, status == E2E_LOAD_OK, &net, str->str, len, resolve_cb, server);
@@ -1778,7 +1797,7 @@ static void native_gate(SERVER_REC *server, GString *str)
 	   left alone, and the gate refuses. Changed by another process since
 	   the module's last look: the statusbar looks again. */
 	note_keyring_stat(FALSE);
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	error = NULL;
 	/* only for a REKEY: never created here */
@@ -1915,7 +1934,7 @@ static void sig_server_outgoing_script(SERVER_REC *server, GString *str, int crl
 		return;
 	}
 	/* an unreadable keyring may hold such an entry: fail closed */
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	e2e_server_net(server, &net);
 	action = e2e_script_guard(kr, status == E2E_LOAD_OK, status == E2E_LOAD_LOST,
@@ -1986,7 +2005,7 @@ static gboolean gate_lets_pass(SERVER_REC *server, const char *cmd)
 
 	while (len > 0 && (cmd[len - 1] == '\n' || cmd[len - 1] == '\r'))
 		len--;
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	e2e_server_net(server, &net);
 	if (memchr(cmd, '\r', len) != NULL || memchr(cmd, '\n', len) != NULL) {
@@ -2156,7 +2175,7 @@ static void plain_configs_load(void)
 	}
 	g_hash_table_remove_all(plain_enabled);
 	g_hash_table_remove_all(plain_configured);
-	kr = e2e_keyring_load_checked(keyring_file, &status, &error);
+	kr = load_checked_base(&status, &error);
 	g_free(error);
 	plain_ok = status == E2E_LOAD_OK;
 	keys = e2e_json_keys(e2e_json_get(kr, "channels"));

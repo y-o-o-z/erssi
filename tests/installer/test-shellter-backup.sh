@@ -910,10 +910,13 @@ root-foreign-erssi)
     mkdir -p "$W/alice/opt/bin"
     printf '#!/bin/sh\n: > "%s/ran"\necho "erssi 2026.11.9 (x)"\n' "$W" > "$W/alice/opt/bin/erssi"
     chmod 755 "$W/alice/opt/bin/erssi"
-    run --backup "$W/user.tar.gz" --prefix "$W/alice/opt"
-    check "as the user: backed up" [ "$RC" = 0 ]
-    check "... its erssi asked for the version" [ -e "$W/ran" ]
-    rm -f "$W/ran"
+    # (run by root for real, there is no user's run to compare with)
+    if [ "$(id -u)" != 0 ]; then
+        run --backup "$W/user.tar.gz" --prefix "$W/alice/opt"
+        check "as the user: backed up" [ "$RC" = 0 ]
+        check "... its erssi asked for the version" [ -e "$W/ran" ]
+        rm -f "$W/ran"
+    fi
     mkdir -p "$W/rootshim"
     # shellcheck disable=SC2016 # stand-in scripts
     printf '#!/bin/sh\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec %s "$@"\n' "$(command -v id)" > "$W/rootshim/id"

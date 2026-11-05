@@ -1661,6 +1661,19 @@ static void set_session(E2E_JSON *kr, const char *handle, const char *ctx,
 	g_free(k);
 }
 
+void e2e_decline_session(E2E_JSON *kr, const char *handle, const char *ctx, const char *fp_hex)
+{
+	static const unsigned char zero[32] = { 0 };
+	char *k = pipe_key(handle, ctx);
+	E2E_JSON *row = e2e_json_get(e2e_json_get(kr, "incoming"), k);
+
+	g_free(k);
+	if (row != NULL)
+		e2e_json_set_string(row, "status", "revoked");
+	else if (fp_hex != NULL)
+		set_session(kr, handle, ctx, fp_hex, zero, "revoked");
+}
+
 /* A REKEY replaces the trusted session of handle and ctx: the key it
    replaces is kept with the new row for E2E_PREV_KEY_GRACE seconds
    ("prev_sk", "prev_until"), so the chunks the peer sent under it just
@@ -2179,6 +2192,10 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 		mode = "auto-accept";
 	sess = row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL);
 	trusted = is_trusted(sess);
+	/* declined or revoked by the user, not accepted since: no mode and
+	   no autotrust rule answers them - only /e2e accept does */
+	if (is_revoked(sess) && !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex))
+		mode = "normal";
 	/* quiet: a stranger's request is dropped silently - before anything
 	   of theirs is stored (a peer slot, a keyring write) */
 	if (strcmp(mode, "quiet") == 0 && !trusted &&

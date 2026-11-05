@@ -1316,6 +1316,21 @@ static void test_decline_survives_peer(void)
 	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
 
+	/* auto-accept mode, or an autotrust rule, answers no declined
+	   peer: still no key for him */
+	enable(&a, "#c", "auto-accept");
+	g_free(req);
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#c|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	g_assert_nonnull(req);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_false(e2e_peer_accepted(a.kr, MAL, "#c", m.id.fp_hex));
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+
 	/* /e2e unrevoke: the user's word brings him back */
 	g_assert_cmpint(e2e_unrevoke(a.kr, MAL, "#c", NULL), ==, 1);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "trusted");
@@ -1323,6 +1338,52 @@ static void test_decline_survives_peer(void)
 	g_free(recip);
 	g_free(wire);
 	g_free(req);
+	g_free(mine);
+	peer_free(&a);
+	peer_free(&m);
+}
+
+/* declined before any session of theirs was there: a revoked row
+   stands in, so their next message asks nothing, and the answer to a
+   request of ours out already installs nothing */
+static void test_decline_before_session(void)
+{
+	PEER a, m;
+	char *wire, *mine, *rsp = NULL, *recip = NULL, *error = NULL;
+	E2E_JSON *row;
+	E2E_IN_RESULT r;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&m, "mallory", MAL, -1);
+	enable(&a, "#d", "normal");
+	enable(&m, "#d", "auto-accept");
+	mine = e2e_build_keyreq(a.kr, &a.id, "#d", MAL, &error);
+	g_assert_nonnull(mine);
+	g_assert_null(path_get(a.kr, "incoming", MAL "|#d", NULL));
+	e2e_decline_session(a.kr, MAL, "#d", m.id.fp_hex);
+	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_assert_false(e2e_session_has_key(row));
+	/* his message: not read, nothing asked */
+	wire = gate_wire(&m, "#d", "hello there");
+	g_hash_table_remove_all(a.stamps);
+	recv_wire(&a, &m, "#d", wire, &r);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REVOKED);
+	g_assert_null(r.keyreq);
+	e2e_in_result_clear(&r);
+	/* his answer to her request: no session */
+	deliver_keyreq(&m, &a, mine, MAL, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	deliver_keyrsp(&a, &m, rsp);
+	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_assert_false(e2e_session_has_key(row));
+	/* without the key of a request (none known), nothing stands in */
+	e2e_decline_session(a.kr, MAL, "#none", NULL);
+	g_assert_null(path_get(a.kr, "incoming", MAL "|#none", NULL));
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
 	g_free(mine);
 	peer_free(&a);
 	peer_free(&m);
@@ -8023,6 +8084,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
 	add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
 	add_func("/e2e/proto/decline-survives-peer", test_decline_survives_peer);
+	add_func("/e2e/proto/decline-before-session", test_decline_before_session);
 	add_func("/e2e/proto/control-characters", test_control_characters);
 	add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
 	add_func("/e2e/proto/rekey-replay", test_rekey_replay);

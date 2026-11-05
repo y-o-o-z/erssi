@@ -1338,9 +1338,19 @@ static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, con
                            const char *nick)
 {
 	gboolean had;
-	char *k, *own;
+	char *k, *own, *fp = NULL;
+	const char *pub_b64;
+	unsigned char *pub;
+	gsize len = 0;
 
 	k = g_strconcat(handle, "|", ctx, NULL);
+	/* the key of the request declined, for the rows that stand in for
+	   sessions not there yet */
+	pub_b64 = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "pending_inbound"), k), "pubkey");
+	pub = pub_b64 != NULL ? e2e_b64_decode(pub_b64, &len) : NULL;
+	if (pub != NULL && len == 32)
+		fp = e2e_fingerprint_hex(pub);
+	g_free(pub);
 	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
 	g_free(k);
 	/* in a query their messages open under the row of "@<own>", the
@@ -1348,9 +1358,12 @@ static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, con
 	   does; and a request of ours still out is cancelled, its answer
 	   would be no decision of the user's */
 	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, item != NULL ? item->server : NULL, ctx) : NULL;
-	set_incoming_trust(kr, handle, ctx, own, "revoked");
+	e2e_decline_session(kr, handle, ctx, fp);
+	if (own != NULL && strcmp(own, ctx) != 0)
+		e2e_decline_session(kr, handle, own, fp);
 	cancel_requests(kr, handle, ctx, own);
 	g_free(own);
+	g_free(fp);
 	had = e2e_stop_giving_key(kr, handle, ctx);
 	e2e_save(kr);
 	e2e_print_item(item, "declined %s (%s) on %s", shown_text(nick != NULL ? nick : handle),
