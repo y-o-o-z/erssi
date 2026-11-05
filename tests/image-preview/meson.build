@@ -77,3 +77,18 @@ test('test-image-fetch-loop test', test_test_image_fetch_loop,
   env : test_env,
   args : ['--tap'],
   protocol : 'tap')
+
+# the decoder's size limits, on PNG headers made up here
+test_test_image_decode = executable('test-image-decode',
+  files(
+    'test-image-decode.c',
+    '../../src/image-preview/image-decode.c',
+  ),
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-image-decode test', test_test_image_decode,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap')

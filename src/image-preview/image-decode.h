@@ -4,9 +4,12 @@
 #include <stddef.h>
 #include <stdio.h>
 
-/* At most this many pixels are decoded: a small file can declare a huge
- * image */
-#define IMAGE_DECODE_MAX_PIXELS (40 * 1000 * 1000)
+/* At most this many pixels are decoded (4096 x 4096): a small file can
+ * declare a huge image, and stb_image holds the inflated data and the
+ * result at once - some 130 MB at this size, on the main loop. A 16-bit
+ * image takes twice as much while it is decoded: half as many pixels. */
+#define IMAGE_DECODE_MAX_PIXELS (4096 * 4096)
+#define IMAGE_DECODE_MAX_PIXELS_16BIT (IMAGE_DECODE_MAX_PIXELS / 2)
 
 /* Decodes a JPEG, PNG, GIF or BMP image into RGBA pixels, 4 bytes each,
  * width * height of them; NULL when the format is unknown, the image too

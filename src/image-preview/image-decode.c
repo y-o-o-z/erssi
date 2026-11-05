@@ -31,10 +31,11 @@
 #define STBI_NO_LINEAR
 #include "stb_image.h"
 
-static int too_large(int width, int height)
+static int too_large(int width, int height, int wide)
 {
 	return width <= 0 || height <= 0 ||
-	       (long long) width * height > IMAGE_DECODE_MAX_PIXELS;
+	       (long long) width * height >
+	           (wide ? IMAGE_DECODE_MAX_PIXELS_16BIT : IMAGE_DECODE_MAX_PIXELS);
 }
 
 unsigned char *image_decode_file(FILE *fp, int *width, int *height, int *channels,
@@ -43,7 +44,8 @@ unsigned char *image_decode_file(FILE *fp, int *width, int *height, int *channel
 	unsigned char *pixels;
 
 	/* the header first: only an image of a size we accept is decoded */
-	if (!stbi_info_from_file(fp, width, height, channels) || too_large(*width, *height)) {
+	if (!stbi_info_from_file(fp, width, height, channels) ||
+	    too_large(*width, *height, stbi_is_16_bit_from_file(fp))) {
 		*why = "unknown format or too large";
 		return NULL;
 	}
@@ -60,7 +62,7 @@ unsigned char *image_decode_memory(const unsigned char *data, size_t len, int *w
 
 	if (len == 0 || len > INT_MAX ||
 	    !stbi_info_from_memory(data, (int) len, width, height, channels) ||
-	    too_large(*width, *height)) {
+	    too_large(*width, *height, stbi_is_16_bit_from_memory(data, (int) len))) {
 		*why = "unknown format or too large";
 		return NULL;
 	}

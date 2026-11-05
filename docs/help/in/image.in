@@ -33,7 +33,7 @@
     networks are refused, also after a redirect. A download stops at
     image_preview_max_file_size even when the server does not announce the
     size, or sends less than 1 KB/s for 15 seconds. Images larger than 8192
-    pixels on a side or 40 megapixels are not shown.
+    pixels on a side or 16 megapixels (8 for a 16-bit PNG) are not shown.
 
     Downloaded images are kept in the image_cache directory inside the
     configuration directory. The file of a shown image is deleted again 30
