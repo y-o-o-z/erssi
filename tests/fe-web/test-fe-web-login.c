@@ -128,6 +128,46 @@ static void test_own_uid_never_paced(void)
 	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
 }
 
+/* One login from 'peer' that came from a web page (a browser sends
+ * Origin; Nexus and other server-side clients do not) */
+static GByteArray *attempt_from_page(const char *peer, const char *password)
+{
+	WEB_CLIENT_REC *client;
+	char *request, *page;
+
+	client = fe_web_fuzz_client_new_peer(peer, FALSE, FALSE);
+	request = test_request(password);
+	/* in front of the blank line that ends the headers */
+	request[strlen(request) - 2] = '\0';
+	page = g_strconcat(request, "origin: https://evil.example\r\n\r\n", NULL);
+	fe_web_fuzz_client_send(client, (const guchar *) page, strlen(page));
+	g_free(page);
+	g_free(request);
+	if (last != NULL)
+		g_byte_array_unref(last);
+	last = g_byte_array_new();
+	g_byte_array_append(last, fe_web_fuzz_received()->data, fe_web_fuzz_received()->len);
+	fe_web_fuzz_client_free(client);
+	return last;
+}
+
+/* A page in the owner's browser runs as the owner's uid too, but it is
+ * no process of theirs that could read the password: its guesses are
+ * paced. The owner's own clients (no Origin) are not, even then. */
+static void test_page_of_owner_paced(void)
+{
+	int i;
+
+	setup();
+	for (i = 0; i < 5; i++)
+		g_assert_true(test_starts_with(attempt_from_page(own, "wrong"), HTTP_401));
+	g_assert_true(test_starts_with(attempt_from_page(own, "wrong"), HTTP_429));
+	g_assert_true(test_starts_with(attempt_from_page(own, TEST_PASSWORD), HTTP_429));
+	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
+	g_assert_true(test_starts_with(attempt(own, "wrong"), HTTP_401));
+	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
+}
+
 static void test_owner_logs_in_while_paced(void)
 {
 	int i;
@@ -1182,6 +1222,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/other-peer-logs-in", test_other_peer_logs_in);
 	g_test_add_func("/fe-web/login/paced-429-after-five", test_paced_429_after_five);
 	g_test_add_func("/fe-web/login/own-uid-never-paced", test_own_uid_never_paced);
+	g_test_add_func("/fe-web/login/page-of-owner-paced", test_page_of_owner_paced);
 	g_test_add_func("/fe-web/login/owner-logs-in-while-paced", test_owner_logs_in_while_paced);
 	g_test_add_func("/fe-web/login/success-resets-peer", test_success_resets_peer);
 	g_test_add_func("/fe-web/login/pacing-ends-after-a-minute",

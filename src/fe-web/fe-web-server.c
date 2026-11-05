@@ -565,6 +565,20 @@ static int logged_in_clients(void)
 	return n;
 }
 
+/* Does the request (headers complete) carry the header name, in any case */
+static gboolean request_has_header(const char *data, const char *name)
+{
+	const char *end = strstr(data, "\r\n\r\n"), *p = data;
+	size_t n = strlen(name);
+
+	while (end != NULL && (p = strstr(p, "\r\n")) != NULL && p < end) {
+		p += 2;
+		if (g_ascii_strncasecmp(p, name, n) == 0 && p[n] == ':')
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* Handle WebSocket handshake (RFC 6455) */
 static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 {
@@ -602,8 +616,11 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 		own_peer_key = fe_web_peer_key_uid((unsigned long) getuid());
 	peer = client_peer(client);
 	/* the owner's uid is exempt - and so is whatever connects through a
-	 * proxy running as the owner (see login_pacing) */
-	paced = strcmp(peer, own_peer_key) != 0;
+	 * proxy running as the owner (see login_pacing). Not a web page in
+	 * the owner's browser (it sends Origin; Nexus and the other clients
+	 * that run as a server send none): it runs as the owner's uid but
+	 * reads no password, and could guess one at the speed of TLS */
+	paced = strcmp(peer, own_peer_key) != 0 || request_has_header(data, "Origin");
 	if (paced && !fe_web_pacing_may_check(login_pacing, peer, now)) {
 		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
 		                           "Retry-After: " G_STRINGIFY(FE_WEB_CHECK_INTERVAL) "\r\n"
