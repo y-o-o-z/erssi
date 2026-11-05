@@ -2053,8 +2053,10 @@ static void cmd_import(WI_ITEM_REC *item, const char *path)
 	if (bak != NULL) {
 		if (lost) {
 			saved = e2e_keyring_start_fresh(e2e_keyring_file(), kr, &error);
-			if (saved)
+			if (saved) {
+				e2e_keyring_written_here();
 				e2e_state_changed();
+			}
 			if (!saved)
 				e2e_print_item(item, "%s", error);
 			else if (e2e_drop_queued_privmsgs() > 0)
@@ -2271,6 +2273,7 @@ static void cmd_reset(WI_ITEM_REC *item, char **args)
 			e2e_print_item(item, "reset failed: %s", error);
 		} else {
 			if (e2e_keyring_save(e2e_keyring_file(), kr, &error)) {
+				e2e_keyring_written_here();
 				kept = g_strdup_printf("The old keyring is kept as %s (/e2e import it to go back)", bak);
 				reset_done(item, &id, kept);
 				g_free(kept);
@@ -2289,6 +2292,7 @@ static void cmd_reset(WI_ITEM_REC *item, char **args)
 		e2e_print_item(item, "reset failed: %s", error);
 	} else {
 		if (e2e_keyring_start_fresh(e2e_keyring_file(), kr, &error)) {
+			e2e_keyring_written_here();
 			kept = g_strdup_printf("The corrupt file stays as %s.corrupt-*", e2e_keyring_file());
 			reset_done(item, &id, kept);
 			g_free(kept);

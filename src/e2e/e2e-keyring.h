@@ -91,6 +91,15 @@ gboolean e2e_keyring_save(const char *path, const E2E_JSON *kr, char **error);
 /* the same; *written: the new file's fstat after the rename */
 gboolean e2e_keyring_save_stat(const char *path, const E2E_JSON *kr, struct stat *written,
                                char **error);
+/* the same, only while the file is still the one kr was read from (base,
+   an lstat of it; NULL: there was none) - not once another erssi on the
+   same keyring wrote it since; check and write under "<path>.lock" */
+gboolean e2e_keyring_save_based(const char *path, const E2E_JSON *kr, const struct stat *base,
+                                struct stat *written, char **error);
+/* the shared lock of "<path>.lock" for a read of the keyring and an lstat
+   of what was read: a descriptor, or < 0 without one */
+int e2e_keyring_read_lock(const char *path);
+void e2e_keyring_read_unlock(int fd);
 /* /e2e reset: kr becomes the keyring while there is none (E2E_LOAD_LOST) */
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error);
 /* canonical text, to compare before / after */

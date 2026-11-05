@@ -39,6 +39,9 @@ gboolean e2e_keyring_is_lost(void);
    of the module's send queues; how many */
 int e2e_drop_queued_privmsgs(void);
 gboolean e2e_save(const E2E_JSON *kr);
+/* the keyring file was written by hand (/e2e reset, a fresh one): the
+   next e2e_save() writes over this one, not refused as another erssi's */
+void e2e_keyring_written_here(void);
 /* ensure_identity: creates and stores one when the keyring has none */
 gboolean e2e_ensure_identity(E2E_JSON *kr, E2E_IDENTITY *id);
 

@@ -120,6 +120,11 @@ static gboolean seen_stat_valid;
 static struct stat seen_stat;
 /* its content then, for e2e_load_status() */
 static E2E_KEYRING_CACHE keyring_cache;
+/* the keyring file as the last e2e_load() read it (or e2e_save() wrote
+   it): e2e_save() writes only over that one */
+enum { BASE_UNKNOWN, BASE_NONE, BASE_FILE };
+static int load_base_state = BASE_UNKNOWN;
+static struct stat load_base;
 
 static gboolean script_seen;
 static guint script_check_id;
@@ -615,12 +620,22 @@ E2E_JSON *e2e_load_status(gboolean *lost, E2E_LOAD_STATUS *out)
 	char *notice = NULL;
 	gboolean was_lost;
 	E2E_JSON *kr;
+	int lock;
 
 	/* the directory 0700, as rpe2e.pl keeps it */
 	chmod(keyring_dir, 0700);
 	was_lost = e2e_keyring_lost(keyring_file);
 	note_keyring_stat(FALSE);
+	lock = e2e_keyring_read_lock(keyring_file);
 	kr = e2e_keyring_cache_load(&keyring_cache, keyring_file, &status, &notice);
+	/* what was read, for e2e_save(): under the lock, no write between */
+	if (status != E2E_LOAD_OK)
+		load_base_state = BASE_UNKNOWN;
+	else if (lstat(keyring_file, &load_base) == 0)
+		load_base_state = BASE_FILE;
+	else
+		load_base_state = errno == ENOENT ? BASE_NONE : BASE_UNKNOWN;
+	e2e_keyring_read_unlock(lock);
 	/* the keys REKEYs replaced, once their grace is over, leave the
 	   file too */
 	if (status == E2E_LOAD_OK) {
@@ -655,12 +670,37 @@ E2E_JSON *e2e_load(void)
 	return e2e_load_full(NULL);
 }
 
+void e2e_keyring_written_here(void)
+{
+	e2e_keyring_cache_clear(&keyring_cache);
+	if (lstat(keyring_file, &load_base) == 0)
+		load_base_state = BASE_FILE;
+	else
+		load_base_state = BASE_UNKNOWN;
+}
+
 gboolean e2e_save(const E2E_JSON *kr)
 {
 	char *error = NULL;
 	struct stat written;
+	gboolean ok;
 
-	if (e2e_keyring_save_stat(keyring_file, kr, &written, &error)) {
+	/* only over the file it was read from: another erssi on this
+	   keyring may have written it since, and its change (a revocation,
+	   a rotated key) must not go without a word */
+	if (load_base_state == BASE_UNKNOWN)
+		ok = e2e_keyring_save_stat(keyring_file, kr, &written, &error);
+	else
+		ok = e2e_keyring_save_based(keyring_file, kr,
+		                            load_base_state == BASE_FILE ? &load_base : NULL,
+		                            &written, &error);
+	if (ok) {
+		if (written.st_ino == 0 && written.st_dev == 0) {
+			load_base_state = BASE_UNKNOWN;
+		} else {
+			load_base = written;
+			load_base_state = BASE_FILE;
+		}
 		e2e_keyring_cache_saved(&keyring_cache, kr, &written);
 		note_keyring_stat(TRUE);
 		e2e_state_changed();

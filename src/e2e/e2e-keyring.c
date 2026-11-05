@@ -26,6 +26,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -569,6 +570,80 @@ static gboolean keyring_write(const char *path, const E2E_JSON *kr, gboolean fre
 	ok = e2e_write_file_atomic_stat(path, data, len, "keyring", written, error);
 	e2e_wipe(data, len);
 	g_free(data);
+	return ok;
+}
+
+/* "<path>.lock", taken (flock) around a look at the keyring and the write
+   that depends on it: -1 without a lock where the file system has none
+   (the look and the write then go on, as before); -2 when the lock file
+   is a link or not a regular file of ours (*error set) */
+static int keyring_lock(const char *path, int how, char **error)
+{
+	struct stat st;
+	char *lp = g_strconcat(path, ".lock", NULL);
+	int fd = open(lp, O_RDWR | O_CREAT | O_NOFOLLOW | O_NOCTTY | O_CLOEXEC, 0600);
+
+	if (fd == -1 && errno == ELOOP) {
+		*error = g_strdup_printf("keyring NOT saved: %s is a symbolic link — remove it", lp);
+		g_free(lp);
+		return -2;
+	}
+	if (fd != -1 && (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != geteuid())) {
+		close(fd);
+		*error = g_strdup_printf("keyring NOT saved: %s is not a regular file of yours — remove it", lp);
+		g_free(lp);
+		return -2;
+	}
+	g_free(lp);
+	if (fd == -1)
+		return -1;
+	while (flock(fd, how) != 0) {
+		if (errno != EINTR) {
+			close(fd);
+			return -1;
+		}
+	}
+	return fd;
+}
+
+static void keyring_unlock(int fd)
+{
+	if (fd >= 0)
+		close(fd);
+}
+
+int e2e_keyring_read_lock(const char *path)
+{
+	char *error = NULL;
+	int fd = keyring_lock(path, LOCK_SH, &error);
+
+	g_free(error);
+	return fd;
+}
+
+void e2e_keyring_read_unlock(int fd)
+{
+	keyring_unlock(fd);
+}
+
+gboolean e2e_keyring_save_based(const char *path, const E2E_JSON *kr, const struct stat *base,
+                                struct stat *written, char **error)
+{
+	struct stat now;
+	gboolean there, ok;
+	int fd = keyring_lock(path, LOCK_EX, error);
+
+	if (fd == -2)
+		return FALSE;
+	there = lstat(path, &now) == 0;
+	if (base != NULL ? !there || !e2e_same_file(base, &now) : there) {
+		keyring_unlock(fd);
+		*error = g_strdup_printf("keyring NOT saved: %s was changed by another erssi since it was read — its change is kept; run the command again",
+		                         path);
+		return FALSE;
+	}
+	ok = keyring_write(path, kr, FALSE, written, error);
+	keyring_unlock(fd);
 	return ok;
 }
 

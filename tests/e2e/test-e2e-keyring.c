@@ -1037,6 +1037,51 @@ static void cache_age(void)
 	g_assert_cmpint(utimensat(AT_FDCWD, path, times, 0), ==, 0);
 }
 
+/* a save based on what was read is refused once another erssi wrote the
+   file since: its change would be lost without a word */
+static void test_save_based(void)
+{
+	E2E_JSON *kr, *other;
+	struct stat base, written;
+	char *error = NULL, *text;
+
+	setup();
+	/* none there when read: saved, and the base is the new file */
+	kr = e2e_keyring_new();
+	e2e_json_set_string(kr, "who", "first");
+	g_assert_true(e2e_keyring_save_based(path, kr, NULL, &written, &error));
+	g_assert_null(error);
+	base = written;
+	/* another erssi writes it */
+	other = e2e_keyring_new();
+	e2e_json_set_string(other, "who", "other erssi");
+	g_assert_true(e2e_keyring_save(path, other, &error));
+	/* ours, based on the old file: refused, theirs is kept */
+	e2e_json_set_string(kr, "who", "stale");
+	g_assert_false(e2e_keyring_save_based(path, kr, &base, &written, &error));
+	g_assert_nonnull(strstr(error, "changed by another erssi"));
+	g_clear_pointer(&error, g_free);
+	text = slurp(path);
+	g_assert_nonnull(strstr(text, "other erssi"));
+	g_free(text);
+	/* none there when read, one there now: refused too */
+	g_assert_false(e2e_keyring_save_based(path, kr, NULL, &written, &error));
+	g_clear_pointer(&error, g_free);
+	/* based on the file as it is: saved */
+	g_assert_cmpint(lstat(path, &base), ==, 0);
+	g_assert_true(e2e_keyring_save_based(path, kr, &base, &written, &error));
+	text = slurp(path);
+	g_assert_nonnull(strstr(text, "stale"));
+	g_free(text);
+	/* the lock file is the user's, 0600, next to the keyring */
+	text = g_strconcat(path, ".lock", NULL);
+	g_assert_cmpint(lstat(text, &base), ==, 0);
+	g_assert_cmpint(base.st_mode & 0777, ==, 0600);
+	g_free(text);
+	e2e_json_free(kr);
+	e2e_json_free(other);
+}
+
 static void test_cache(void)
 {
 	E2E_KEYRING_CACHE cache = { NULL };
@@ -1158,6 +1203,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/keyring/absent", test_absent);
 	g_test_add_func("/e2e/keyring/save-load", test_save_load);
 	g_test_add_func("/e2e/keyring/cache", test_cache);
+	g_test_add_func("/e2e/keyring/save-based", test_save_based);
 	g_test_add_func("/e2e/json/changes", test_json_changes);
 	g_test_add_func("/e2e/keyring/corrupt", test_corrupt);
 	g_test_add_func("/e2e/keyring/corrupt-fails-closed", test_corrupt_fails_closed);
