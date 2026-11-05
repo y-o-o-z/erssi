@@ -1323,22 +1323,34 @@ static void tell_key_kept(WI_ITEM_REC *item, const char *who, const char *where)
 		                  shown_text(who));
 }
 
+/* our requests for handle's key in ctx (and own_ctx) still out: gone */
+static void cancel_requests(E2E_JSON *kr, const char *handle, const char *ctx, const char *own_ctx)
+{
+	e2e_forget_keyreq(kr, ctx, handle);
+	if (own_ctx != NULL && strcmp(own_ctx, ctx) != 0)
+		e2e_forget_keyreq(kr, own_ctx, handle);
+}
+
 /* /e2e decline of handle in ctx, picked already: its request goes, its
    session is revoked, its acceptance forgotten and it is no recipient of
    our key any more; saved, told */
 static void decline_handle(E2E_JSON *kr, WI_ITEM_REC *item, const char *ctx, const char *handle,
                            const char *nick)
 {
-	E2E_JSON *row;
 	gboolean had;
-	char *k;
+	char *k, *own;
 
 	k = g_strconcat(handle, "|", ctx, NULL);
 	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
 	g_free(k);
-	row = incoming_row(kr, handle, ctx);
-	if (row != NULL)
-		e2e_json_set_string(row, "status", "revoked");
+	/* in a query their messages open under the row of "@<own>", the
+	   row of "@<peer>" holds no key: both are revoked, as /e2e revoke
+	   does; and a request of ours still out is cancelled, its answer
+	   would be no decision of the user's */
+	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, item != NULL ? item->server : NULL, ctx) : NULL;
+	set_incoming_trust(kr, handle, ctx, own, "revoked");
+	cancel_requests(kr, handle, ctx, own);
+	g_free(own);
 	had = e2e_stop_giving_key(kr, handle, ctx);
 	e2e_save(kr);
 	e2e_print_item(item, "declined %s (%s) on %s", shown_text(nick != NULL ? nick : handle),

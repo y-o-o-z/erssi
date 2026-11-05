@@ -299,6 +299,56 @@ def main():
         finally:
             a.type_and_wait("/window goto bob", "/e2e off", "/window close")
 
+    def t_query_decline():
+        """/e2e decline in a query: the peer's messages are not read any
+        more - the session they open under goes too - and neither a new
+        request of theirs nor their next message brings it back"""
+        c = erssi("carol", st["port"], "carol")
+        d = erssi("dave", st["port"], "dave")
+        up(c)
+        up(d)
+        # a query needs the peer's address first: a plain line each way
+        off_c, off_d = log_size(c), log_size(d)
+        c.type_and_wait("/msg dave dq plain hello")
+        assert wait_log(d, off_d, "dq plain hello"), log_since(d, off_d)
+        d.type_and_wait("/msg carol dq plain hello back")
+        assert wait_log(c, off_c, "dq plain hello back"), log_since(c, off_c)
+
+        def e2e_on(e, peer):
+            # the own address comes with a WHOIS reply: until then
+            # /e2e on in a query refuses, so it is typed again
+            def on():
+                off = log_size(e)
+                e.type_and_wait(f"/window goto {peer}", "/e2e on")
+                return f"enabled on E2E:@{peer}@127.0.0.1" in log_since(e, off)
+            assert harness.wait_until(on, WAIT, interval=0.5), f"{e.name}: no E2E in the query"
+
+        e2e_on(c, "dave")
+        e2e_on(d, "carol")
+        off_c, off_d = log_size(c), log_size(d)
+        d.type_and_wait("/msg carol dq opening line")
+        assert wait_log(c, off_c, "no key from dave"), log_since(c, off_c)
+        assert wait_log(d, off_d, "Pending key exchange from carol"), log_since(d, off_d)
+        d.type_and_wait("/window goto carol", "/e2e accept carol")
+        assert wait_log(c, off_c, "Pending key exchange from dave"), log_since(c, off_c)
+        off_c = log_size(c)
+        d.type_and_wait("/msg carol readable now")
+        assert wait_log(c, off_c, "readable now"), log_since(c, off_c)
+        c.type_and_wait("/window goto dave", "/e2e decline dave")
+        assert wait_log(c, off_c, "declined dave"), log_since(c, off_c)
+        off_c = log_size(c)
+        d.type_and_wait("/msg carol after the decline")
+        assert wait_log(c, off_c, "you declined or revoked dave"), log_since(c, off_c)
+        assert "after the decline" not in log_since(c, off_c), log_since(c, off_c)
+        # a new request of his, then another message: still not read
+        d.type_and_wait("/window goto carol", "/e2e handshake")
+        off_c = log_size(c)
+        d.type_and_wait("/msg carol and once more")
+        assert wait_log(c, off_c, "you declined or revoked dave"), log_since(c, off_c)
+        assert "and once more" not in log_since(c, off_c), log_since(c, off_c)
+        c.quit()
+        d.quit()
+
     def t_replay_after_restart():
         """a line of alice's that the server delivers again is dropped,
         not shown twice - also after /unload and /load of the module and
@@ -592,7 +642,7 @@ def main():
 
     try:
         harness.main([t_install, t_first_contact, t_new_address, t_shellter_column, t_reverify,
-                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_plain_impostor,
+                      t_accept_live_nick, t_bot_lines, t_plain_marked, t_plain_impostor, t_query_decline,
                       t_replay_after_restart, t_unreadable_keyring, t_save_fails, t_reset_force,
                       t_import_identity, t_special_files, t_corrupt_keyring, t_wire])
     finally:

@@ -232,6 +232,13 @@ static gboolean is_trusted(const E2E_JSON *row)
 	return row != NULL && strcmp(status_of(row), "trusted") == 0 && e2e_session_has_key(row);
 }
 
+/* declined or revoked by the user: only they undo it (/e2e accept,
+   /e2e unrevoke, /e2e handshake), never the peer's traffic */
+static gboolean is_revoked(const E2E_JSON *row)
+{
+	return row != NULL && strcmp(status_of(row), "revoked") == 0;
+}
+
 /* created_at of a row still within ttl seconds; one from the future (an
    imported keyring, a clock set back) is not, and nothing overflows */
 static gboolean is_fresh(gint64 created_at, gint64 ttl)
@@ -2198,8 +2205,11 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   then, see the header). */
 	if (strcmp(mode, "auto-accept") != 0 &&
 	    !accepted_or_twin(kr, net, sender_handle, ctx, fp_hex)) {
-		/* waits for /e2e accept; a session with their key is kept */
-		if (!trusted) {
+		/* waits for /e2e accept; a session with their key is kept,
+		   and so is a revoked one: a pending placeholder there would
+		   let the next wire ask them for their key, and their answer
+		   would be trusted behind the user's back */
+		if (!trusted && !is_revoked(sess)) {
 			unsigned char zero[32] = { 0 };
 
 			set_session(kr, sender_handle, ctx, fp_hex, zero, "pending");
@@ -2302,6 +2312,11 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 	if (!ok)
 		goto out;
 	ok = FALSE;
+	/* an answer to a request of before the user declined them: their
+	   session stays revoked (one the user asked for again, /e2e
+	   handshake, is theirs to have) */
+	if (!user_started && is_revoked(row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL)))
+		goto out;
 	fp_hex = e2e_fingerprint_hex(rsp->pub);
 	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, nick, ctx, &change)) {
 		/* the session their key signed, kept with the record: accepted

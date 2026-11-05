@@ -1264,6 +1264,70 @@ static void test_no_key_no_trust(void)
 	peer_free(&m);
 }
 
+/* /e2e decline holds against the peer's later traffic: a new KEYREQ, a
+   wire, a KEYRSP to a request of before - only the user undoes it */
+static void test_decline_survives_peer(void)
+{
+	PEER a, m;
+	char *req, *wire, *mine, *rsp = NULL, *recip = NULL, *error = NULL;
+	E2E_JSON *row;
+	E2E_IN_RESULT r;
+
+	peer_init(&a, "alice", ALICE, -1);
+	peer_init(&m, "mallory", MAL, -1);
+	enable(&a, "#c", "normal");
+	enable(&m, "#c", "auto-accept");
+	exchange(&a, &m, "#c");
+	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "trusted");
+	/* a request of alice's still out when she declines */
+	e2e_json_remove(e2e_json_get(a.kr, "pending"), "#c|" MAL);
+	mine = e2e_build_keyreq(a.kr, &a.id, "#c", MAL, &error);
+	g_assert_nonnull(mine);
+	/* what /e2e decline leaves */
+	e2e_json_remove(e2e_json_get(a.kr, "pending_inbound"), MAL "|#c");
+	e2e_json_set_string(row, "status", "revoked");
+	e2e_stop_giving_key(a.kr, MAL, "#c");
+
+	/* his new request: no key for him, the row stays revoked */
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#c|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#c", ALICE, &error);
+	g_assert_nonnull(req);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_free(recip);
+	recip = NULL;
+
+	/* his next wire: not read, and alice asks him for nothing */
+	wire = gate_wire(&m, "#c", "read me again");
+	g_hash_table_remove_all(a.stamps);
+	recv_wire(&a, &m, "#c", wire, &r);
+	g_assert_cmpint(r.action, ==, E2E_IN_DROP);
+	g_assert_cmpint(r.why, ==, E2E_IN_WHY_REVOKED);
+	g_assert_null(r.keyreq);
+	e2e_in_result_clear(&r);
+
+	/* his answer to her old request installs nothing either */
+	deliver_keyreq(&m, &a, mine, MAL, &rsp, &recip);
+	g_assert_nonnull(rsp);
+	deliver_keyrsp(&a, &m, rsp);
+	row = path_get(a.kr, "incoming", MAL "|#c", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+
+	/* /e2e unrevoke: the user's word brings him back */
+	g_assert_cmpint(e2e_unrevoke(a.kr, MAL, "#c", NULL), ==, 1);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "trusted");
+	g_free(rsp);
+	g_free(recip);
+	g_free(wire);
+	g_free(req);
+	g_free(mine);
+	peer_free(&a);
+	peer_free(&m);
+}
+
 /* no line breaks or NUL out of a decrypted message */
 static void test_control_characters(void)
 {
@@ -7958,6 +8022,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/multiline-buffer", test_multiline_buffer);
 	add_func("/e2e/proto/dm-handle-changed", test_dm_handle_changed);
 	add_func("/e2e/proto/no-key-no-trust", test_no_key_no_trust);
+	add_func("/e2e/proto/decline-survives-peer", test_decline_survives_peer);
 	add_func("/e2e/proto/control-characters", test_control_characters);
 	add_func("/e2e/proto/keyrsp-binding", test_keyrsp_binding);
 	add_func("/e2e/proto/rekey-replay", test_rekey_replay);
