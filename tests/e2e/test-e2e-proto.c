@@ -4247,6 +4247,37 @@ static void test_casemap_decrypt_folded_target(void)
 	peer_free(&a);
 }
 
+/* declined under one spelling of a channel (#Żaba): not read under
+   another (#żaba) through its session either, and the other way round */
+static void test_casemap_decline_folded(void)
+{
+	PEER a;
+	char *plain;
+	E2E_JSON *row;
+
+	peer_init(&a, "alice", ALICE, 0x41);
+	set_trusted_session(a.kr, BOB "|E2E\x1f" ZABA_LOWER, VEC_KEY_22);
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
+	g_free(plain);
+	/* declined where his request came from: #Żaba */
+	e2e_decline_session(a.kr, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_DROP);
+	g_assert_null(plain);
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_LOWER, &plain), ==, E2E_IN_DROP);
+	g_assert_null(plain);
+	/* declined under the spelling of the session, read as the other */
+	e2e_json_remove(e2e_json_get(a.kr, "incoming"), BOB "|E2E\x1f" ZABA_UPPER);
+	row = path_get(a.kr, "incoming", BOB "|E2E\x1f" ZABA_LOWER, NULL);
+	e2e_json_set_string(row, "status", "revoked");
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_DROP);
+	g_assert_null(plain);
+	/* trusted again: read */
+	e2e_json_set_string(row, "status", "trusted");
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
+	g_free(plain);
+	peer_free(&a);
+}
+
 /* the single code point c folds to with GLib, or c */
 static gunichar casefold_char(gunichar c)
 {
@@ -8250,6 +8281,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/casemap/other-network-ignored", test_casemap_other_network_ignored);
 	add_func("/e2e/casemap/not-utf8-refused", test_casemap_not_utf8_refused);
 	add_func("/e2e/casemap/decrypt-folded-target", test_casemap_decrypt_folded_target);
+	add_func("/e2e/casemap/decline-folded", test_casemap_decline_folded);
 	add_func("/e2e/casemap/superset", test_casemap_superset);
 	add_func("/e2e/casemap/dm-nick", test_casemap_dm_nick);
 	add_func("/e2e/casemap/decrypt-marked", test_casemap_decrypt_marked);

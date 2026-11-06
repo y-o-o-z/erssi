@@ -3922,6 +3922,13 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 			continue;
 		}
 		row = row_or_twin(kr, p->net, "incoming", p->handle, ctx, TRUE, NULL);
+		/* w NULL: only whether the sender is declined or revoked under
+		   another spelling of the channel */
+		if (w == NULL) {
+			done = is_revoked(row);
+			g_free(ctx);
+			continue;
+		}
 		if (is_trusted(row) && try_decrypt(w, row, ctx, res)) {
 			g_free(res->ctx);
 			res->ctx = ctx;
@@ -4463,9 +4470,17 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		g_free(actx);
 	}
 
+	/* declined or revoked under another spelling of the same channel
+	   (#Żaba, #żaba): that is the user's word for this one too */
+	if (!is_dm && !is_revoked(row) && try_decrypt_folded(kr, p, NULL, res)) {
+		res->debug = g_strdup_printf("%s (%s) declined or revoked under another spelling of %s",
+		                             p->nick, p->handle, e2e_ctx_wire(res->ctx));
+		res->why = E2E_IN_WHY_REVOKED;
+		goto out;
+	}
 	/* a channel written otherwise: the session of the same channel to
-	   the server */
-	if (!is_trusted(row) && !is_dm && try_decrypt_folded(kr, p, w, res))
+	   the server - not where the user declined them */
+	if (!is_trusted(row) && !is_revoked(row) && !is_dm && try_decrypt_folded(kr, p, w, res))
 		goto out;
 	if (!is_trusted(row)) {
 		res->debug = g_strdup_printf("no trusted incoming for (%s,%s)", p->handle,
