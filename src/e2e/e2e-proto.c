@@ -3863,8 +3863,12 @@ void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, c
 			    !e2e_ctx_on_net(x, net) || !e2e_is_channel(e2e_ctx_wire(x)))
 				continue;
 			have = e2e_casefold_narrow(e2e_ctx_wire(x), map);
-			if (have != NULL && strcmp(have, want) == 0)
+			if (have != NULL && strcmp(have, want) == 0) {
 				e2e_json_set_string(r, "status", "revoked");
+				/* and a request of ours out there (even one the
+				   user started): its answer is no decision now */
+				e2e_forget_keyreq(kr, x, handle);
+			}
 			g_free(have);
 		}
 		g_ptr_array_unref(keys);

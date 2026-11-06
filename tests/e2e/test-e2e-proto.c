@@ -4275,8 +4275,16 @@ static void test_casemap_decline_folded(void)
 	set_trusted_session(a.kr, BOB "|E2E\x1f" ZABA_LOWER, VEC_KEY_22);
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
 	g_free(plain);
+	/* a request of ours out for the other spelling (an /e2e handshake) */
+	{
+		E2E_JSON *req = e2e_json_new(E2E_JSON_OBJECT);
+
+		e2e_json_set_int(req, "by_user", 1);
+		e2e_json_set(e2e_json_get(a.kr, "pending"), "E2E\x1f" ZABA_LOWER "|" BOB, req);
+	}
 	/* declined where his request came from: #Żaba */
 	e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f" ZABA_LOWER "|" BOB, NULL));
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_DROP);
 	g_assert_null(plain);
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_LOWER, &plain), ==, E2E_IN_DROP);
