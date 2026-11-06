@@ -4292,6 +4292,40 @@ static void test_casemap_decline_folded(void)
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
 	g_free(plain);
 	peer_free(&a);
+
+	/* a channel only the superset fold joins to the declined one (#a[b
+	   and #a{b are two under utf8): his messages there are read */
+	{
+		unsigned char key[32];
+		gsize len = 0;
+		guchar *raw = g_base64_decode(VEC_KEY_22, &len);
+		const char *err = NULL;
+		GPtrArray *w;
+		E2E_IN_PARAMS in;
+		E2E_IN_RESULT r;
+
+		g_assert_cmpuint(len, ==, 32);
+		memcpy(key, raw, 32);
+		g_free(raw);
+		peer_init(&a, "alice", ALICE, 0x41);
+		set_trusted_session(a.kr, BOB "|E2E\x1f#a{b", VEC_KEY_22);
+		e2e_decline_session(a.kr, BOB, "E2E\x1f#a[b", "00");
+		w = e2e_encrypt_plain(key, "#a{b", "in the other channel", fake_now, &err);
+		g_assert_nonnull(w);
+		memset(&in, 0, sizeof(in));
+		in.nick = "bob";
+		in.handle = BOB;
+		in.target = "#a{b";
+		in.own_handle = ALICE;
+		in.resolve = no_resolve;
+		in.keyreq_stamps = a.stamps;
+		in.net = &cm_unicode;
+		e2e_decrypt_incoming(a.kr, &a.id, &in, g_ptr_array_index(w, 0), &r);
+		g_assert_cmpint(r.action, ==, E2E_IN_PLAIN);
+		e2e_in_result_clear(&r);
+		g_ptr_array_unref(w);
+		peer_free(&a);
+	}
 }
 
 /* the single code point c folds to with GLib, or c */

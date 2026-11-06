@@ -3925,7 +3925,10 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 		/* w NULL: only whether the sender is declined or revoked under
 		   another spelling of the channel */
 		if (w == NULL) {
-			done = is_revoked(row);
+			/* only a spelling the server surely takes for the same
+			   channel: the superset fold also joins ones it keeps apart
+			   (#a[b, #a{b under utf8) */
+			done = is_revoked(row) && surely_same_channel(wire, p, map);
 			g_free(ctx);
 			continue;
 		}
