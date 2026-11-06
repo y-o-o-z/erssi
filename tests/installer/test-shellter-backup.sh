@@ -929,7 +929,9 @@ root-foreign-erssi)
     if [ "$RC" != 0 ]; then show; fi
     check "as root: backed up" [ "$RC" = 0 ]
     check "... the other user's erssi was not run" [ ! -e "$W/ran" ]
-    gzip -dc "$W/root.tar.gz" | "$REAL_TAR" -xOf - --wildcards '*/MANIFEST' > "$W/manifest" 2>/dev/null
+    # (the path itself: --wildcards is GNU tar only, bsdtar has no such flag)
+    gzip -dc "$W/root.tar.gz" | "$REAL_TAR" -tf - > "$W/list"
+    gzip -dc "$W/root.tar.gz" | "$REAL_TAR" -xOf - "$(head -n 1 "$W/list" | sed 's|/*$||')/MANIFEST" > "$W/manifest"
     check "... the MANIFEST says the version is unknown" grep -qx 'version unknown' "$W/manifest"
     run_env PATH="$W/rootshim:$PATH" -- --restore "$W/root.tar.gz" --home "$W/new/.erssi" --prefix "$W/alice/opt"
     if [ "$RC" != 0 ]; then show; fi
