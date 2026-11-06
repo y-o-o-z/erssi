@@ -3832,49 +3832,95 @@ static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const c
 	return key + len + 1;
 }
 
+/* the context in key of store when the row is handle's: "handle|ctx"
+   (handle_first) or "ctx|handle" */
+static const char *ctx_of_key(const char *key, const E2E_JSON *row, const char *handle,
+                              gboolean handle_first, char **copy)
+{
+	size_t kl = strlen(key), hl = strlen(handle);
+
+	*copy = NULL;
+	if (handle_first)
+		return incoming_ctx_of(key, row, handle);
+	if (kl <= hl + 1 || key[kl - hl - 1] != '|' || strcmp(key + kl - hl, handle) != 0)
+		return NULL;
+	*copy = g_strndup(key, kl - hl - 1);
+	return *copy;
+}
+
 void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, const char *ctx,
                          const char *fp_hex)
 {
 	static const unsigned char zero[32] = { 0 };
+	static const struct { const char *store; gboolean handle_first; } stores[] = {
+		{ "incoming", TRUE }, { "accepted", TRUE }, { "pending", FALSE },
+		{ "outgoing_recipients", FALSE }
+	};
 	E2E_JSON *incoming = e2e_json_get(kr, "incoming");
 	char *k = pipe_key(handle, ctx);
 	E2E_JSON *row = e2e_json_get(incoming, k);
 	const char *wire = e2e_ctx_wire(ctx);
+	GPtrArray *aliases;
+	guint i, j;
 
 	if (row != NULL)
 		e2e_json_set_string(row, "status", "revoked");
 	else
 		set_session(kr, handle, ctx, fp_hex != NULL ? fp_hex : "", zero, "revoked");
-	/* the sessions of the same channel written otherwise on this
-	   network (#Zaba, #zaba): revoked too - only where every server of
-	   the CASEMAPPING takes the two for one channel */
-	if (net != NULL && e2e_is_channel(wire)) {
+	g_free(k);
+	if (net == NULL || !e2e_is_channel(wire))
+		return;
+	/* the same channel written otherwise on this network (#Zaba,
+	   #zaba), wherever the peer has anything there - a session, an
+	   acceptance, a request of ours, our key: declined there too, only
+	   where every server of the CASEMAPPING takes the two for one */
+	aliases = g_ptr_array_new_with_free_func(g_free);
+	{
 		E2E_CASEMAP map = net_casemap(net);
 		char *want = e2e_casefold_narrow(wire, map);
-		GPtrArray *keys = e2e_json_keys(incoming);
-		guint i;
 
-		for (i = 0; want != NULL && i < keys->len; i++) {
-			const char *key = g_ptr_array_index(keys, i), *x;
-			E2E_JSON *r = e2e_json_get(incoming, key);
-			char *have;
+		for (i = 0; want != NULL && i < G_N_ELEMENTS(stores); i++) {
+			E2E_JSON *store = e2e_json_get(kr, stores[i].store);
+			GPtrArray *keys = e2e_json_keys(store);
 
-			if (strcmp(key, k) == 0 || (x = incoming_ctx_of(key, r, handle)) == NULL ||
-			    !e2e_ctx_on_net(x, net) || !e2e_is_channel(e2e_ctx_wire(x)))
-				continue;
-			have = e2e_casefold_narrow(e2e_ctx_wire(x), map);
-			if (have != NULL && strcmp(have, want) == 0) {
-				e2e_json_set_string(r, "status", "revoked");
-				/* and a request of ours out there (even one the
-				   user started): its answer is no decision now */
-				e2e_forget_keyreq(kr, x, handle);
+			for (j = 0; j < keys->len; j++) {
+				const char *key = g_ptr_array_index(keys, j), *x;
+				char *copy, *have;
+				guint n;
+				gboolean dup = FALSE;
+
+				x = ctx_of_key(key, e2e_json_get(store, key), handle, stores[i].handle_first, &copy);
+				if (x != NULL && strcmp(x, ctx) != 0 && e2e_ctx_on_net(x, net) &&
+				    e2e_is_channel(e2e_ctx_wire(x))) {
+					have = e2e_casefold_narrow(e2e_ctx_wire(x), map);
+					for (n = 0; n < aliases->len && !dup; n++)
+						dup = strcmp(g_ptr_array_index(aliases, n), x) == 0;
+					if (have != NULL && strcmp(have, want) == 0 && !dup)
+						g_ptr_array_add(aliases, g_strdup(x));
+					g_free(have);
+				}
+				g_free(copy);
 			}
-			g_free(have);
+			g_ptr_array_unref(keys);
 		}
-		g_ptr_array_unref(keys);
 		g_free(want);
 	}
-	g_free(k);
+	for (i = 0; i < aliases->len; i++) {
+		const char *x = g_ptr_array_index(aliases, i);
+
+		k = pipe_key(handle, x);
+		row = e2e_json_get(incoming, k);
+		if (row != NULL)
+			e2e_json_set_string(row, "status", "revoked");
+		else
+			set_session(kr, handle, x, fp_hex != NULL ? fp_hex : "", zero, "revoked");
+		g_free(k);
+		/* a request of ours out there (even one the user started):
+		   its answer is no decision now; and no more of our key */
+		e2e_forget_keyreq(kr, x, handle);
+		e2e_stop_giving_key(kr, handle, x);
+	}
+	g_ptr_array_unref(aliases);
 }
 
 /* have (an e2e_casefold_narrow() result, or NULL) is name's */

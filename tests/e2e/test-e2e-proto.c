@@ -4335,6 +4335,28 @@ static void test_casemap_decline_folded(void)
 		peer_free(&a);
 	}
 
+	/* only a request of ours and an acceptance under #żaba, no session:
+	   declined in #Żaba, both go and a revoked row stands there */
+	peer_init(&a, "alice", ALICE, 0x41);
+	{
+		E2E_JSON *req = e2e_json_new(E2E_JSON_OBJECT), *acc = e2e_json_new(E2E_JSON_OBJECT),
+		         *rcp = e2e_json_new(E2E_JSON_OBJECT);
+
+		e2e_json_set_int(req, "by_user", 1);
+		e2e_json_set(e2e_json_get(a.kr, "pending"), "E2E\x1f" ZABA_LOWER "|" BOB, req);
+		e2e_json_set_string(acc, "fp", "00");
+		e2e_json_set(e2e_json_get(a.kr, "accepted"), BOB "|E2E\x1f" ZABA_LOWER, acc);
+		e2e_json_set_string(rcp, "fingerprint", "00");
+		e2e_json_set(e2e_json_get(a.kr, "outgoing_recipients"), "E2E\x1f" ZABA_LOWER "|" BOB, rcp);
+	}
+	e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	g_assert_null(path_get(a.kr, "pending", "E2E\x1f" ZABA_LOWER "|" BOB, NULL));
+	g_assert_null(path_get(a.kr, "accepted", BOB "|E2E\x1f" ZABA_LOWER, NULL));
+	g_assert_null(path_get(a.kr, "outgoing_recipients", "E2E\x1f" ZABA_LOWER "|" BOB, NULL));
+	row = path_get(a.kr, "incoming", BOB "|E2E\x1f" ZABA_LOWER, NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	peer_free(&a);
+
 	/* declined in #Żaba, then the user trusts him again where the
 	   channel is written #żaba (/e2e handshake there installs a session):
 	   read there - the other spelling's decline is no veto */
