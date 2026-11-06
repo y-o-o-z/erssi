@@ -1675,19 +1675,6 @@ static void set_session(E2E_JSON *kr, const char *handle, const char *ctx,
 	g_free(k);
 }
 
-void e2e_decline_session(E2E_JSON *kr, const char *handle, const char *ctx, const char *fp_hex)
-{
-	static const unsigned char zero[32] = { 0 };
-	char *k = pipe_key(handle, ctx);
-	E2E_JSON *row = e2e_json_get(e2e_json_get(kr, "incoming"), k);
-
-	g_free(k);
-	if (row != NULL)
-		e2e_json_set_string(row, "status", "revoked");
-	else
-		set_session(kr, handle, ctx, fp_hex != NULL ? fp_hex : "", zero, "revoked");
-}
-
 /* A REKEY replaces the trusted session of handle and ctx: the key it
    replaces is kept with the new row for E2E_PREV_KEY_GRACE seconds
    ("prev_sk", "prev_until"), so the chunks the peer sent under it just
@@ -3845,6 +3832,47 @@ static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const c
 	return key + len + 1;
 }
 
+void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, const char *ctx,
+                         const char *fp_hex)
+{
+	static const unsigned char zero[32] = { 0 };
+	E2E_JSON *incoming = e2e_json_get(kr, "incoming");
+	char *k = pipe_key(handle, ctx);
+	E2E_JSON *row = e2e_json_get(incoming, k);
+	const char *wire = e2e_ctx_wire(ctx);
+
+	if (row != NULL)
+		e2e_json_set_string(row, "status", "revoked");
+	else
+		set_session(kr, handle, ctx, fp_hex != NULL ? fp_hex : "", zero, "revoked");
+	/* the sessions of the same channel written otherwise on this
+	   network (#Zaba, #zaba): revoked too - only where every server of
+	   the CASEMAPPING takes the two for one channel */
+	if (net != NULL && e2e_is_channel(wire)) {
+		E2E_CASEMAP map = net_casemap(net);
+		char *want = e2e_casefold_narrow(wire, map);
+		GPtrArray *keys = e2e_json_keys(incoming);
+		guint i;
+
+		for (i = 0; want != NULL && i < keys->len; i++) {
+			const char *key = g_ptr_array_index(keys, i), *x;
+			E2E_JSON *r = e2e_json_get(incoming, key);
+			char *have;
+
+			if (strcmp(key, k) == 0 || (x = incoming_ctx_of(key, r, handle)) == NULL ||
+			    !e2e_ctx_on_net(x, net) || !e2e_is_channel(e2e_ctx_wire(x)))
+				continue;
+			have = e2e_casefold_narrow(e2e_ctx_wire(x), map);
+			if (have != NULL && strcmp(have, want) == 0)
+				e2e_json_set_string(r, "status", "revoked");
+			g_free(have);
+		}
+		g_ptr_array_unref(keys);
+		g_free(want);
+	}
+	g_free(k);
+}
+
 /* have (an e2e_casefold_narrow() result, or NULL) is name's */
 static gboolean narrow_same(const char *have, const char *name, E2E_CASEMAP map)
 {
@@ -3922,16 +3950,6 @@ static gboolean try_decrypt_folded(const E2E_JSON *kr, const E2E_IN_PARAMS *p, c
 			continue;
 		}
 		row = row_or_twin(kr, p->net, "incoming", p->handle, ctx, TRUE, NULL);
-		/* w NULL: only whether the sender is declined or revoked under
-		   another spelling of the channel */
-		if (w == NULL) {
-			/* only a spelling the server surely takes for the same
-			   channel: the superset fold also joins ones it keeps apart
-			   (#a[b, #a{b under utf8) */
-			done = is_revoked(row) && surely_same_channel(wire, p, map);
-			g_free(ctx);
-			continue;
-		}
 		if (is_trusted(row) && try_decrypt(w, row, ctx, res)) {
 			g_free(res->ctx);
 			res->ctx = ctx;
@@ -4473,14 +4491,6 @@ void e2e_decrypt_incoming(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_IN_PAR
 		g_free(actx);
 	}
 
-	/* declined or revoked under another spelling of the same channel
-	   (#Żaba, #żaba): that is the user's word for this one too */
-	if (!is_dm && !is_revoked(row) && try_decrypt_folded(kr, p, NULL, res)) {
-		res->debug = g_strdup_printf("%s (%s) declined or revoked under another spelling of %s",
-		                             p->nick, p->handle, e2e_ctx_wire(res->ctx));
-		res->why = E2E_IN_WHY_REVOKED;
-		goto out;
-	}
 	/* a channel written otherwise: the session of the same channel to
 	   the server - not where the user declined them */
 	if (!is_trusted(row) && !is_revoked(row) && !is_dm && try_decrypt_folded(kr, p, w, res))

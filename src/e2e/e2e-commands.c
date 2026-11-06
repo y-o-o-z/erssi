@@ -1375,9 +1375,18 @@ static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, 
 	g_free(k);
 	/* and a request of ours still out is cancelled, its answer would
 	   be no decision of the user's */
-	e2e_decline_session(kr, handle, ctx, fp);
-	if (own != NULL && strcmp(own, ctx) != 0)
-		e2e_decline_session(kr, handle, own, fp);
+	{
+		SERVER_REC *srv = server != NULL ? server : item != NULL ? item->server : NULL;
+		E2E_NET net;
+
+		if (srv != NULL)
+			e2e_server_net(srv, &net);
+		e2e_decline_session(kr, srv != NULL ? &net : NULL, handle, ctx, fp);
+		if (own != NULL && strcmp(own, ctx) != 0)
+			e2e_decline_session(kr, srv != NULL ? &net : NULL, handle, own, fp);
+		if (srv != NULL)
+			e2e_net_clear(&net);
+	}
 	cancel_requests(kr, handle, ctx, own);
 	g_free(own);
 	g_free(fp);

@@ -209,7 +209,12 @@ void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);
    key fp_hex, "" when it is not known) stands in for it, so that neither
    their next message or request nor the answer to a request of ours
    makes one trusted */
-void e2e_decline_session(E2E_JSON *kr, const char *handle, const char *ctx, const char *fp_hex);
+/* With net, the sessions of the same channel spelt otherwise there (as
+   every server of its CASEMAPPING takes them, e2e_casefold_narrow()) are
+   revoked as well; /e2e accept, unrevoke or handshake in a spelling then
+   trust that one again. */
+void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, const char *ctx,
+                         const char *fp_hex);
 gboolean e2e_stop_giving_key(E2E_JSON *kr, const char *handle, const char *ctx);
 
 typedef enum {

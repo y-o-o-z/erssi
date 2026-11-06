@@ -1372,7 +1372,7 @@ static void test_decline_before_session(void)
 	mine = e2e_build_keyreq(a.kr, &a.id, "#d", MAL, &error);
 	g_assert_nonnull(mine);
 	g_assert_null(path_get(a.kr, "incoming", MAL "|#d", NULL));
-	e2e_decline_session(a.kr, MAL, "#d", m.id.fp_hex);
+	e2e_decline_session(a.kr, NULL, MAL, "#d", m.id.fp_hex);
 	row = path_get(a.kr, "incoming", MAL "|#d", NULL);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
 	g_assert_false(e2e_session_has_key(row));
@@ -1432,7 +1432,7 @@ static void test_decline_before_session(void)
 	/* without the key of a request (none known) a row stands in too:
 	   auto-accept answered him, no request waits, and his next request
 	   gets no key */
-	e2e_decline_session(a.kr, MAL, "#none", NULL);
+	e2e_decline_session(a.kr, NULL, MAL, "#none", NULL);
 	row = path_get(a.kr, "incoming", MAL "|#none", NULL);
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
 	g_assert_false(e2e_session_has_key(row));
@@ -1474,7 +1474,7 @@ static void test_decline_survives_flood(void)
 	g_free(req);
 	/* what /e2e decline leaves */
 	e2e_json_remove(e2e_json_get(a.kr, "pending_inbound"), MAL "|#c");
-	e2e_decline_session(a.kr, MAL, "#c", m.id.fp_hex);
+	e2e_decline_session(a.kr, NULL, MAL, "#c", m.id.fp_hex);
 	e2e_stop_giving_key(a.kr, MAL, "#c");
 	for (i = 0; i < E2E_MAX_UNACCEPTED_PEERS + 40; i++) {
 		E2E_JSON *kr = e2e_keyring_new();
@@ -4276,7 +4276,7 @@ static void test_casemap_decline_folded(void)
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_PLAIN);
 	g_free(plain);
 	/* declined where his request came from: #Żaba */
-	e2e_decline_session(a.kr, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f" ZABA_UPPER, "00");
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_UPPER, &plain), ==, E2E_IN_DROP);
 	g_assert_null(plain);
 	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_LOWER, &plain), ==, E2E_IN_DROP);
@@ -4309,7 +4309,7 @@ static void test_casemap_decline_folded(void)
 		g_free(raw);
 		peer_init(&a, "alice", ALICE, 0x41);
 		set_trusted_session(a.kr, BOB "|E2E\x1f#a{b", VEC_KEY_22);
-		e2e_decline_session(a.kr, BOB, "E2E\x1f#a[b", "00");
+		e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f#a[b", "00");
 		w = e2e_encrypt_plain(key, "#a{b", "in the other channel", fake_now, &err);
 		g_assert_nonnull(w);
 		memset(&in, 0, sizeof(in));
@@ -4326,6 +4326,16 @@ static void test_casemap_decline_folded(void)
 		g_ptr_array_unref(w);
 		peer_free(&a);
 	}
+
+	/* declined in #Żaba, then the user trusts him again where the
+	   channel is written #żaba (/e2e handshake there installs a session):
+	   read there - the other spelling's decline is no veto */
+	peer_init(&a, "alice", ALICE, 0x41);
+	e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	set_trusted_session(a.kr, BOB "|E2E\x1f" ZABA_LOWER, VEC_KEY_22);
+	g_assert_cmpint(cm_decrypt(&a, &cm_unicode, ZABA_LOWER, &plain), ==, E2E_IN_PLAIN);
+	g_free(plain);
+	peer_free(&a);
 }
 
 /* the single code point c folds to with GLib, or c */
