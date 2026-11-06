@@ -565,8 +565,10 @@ static int logged_in_clients(void)
 	return n;
 }
 
-/* Does the request (headers complete) carry the header name, in any case */
-static gboolean request_has_header(const char *data, const char *name)
+/* The line of the header name (in any case) among the request's headers,
+ * which must be complete: NULL when there is none. Only a line's start
+ * counts - "Sec-WebSocket-Key:" in the URL a page fetches is no header. */
+static const char *request_header(const char *data, const char *name)
 {
 	const char *end = strstr(data, "\r\n\r\n"), *p = data;
 	size_t n = strlen(name);
@@ -574,9 +576,14 @@ static gboolean request_has_header(const char *data, const char *name)
 	while (end != NULL && (p = strstr(p, "\r\n")) != NULL && p < end) {
 		p += 2;
 		if (g_ascii_strncasecmp(p, name, n) == 0 && p[n] == ':')
-			return TRUE;
+			return p;
 	}
-	return FALSE;
+	return NULL;
+}
+
+static gboolean request_has_header(const char *data, const char *name)
+{
+	return request_header(data, name) != NULL;
 }
 
 /* Handle WebSocket handshake (RFC 6455) */
@@ -591,15 +598,12 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	const char *peer;
 	gboolean paced;
 
-	/* Look for Sec-WebSocket-Key header */
-	key_line = strstr(data, "Sec-WebSocket-Key:");
-	if (key_line == NULL) {
-		/* Try case-insensitive search */
-		key_line = strcasestr(data, "Sec-WebSocket-Key:");
-		if (key_line == NULL) {
-			return 0; /* Not complete handshake yet */
-		}
-	}
+	/* Look for Sec-WebSocket-Key header: a header line of its own (a
+	 * page's plain GET can put the text into its URL, but not set the
+	 * header, nor leave out Origin on a WebSocket) */
+	key_line = (char *) request_header(data, "Sec-WebSocket-Key");
+	if (key_line == NULL)
+		return 0; /* Not complete handshake yet */
 
 	/* Check for end of headers */
 	if (strstr(data, "\r\n\r\n") == NULL) {
@@ -621,6 +625,7 @@ static int fe_web_handle_handshake(WEB_CLIENT_REC *client, const char *data)
 	 * that run as a server send none): it runs as the owner's uid but
 	 * reads no password, and could guess one at the speed of TLS */
 	paced = strcmp(peer, own_peer_key) != 0 || request_has_header(data, "Origin");
+	client->login_paced = paced;
 	if (paced && !fe_web_pacing_may_check(login_pacing, peer, now)) {
 		static const char busy[] = "HTTP/1.1 429 Too Many Requests\r\n"
 		                           "Retry-After: " G_STRINGIFY(FE_WEB_CHECK_INTERVAL) "\r\n"
@@ -1170,9 +1175,9 @@ static void client_input_once(WEB_CLIENT_REC *client)
 
 			client->authenticated = TRUE;
 			/* the owner is never paced: it needs no place among
-			 * the trusted peers */
-			if (login_pacing != NULL && own_peer_key != NULL &&
-			    strcmp(client_peer(client), own_peer_key) != 0)
+			 * the trusted peers - a web page of theirs is, and its
+			 * success clears its wrong passwords */
+			if (login_pacing != NULL && client->login_paced)
 				fe_web_pacing_succeeded(login_pacing, client_peer(client));
 
 			/* the request is done with; what came after it are

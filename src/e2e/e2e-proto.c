@@ -2340,7 +2340,15 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 		goto out;
 	}
 	have_eph = b64_member(row, "eph_sk", eph_sk, 32);
-	user_started = e2e_json_truthy(e2e_json_get(row, "by_user"));
+	/* the user's own /e2e handshake - of this context: a legacy twin's
+	   request from before is no decision about this one */
+	{
+		char *exact = pending_key(ctx, sender_handle);
+
+		user_started = e2e_json_truthy(e2e_json_get(row, "by_user")) &&
+		               strcmp(pk, exact) == 0;
+		g_free(exact);
+	}
 	if (!have_eph) {
 		e2e_json_remove(pending, pk);
 		g_free(pk);

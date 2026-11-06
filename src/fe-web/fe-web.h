@@ -64,6 +64,9 @@ typedef struct {
 	char *peer_key;
 	/* peer_key is an address other users of this machine share */
 	unsigned int peer_shared : 1;
+	/* its login was paced (a peer not the owner, or a web page):
+	 * a success clears its wrong passwords */
+	unsigned int login_paced : 1;
 
 	/* WebSocket state */
 	unsigned int authenticated : 1;

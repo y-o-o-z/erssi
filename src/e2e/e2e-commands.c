@@ -1343,6 +1343,20 @@ static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, 
 	unsigned char *pub;
 	gsize len = 0;
 
+	/* in a query their messages open under the row of "@<own>", the
+	   row of "@<peer>" holds no key: both are revoked, as /e2e revoke
+	   does. The server the decline is for says where "@<own>" is (also
+	   from the status window, which has no item); while our own handle
+	   is not known yet, nothing is declined - half a decline would say
+	   "declined" and go on reading them */
+	own = NULL;
+	if (*e2e_ctx_wire(ctx) == '@') {
+		own = own_ctx(kr, server != NULL ? server : item != NULL ? item->server : NULL, ctx);
+		if (own == NULL) {
+			e2e_print_item(item, "/e2e decline: own identity not learned yet (waiting for the WHOIS reply) — try again in a moment");
+			return;
+		}
+	}
 	k = g_strconcat(handle, "|", ctx, NULL);
 	/* the key of the request declined, for the rows that stand in for
 	   sessions not there yet */
@@ -1353,13 +1367,8 @@ static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, 
 	g_free(pub);
 	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
 	g_free(k);
-	/* in a query their messages open under the row of "@<own>", the
-	   row of "@<peer>" holds no key: both are revoked, as /e2e revoke
-	   does; and a request of ours still out is cancelled, its answer
-	   would be no decision of the user's */
-	/* the server the decline is for: also from the status window,
-	   which has no item */
-	own = *e2e_ctx_wire(ctx) == '@' ? own_ctx(kr, server != NULL ? server : item != NULL ? item->server : NULL, ctx) : NULL;
+	/* and a request of ours still out is cancelled, its answer would
+	   be no decision of the user's */
 	e2e_decline_session(kr, handle, ctx, fp);
 	if (own != NULL && strcmp(own, ctx) != 0)
 		e2e_decline_session(kr, handle, own, fp);

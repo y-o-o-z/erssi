@@ -166,6 +166,33 @@ static void test_page_of_owner_paced(void)
 	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
 	g_assert_true(test_starts_with(attempt(own, "wrong"), HTTP_401));
 	g_assert_true(test_starts_with(attempt(own, TEST_PASSWORD), HTTP_101));
+	/* the page logs in (one check every 2 s): its wrong passwords are
+	   cleared, the next one is checked at once */
+	fe_web_fuzz_set_clock(T + 2);
+	g_assert_true(test_starts_with(attempt_from_page(own, TEST_PASSWORD), HTTP_101));
+	g_assert_true(test_starts_with(attempt_from_page(own, "wrong"), HTTP_401));
+}
+
+/* A page's plain GET (fetch, no-cors) carries no Origin and can set no
+ * Sec-WebSocket-Key header, but it can put the text into its URL: that
+ * is no WebSocket handshake, its password is never checked */
+static void test_page_get_is_no_handshake(void)
+{
+	static const char get[] = "GET /Sec-WebSocket-Key:dGhlIHNhbXBsZSBub25jZQ==?password=wrong HTTP/1.1\r\n"
+	                          "Host: 127.0.0.1:9001\r\n"
+	                          "Accept: */*\r\n\r\n";
+	WEB_CLIENT_REC *client;
+	char *printed;
+
+	setup();
+	client = fe_web_fuzz_client_new_peer(own, FALSE, FALSE);
+	fe_web_fuzz_client_send(client, (const guchar *) get, sizeof(get) - 1);
+	g_assert_cmpuint(fe_web_fuzz_received()->len, ==, 0);
+	g_assert_false(client->authenticated);
+	fe_web_fuzz_client_free(client);
+	printed = fe_web_fuzz_take_printed();
+	g_assert_null(strstr(printed, "wrong or missing password"));
+	g_free(printed);
 }
 
 static void test_owner_logs_in_while_paced(void)
@@ -1223,6 +1250,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/fe-web/login/paced-429-after-five", test_paced_429_after_five);
 	g_test_add_func("/fe-web/login/own-uid-never-paced", test_own_uid_never_paced);
 	g_test_add_func("/fe-web/login/page-of-owner-paced", test_page_of_owner_paced);
+	g_test_add_func("/fe-web/login/page-get-is-no-handshake", test_page_get_is_no_handshake);
 	g_test_add_func("/fe-web/login/owner-logs-in-while-paced", test_owner_logs_in_while_paced);
 	g_test_add_func("/fe-web/login/success-resets-peer", test_success_resets_peer);
 	g_test_add_func("/fe-web/login/pacing-ends-after-a-minute",
