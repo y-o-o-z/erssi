@@ -1684,8 +1684,8 @@ void e2e_decline_session(E2E_JSON *kr, const char *handle, const char *ctx, cons
 	g_free(k);
 	if (row != NULL)
 		e2e_json_set_string(row, "status", "revoked");
-	else if (fp_hex != NULL)
-		set_session(kr, handle, ctx, fp_hex, zero, "revoked");
+	else
+		set_session(kr, handle, ctx, fp_hex != NULL ? fp_hex : "", zero, "revoked");
 }
 
 /* A REKEY replaces the trusted session of handle and ctx: the key it

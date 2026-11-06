@@ -206,8 +206,9 @@ void e2e_forget_acceptance(E2E_JSON *kr, const char *handle, const char *ctx);
    messages there until it rotates (/e2e revoke, /e2e rotate). */
 /* /e2e decline of handle in ctx: its incoming session there is revoked;
    where there is none yet, a revoked row without a key (of the declined
-   key fp_hex) stands in for it, so that neither their next message nor
-   the answer to a request of ours makes one trusted */
+   key fp_hex, "" when it is not known) stands in for it, so that neither
+   their next message or request nor the answer to a request of ours
+   makes one trusted */
 void e2e_decline_session(E2E_JSON *kr, const char *handle, const char *ctx, const char *fp_hex);
 gboolean e2e_stop_giving_key(E2E_JSON *kr, const char *handle, const char *ctx);
 

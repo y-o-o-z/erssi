@@ -1429,9 +1429,25 @@ static void test_decline_before_session(void)
 	g_assert_true(e2e_session_has_key(row));
 	g_free(req);
 
-	/* without the key of a request (none known), nothing stands in */
+	/* without the key of a request (none known) a row stands in too:
+	   auto-accept answered him, no request waits, and his next request
+	   gets no key */
 	e2e_decline_session(a.kr, MAL, "#none", NULL);
-	g_assert_null(path_get(a.kr, "incoming", MAL "|#none", NULL));
+	row = path_get(a.kr, "incoming", MAL "|#none", NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	g_assert_false(e2e_session_has_key(row));
+	enable(&a, "#none", "auto-accept");
+	g_free(rsp);
+	g_free(recip);
+	rsp = recip = NULL;
+	e2e_json_remove(e2e_json_get(m.kr, "pending"), "#none|" ALICE);
+	req = e2e_build_keyreq(m.kr, &m.id, "#none", ALICE, &error);
+	g_assert_nonnull(req);
+	free_budgets(a.stamps);
+	deliver_keyreq(&a, &m, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_false(e2e_peer_accepted(a.kr, MAL, "#none", m.id.fp_hex));
+	g_free(req);
 	g_free(rsp);
 	g_free(recip);
 	g_free(wire);

@@ -1365,6 +1365,12 @@ static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, 
 	if (pub != NULL && len == 32)
 		fp = e2e_fingerprint_hex(pub);
 	g_free(pub);
+	/* no request waits (auto-accept answered it): the key we accepted */
+	if (fp == NULL) {
+		const char *afp = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "accepted"), k), "fp");
+
+		fp = g_strdup(afp);
+	}
 	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
 	g_free(k);
 	/* and a request of ours still out is cancelled, its answer would
