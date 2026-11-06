@@ -35,6 +35,11 @@ tarball() {   # version platform needed [glibc]
     printf '#!/bin/sh\necho "erssi %s (20261103 1102)"\n' "$1" > "$W/t/$t/bin/erssi"
     chmod 750 "$W/t/$t/bin/erssi"
     printf 'theme\n' > "$W/t/$t/share/irssi/default.theme"
+    if [ -z "${OLD_INSTALLER:-}" ]; then
+        printf '# refuses $PREFIX/share/irssi/packaged-by\n' > "$W/t/$t/share/irssi/shellter-install.sh"
+    else
+        printf '# an installer of before\n' > "$W/t/$t/share/irssi/shellter-install.sh"
+    fi
     chmod 640 "$W/t/$t/share/irssi/default.theme"
     printf 'version=%s\nplatform=%s\nlibc=glibc %s\nneeded=%s\n' "$1" "$2" "${4:-2.41}" "$3" > "$W/t/$t/MANIFEST"
     find "$W/t/$t" -exec touch -h -d @1793700159 {} +
@@ -100,6 +105,12 @@ refused "a name of another version than its directory's" "not one directory erss
 sign_sums
 refused "a MANIFEST of another version" "its MANIFEST is of version 2026.11.3" "$W/erssi-2026.11.4-debian13-amd64.tar.xz"
 rm "$W/erssi-2026.11.4-debian13-amd64.tar.xz"
+# a release whose installer does not know packaged-by (before 2026.11.3)
+OLD_INSTALLER=1
+tarball 2026.11.2 debian13-amd64 "$NEEDED13"
+OLD_INSTALLER=
+refused "a release whose installer would update over apt" "its installer does not know packaged-by" "$W/erssi-2026.11.2-debian13-amd64.tar.xz"
+rm "$W/erssi-2026.11.2-debian13-amd64.tar.xz"
 # only what the release signed is packed
 tarball 2026.11.3 debian13-amd64 "$NEEDED13"
 T13=$W/erssi-2026.11.3-debian13-amd64.tar.xz

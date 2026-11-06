@@ -456,6 +456,9 @@ for p in debian12 debian13 ubuntu24; do
 done
 ```
 
+- From 2026.11.3 on: the installer of an older release does not know
+  `packaged-by` (below), so `erssi --update` run as root would change what
+  apt installed. `build-deb.sh` refuses such a tarball.
 - Only a tarball the release signed is packed: `SHA256SUMS` and
   `SHA256SUMS.sig` must be next to it, the signature must be by a key of
   `utils/allowed_signers` (`--signers FILE`) in the namespace
@@ -485,7 +488,8 @@ sh utils/apt-repo.sh --repo ~/erssi-packages --gnupghome <its gnupg home> \
     --key <its fingerprint> ~/release-X/deb/*.deb
 ```
 
-It checks that each package is what its name says (`Package: erssi`, its
+It copies the packages to a private directory first and checks and
+publishes the copies. It checks that each package is what its name says (`Package: erssi`, its
 `Version`, `Architecture: amd64`): apt trusts the control fields, not the
 file name. One update runs at a time (`flock` on `.lock` in the
 repository). It writes `pool/main/e/erssi/` (every release kept; the same

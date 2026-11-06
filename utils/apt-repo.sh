@@ -57,9 +57,19 @@ GHOME=$(cd -- "$GHOME" 2>/dev/null && pwd) || die "$GHOME: no such directory"
 gpgk() { gpg --homedir "$GHOME" --batch --no-tty --local-user "$KEY" "$@"; }
 gpgk --list-secret-keys "$KEY" > /dev/null 2>&1 || die "no secret key $KEY in $GHOME"
 
-# every package checked before anything is written: its name, and the
-# control fields apt goes by
+# every package copied to a private directory and checked there, before
+# anything is written: its name, and the control fields apt goes by. The
+# copies are what is published - the files given may change meanwhile.
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/apt-repo.XXXXXX") || die "cannot make a temporary directory"
+trap 'rm -rf "$STAGE"' EXIT
+trap 'exit 1' HUP INT TERM
 for d in "$@"; do
+    b=$(basename -- "$d")
+    [ -f "$d" ] && [ ! -L "$d" ] || die "$d: no such file"
+    [ ! -e "$STAGE/$b" ] || die "$b: given twice"
+    cp "$d" "$STAGE/$b" || die "cannot copy $b"
+done
+for d in "$STAGE"/*; do
     b=$(basename -- "$d")
     case $b in
         erssi_*-1~deb12_amd64.deb|erssi_*-1~deb13_amd64.deb|erssi_*-1~ubuntu24.04_amd64.deb) ;;
@@ -80,7 +90,7 @@ exec 9> "$REPO/.lock" || die "cannot open $REPO/.lock"
 flock -w 600 9 || die "another update holds $REPO/.lock"
 POOL=pool/main/e/erssi
 mkdir -p "$REPO/$POOL" || die "cannot make $REPO/$POOL"
-for d in "$@"; do
+for d in "$STAGE"/*; do
     b=$(basename -- "$d")
     if [ -e "$REPO/$POOL/$b" ] || [ -L "$REPO/$POOL/$b" ]; then
         [ -f "$REPO/$POOL/$b" ] && [ ! -L "$REPO/$POOL/$b" ] && cmp -s "$d" "$REPO/$POOL/$b" ||
@@ -108,8 +118,11 @@ for s in bookworm:deb12:"Debian 12" trixie:deb13:"Debian 13" noble:ubuntu24.04:"
         BEGIN { RS = ""; ORS = "\n\n" }
         { if (match($0, /\nVersion: [^\n]*/)) { v = substr($0, RSTART, RLENGTH)
               if (substr(v, length(v) - length(t) + 1) == t) print } }' > "$dir/Packages"
-    gzip -9n < "$dir/Packages" > "$dir/Packages.gz"
-    xz -9 < "$dir/Packages" > "$dir/Packages.xz"
+    gzip -9n < "$dir/Packages" > "$dir/Packages.gz" || die "gzip failed on $dir/Packages"
+    xz -9 < "$dir/Packages" > "$dir/Packages.xz" || die "xz failed on $dir/Packages"
+    # what is signed must open
+    gzip -dc "$dir/Packages.gz" | cmp -s - "$dir/Packages" && xz -dc "$dir/Packages.xz" | cmp -s - "$dir/Packages" ||
+        die "$dir: the compressed Packages do not give Packages back"
     apt-ftparchive \
         -o APT::FTPArchive::Release::Origin="erssi Shellter Edition" \
         -o APT::FTPArchive::Release::Label="erssi" \

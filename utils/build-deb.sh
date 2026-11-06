@@ -143,6 +143,11 @@ tar -xJf "$WORK/$base" -C "$WORK/x" --no-same-owner || die "$base: cannot unpack
 [ "$(ls -A "$WORK/x")" = "$top" ] || die "$base: not one directory $top/ inside"
 T=$WORK/x/$top
 [ -f "$T/MANIFEST" ] && [ -x "$T/bin/erssi" ] || die "$base: no MANIFEST or bin/erssi"
+# its installer (what erssi --update runs) must leave a package alone:
+# the releases before 2026.11.3 do not know packaged-by, and run as root
+# they would replace what dpkg keeps
+grep -q 'share/irssi/packaged-by' "$T/share/irssi/shellter-install.sh" 2>/dev/null ||
+    die "$base: its installer does not know packaged-by (a release before 2026.11.3) - erssi --update would change what apt installed; package a newer release"
 field() { sed -n "s/^$1=//p" "$T/MANIFEST" | head -n 1; }
 [ "$(field version)" = "$VERSION" ] || die "$base: its MANIFEST is of version $(field version)"
 [ "$(field platform)" = "$PLATFORM" ] || die "$base: its MANIFEST is of platform $(field platform)"
