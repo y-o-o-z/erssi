@@ -196,8 +196,10 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         start = len(trace(tr))
         send(a, "/keepnick zed")
         assert wait_log(a, off, "Keepnick: Now keeping zed on [E2E]"), log_since(a, off)
-        # keepnick_autosave (ON): in the file at once, no /SAVE
-        assert config_has(a, "zed"), (a.home / "config").read_text()
+        # keepnick_autosave (ON): in the file at once, no /SAVE. The line
+        # is printed before the save, so the file is waited for: read right
+        # after the line it could still be the old one (FreeBSD 14 build)
+        assert harness.wait_until(lambda: config_has(a, "zed"), WAIT), (a.home / "config").read_text()
         assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON for zed:\n" + trace(tr)[start:]
         # two more checks: no NICK while zed is on
         assert harness.wait_until(lambda: len(sent(tr, r" ISON ", start)) >= 3, LATE), trace(tr)[start:]
