@@ -4357,6 +4357,15 @@ static void test_casemap_decline_folded(void)
 	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
 	peer_free(&a);
 
+	/* nothing of his under #żaba but its config (E2E on there): a
+	   revoked row stands there too */
+	peer_init(&a, "alice", ALICE, 0x41);
+	enable(&a, "E2E\x1f" ZABA_LOWER, "auto-accept");
+	e2e_decline_session(a.kr, &cm_unicode, BOB, "E2E\x1f" ZABA_UPPER, "00");
+	row = path_get(a.kr, "incoming", BOB "|E2E\x1f" ZABA_LOWER, NULL);
+	g_assert_cmpstr(e2e_json_get_string(row, "status"), ==, "revoked");
+	peer_free(&a);
+
 	/* declined in #Żaba, then the user trusts him again where the
 	   channel is written #żaba (/e2e handshake there installs a session):
 	   read there - the other spelling's decline is no veto */

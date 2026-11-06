@@ -3833,14 +3833,17 @@ static const char *incoming_ctx_of(const char *key, const E2E_JSON *row, const c
 }
 
 /* the context in key of store when the row is handle's: "handle|ctx"
-   (handle_first) or "ctx|handle" */
+   (how 1), "ctx|handle" (2), or the key itself (0: a channel's config,
+   anyone's) */
 static const char *ctx_of_key(const char *key, const E2E_JSON *row, const char *handle,
-                              gboolean handle_first, char **copy)
+                              int how, char **copy)
 {
 	size_t kl = strlen(key), hl = strlen(handle);
 
 	*copy = NULL;
-	if (handle_first)
+	if (how == 0)
+		return key;
+	if (how == 1)
 		return incoming_ctx_of(key, row, handle);
 	if (kl <= hl + 1 || key[kl - hl - 1] != '|' || strcmp(key + kl - hl, handle) != 0)
 		return NULL;
@@ -3852,9 +3855,9 @@ void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, c
                          const char *fp_hex)
 {
 	static const unsigned char zero[32] = { 0 };
-	static const struct { const char *store; gboolean handle_first; } stores[] = {
-		{ "incoming", TRUE }, { "accepted", TRUE }, { "pending", FALSE },
-		{ "outgoing_recipients", FALSE }
+	static const struct { const char *store; int how; } stores[] = {
+		{ "incoming", 1 }, { "accepted", 1 }, { "pending", 2 },
+		{ "outgoing_recipients", 2 }, { "channels", 0 }
 	};
 	E2E_JSON *incoming = e2e_json_get(kr, "incoming");
 	char *k = pipe_key(handle, ctx);
@@ -3872,8 +3875,9 @@ void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, c
 		return;
 	/* the same channel written otherwise on this network (#Zaba,
 	   #zaba), wherever the peer has anything there - a session, an
-	   acceptance, a request of ours, our key: declined there too, only
-	   where every server of the CASEMAPPING takes the two for one */
+	   acceptance, a request of ours, our key - or E2E is set up there:
+	   declined there too, only where every server of the CASEMAPPING
+	   takes the two for one */
 	aliases = g_ptr_array_new_with_free_func(g_free);
 	{
 		E2E_CASEMAP map = net_casemap(net);
@@ -3889,7 +3893,7 @@ void e2e_decline_session(E2E_JSON *kr, const E2E_NET *net, const char *handle, c
 				guint n;
 				gboolean dup = FALSE;
 
-				x = ctx_of_key(key, e2e_json_get(store, key), handle, stores[i].handle_first, &copy);
+				x = ctx_of_key(key, e2e_json_get(store, key), handle, stores[i].how, &copy);
 				if (x != NULL && strcmp(x, ctx) != 0 && e2e_ctx_on_net(x, net) &&
 				    e2e_is_channel(e2e_ctx_wire(x))) {
 					have = e2e_casefold_narrow(e2e_ctx_wire(x), map);
