@@ -980,6 +980,27 @@ static char *unavailable_reason(void)
 	if (capability_mode)
 		return g_strdup(CAPSICUM_REASON);
 	installer = installer_path(&test);
+	/* installed by a package manager (build-deb.sh writes the file next
+	   to the installer): it updates erssi, the installer must not */
+	{
+		char *dir = g_path_get_dirname(installer);
+		char *marker = g_build_filename(dir, "packaged-by", NULL), *by = NULL;
+
+		g_free(dir);
+		if (g_file_get_contents(marker, &by, NULL, NULL)) {
+			g_strstrip(by);
+			if (strcmp(by, "apt") == 0)
+				reason = g_strdup("this erssi was installed with apt - the package manager updates it (as root: apt update && apt upgrade)");
+			else
+				reason = g_strdup_printf("this erssi was installed with %s - the package manager updates it",
+				                         *by != '\0' && strspn(by, "abcdefghijklmnopqrstuvwxyz0-9-") == strlen(by) ? by : "a package manager");
+			g_free(by);
+			g_free(marker);
+			g_free(installer);
+			return reason;
+		}
+		g_free(marker);
+	}
 	if (access(installer, R_OK) != 0) {
 		reason = g_strdup_printf("this erssi was not installed with shellter-install.sh "
 		                         "(no %s) - update it the way it was installed",

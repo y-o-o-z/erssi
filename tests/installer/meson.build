@@ -16,7 +16,7 @@ test('installer versions test (shellter-v1.3.10)', find_program('sh'),
 # HOME (test-shellter-install.sh SOURCE_ROOT CASE)
 foreach c : ['ascii', 'utf8',
     'link-home', 'link-system-prefix', 'link-root', 'link-same-dir', 'relative-prefix',
-    'lock-before-venv', 'lock-held-during-venv', 'prefix-lock', 'stale-lock', 'lock-freebsd', 'prefix-foreign', 'glib-old', 'glib-min',
+    'lock-before-venv', 'lock-held-during-venv', 'prefix-lock', 'stale-lock', 'lock-freebsd', 'prefix-foreign', 'packaged', 'glib-old', 'glib-min',
     'freebsd-base-openssl', 'freebsd-no-openssl',
     'src-foreign', 'src-writable', 'src-writable-named', 'src-shared-parent', 'acl-bsd',
     'userns', 'userns-kernel',
@@ -46,6 +46,12 @@ endforeach
 test('installer install.sh', find_program('sh'),
   args : [files('test-install-sh.sh'), meson.current_source_dir() / '..' / '..'],
   suite : 'tooling')
+
+# utils/build-deb.sh and utils/apt-repo.sh on made-up release tarballs, with
+# a throwaway OpenPGP key (test-build-deb.sh SOURCE_ROOT)
+test('build-deb', find_program('sh'),
+  args : [files('test-build-deb.sh'), meson.current_source_dir() / '..' / '..'],
+  timeout : 120, suite : 'tooling')
 
 # utils/release.sh with throwaway repositories, a throwaway signing key, a
 # local bare remote and a stand-in gh: no network, no chroot, no ssh

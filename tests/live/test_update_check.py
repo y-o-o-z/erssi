@@ -178,6 +178,26 @@ def main():
         assert runs(d) == []
         finish(e)
 
+    def t_packaged():
+        # installed by build-deb.sh's package: apt updates it, the
+        # installer next to it is not run
+        d = work / "packaged"
+        d.mkdir()
+        inst = d / "shellter-install.sh"
+        inst.write_text("#!/bin/sh\necho ran >> " + str(d / "ran") + "\n")
+        (d / "packaged-by").write_text("apt\n")
+        apt = "this erssi was installed with apt - the package manager updates it"
+        e = harness.Erssi(st["inst"], work, "erin", harness.config(st["port"], "erin"),
+                          env={"ERSSI_TEST_UPDATE_INSTALLER": str(inst)})
+        e.start(160, 40)
+        e.wait_ready()
+        e.type_and_wait("/update check")
+        assert wait_log(e, "Update check: " + apt), log_text(e)[-2000:]
+        e.type_and_wait("/update install")
+        assert harness.wait_until(lambda: log_text(e).count(apt) == 2, WAIT), log_text(e)[-2000:]
+        assert not (d / "ran").exists(), "the installer ran"
+        finish(e)
+
     def t_foreign():
         # a file of root's that erssi would run if it ran a foreign installer
         theirs = Path("/bin/sh").resolve()
@@ -216,7 +236,7 @@ def main():
         assert r.returncode == 0 and runs(d)[-1].endswith(" --check"), (r, runs(d))
 
     try:
-        harness.main([t_install, t_check_command, t_daily, t_no_installer, t_foreign])
+        harness.main([t_install, t_check_command, t_daily, t_no_installer, t_packaged, t_foreign])
     finally:
         if "ircd" in st:
             st["ircd"].stop()

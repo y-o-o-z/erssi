@@ -442,6 +442,67 @@ Between the tag's push (step 7 of [A release](#a-release)) and the upload,
 The assets are then at
 `https://github.com/y-o-o-z/erssi/releases/download/shellter-vX/<asset>`.
 
+### Debian packages and the apt repository
+
+The tarballs of Debian 12, Debian 13 and Ubuntu 24.04 are also published
+as `.deb` packages in a signed apt repository, so that a system install
+is updated with `apt upgrade`. `utils/build-deb.sh` makes a package from
+a tarball that `verify` reproduced and `sums` signed; nothing is built
+again:
+
+```sh
+for p in debian12 debian13 ubuntu24; do
+    sh utils/build-deb.sh --out ~/release-X/deb ~/release-X/erssi-X-$p-amd64.tar.xz
+done
+```
+
+- The package holds the tarball's files under `/opt/erssi` (the tarball is
+  relocatable) and `/usr/bin/erssi`, a link to `/opt/erssi/bin/erssi`.
+  Debian's own irssi (`/usr/lib/irssi`, `/usr/share/irssi`) is not touched.
+- Its version is `X-1~deb12`, `X-1~deb13` or `X-1~ubuntu24.04`.
+- `Depends` comes from the `needed=` line of the tarball's MANIFEST,
+  through a table of each release's package names in `build-deb.sh`. A
+  library the table does not know stops the build: add it there.
+- The files are owned by root, dated to the release's commit, programs
+  755, other files 644. The same tarball always gives the same bytes,
+  so anyone can make the package from the published tarball and compare.
+- `/opt/erssi/share/irssi/packaged-by` says `apt`. `erssi --update`,
+  `/update` and the installer then refuse that install and say that
+  `apt upgrade` updates it.
+
+`utils/apt-repo.sh` adds the packages to the repository and signs it with
+the repository's OpenPGP key (gpg; a key of its own, not the release key,
+because apt checks OpenPGP signatures only):
+
+```sh
+sh utils/apt-repo.sh --repo ~/erssi-packages --gnupghome <its gnupg home> \
+    --key <its fingerprint> ~/release-X/deb/*.deb
+```
+
+It writes `pool/main/e/erssi/` (every release kept; the same name with
+other bytes is refused) and, for bookworm, trixie and noble,
+`dists/<codename>/main/binary-amd64/Packages{,.gz,.xz}` and `Release`,
+signed as `InRelease` and `Release.gpg`. It also writes the public key as
+`erssi-archive-keyring.gpg` (and `.asc`). The repository is a directory of
+static files: it is published with GitHub Pages.
+
+To try a repository before it is published, use a new chroot without root
+(`TMPDIR` must not be a 0700 home, as for `build`). This installs erssi
+with apt from the repository and starts it:
+
+```sh
+TMPDIR=/var/tmp/$(id -un)-mm mmdebstrap --mode=unshare --variant=apt trixie /var/tmp/t.tar \
+  "deb http://deb.debian.org/debian trixie main" \
+  "deb [signed-by=$PWD/repo/erssi-archive-keyring.gpg] copy://$PWD/repo trixie main" \
+  --include=erssi --customize-hook='chroot "$1" sh -c "HOME=/tmp erssi --version"'
+```
+
+The repository must be readable by every user (`chmod -R a+rX`). Use
+`copy://`: with `file://`, mmdebstrap's apt hands dpkg a path that does not
+exist inside the chroot. For bookworm and noble, use their mirror (noble
+with `--components=main,universe
+--keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg`).
+
 ### Testing the packager
 
 `tests/version/test-build-binary.sh` runs `build-binary.sh` on a

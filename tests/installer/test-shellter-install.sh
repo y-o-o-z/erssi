@@ -2913,6 +2913,24 @@ binary-interrupted)
     check "... bin/erssi the link into current again" current_is 2026.10.4
     check "... no locks left" none_exist "$P/.install.lock" "$HOME/.local/src/erssi.lock"
     ;;
+packaged)
+    # an erssi installed with apt (build-deb.sh's package): no install,
+    # update or uninstall over it, nothing of it changed
+    fake_prefix "$W/p" 1.3.9
+    printf 'apt\n' > "$W/p/share/irssi/packaged-by"
+    before=$(ls -lAR "$W/p")
+    apt_says="$W/p holds an erssi installed with apt - the package manager updates it (as root: apt update && apt upgrade)"
+    run_install --prefix "$W/p"
+    check "install over it: refused" [ "$RC" = 1 ]
+    check "... saying apt updates it" grep -qF "$apt_says" "$W/out"
+    for a in --update --uninstall; do
+        sh "$SRC/shellter-install.sh" "$a" --prefix "$W/p" > "$W/out" 2>&1 < /dev/null
+        RC=$?
+        check "$a: refused" [ "$RC" = 1 ]
+        check "... saying apt updates it" grep -qF "$apt_says" "$W/out"
+    done
+    check "nothing of it changed" [ "$(ls -lAR "$W/p")" = "$before" ]
+    ;;
 prefix-foreign)
     # the prefix holds the erssi that is run (also by the installer, for
     # its version) and the installer erssi --update runs: refused when
