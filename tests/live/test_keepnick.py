@@ -747,8 +747,11 @@ Irssi::Irc::Server::redirect_register('keepnick nick', 0, 0, undef,
         send(a, "/keepnick zed")
         assert wait_trace(tr, r" in alice ISON :?zed$", start), "no ISON"
         ison_answered(a, tr, start)
-        holder.sock.sendall(b"NICK zed2\r\n")
-        grab.sock.sendall(b"NICK zed\r\n")
+        # one write, so the server makes both changes before erssi can
+        # answer the first (two clients' writes raced under load: erssi's
+        # NICK came first and took the nick): the holder goes, grab
+        # takes the nick at once (from the server side, as SVSNICK)
+        holder.sock.sendall(b"NICK zed2\r\nTESTNICK grab zed\r\n")
         assert wait_trace(tr, r" out alice :\S+ 433 alice zed ", start), trace(tr)[start:]
         assert wait_log(a, off, "grab is now known as zed"), log_since(a, off)
         run(a, "/echo late-done")
