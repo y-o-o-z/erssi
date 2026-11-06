@@ -60,7 +60,8 @@ E2E_JSON *e2e_keyring_parse_checked(const char *data, size_t len, E2E_LOAD_STATU
 E2E_JSON *e2e_keyring_load(const char *path, char **notice);
 /* the same with the status: E2E_LOAD_LOST once the file was moved aside */
 E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, char **notice);
-/* the same file at two looks (stat: device, inode, size, mtime, ctime) */
+/* the same file at two looks (stat: device, inode, size, mtime, mode,
+   owner and group - not the ctime) */
 gboolean e2e_same_file(const struct stat *a, const struct stat *b);
 
 /* The keyring as it was last read from (or written to) its file, kept

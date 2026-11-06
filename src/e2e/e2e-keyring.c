@@ -364,11 +364,17 @@ E2E_JSON *e2e_keyring_load_status(const char *path, E2E_LOAD_STATUS *status, cha
 	return kr;
 }
 
+/* not the ctime: FreeBSD with soft updates sets it again a moment after
+   the rename that put the file in place (when the link counts are
+   written), so a file stamped as written, or just looked at, would differ
+   from itself - and a save based on it be refused as "changed by another
+   erssi". Another writer's rename leaves another inode, a write in place
+   another mtime; a chmod or chown is the mode and owner, compared here */
 gboolean e2e_same_file(const struct stat *a, const struct stat *b)
 {
 	return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
 	       a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
-	       a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+	       a->st_mode == b->st_mode && a->st_uid == b->st_uid && a->st_gid == b->st_gid;
 }
 
 void e2e_keyring_cache_clear(E2E_KEYRING_CACHE *cache)

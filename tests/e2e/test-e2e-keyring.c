@@ -1083,6 +1083,37 @@ static void test_save_based(void)
 	remove_tree();
 }
 
+/* a change of the ctime alone is the same file (FreeBSD's soft updates
+   set it again after the rename of a save); a chmod is not */
+static void test_same_file(void)
+{
+	struct stat a, b;
+	char *other;
+	int tries;
+
+	setup();
+	g_assert_true(g_file_set_contents(path, "{}", -1, NULL));
+	g_assert_cmpint(lstat(path, &a), ==, 0);
+	other = g_strconcat(path, ".link", NULL);
+	/* a second link changes the ctime (and the link count) only */
+	for (tries = 0;; tries++) {
+		g_usleep(20000);
+		g_assert_cmpint(link(path, other), ==, 0);
+		g_assert_cmpint(lstat(path, &b), ==, 0);
+		if (b.st_ctim.tv_sec != a.st_ctim.tv_sec || b.st_ctim.tv_nsec != a.st_ctim.tv_nsec)
+			break;
+		g_assert_cmpint(unlink(other), ==, 0);
+		g_assert_cmpint(tries, <, 100);
+	}
+	g_assert_true(e2e_same_file(&a, &b));
+	g_assert_cmpint(unlink(other), ==, 0);
+	g_free(other);
+	g_assert_cmpint(chmod(path, 0400), ==, 0);
+	g_assert_cmpint(lstat(path, &b), ==, 0);
+	g_assert_false(e2e_same_file(&a, &b));
+	remove_tree();
+}
+
 static void test_cache(void)
 {
 	E2E_KEYRING_CACHE cache = { NULL };
@@ -1205,6 +1236,7 @@ int main(int argc, char **argv)
 	g_test_add_func("/e2e/keyring/save-load", test_save_load);
 	g_test_add_func("/e2e/keyring/cache", test_cache);
 	g_test_add_func("/e2e/keyring/save-based", test_save_based);
+	g_test_add_func("/e2e/keyring/same-file", test_same_file);
 	g_test_add_func("/e2e/json/changes", test_json_changes);
 	g_test_add_func("/e2e/keyring/corrupt", test_corrupt);
 	g_test_add_func("/e2e/keyring/corrupt-fails-closed", test_corrupt_fails_closed);
