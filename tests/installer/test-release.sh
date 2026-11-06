@@ -75,6 +75,9 @@ printf '%s namespaces="git" %s\n' "$EMAIL" "$(cut -d' ' -f1,2 "$tmp/key.pub")" >
 # by release.sh
 printf '%s namespaces="erssi-release" %s\n' "$EMAIL" "$(cut -d' ' -f1,2 "$tmp/key.pub")" > "$tmp/release_signers"
 export RELEASE_MM_TMPDIR="$tmp/mm"
+# a sandboxed CI job runs in a user namespace: the directories of root
+# above the test's show as the overflow uid
+export RELEASE_TRUST_OVERFLOW_UID=1
 
 # the stand-in gh: releases are directories in $tmp/gh/<tag>, the tags
 # are those of the bare repository $FAKE_GH_GIT (gh api .../git/ref/tags/

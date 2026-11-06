@@ -483,12 +483,25 @@ mm_tmpdir() {
     # could whoever may rename a directory above it: each one is the
     # releaser's or root's, no link, and open to others only with the
     # sticky bit (as /var/tmp)
+    # In a user namespace (a sandboxed CI job, bwrap) root's directories
+    # show as the kernel's overflow uid, as every unmapped user's do:
+    # RELEASE_TRUST_OVERFLOW_UID=1 counts that uid as root's here
+    ovf=""
+    if [ "${RELEASE_TRUST_OVERFLOW_UID:-}" = 1 ] && [ -r /proc/self/uid_map ] &&
+            [ "$(awk '{$1 = $1; print}' /proc/self/uid_map 2>/dev/null)" != "0 0 4294967295" ]; then
+        ovf=$(cat /proc/sys/kernel/overflowuid 2>/dev/null)
+        case $ovf in ''|*[!0-9]*|0) ovf="" ;; esac
+    fi
     up=$(dirname -- "$MM_TMPDIR")
     while :; do
         [ ! -L "$up" ] || die "$up (above $MM_TMPDIR) is a symbolic link - give a path without links with --mm-tmpdir"
         # shellcheck disable=SC2012,SC2046 # as below
         set -- $(ls -ldn "$up" 2>/dev/null)
-        case ${3:-} in 0|"$(id -u)") ;; *) die "$up (above $MM_TMPDIR) belongs to another user - give a --mm-tmpdir under directories of yours or root's" ;; esac
+        case ${3:-} in
+            0|"$(id -u)") ;;
+            *) [ -n "$ovf" ] && [ "${3:-}" = "$ovf" ] ||
+                   die "$up (above $MM_TMPDIR) belongs to another user (uid ${3:-unknown}) - give a --mm-tmpdir under directories of yours or root's (in a user namespace, where root's show as the overflow uid: RELEASE_TRUST_OVERFLOW_UID=1)" ;;
+        esac
         case ${1:-} in
             ?????w???[tT]*|????????w[tT]*) ;;
             ?????w????*|????????w?*) die "$up (above $MM_TMPDIR) is writable by other users - give a --mm-tmpdir under directories only you or root can change" ;;
