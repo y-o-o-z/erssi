@@ -2930,6 +2930,20 @@ packaged)
         check "... saying apt updates it" grep -qF "$apt_says" "$W/out"
     done
     check "nothing of it changed" [ "$(ls -lAR "$W/p")" = "$before" ]
+    # a prefix whose bin/erssi is the package's link (/usr with the
+    # package's /usr/bin/erssi): refused too, the link kept
+    mkdir -p "$W/usr/bin"
+    ln -s "$W/p/bin/erssi" "$W/usr/bin/erssi"
+    run_install --prefix "$W/usr"
+    check "a prefix with the package's link: refused" [ "$RC" = 1 ]
+    check "... saying apt updates it" grep -qF "$W/usr holds an erssi installed with apt" "$W/out"
+    check "... the link kept" [ "$(readlink "$W/usr/bin/erssi")" = "$W/p/bin/erssi" ]
+    # a link to an erssi no package made: as before
+    rm "$W/usr/bin/erssi"
+    fake_prefix "$W/own" 1.3.9
+    ln -s "$W/own/bin/erssi" "$W/usr/bin/erssi"
+    run_install --prefix "$W/usr"
+    check "a link to an erssi of no package: not refused for that" sh -c '! grep -q "installed with apt" "$1"' sh "$W/out"
     ;;
 prefix-foreign)
     # the prefix holds the erssi that is run (also by the installer, for

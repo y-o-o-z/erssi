@@ -3014,8 +3014,16 @@ fi
 # installed by a package manager (utils/build-deb.sh writes the file):
 # it updates and removes that erssi, nothing here may change its files
 case "$ACTION" in backup|restore) ;; *)
-    if [ -f "$PREFIX/share/irssi/packaged-by" ]; then
-        by=$(head -n 1 "$PREFIX/share/irssi/packaged-by" 2>/dev/null | tr -cd 'a-z0-9-')
+    # or whose bin/erssi is the package's link (/usr/bin/erssi of the
+    # package, with --prefix /usr): installing there would replace it
+    pk=$PREFIX/share/irssi/packaged-by
+    if [ ! -f "$pk" ] && [ -L "$PREFIX/bin/erssi" ]; then
+        t=$(readlink "$PREFIX/bin/erssi" 2>/dev/null)
+        case $t in /*) ;; *) t=$PREFIX/bin/$t ;; esac
+        td=$(cd -P -- "$(dirname -- "$t")/.." 2>/dev/null && pwd -P) && pk=$td/share/irssi/packaged-by
+    fi
+    if [ -f "$pk" ]; then
+        by=$(head -n 1 "$pk" 2>/dev/null | tr -cd 'a-z0-9-')
         if [ "$by" = apt ]; then
             die "$PREFIX holds an erssi installed with apt - the package manager updates it (as root: apt update && apt upgrade) and removes it (apt remove erssi)"
         fi

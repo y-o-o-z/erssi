@@ -456,6 +456,11 @@ for p in debian12 debian13 ubuntu24; do
 done
 ```
 
+- Only a tarball the release signed is packed: `SHA256SUMS` and
+  `SHA256SUMS.sig` must be next to it, the signature must be by a key of
+  `utils/allowed_signers` (`--signers FILE`) in the namespace
+  `erssi-release`, and the tarball's sum must be the one there. Private
+  copies of the three are checked and packed.
 - The package holds the tarball's files under `/opt/erssi` (the tarball is
   relocatable) and `/usr/bin/erssi`, a link to `/opt/erssi/bin/erssi`.
   Debian's own irssi (`/usr/lib/irssi`, `/usr/share/irssi`) is not touched.
@@ -468,7 +473,8 @@ done
   so anyone can make the package from the published tarball and compare.
 - `/opt/erssi/share/irssi/packaged-by` says `apt`. `erssi --update`,
   `/update` and the installer then refuse that install and say that
-  `apt upgrade` updates it.
+  `apt upgrade` updates it. The installer also refuses a `--prefix` whose
+  `bin/erssi` is the package's link (`--prefix /usr`).
 
 `utils/apt-repo.sh` adds the packages to the repository and signs it with
 the repository's OpenPGP key (gpg; a key of its own, not the release key,
@@ -479,8 +485,11 @@ sh utils/apt-repo.sh --repo ~/erssi-packages --gnupghome <its gnupg home> \
     --key <its fingerprint> ~/release-X/deb/*.deb
 ```
 
-It writes `pool/main/e/erssi/` (every release kept; the same name with
-other bytes is refused) and, for bookworm, trixie and noble,
+It checks that each package is what its name says (`Package: erssi`, its
+`Version`, `Architecture: amd64`): apt trusts the control fields, not the
+file name. One update runs at a time (`flock` on `.lock` in the
+repository). It writes `pool/main/e/erssi/` (every release kept; the same
+name with other bytes is refused) and, for bookworm, trixie and noble,
 `dists/<codename>/main/binary-amd64/Packages{,.gz,.xz}` and `Release`,
 signed as `InRelease` and `Release.gpg`. It also writes the public key as
 `erssi-archive-keyring.gpg` (and `.asc`). The repository is a directory of

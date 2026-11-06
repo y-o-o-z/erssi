@@ -2,12 +2,20 @@
 # utils/build-deb.sh: the Debian package of a released binary package.
 #
 # Usage:
-#   build-deb.sh [--out DIR] TARBALL
+#   build-deb.sh [--out DIR] [--signers FILE] TARBALL
 #       TARBALL is erssi-<version>-<platform>.tar.xz of a release (built,
 #       reproduced and signed as docs/shellter/releasing.md says) for
-#       debian12-amd64, debian13-amd64 or ubuntu24-amd64. Writes
+#       debian12-amd64, debian13-amd64 or ubuntu24-amd64, with the
+#       release's SHA256SUMS and SHA256SUMS.sig next to it. Writes
 #       erssi_<version>-1~<suite>_amd64.deb into DIR (default: the current
 #       directory) and prints its name and sha256.
+#
+# Only a tarball the release signed is packed: SHA256SUMS.sig must be a
+# signature of SHA256SUMS by a key of FILE (allowed_signers format;
+# default: allowed_signers next to this script, the release key) in the
+# namespace erssi-release, and the tarball's sum must be the one there.
+# All three are copied to a private directory first and the copies are
+# checked and packed: the files next to TARBALL may change meanwhile.
 #
 # The .deb holds exactly the files of the tarball, under /opt/erssi (the
 # tarball is relocatable: erssi finds its modules and scripts next to
@@ -32,9 +40,11 @@ die() { printf 'build-deb: %s\n' "$*" >&2; exit 1; }
 usage() { sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 OUT=.
+SIGNERS=$(dirname -- "$0")/allowed_signers
 while [ $# -gt 0 ]; do
     case $1 in
         --out) [ $# -ge 2 ] || usage; OUT=$2; shift 2 ;;
+        --signers) [ $# -ge 2 ] || usage; SIGNERS=$2; shift 2 ;;
         -h|--help) usage ;;
         --) shift; break ;;
         -*) usage ;;
@@ -43,7 +53,7 @@ while [ $# -gt 0 ]; do
 done
 [ $# = 1 ] || usage
 TARBALL=$1
-for t in tar xz dpkg-deb sha256sum find sort; do
+for t in tar xz dpkg-deb sha256sum find sort ssh-keygen; do
     command -v "$t" > /dev/null 2>&1 || die "$t is missing"
 done
 [ -f "$TARBALL" ] || die "$TARBALL: no such file"
@@ -97,11 +107,39 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/build-deb.XXXXXX") || die "cannot make a tempo
 trap 'rm -rf "$WORK"' EXIT
 trap 'exit 1' HUP INT TERM
 
+# the release's signature over the sums, and the tarball's sum there - of
+# private copies, which are what is packed
+dir=$(dirname -- "$TARBALL")
+[ -f "$dir/SHA256SUMS" ] && [ -f "$dir/SHA256SUMS.sig" ] ||
+    die "no SHA256SUMS and SHA256SUMS.sig of the release next to $base"
+[ -r "$SIGNERS" ] || die "cannot read the signers file $SIGNERS"
+cp "$TARBALL" "$WORK/$base" && cp "$dir/SHA256SUMS" "$WORK/SHA256SUMS" &&
+    cp "$dir/SHA256SUMS.sig" "$WORK/SHA256SUMS.sig" || die "cannot copy $base and its sums"
+awk '/^[ \t]*(#|$)/ { next }
+    { k = ($2 ~ /^(ssh-|ecdsa-|sk-)/) ? 2 : 3
+      if ($k == "" || $(k + 1) == "") next
+      printf "%s namespaces=\"erssi-release\" %s %s\n", $1, $k, $(k + 1) }' "$SIGNERS" > "$WORK/signers"
+[ -s "$WORK/signers" ] || die "no key in the signers file $SIGNERS"
+good=0
+# shellcheck disable=SC2013 # principals: words without blanks
+for who in $(awk '{print $1}' "$WORK/signers" | sort -u); do
+    if ssh-keygen -Y verify -f "$WORK/signers" -I "$who" -n erssi-release \
+            -s "$WORK/SHA256SUMS.sig" < "$WORK/SHA256SUMS" > /dev/null 2>&1; then
+        good=1
+        break
+    fi
+done
+[ "$good" = 1 ] || die "SHA256SUMS.sig is not a signature of SHA256SUMS by a key of $SIGNERS (namespace erssi-release) - not packed"
+want=$(awk -v f="$base" '$2 == f && NF == 2 {print $1}' "$WORK/SHA256SUMS")
+[ -n "$want" ] || die "$base is not in the release's SHA256SUMS - not packed"
+[ "$(sha256sum < "$WORK/$base" | awk '{print $1}')" = "$want" ] ||
+    die "$base does not match its sum in the release's SHA256SUMS - not packed"
+
 # the tarball's own checks (no path outside its top directory, no links
 # out of it) were made when it was built and reproduced; here only its
 # shape: one top directory of its name with a MANIFEST of this version
 mkdir "$WORK/x" || exit 1
-tar -xJf "$TARBALL" -C "$WORK/x" --no-same-owner || die "$base: cannot unpack"
+tar -xJf "$WORK/$base" -C "$WORK/x" --no-same-owner || die "$base: cannot unpack"
 [ "$(ls -A "$WORK/x")" = "$top" ] || die "$base: not one directory $top/ inside"
 T=$WORK/x/$top
 [ -f "$T/MANIFEST" ] && [ -x "$T/bin/erssi" ] || die "$base: no MANIFEST or bin/erssi"
@@ -157,7 +195,11 @@ License: GPL-2+
  On Debian systems, the complete text of the GNU General Public License
  version 2 can be found in /usr/share/common-licenses/GPL-2.
 EOF
-size=$(du -sk "$R/opt" "$R/usr" | awk '{s += $1} END {print s}')
+# in KiB, as dpkg-gencontrol counts it: each file's size rounded up, one
+# for each directory and link - not the blocks of the file system it is
+# built on (tmpfs and ext4 give other numbers)
+size=$(find "$R/opt" "$R/usr" \( -type f -printf '%s\n' \) -o \( \( -type d -o -type l \) -printf '0\n' \) |
+    awk '{s += ($1 == 0) ? 1 : int(($1 + 1023) / 1024)} END {print s}')
 cat > "$R/DEBIAN/control" << EOF
 Package: erssi
 Version: $DEBVER

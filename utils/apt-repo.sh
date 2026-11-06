@@ -13,7 +13,10 @@
 #       noble (Ubuntu 24.04, ~ubuntu24.04). The Release files are signed
 #       with the OpenPGP key KEYID of the keyring in --gnupghome (gpg).
 #       A package already in the pool must be the same bytes: a release
-#       is never replaced.
+#       is never replaced. Each package must be what its name says
+#       (Package erssi, its Version, Architecture amd64) - apt trusts the
+#       control fields, not the file name. One update at a time:
+#       DIR/.lock (flock) is held from the first copy to the signatures.
 #
 # A system then takes erssi from it with (Debian 13; bookworm or noble
 # for the others):
@@ -46,27 +49,49 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ -n "$REPO" ] && [ -n "$GHOME" ] && [ -n "$KEY" ] && [ $# -ge 1 ] || usage
-for t in apt-ftparchive gpg gzip xz cmp; do
+for t in apt-ftparchive gpg gzip xz cmp dpkg-deb flock mktemp; do
     command -v "$t" > /dev/null 2>&1 || die "$t is missing"
 done
-[ -d "$GHOME" ] || die "$GHOME: no such directory"
-GPG="gpg --homedir $GHOME --batch --no-tty --local-user $KEY"
-$GPG --list-secret-keys "$KEY" > /dev/null 2>&1 || die "no secret key $KEY in $GHOME"
+# absolute: the signing runs in the repository
+GHOME=$(cd -- "$GHOME" 2>/dev/null && pwd) || die "$GHOME: no such directory"
+gpgk() { gpg --homedir "$GHOME" --batch --no-tty --local-user "$KEY" "$@"; }
+gpgk --list-secret-keys "$KEY" > /dev/null 2>&1 || die "no secret key $KEY in $GHOME"
 
-POOL=pool/main/e/erssi
-mkdir -p "$REPO/$POOL" || die "cannot make $REPO/$POOL"
+# every package checked before anything is written: its name, and the
+# control fields apt goes by
 for d in "$@"; do
     b=$(basename -- "$d")
     case $b in
         erssi_*-1~deb12_amd64.deb|erssi_*-1~deb13_amd64.deb|erssi_*-1~ubuntu24.04_amd64.deb) ;;
         *) die "$b: not a package of build-deb.sh" ;;
     esac
-    [ -f "$d" ] || die "$d: no such file"
-    if [ -e "$REPO/$POOL/$b" ]; then
-        cmp -s "$d" "$REPO/$POOL/$b" || die "$b is in the pool already with other bytes - a release is never replaced"
+    [ -f "$d" ] && [ ! -L "$d" ] || die "$d: no such file"
+    v=${b#erssi_}
+    v=${v%_amd64.deb}
+    case $v in *[!0-9a-z.~+-]*) die "$b: not a package of build-deb.sh" ;; esac
+    got=$(dpkg-deb -f "$d" Package Version Architecture 2>/dev/null) || die "$b: not a Debian package"
+    [ "$got" = "$(printf 'Package: erssi\nVersion: %s\nArchitecture: amd64' "$v")" ] ||
+        die "$b: its control fields are not Package erssi, Version $v, Architecture amd64"
+done
+
+mkdir -p "$REPO" || die "cannot make $REPO"
+REPO=$(cd -- "$REPO" && pwd) || exit 1
+exec 9> "$REPO/.lock" || die "cannot open $REPO/.lock"
+flock -w 600 9 || die "another update holds $REPO/.lock"
+POOL=pool/main/e/erssi
+mkdir -p "$REPO/$POOL" || die "cannot make $REPO/$POOL"
+for d in "$@"; do
+    b=$(basename -- "$d")
+    if [ -e "$REPO/$POOL/$b" ] || [ -L "$REPO/$POOL/$b" ]; then
+        [ -f "$REPO/$POOL/$b" ] && [ ! -L "$REPO/$POOL/$b" ] && cmp -s "$d" "$REPO/$POOL/$b" ||
+            die "$b is in the pool already with other bytes - a release is never replaced"
         say "$b: in the pool already"
     else
-        cp "$d" "$REPO/$POOL/$b.tmp" && mv "$REPO/$POOL/$b.tmp" "$REPO/$POOL/$b" || die "cannot copy $b"
+        # a new file of its own, renamed into place (never written through
+        # a name someone else made)
+        tmp=$(mktemp "$REPO/$POOL/.add.XXXXXX") || die "cannot copy $b"
+        cat "$d" > "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$REPO/$POOL/$b" ||
+            { rm -f "$tmp"; die "cannot copy $b"; }
         say "$b: added"
     fi
 done
@@ -96,8 +121,8 @@ for s in bookworm:deb12:"Debian 12" trixie:deb13:"Debian 13" noble:ubuntu24.04:"
         release "dists/$code" > "dists/$code/Release.tmp" || die "apt-ftparchive release failed"
     mv "dists/$code/Release.tmp" "dists/$code/Release"
     rm -f "dists/$code/InRelease" "dists/$code/Release.gpg"
-    $GPG --clearsign -o "dists/$code/InRelease" "dists/$code/Release" || die "cannot sign dists/$code"
-    $GPG --armor --detach-sign -o "dists/$code/Release.gpg" "dists/$code/Release" || die "cannot sign dists/$code"
+    gpgk --clearsign -o "dists/$code/InRelease" "dists/$code/Release" || die "cannot sign dists/$code"
+    gpgk --armor --detach-sign -o "dists/$code/Release.gpg" "dists/$code/Release" || die "cannot sign dists/$code"
     say "dists/$code: $(grep -c '^Package:' "$dir/Packages") package(s), signed"
 done
 gpg --homedir "$GHOME" --batch --export "$KEY" > erssi-archive-keyring.gpg || die "cannot export the key"
