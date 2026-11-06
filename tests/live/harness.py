@@ -580,8 +580,11 @@ class Erssi:
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "TERM": "xterm-256color",
-            "ASAN_OPTIONS": f"detect_leaks=0:log_path={self.work}/asan-{self.name}",
-            "UBSAN_OPTIONS": f"print_stacktrace=1:log_path={self.work}/ubsan-{self.name}",
+            # the sanitizers split their options at spaces and colons: a
+            # name such as "with space" in log_path made ASan refuse the
+            # options and exit before erssi ran
+            "ASAN_OPTIONS": f"detect_leaks=0:log_path={self.work}/asan-{self._log_tag()}",
+            "UBSAN_OPTIONS": f"print_stacktrace=1:log_path={self.work}/ubsan-{self._log_tag()}",
             # never the installer of an erssi installed on this machine
             # (update_check, /UPDATE CHECK would contact GitHub): a test
             # that wants one names its stand-in
@@ -904,5 +907,9 @@ class Erssi:
                 pass
             self.master = None
 
+    def _log_tag(self):
+        return re.sub(r"[^A-Za-z0-9_.-]", "_", self.name)
+
     def sanitizer_reports(self):
-        return sorted(p for pat in (f"asan-{self.name}.*", f"ubsan-{self.name}.*") for p in self.work.glob(pat))
+        tag = self._log_tag()
+        return sorted(p for pat in (f"asan-{tag}.*", f"ubsan-{tag}.*") for p in self.work.glob(pat))
