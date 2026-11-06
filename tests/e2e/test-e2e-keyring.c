@@ -1080,6 +1080,7 @@ static void test_save_based(void)
 	g_free(text);
 	e2e_json_free(kr);
 	e2e_json_free(other);
+	remove_tree();
 }
 
 static void test_cache(void)
