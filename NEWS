@@ -1,3 +1,48 @@
+shellter-v2026.11.3 2026-11-06  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.3
+
+	Fixes from a security review of the code erssi adds to irssi:
+	/e2e decline now holds against everything the declined peer sends
+	afterwards, two erssi on one keyring no longer overwrite each other's
+	changes, and the web frontend, the image preview, /UPGRADE, the
+	installer and the release tools are hardened.
+
+	+ End-to-end encryption
+	  - /e2e decline holds: a new key request of the peer, their next
+	    message, the answer to a request sent before, auto-accept mode or
+	    an autotrust rule, the cleanup of old requests and peers - none
+	    makes them trusted again; only /e2e accept, /e2e unrevoke or
+	    /e2e handshake do. Before, a declined peer could undo it alone
+	  - in a query, decline also revokes the session their messages
+	    open under, also from the status window; while our own address
+	    is not known yet (before the WHOIS reply) it is refused instead
+	    of done by half
+	  - a decline covers the same channel written otherwise (#Zaba,
+	    #zaba) where every server of the CASEMAPPING takes the two for
+	    one channel
+	  - /e2e unrevoke clears the mark of a decline that had no key yet
+	  - the keyring is written only over the file it was read from: when
+	    another erssi on the same keyring wrote it since, the save is
+	    refused with a message and its change is kept (before, a
+	    revocation or a rotated key of the other could be lost)
+	+ Web frontend (fe-web)
+	  - a login from a web page (a request with Origin) is paced like
+	    any other peer's, also from your own uid; Nexus is not affected
+	  - Sec-WebSocket-Key counts only as a header of its own line
+	+ Image preview
+	  - at most 16 megapixels are decoded (8 for a 16-bit PNG), and a
+	    PNG's data inflates to no more than its header says: a small
+	    PNG could take half a gigabyte and freeze erssi
+	+ /UPGRADE
+	  - a space in the path of the binary, the home or the config no
+	    longer makes the exec fail after the connections were let go
+	+ Installer and releases
+	  - --backup and --restore run as root no longer run the erssi of a
+	    prefix that may be another user's
+	  - release.sh takes an mmdebstrap TMPDIR only if it is the
+	    releaser's own, with no link and no directory above it that
+	    others may change
+
 shellter-v2026.11.2 2026-11-03  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.2
 
