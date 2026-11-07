@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.2.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.3.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.2">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.3">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.2</pre>
+    verify-tag shellter-v2026.11.3</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.11.2">
-        <header><b>shellter-v2026.11.2</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.11.3">
+        <header><b>shellter-v2026.11.3</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>13c458bed</dd></div>
+          <div><dt>Commit</dt><dd>19662582b</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="3df51c723a321a695cc41c7185e19fa2155966f4ac448d39e2c0aaa4b875a80b">sha256 3df51c72…4b875a80b</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="7f84684d290d61da4eac372469246efb35297b8f189ac22675adb9bdcc585fd2">sha256 7f84684d…dcc585fd2</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="826f332d6230e2158ff973012ec547e955d98c9897dfc22e2928c430ebdabf90">sha256 826f332d…0ebdabf90</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="55a25ce52e8e19bc208bf675a5c82bb15d098500475ae86f2a903d1704d1da2c">sha256 55a25ce5…704d1da2c</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="ab22978984d11e5aef88903c4bebcf9f047ae7979248d7d4be3aa8bbe7a1ffb7">sha256 ab229789…be7a1ffb7</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="f82b018af86147c0fe6f4d37f1c2c740121dd8541c4e413aaadc13d5cb420a1e">sha256 f82b018a…5cb420a1e</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="39bcd236c3e963fa3aef734ef534c90a71c9c5d427951b56fb93b42214b36e9f">sha256 39bcd236…214b36e9f</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="e37c5dfd60dccb876b53ea13f909fb07996932d457f5f7cd040b9e1d4216181d">sha256 e37c5dfd…d4216181d</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="08226a31f33f6cd92b36784b2c98670974dc1f1c9eaf64febd474c8dfdff680b">sha256 08226a31…dfdff680b</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="8decb41990cfd90a4ce559dca2b6ef17f36dd029e0b1b00c05c6732b15c31f94">sha256 8decb419…b15c31f94</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,11 +241,17 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.11.2</h2>
-        <p>Released on 3 November 2026, a fix for the disk space warning. The rest of this list came with 2026.11.1 and 2026.11.0, on 2 and 1 November.</p>
+        <h2 id="h-new">New in 2026.11.3</h2>
+        <p>Released on 7 November 2026, the fixes of a security review of the code erssi adds to irssi. The rest of this list came with 2026.11.2, 2026.11.1 and 2026.11.0, from 1 to 3 November.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">disk</span><p><b>The disk space warning in a hardened service.</b> Under a seccomp filter that forbids the quota calls, as <code>SystemCallFilter=@system-service</code> of systemd does, 2026.11.2 was killed at its first look at the disk. erssi now checks the free space there and reads the quota only where it may.</p></li>
+        <li><span class="tag">e2e</span><p><b><code>/e2e decline</code> holds.</b> A declined peer can no longer undo it alone: a new key request, their next message, auto-accept or an autotrust rule no longer make them trusted again. Only <code>/e2e accept</code>, <code>/e2e unrevoke</code> or <code>/e2e handshake</code> do.</p></li>
+        <li><span class="tag">e2e</span><p><b>Two erssi on one keyring.</b> erssi saves the keyring only over the file it read. When another erssi wrote it in the meantime, the save is refused with a message and the other's change is kept, so a revocation or a new key is no longer lost.</p></li>
+        <li><span class="tag">web</span><p><b>Web frontend logins.</b> A login from a web page is paced like anyone else's, also from your own account.</p></li>
+        <li><span class="tag">images</span><p><b>Image preview limits.</b> At most 16 megapixels are decoded, so a small crafted PNG can no longer take half a gigabyte and freeze erssi.</p></li>
+        <li><span class="tag">upgrade</span><p><b><code>/upgrade</code> with a space in a path.</b> A space in the path of erssi, its home or its config no longer makes <code>/upgrade</code> fail after the connections were let go.</p></li>
+        <li><span class="tag">backup</span><p><b>Backups as root.</b> <code>--backup</code> and <code>--restore</code> run as root no longer start the erssi of a prefix that may belong to another user.</p></li>
+        <li><span class="tag">disk</span><p><b>The disk space warning in a hardened service.</b> Under a seccomp filter that forbids the quota calls, as <code>SystemCallFilter=@system-service</code> of systemd does, 2026.11.1 was killed at its first look at the disk. erssi now checks the free space there and reads the quota only where it may.</p></li>
         <li><span class="tag">backup</span><p><b>Encrypted backups.</b> <code>erssi --backup --encrypt</code> asks for a passphrase and writes a backup that only it opens, so it can sit where others might see it. <code>erssi --restore</code> knows it and asks for the passphrase.</p></li>
         <li><span class="tag">disk</span><p><b>A warning before the disk fills up.</b> erssi says when little is left of the disk or your quota, before logs, keys and backups stop saving (<code>/set disk_warn</code>).</p></li>
         <li><span class="tag">mouse</span><p><b>The mouse on a slow link.</b> A mouse report cut off on the way no longer eats what you type after it, and with the screen split the wheel scrolls the window under the pointer.</p></li>
@@ -254,7 +260,7 @@ erssi --update</pre>
         <li><span class="tag">update</span><p><b>Update from inside erssi.</b> <code>/update install</code> installs the newest signed release in the background while you chat, then says to load it with <code>/upgrade</code>. TLS connections reconnect once.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.2">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.3">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -319,7 +325,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.2 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.3 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>
