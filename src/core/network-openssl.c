@@ -34,6 +34,13 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
+#include <openssl/rand.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* OpenSSL 1.1.0 introduced some backward-incompatible changes to the api */
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L) && \
@@ -776,6 +783,336 @@ static void set_server_temporary_key_info(TLS_REC *tls, SSL *ssl)
 		EVP_PKEY_free(ephemeral_key);
 	}
 #endif /* SSL_get_server_tmp_key. */
+}
+
+/* TLS on a DCC connection (SDCC: DCC SCHAT, DCC SSEND). The peer is a
+   person, not a server with a certificate a CA signed: the certificate is
+   never verified, its SHA-256 is only shown so that both sides can compare
+   it some other way. The side that accepted the TCP connection is the TLS
+   server, as in Eggdrop and KVIrc. */
+
+static int dcc_tls_accept_any(int ok, X509_STORE_CTX *store_ctx)
+{
+	(void) ok;
+	(void) store_ctx;
+	return 1;
+}
+
+static char *tls_error_text(const char *fallback)
+{
+	unsigned long code = ERR_get_error();
+	const char *reason = code != 0 ? ERR_reason_error_string(code) : NULL;
+
+	ERR_clear_error();
+	return g_strdup(reason != NULL ? reason : fallback);
+}
+
+static gboolean is_ssl_channel(GIOChannel *handle)
+{
+	return handle != NULL && handle->funcs == &irssi_ssl_channel_funcs;
+}
+
+GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
+			     const char *cert_file, int min_version,
+			     char **error)
+{
+	GIOSSLChannel *chan;
+	GIOChannel *gchan;
+	SSL_CTX *ctx;
+	SSL *ssl;
+	int fd, proto;
+
+	g_return_val_if_fail(handle != NULL, NULL);
+	g_return_val_if_fail(error != NULL, NULL);
+	*error = NULL;
+
+	if (!ssl_inited && !irssi_ssl_init()) {
+		*error = g_strdup("OpenSSL could not be initialised");
+		return NULL;
+	}
+	fd = g_io_channel_unix_get_fd(handle);
+
+	if (min_version >= 13) {
+#ifdef TLS1_3_VERSION
+		proto = TLS1_3_VERSION;
+#else
+		*error = g_strdup("this OpenSSL has no TLS 1.3");
+		return NULL;
+#endif
+	} else {
+		proto = TLS1_2_VERSION;
+	}
+
+	ERR_clear_error();
+	ctx = SSL_CTX_new(TLS_method());
+	if (ctx == NULL) {
+		*error = tls_error_text("no memory for a TLS context");
+		return NULL;
+	}
+	if (!SSL_CTX_set_min_proto_version(ctx, proto)) {
+		*error = tls_error_text("the TLS version could not be set");
+		SSL_CTX_free(ctx);
+		return NULL;
+	}
+	/* ask for the peer's certificate (a client sends one only when it
+	   has one), accept whatever comes: see above */
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, dcc_tls_accept_any);
+#if (OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(LIBRESSL_VERSION_NUMBER)
+	/* a DCC is never resumed: no session tickets after the handshake */
+	SSL_CTX_set_num_tickets(ctx, 0);
+#endif
+	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+
+	if (cert_file != NULL && *cert_file != '\0') {
+		if (SSL_CTX_use_certificate_chain_file(ctx, cert_file) != 1 ||
+		    SSL_CTX_use_PrivateKey_file(ctx, cert_file, SSL_FILETYPE_PEM) != 1 ||
+		    SSL_CTX_check_private_key(ctx) != 1) {
+			char *why = tls_error_text("unreadable");
+
+			*error = g_strdup_printf("the certificate %s: %s", cert_file, why);
+			g_free(why);
+			SSL_CTX_free(ctx);
+			return NULL;
+		}
+	} else if (accept_side) {
+		*error = g_strdup("a TLS server needs a certificate");
+		SSL_CTX_free(ctx);
+		return NULL;
+	}
+
+	ssl = SSL_new(ctx);
+	if (ssl == NULL || !SSL_set_fd(ssl, fd)) {
+		*error = tls_error_text("the TLS connection could not be set up");
+		SSL_free(ssl);
+		SSL_CTX_free(ctx);
+		return NULL;
+	}
+	if (accept_side)
+		SSL_set_accept_state(ssl);
+	else
+		SSL_set_connect_state(ssl);
+	SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE |
+			SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
+	chan = g_new0(GIOSSLChannel, 1);
+	chan->fd = fd;
+	chan->giochan = handle;
+	chan->ssl = ssl;
+	chan->ctx = ctx;
+	chan->server = NULL;
+	chan->port = 0;
+	chan->verify = FALSE;
+
+	gchan = (GIOChannel *)chan;
+	gchan->funcs = &irssi_ssl_channel_funcs;
+	g_io_channel_init(gchan);
+	gchan->is_readable = gchan->is_writeable = TRUE;
+	gchan->use_buffer = FALSE;
+	return gchan;
+}
+
+int net_tls_dcc_handshake(GIOChannel *handle, char **error)
+{
+	GIOSSLChannel *chan = (GIOSSLChannel *)handle;
+	int ret, err;
+
+	g_return_val_if_fail(is_ssl_channel(handle), -1);
+	g_return_val_if_fail(error != NULL, -1);
+	*error = NULL;
+
+	ERR_clear_error();
+	ret = SSL_do_handshake(chan->ssl);
+	if (ret == 1)
+		return 0;
+
+	err = SSL_get_error(chan->ssl, ret);
+	switch (err) {
+	case SSL_ERROR_WANT_READ:
+		return 1;
+	case SSL_ERROR_WANT_WRITE:
+		return 3;
+	case SSL_ERROR_ZERO_RETURN:
+		*error = g_strdup("the other side closed the connection");
+		break;
+	case SSL_ERROR_SYSCALL:
+		if (ERR_peek_error() == 0) {
+			*error = g_strdup(ret == -1 && errno != 0 ? g_strerror(errno) :
+					  "the other side closed the connection");
+			break;
+		}
+		/* fall through */
+	default:
+		*error = tls_error_text("unknown TLS error");
+		break;
+	}
+	return -1;
+}
+
+int net_tls_pending(GIOChannel *handle)
+{
+	if (!is_ssl_channel(handle))
+		return 0;
+	return SSL_pending(((GIOSSLChannel *)handle)->ssl);
+}
+
+char *net_tls_dcc_info(GIOChannel *handle)
+{
+	GIOSSLChannel *chan = (GIOSSLChannel *)handle;
+
+	if (!is_ssl_channel(handle))
+		return NULL;
+	return g_strdup_printf("%s %s", SSL_get_version(chan->ssl),
+			       SSL_CIPHER_get_name(SSL_get_current_cipher(chan->ssl)));
+}
+
+static char *cert_sha256(X509 *cert)
+{
+	unsigned char md[EVP_MAX_MD_SIZE];
+	unsigned int len;
+
+	if (!X509_digest(cert, EVP_sha256(), md, &len))
+		return NULL;
+	return binary_to_hex(md, len);
+}
+
+char *net_tls_dcc_peer_fingerprint(GIOChannel *handle)
+{
+	X509 *cert;
+	char *ret;
+
+	if (!is_ssl_channel(handle))
+		return NULL;
+	cert = SSL_get_peer_certificate(((GIOSSLChannel *)handle)->ssl);
+	if (cert == NULL)
+		return NULL;
+	ret = cert_sha256(cert);
+	X509_free(cert);
+	return ret;
+}
+
+char *net_tls_dcc_cert_fingerprint(const char *cert_file)
+{
+	X509 *cert;
+	FILE *fp;
+	char *ret;
+
+	fp = fopen(cert_file, "r");
+	if (fp == NULL)
+		return NULL;
+	cert = PEM_read_X509(fp, NULL, NULL, NULL);
+	fclose(fp);
+	if (cert == NULL) {
+		ERR_clear_error();
+		return NULL;
+	}
+	ret = cert_sha256(cert);
+	X509_free(cert);
+	return ret;
+}
+
+/* A self-signed P-256 key and certificate (ten years) for DCC: the TLS
+   server of a DCC must have one. Written 0600 under a temporary name and
+   linked into place, so that a second erssi that makes one at the same
+   moment never replaces the first. */
+int net_tls_dcc_make_cert(const char *cert_file, char **error)
+{
+	EVP_PKEY_CTX *pctx = NULL;
+	EVP_PKEY *pkey = NULL;
+	X509 *cert = NULL;
+	X509_NAME *name;
+	BIGNUM *bn = NULL;
+	unsigned char serial[16];
+	char *tmp = NULL;
+	FILE *fp = NULL;
+	int fd = -1, ok = FALSE;
+
+	g_return_val_if_fail(cert_file != NULL, FALSE);
+	g_return_val_if_fail(error != NULL, FALSE);
+	*error = NULL;
+
+	if (g_file_test(cert_file, G_FILE_TEST_EXISTS))
+		return TRUE;
+	if (!ssl_inited && !irssi_ssl_init()) {
+		*error = g_strdup("OpenSSL could not be initialised");
+		return FALSE;
+	}
+
+	ERR_clear_error();
+	pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	if (pctx == NULL || EVP_PKEY_keygen_init(pctx) <= 0 ||
+	    EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1) <= 0 ||
+	    EVP_PKEY_keygen(pctx, &pkey) <= 0)
+		goto fail;
+
+	cert = X509_new();
+	if (cert == NULL || !X509_set_version(cert, 2))
+		goto fail;
+	if (RAND_bytes(serial, sizeof(serial)) != 1)
+		goto fail;
+	serial[0] &= 0x7f; /* a positive serial number */
+	bn = BN_bin2bn(serial, sizeof(serial), NULL);
+	if (bn == NULL || BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(cert)) == NULL)
+		goto fail;
+	if (X509_gmtime_adj(X509_getm_notBefore(cert), -86400L) == NULL ||
+	    X509_gmtime_adj(X509_getm_notAfter(cert), 3650L * 86400L) == NULL ||
+	    !X509_set_pubkey(cert, pkey))
+		goto fail;
+	name = X509_get_subject_name(cert);
+	if (!X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+					(const unsigned char *) "erssi DCC", -1, -1, 0) ||
+	    !X509_set_issuer_name(cert, name) ||
+	    !X509_sign(cert, pkey, EVP_sha256()))
+		goto fail;
+
+	tmp = g_strconcat(cert_file, ".XXXXXX", NULL);
+	fd = g_mkstemp_full(tmp, O_WRONLY, 0600);
+	if (fd == -1) {
+		*error = g_strdup_printf("%s: %s", tmp, g_strerror(errno));
+		goto out;
+	}
+	fp = fdopen(fd, "w");
+	if (fp == NULL) {
+		*error = g_strdup_printf("%s: %s", tmp, g_strerror(errno));
+		goto out;
+	}
+	fd = -1;
+	if (!PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL) ||
+	    !PEM_write_X509(fp, cert))
+		goto fail;
+	if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+		*error = g_strdup_printf("%s: %s", tmp, g_strerror(errno));
+		goto out;
+	}
+	fclose(fp);
+	fp = NULL;
+	if (link(tmp, cert_file) != 0 && errno != EEXIST) {
+		/* no hard links here (FAT, some FUSE): rename, which can
+		   only lose a race against another erssi, not a key */
+		if (rename(tmp, cert_file) != 0) {
+			*error = g_strdup_printf("%s: %s", cert_file, g_strerror(errno));
+			goto out;
+		}
+	}
+	ok = TRUE;
+	goto out;
+
+fail:
+	if (*error == NULL)
+		*error = tls_error_text("the certificate could not be made");
+out:
+	if (fp != NULL)
+		fclose(fp);
+	if (fd != -1)
+		close(fd);
+	if (tmp != NULL) {
+		unlink(tmp);
+		g_free(tmp);
+	}
+	BN_free(bn);
+	X509_free(cert);
+	EVP_PKEY_free(pkey);
+	EVP_PKEY_CTX_free(pctx);
+	return ok;
 }
 
 GIOChannel *net_connect_ip_ssl(IPADDR *ip, int port, IPADDR *my_ip, SERVER_REC *server)

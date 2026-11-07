@@ -111,7 +111,8 @@ void dcc_queue_free(int queue)
 */
 
 void dcc_queue_add(int queue, int mode, const char *nick, const char *fname,
-		   const char *servertag, CHAT_DCC_REC *chat, int passive)
+		   const char *servertag, CHAT_DCC_REC *chat, int passive,
+		   int secure)
 {
 	DCC_QUEUE_REC *rec;
 	GSList **qlist;
@@ -124,6 +125,7 @@ void dcc_queue_add(int queue, int mode, const char *nick, const char *fname,
 	rec->nick = g_strdup(nick);
 	rec->file = g_strdup(fname);
 	rec->passive = passive;
+	rec->secure = secure;
 
 	qlist = (GSList **) &g_ptr_array_index(queuelist, queue);
 	if (mode == DCC_QUEUE_PREPEND)

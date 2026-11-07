@@ -74,6 +74,11 @@ FORMAT_REC fecommon_irc_dcc_formats[] = {
 	{ "dcc_list_line_server", "{dcc  $0: Port($1) - Send($2) - Chat($3) - Fserve($4)}", 5, { 0, 1, 0, 0, 0 } },
 	{ "dcc_server_started", "{dcc  DCC SERVER started on port {hilight $0}}", 1, { 1 } },
 	{ "dcc_server_closed", "{dcc  DCC SERVER on port {hilight $0} closed}", 1, { 1 } },
+	{ "dcc_request_secure", "{dcc   a secure DCC ({hilight $0}): TLS on the connection, but SDCC does not check who is on the other side}", 1, { 0 } },
+	{ "dcc_tls_connected", "{dcc DCC $0 with {nick $1} encrypted: {hilight $2}}", 3, { 0, 0, 0 } },
+	{ "dcc_tls_fingerprints", "{dcc   certificate SHA-256 of {nick $0}: {hilight $1}, yours: $2 (SDCC does not verify them: compare them with {nick $0} some other way)}", 3, { 0, 0, 0 } },
+	{ "dcc_tls_error", "{dcc DCC $0 with {nick $1}: TLS failed: $2}", 3, { 0, 0, 0 } },
+	{ "dcc_not_secure", "{dcc {nick $0} offered a plain DCC CHAT, not SCHAT: /DCC CHAT $0 accepts it without TLS}", 1, { 0 } },
 
 	{ NULL, NULL, 0 }
 };

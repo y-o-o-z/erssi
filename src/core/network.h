@@ -62,6 +62,27 @@ GIOChannel *net_connect_ip_ssl(IPADDR *ip, int port, IPADDR *my_ip, SERVER_REC *
 GIOChannel *net_start_ssl(SERVER_REC *server);
 
 int irssi_ssl_handshake(GIOChannel *handle);
+
+/* TLS on a DCC connection (SDCC). accept_side: we accepted the TCP
+   connection and are the TLS server. cert_file: a PEM file with the key
+   and the certificate (a TLS server needs one). min_version: 12 for
+   TLS 1.2, 13 for TLS 1.3. The peer's certificate is not verified. */
+GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
+			     const char *cert_file, int min_version,
+			     char **error);
+/* 0 done, 1 wants to read, 3 wants to write, -1 failed (*error set) */
+int net_tls_dcc_handshake(GIOChannel *handle, char **error);
+/* "TLSv1.3 TLS_AES_256_GCM_SHA384" of an established DCC TLS channel */
+char *net_tls_dcc_info(GIOChannel *handle);
+/* SHA-256 (hex) of the peer's certificate, NULL when it sent none */
+char *net_tls_dcc_peer_fingerprint(GIOChannel *handle);
+/* SHA-256 (hex) of the certificate in cert_file, NULL if unreadable */
+char *net_tls_dcc_cert_fingerprint(const char *cert_file);
+/* make a self-signed key and certificate in cert_file (0600) unless the
+   file exists */
+int net_tls_dcc_make_cert(const char *cert_file, char **error);
+/* bytes TLS decrypted that a read has not taken yet (0 for plain) */
+int net_tls_pending(GIOChannel *handle);
 /* Connect to socket with ip address */
 GIOChannel *net_connect_ip(IPADDR *ip, int port, IPADDR *my_ip);
 /* Connect to named UNIX socket */

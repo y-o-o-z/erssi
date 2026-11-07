@@ -24,4 +24,11 @@ int pasv_id; /* DCC Id for passive DCCs. <0 means a passive DCC, >=0 means a sta
 
 unsigned int destroyed:1; /* We're about to destroy this DCC recond */
 
+/* SDCC (DCC SCHAT, DCC SSEND): TLS on the connection */
+unsigned int secure:1;
+unsigned int tls_done:1; /* the TLS handshake is over */
+char *tls_info; /* version and cipher, after the handshake */
+char *tls_fingerprint; /* SHA-256 of the other side's certificate or NULL */
+void (*tls_ready)(void *dcc); /* what goes on after the handshake */
+
 GHashTable *module_data;

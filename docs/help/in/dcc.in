@@ -6,7 +6,10 @@
 %9Parameters:%9
 
     CHAT:        Initiates or accept a chat request.
-    GET:         Accepts a file transfer request.
+    SCHAT:       The same over TLS (secure DCC, SDCC).
+    SEND:        Offers files.
+    SSEND:       The same over TLS (secure DCC, SDCC).
+    GET:         Accepts a file transfer request (SSEND ones as well).
     RESUME:      Resumes a file transfer.
     SERVER:      Starts a DCC server.
     CLOSE:       Closes a DCC connection.
@@ -33,11 +36,26 @@
     You can send files which contain special character or spaces by enclosing
     the filename within quotes. For example: 'my file with spaces.txt'.
 
+    SCHAT and SSEND (secure DCC, SDCC) put TLS on the connection: TLS 1.3
+    unless /SET dcc_tls_min_version is 1.2. KVIrc, AdiIRC and Eggdrop know
+    them; other clients see an unknown DCC. Neither side's certificate is
+    verified: SDCC keeps the connection from being read on the way, not
+    from someone who sits in the middle. Once it is up, erssi shows the
+    SHA-256 of both certificates: compare them with the other person some
+    other way (an E2E query, say) to know you talk to each other. Your
+    key and certificate are made on the first secure DCC, in dcc-tls.pem
+    in the erssi directory, or /SET dcc_tls_cert names your own PEM file
+    (key and certificate). A secure offer stays secure however it is
+    accepted (/DCC CHAT, /DCC GET); /DCC SCHAT never accepts a plain offer,
+    and a plain answer to a secure offer never connects.
+
 %9Examples:%9
 
     /DCC CHAT mike
     /DCC GET bob "summer vacation.mkv"
     /DCC SEND sarah "summer vacation.mkv"
+    /DCC SCHAT mike
+    /DCC SSEND sarah "summer vacation.mkv"
     /DCC CLOSE get mike
     /DCC CLOSE send bob "summer vacation.mkv"
 

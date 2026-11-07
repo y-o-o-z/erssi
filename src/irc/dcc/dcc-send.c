@@ -40,7 +40,7 @@
 
 static int dcc_send_one_file(int queue, const char *target, const char *fname,
 			     IRC_SERVER_REC *server, CHAT_DCC_REC *chat,
-			     int passive);
+			     int passive, int secure);
 
 static void dcc_queue_send_next(int queue)
 {
@@ -60,7 +60,8 @@ static void dcc_queue_send_next(int queue)
 			send_started = dcc_send_one_file(queue, qrec->nick,
 							 qrec->file, server,
 							 qrec->chat,
-							 qrec->passive);
+							 qrec->passive,
+							 qrec->secure);
 		}
                 dcc_queue_remove_head(queue);
 	}
@@ -91,7 +92,7 @@ static char *dcc_send_get_file(const char *fname)
 
 static void dcc_send_add(const char *servertag, CHAT_DCC_REC *chat,
 			 const char *nick, char *fileargs, int add_mode,
-			 int passive)
+			 int passive, int secure)
 {
 	struct stat st;
 	glob_t globbuf;
@@ -150,7 +151,7 @@ static void dcc_send_add(const char *servertag, CHAT_DCC_REC *chat,
 		}
 
 		dcc_queue_add(queue, add_mode, nick,
-			      fname, servertag, chat, passive);
+			      fname, servertag, chat, passive, secure);
 		files++;
 		g_free(fname);
 	}
@@ -161,10 +162,8 @@ static void dcc_send_add(const char *servertag, CHAT_DCC_REC *chat,
 	globfree(&globbuf);
 }
 
-/* DCC SEND [-append | -prepend | -flush | -rmtail | -rmhead | -passive]
-            <nick> <file> [<file> ...] */
-static void cmd_dcc_send(const char *data, IRC_SERVER_REC *server,
-			 WI_ITEM_REC *item)
+static void dcc_send_command(const char *data, IRC_SERVER_REC *server,
+			     WI_ITEM_REC *item, int secure)
 {
 	const char *servertag;
 	char *nick, *fileargs;
@@ -175,7 +174,8 @@ static void cmd_dcc_send(const char *data, IRC_SERVER_REC *server,
 
 	if (!cmd_get_params(data, &free_arg, 2 | PARAM_FLAG_OPTIONS |
 			    PARAM_FLAG_GETREST | PARAM_FLAG_STRIP_TRAILING_WS, 
-			    "dcc send", &optlist, &nick, &fileargs))
+			    secure ? "dcc ssend" : "dcc send",
+			    &optlist, &nick, &fileargs))
 		return;
 
 	chat = item_get_dcc(item);
@@ -218,10 +218,27 @@ static void cmd_dcc_send(const char *data, IRC_SERVER_REC *server,
 		if (*fileargs == '\0')
 			cmd_param_error(CMDERR_NOT_ENOUGH_PARAMS);
 
-		dcc_send_add(servertag, chat, nick, fileargs, mode, passive);
+		dcc_send_add(servertag, chat, nick, fileargs, mode, passive,
+			     secure);
 	}
 
 	cmd_params_free(free_arg);
+}
+
+/* SYNTAX: DCC SEND [-append | -prepend | -flush | -rmtail | -rmhead | -passive]
+                   <nick> <file> [<file> ...] */
+static void cmd_dcc_send(const char *data, IRC_SERVER_REC *server,
+			 WI_ITEM_REC *item)
+{
+	dcc_send_command(data, server, item, FALSE);
+}
+
+/* SYNTAX: DCC SSEND [-append | -prepend | -flush | -rmtail | -rmhead | -passive]
+                    <nick> <file> [<file> ...] */
+static void cmd_dcc_ssend(const char *data, IRC_SERVER_REC *server,
+			  WI_ITEM_REC *item)
+{
+	dcc_send_command(data, server, item, TRUE);
 }
 
 static SEND_DCC_REC *dcc_send_create(IRC_SERVER_REC *server,
@@ -259,10 +276,12 @@ static void sig_dcc_destroyed(SEND_DCC_REC *dcc)
 /* input function: DCC SEND - we're ready to send more data */
 static void dcc_send_data(SEND_DCC_REC *dcc)
 {
-        char buffer[512];
+	/* plain DCC keeps its 512 bytes; with TLS every write is a record
+	   (and an acknowledgement), so a full record each time */
+        char buffer[16384];
 	int ret;
 
-	ret = read(dcc->fhandle, buffer, sizeof(buffer));
+	ret = read(dcc->fhandle, buffer, dcc->secure ? sizeof(buffer) : 512);
 	if (ret <= 0) {
 		/* no need to call this function anymore..
 		   in fact it just eats all the cpu.. */
@@ -287,27 +306,42 @@ static void dcc_send_read_size(SEND_DCC_REC *dcc)
 	guint32 bytes;
 	int ret;
 
-	ret = net_receive(dcc->handle, dcc->count_buf+dcc->count_pos,
-			  4-dcc->count_pos);
-	if (ret == -1) {
-		dcc_close(DCC(dcc));
-		return;
-	}
+	/* more than one acknowledgement may sit decrypted in TLS, and no
+	   new data on the socket would wake us up for them */
+	do {
+		ret = net_receive(dcc->handle, dcc->count_buf+dcc->count_pos,
+				  4-dcc->count_pos);
+		if (ret == -1) {
+			dcc_close(DCC(dcc));
+			return;
+		}
 
-	dcc->count_pos += ret;
+		dcc->count_pos += ret;
 
-	if (dcc->count_pos != 4)
-		return;
+		if (dcc->count_pos != 4)
+			continue;
 
-	memcpy(&bytes, dcc->count_buf, sizeof(bytes));
-	bytes = ntohl(bytes);
-	dcc->count_pos = 0;
+		memcpy(&bytes, dcc->count_buf, sizeof(bytes));
+		bytes = ntohl(bytes);
+		dcc->count_pos = 0;
 
-	if (dcc->waitforend && bytes == (dcc->transfd & 0xffffffff)) {
-		/* file is sent */
-		dcc->gotalldata = TRUE;
-		dcc_close(DCC(dcc));
-	}
+		if (dcc->waitforend && bytes == (dcc->transfd & 0xffffffff)) {
+			/* file is sent */
+			dcc->gotalldata = TRUE;
+			dcc_close(DCC(dcc));
+			return;
+		}
+	} while (ret > 0 && net_tls_pending(dcc->handle) > 0);
+}
+
+/* the connection is up (after TLS for SDCC) */
+static void dcc_send_ready(SEND_DCC_REC *dcc)
+{
+	dcc->starttime = time(NULL);
+	dcc->tagread = i_input_add(dcc->handle, I_INPUT_READ, (GInputFunction) dcc_send_read_size, dcc);
+	dcc->tagwrite = i_input_add(dcc->handle, I_INPUT_WRITE, (GInputFunction) dcc_send_data, dcc);
+
+	signal_emit("dcc connected", 1, dcc);
 }
 
 /* input function: DCC SEND - someone tried to connect to our socket */
@@ -330,16 +364,26 @@ static void dcc_send_connected(SEND_DCC_REC *dcc)
 	g_source_remove(dcc->tagconn);
         dcc->tagconn = -1;
 
-	dcc->starttime = time(NULL);
 	dcc->handle = handle;
 	memcpy(&dcc->addr, &addr, sizeof(IPADDR));
 	net_ip2host(&dcc->addr, dcc->addrstr);
 	dcc->port = port;
 
-	dcc->tagread = i_input_add(handle, I_INPUT_READ, (GInputFunction) dcc_send_read_size, dcc);
-	dcc->tagwrite = i_input_add(handle, I_INPUT_WRITE, (GInputFunction) dcc_send_data, dcc);
+	if (dcc->secure)
+		dcc_tls_start(DCC(dcc), TRUE, (DCC_TLS_READY) dcc_send_ready);
+	else
+		dcc_send_ready(dcc);
+}
 
-	signal_emit("dcc connected", 1, dcc);
+/* SDCC, passive: the connection to the receiver is up, start TLS */
+static void dcc_send_tls_connected(SEND_DCC_REC *dcc)
+{
+	if (net_geterror(dcc->handle) != 0) {
+		signal_emit("dcc error connect", 1, dcc);
+		dcc_destroy(DCC(dcc));
+		return;
+	}
+	dcc_tls_start(DCC(dcc), FALSE, (DCC_TLS_READY) dcc_send_ready);
 }
 
 /* input function: DCC SEND - connect to the receiver (passive protocol) */
@@ -347,7 +391,11 @@ static void dcc_send_connect(SEND_DCC_REC *dcc)
 {
 	dcc->handle = dcc_connect_ip(&dcc->addr, dcc->port);
 
-	if (dcc->handle != NULL) {
+	if (dcc->handle != NULL && dcc->secure) {
+		/* TLS only once the connection is up */
+		dcc->tagconn = i_input_add(dcc->handle, I_INPUT_WRITE | I_INPUT_READ,
+					   (GInputFunction) dcc_send_tls_connected, dcc);
+	} else if (dcc->handle != NULL) {
 		dcc->starttime = time(NULL);
 
 		dcc->tagread = i_input_add(dcc->handle, I_INPUT_READ,
@@ -364,7 +412,7 @@ static void dcc_send_connect(SEND_DCC_REC *dcc)
 
 static int dcc_send_one_file(int queue, const char *target, const char *fname,
 			     IRC_SERVER_REC *server, CHAT_DCC_REC *chat,
-			     int passive)
+			     int passive, int secure)
 {
 	struct stat st;
 	char *str;
@@ -430,6 +478,7 @@ static int dcc_send_one_file(int queue, const char *target, const char *fname,
 	dcc->size = st.st_size;
 	dcc->fhandle = hfile;
 	dcc->queue = queue;
+	dcc->secure = secure;
         dcc->file_quoted = strchr(fname, ' ') != NULL;
 	if (!passive) {
 		dcc->tagconn =
@@ -448,13 +497,15 @@ static int dcc_send_one_file(int queue, const char *target, const char *fname,
 	dcc_ip2str(&own_ip, host);
 	if (passive == FALSE) {
 		str = g_strdup_printf(dcc->file_quoted ?
-				      "DCC SEND \"%s\" %s %d %"PRIuUOFF_T :
-				      "DCC SEND %s %s %d %"PRIuUOFF_T,
+				      "DCC %s \"%s\" %s %d %"PRIuUOFF_T :
+				      "DCC %s %s %s %d %"PRIuUOFF_T,
+				      secure ? "SSEND" : "SEND",
 				      dcc->arg, host, port, dcc->size);
 	} else {
 		str = g_strdup_printf(dcc->file_quoted ?
-				      "DCC SEND \"%s\" 16843009 0 %"PRIuUOFF_T" %d" :
-				      "DCC SEND %s 16843009 0 %"PRIuUOFF_T" %d",
+				      "DCC %s \"%s\" 16843009 0 %"PRIuUOFF_T" %d" :
+				      "DCC %s %s 16843009 0 %"PRIuUOFF_T" %d",
+				      secure ? "SSEND" : "SEND",
 				      dcc->arg, dcc->size, dcc->pasv_id);
 	}
 	dcc_ctcp_message(server, target, chat, FALSE, str);
@@ -472,6 +523,8 @@ void dcc_send_init(void)
 	signal_add("dcc reply send pasv", (SIGNAL_FUNC) dcc_send_connect);
 	command_bind("dcc send", NULL, (SIGNAL_FUNC) cmd_dcc_send);
 	command_set_options("dcc send", "append flush prepend rmhead rmtail passive");
+	command_bind("dcc ssend", NULL, (SIGNAL_FUNC) cmd_dcc_ssend);
+	command_set_options("dcc ssend", "append flush prepend rmhead rmtail passive");
 
 	dcc_queue_init();
 }
@@ -484,4 +537,5 @@ void dcc_send_deinit(void)
 	signal_remove("dcc destroyed", (SIGNAL_FUNC) sig_dcc_destroyed);
 	signal_remove("dcc reply send pasv", (SIGNAL_FUNC) dcc_send_connect);
 	command_unbind("dcc send", (SIGNAL_FUNC) cmd_dcc_send);
+	command_unbind("dcc ssend", (SIGNAL_FUNC) cmd_dcc_ssend);
 }

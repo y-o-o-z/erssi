@@ -215,6 +215,8 @@ dcc*.c:
  "dcc transfer update", DCC_REC
  "dcc get receive", DCC_REC
  "dcc error connect", DCC_REC
+ "dcc error tls", DCC_REC, char *error
+ "dcc error not secure", DCC_REC
  "dcc error file create", DCC_REC, char *filename
  "dcc error file open", char *nick, char *filename, int errno
  "dcc error get not found", char *nick

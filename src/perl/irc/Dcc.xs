@@ -23,6 +23,10 @@ static void perl_dcc_fill_hash(HV *hv, DCC_REC *dcc)
 
 	(void) hv_store(hv, "starttime", 9, newSViv(dcc->starttime), 0);
 	(void) hv_store(hv, "transfd", 7, newSViv(dcc->transfd), 0);
+
+	(void) hv_store(hv, "secure", 6, newSViv(dcc->secure), 0);
+	(void) hv_store(hv, "tls_info", 8, new_pv(dcc->tls_info), 0);
+	(void) hv_store(hv, "tls_fingerprint", 15, new_pv(dcc->tls_fingerprint), 0);
 }
 
 static void perl_dcc_chat_fill_hash(HV *hv, CHAT_DCC_REC *dcc)

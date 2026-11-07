@@ -33,6 +33,7 @@
 #include <irssi/src/fe-common/irc/dcc/module-formats.h>
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/fe-common/core/themes.h>
+#include <irssi/src/fe-common/irc/dcc/fe-dcc.h>
 
 void fe_dcc_chat_init(void);
 void fe_dcc_chat_deinit(void);
@@ -55,6 +56,21 @@ char *dcc_get_size_str(uoff_t size)
 	return g_strdup_printf("%"PRIuUOFF_T"MB", size / (1024*1024));
 }
 
+const char *dcc_type_label(DCC_REC *dcc)
+{
+	const char *type = dcc_type2str(dcc->type);
+
+	if (!dcc->secure || type == NULL)
+		return type;
+	if (g_strcmp0(type, "CHAT") == 0)
+		return "SCHAT";
+	if (g_strcmp0(type, "SEND") == 0)
+		return "SSEND";
+	if (g_strcmp0(type, "GET") == 0)
+		return "SGET";
+	return type;
+}
+
 static void dcc_request(DCC_REC *dcc)
 {
 	char *service;
@@ -71,12 +87,24 @@ static void dcc_request(DCC_REC *dcc)
 	}
 }
 
+/* under the offer itself (the CHAT and GET handlers print it) */
+static void dcc_request_secure(DCC_REC *dcc)
+{
+	g_return_if_fail(dcc != NULL);
+
+	if (dcc->secure) {
+		printformat(dcc->server, NULL, MSGLEVEL_DCC,
+			    IRCTXT_DCC_REQUEST_SECURE,
+			    IS_DCC_CHAT(dcc) ? "SCHAT" : "SSEND");
+	}
+}
+
 static void dcc_rejected(DCC_REC *dcc)
 {
 	g_return_if_fail(dcc != NULL);
 
 	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_CLOSE,
-		    dcc_type2str(dcc->type), dcc->nick, dcc->arg);
+		    dcc_type_label(dcc), dcc->nick, dcc->arg);
 }
 
 static void dcc_request_send(DCC_REC *dcc)
@@ -84,7 +112,47 @@ static void dcc_request_send(DCC_REC *dcc)
 	g_return_if_fail(dcc != NULL);
 
 	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_REQUEST_SEND,
-		    dcc_type2str(dcc->type), dcc->nick, dcc->arg);
+		    dcc_type_label(dcc), dcc->nick, dcc->arg);
+}
+
+/* SDCC: how the connection is encrypted and both certificates, which
+   only the two people can compare */
+static void dcc_tls_connected(DCC_REC *dcc)
+{
+	char *cert, *own;
+
+	g_return_if_fail(dcc != NULL);
+	if (!dcc->secure || !dcc->tls_done)
+		return;
+
+	cert = dcc_tls_cert_path();
+	own = net_tls_dcc_cert_fingerprint(cert);
+	g_free(cert);
+
+	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_TLS_CONNECTED,
+		    dcc_type_label(dcc), dcc->nick,
+		    dcc->tls_info != NULL ? dcc->tls_info : "TLS");
+	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_TLS_FINGERPRINTS,
+		    dcc->nick,
+		    dcc->tls_fingerprint != NULL ? dcc->tls_fingerprint : "(none sent)",
+		    own != NULL ? own : "?");
+	g_free(own);
+}
+
+static void dcc_error_tls(DCC_REC *dcc, const char *error)
+{
+	g_return_if_fail(dcc != NULL);
+
+	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_TLS_ERROR,
+		    dcc_type_label(dcc), dcc->nick, error);
+}
+
+static void dcc_error_not_secure(DCC_REC *dcc)
+{
+	g_return_if_fail(dcc != NULL);
+
+	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_NOT_SECURE,
+		    dcc->nick);
 }
 
 static void dcc_error_connect(DCC_REC *dcc)
@@ -125,7 +193,7 @@ void dcc_list_print_file(FILE_DCC_REC *dcc)
 
 	printformat(NULL, NULL, MSGLEVEL_DCC,
 		    IRCTXT_DCC_LIST_LINE_FILE,
-		    dcc->nick, dcc_type2str(dcc->type),
+		    dcc->nick, dcc_type_label(DCC(dcc)),
 		    transfd_str, size_str,
 		    dcc->size == 0 ? 0 : (int)((double)dcc->transfd/(double)dcc->size*100.0),
 		    (double)bps/1024.0, dcc->arg, etastr);
@@ -166,6 +234,10 @@ void fe_irc_dcc_init(void)
 	signal_add("dcc request send", (SIGNAL_FUNC) dcc_request_send);
 	signal_add("dcc error connect", (SIGNAL_FUNC) dcc_error_connect);
 	signal_add("dcc error unknown type", (SIGNAL_FUNC) dcc_error_unknown_type);
+	signal_add_last("dcc request", (SIGNAL_FUNC) dcc_request_secure);
+	signal_add_last("dcc connected", (SIGNAL_FUNC) dcc_tls_connected);
+	signal_add("dcc error tls", (SIGNAL_FUNC) dcc_error_tls);
+	signal_add("dcc error not secure", (SIGNAL_FUNC) dcc_error_not_secure);
 	command_bind("dcc", NULL, (SIGNAL_FUNC) cmd_dcc);
 	command_bind("dcc list", NULL, (SIGNAL_FUNC) cmd_dcc_list);
 
@@ -188,6 +260,10 @@ void fe_irc_dcc_deinit(void)
 	signal_remove("dcc request send", (SIGNAL_FUNC) dcc_request_send);
 	signal_remove("dcc error connect", (SIGNAL_FUNC) dcc_error_connect);
 	signal_remove("dcc error unknown type", (SIGNAL_FUNC) dcc_error_unknown_type);
+	signal_remove("dcc request", (SIGNAL_FUNC) dcc_request_secure);
+	signal_remove("dcc connected", (SIGNAL_FUNC) dcc_tls_connected);
+	signal_remove("dcc error tls", (SIGNAL_FUNC) dcc_error_tls);
+	signal_remove("dcc error not secure", (SIGNAL_FUNC) dcc_error_not_secure);
 	command_unbind("dcc", (SIGNAL_FUNC) cmd_dcc);
 	command_unbind("dcc list", (SIGNAL_FUNC) cmd_dcc_list);
 }

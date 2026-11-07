@@ -15,6 +15,7 @@ typedef struct {
 	char *nick;
 	char *file;
 	int passive; /* for passive DCCs */
+	int secure; /* SDCC: DCC SSEND, TLS on the connection */
 } DCC_QUEUE_REC;
 
 /* create a new queue. returns it's designation number (int) */
@@ -28,7 +29,8 @@ int dcc_queue_old(const char *nick, const char *servertag);
 
 /* adds nick/fname/servertag triplet into queue */
 void dcc_queue_add(int queue, int mode, const char *nick, const char *fname,
-		   const char *servertag, CHAT_DCC_REC *chat, int passive);
+		   const char *servertag, CHAT_DCC_REC *chat, int passive,
+		   int secure);
 
 int dcc_queue_remove_head(int queue);
 

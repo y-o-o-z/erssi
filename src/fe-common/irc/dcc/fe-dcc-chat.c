@@ -35,6 +35,8 @@
 #include <irssi/src/fe-common/core/fe-messages.h>
 
 #include <irssi/src/fe-common/core/chat-completion.h>
+#include <irssi/src/irc/dcc/dcc-file.h>
+#include <irssi/src/fe-common/irc/dcc/fe-dcc.h>
 
 void fe_dcc_chat_messages_init(void);
 void fe_dcc_chat_messages_deinit(void);
@@ -225,7 +227,7 @@ static void sig_dcc_list_print(CHAT_DCC_REC *dcc)
 	if (!IS_DCC_CHAT(dcc)) return;
 
 	printformat(NULL, NULL, MSGLEVEL_DCC, IRCTXT_DCC_LIST_LINE_CHAT,
-		    dcc->id, "CHAT");
+		    dcc->id, dcc_type_label(DCC(dcc)));
 }
 
 static void cmd_msg(const char *data, SERVER_REC *server, WI_ITEM_REC *item)

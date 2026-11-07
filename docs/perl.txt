@@ -1075,6 +1075,10 @@ Dcc->{}
   starttime - Unix time stamp when the DCC transfer was started
   transfd - Bytes transferred
 
+  secure - 1 for SDCC (DCC SCHAT, DCC SSEND): TLS on the connection
+  tls_info - TLS version and cipher once the connection is encrypted
+  tls_fingerprint - SHA-256 of the other side's certificate (not verified)
+
 Dcc::Chat->{}
   id - Unique identifier - usually same as nick
   mirc_ctcp - Send CTCPs without the CTCP_MESSAGE prefix

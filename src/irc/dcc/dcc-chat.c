@@ -330,7 +330,19 @@ void dcc_chat_input(CHAT_DCC_REC *dcc)
 			if (server != NULL)
 				server_meta_clear_all(server);
 		}
-	} while (ret > 0);
+		/* TLS may hold a decrypted record that no new data on the
+		   socket would wake us up for: read it now */
+	} while (ret > 0 || (ret == 0 && net_tls_pending(dcc->handle) > 0));
+}
+
+/* the connection is up (after TLS for SDCC) */
+static void dcc_chat_ready(CHAT_DCC_REC *dcc)
+{
+	dcc->starttime = time(NULL);
+	dcc->sendbuf = net_sendbuffer_create(dcc->handle, 0);
+	dcc->tagread = i_input_add(dcc->handle, I_INPUT_READ, (GInputFunction) dcc_chat_input, dcc);
+
+	signal_emit("dcc connected", 1, dcc);
 }
 
 /* input function: DCC CHAT - someone tried to connect to our socket */
@@ -353,15 +365,15 @@ static void dcc_chat_listen(CHAT_DCC_REC *dcc)
 	g_source_remove(dcc->tagconn);
 	dcc->tagconn = -1;
 
-	dcc->starttime = time(NULL);
 	dcc->handle = handle;
-	dcc->sendbuf = net_sendbuffer_create(handle, 0);
 	memcpy(&dcc->addr, &ip, sizeof(IPADDR));
 	net_ip2host(&dcc->addr, dcc->addrstr);
 	dcc->port = port;
-	dcc->tagread = i_input_add(handle, I_INPUT_READ, (GInputFunction) dcc_chat_input, dcc);
 
-	signal_emit("dcc connected", 1, dcc);
+	if (dcc->secure)
+		dcc_tls_start(DCC(dcc), TRUE, (DCC_TLS_READY) dcc_chat_ready);
+	else
+		dcc_chat_ready(dcc);
 }
 
 /* callback: DCC CHAT - connect finished */
@@ -380,11 +392,10 @@ static void sig_chat_connected(CHAT_DCC_REC *dcc)
 	g_source_remove(dcc->tagconn);
 	dcc->tagconn = -1;
 
-	dcc->starttime = time(NULL);
-	dcc->sendbuf = net_sendbuffer_create(dcc->handle, 0);
-	dcc->tagread = i_input_add(dcc->handle, I_INPUT_READ, (GInputFunction) dcc_chat_input, dcc);
-
-	signal_emit("dcc connected", 1, dcc);
+	if (dcc->secure)
+		dcc_tls_start(DCC(dcc), FALSE, (DCC_TLS_READY) dcc_chat_ready);
+	else
+		dcc_chat_ready(dcc);
 }
 
 static void dcc_chat_connect(CHAT_DCC_REC *dcc)
@@ -434,13 +445,24 @@ static void dcc_chat_passive(CHAT_DCC_REC *dcc)
 
 	/* Let's send the reply to the other client! */
 	dcc_ip2str(&own_ip, host);
-	irc_send_cmdv(dcc->server, "PRIVMSG %s :\001DCC CHAT CHAT %s %d %d\001",
-		      dcc->nick, host, port, dcc->pasv_id);
+	irc_send_cmdv(dcc->server, "PRIVMSG %s :\001DCC %s CHAT %s %d %d\001",
+		      dcc->nick, dcc->secure ? "SCHAT" : "CHAT",
+		      host, port, dcc->pasv_id);
 
 }
 
-/* SYNTAX: DCC CHAT [-passive] [<nick>] */
-static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
+/* /DCC SCHAT for a plain DCC CHAT offer (or the other way): never
+   connect without the TLS that was asked for */
+static int dcc_chat_accept_ok(CHAT_DCC_REC *dcc, int secure)
+{
+	if (!secure || dcc->secure)
+		return TRUE;
+	signal_emit("dcc error not secure", 1, dcc);
+	return FALSE;
+}
+
+static void dcc_chat_command(const char *data, IRC_SERVER_REC *server,
+			     int secure)
 {
 	void *free_arg;
 	CHAT_DCC_REC *dcc;
@@ -454,12 +476,12 @@ static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
 	g_return_if_fail(data != NULL);
 
 	if (!cmd_get_params(data, &free_arg, 1 | PARAM_FLAG_OPTIONS,
-			    "dcc chat", &optlist, &nick))
+			    secure ? "dcc schat" : "dcc chat", &optlist, &nick))
 		return;
 
 	if (*nick == '\0') {
 		dcc = DCC_CHAT(dcc_find_request_latest(DCC_CHAT_TYPE));
-		if (dcc != NULL) {
+		if (dcc != NULL && dcc_chat_accept_ok(dcc, secure)) {
 			if (!dcc_is_passive(dcc))
 				dcc_chat_connect(dcc);
 			else
@@ -471,7 +493,9 @@ static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
 
 	dcc = dcc_chat_find_id(nick);
 	if (dcc != NULL && dcc_is_waiting_user(dcc)) {
-		if (!dcc_is_passive(dcc)) {
+		if (!dcc_chat_accept_ok(dcc, secure)) {
+			/* nothing */
+		} else if (!dcc_is_passive(dcc)) {
 			/* found from dcc chat requests,
 			   we're the connecting side */
 			dcc_chat_connect(dcc);
@@ -499,6 +523,7 @@ static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
 		g_warn_if_reached();
 		return;
 	}
+	dcc->secure = secure;
 
 	if (g_hash_table_lookup(optlist, "passive") == NULL) {
 		/* Standard DCC CHAT... let's listen for incoming connections */
@@ -515,8 +540,8 @@ static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
 		signal_emit("dcc request send", 1, dcc);
 
 		dcc_ip2str(&own_ip, host);
-		irc_send_cmdv(server, "PRIVMSG %s :\001DCC CHAT CHAT %s %d\001",
-			      nick, host, port);
+		irc_send_cmdv(server, "PRIVMSG %s :\001DCC %s CHAT %s %d\001",
+			      nick, secure ? "SCHAT" : "CHAT", host, port);
 	} else {
 		/* Passive protocol... we want the other side to listen */
 		/* send the chat request */
@@ -531,10 +556,22 @@ static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
 		   since the other side shouldn't care of it: they will send
 		   the address for us to connect to in the reply */
 		irc_send_cmdv(server,
-			      "PRIVMSG %s :\001DCC CHAT CHAT 16843009 0 %d\001",
-			      nick, p_id);
+			      "PRIVMSG %s :\001DCC %s CHAT 16843009 0 %d\001",
+			      nick, secure ? "SCHAT" : "CHAT", p_id);
 	}
 	cmd_params_free(free_arg);
+}
+
+/* SYNTAX: DCC CHAT [-passive] [<nick>] */
+static void cmd_dcc_chat(const char *data, IRC_SERVER_REC *server)
+{
+	dcc_chat_command(data, server, FALSE);
+}
+
+/* SYNTAX: DCC SCHAT [-passive] [<nick>] */
+static void cmd_dcc_schat(const char *data, IRC_SERVER_REC *server)
+{
+	dcc_chat_command(data, server, TRUE);
 }
 
 /* SYNTAX: MIRCDCC ON|OFF */
@@ -619,10 +656,10 @@ static void cmd_whois(const char *data, SERVER_REC *server,
 		settings_get_str("dcc_autochat_masks"), (nick), (addr)))
 
 
-/* CTCP: DCC CHAT */
-static void ctcp_msg_dcc_chat(IRC_SERVER_REC *server, const char *data,
-			      const char *nick, const char *addr,
-			      const char *target, CHAT_DCC_REC *chat)
+/* CTCP: DCC CHAT, DCC SCHAT (secure: TLS on the connection) */
+static void dcc_chat_offer(IRC_SERVER_REC *server, const char *data,
+			   const char *nick, const char *addr,
+			   const char *target, CHAT_DCC_REC *chat, int secure)
 {
         CHAT_DCC_REC *dcc;
 	char **params;
@@ -644,6 +681,17 @@ static void ctcp_msg_dcc_chat(IRC_SERVER_REC *server, const char *data,
 		nick = "";
 
 	dcc = DCC_CHAT(dcc_find_request(DCC_CHAT_TYPE, nick, NULL));
+	if (dcc != NULL && dcc->secure != secure) {
+		/* a plain answer to a secure offer, or the other way:
+		   neither connects, the old one goes */
+		dcc_destroy(DCC(dcc));
+		dcc = NULL;
+		if (paramcount == 4 && g_strcmp0(params[2], "0") != 0) {
+			/* an answer to our passive offer: not a new offer */
+			g_strfreev(params);
+			return;
+		}
+	}
 	if (dcc != NULL) {
 		if (dcc_is_listening(dcc)) {
 			/* we requested dcc chat, they requested
@@ -681,6 +729,7 @@ static void ctcp_msg_dcc_chat(IRC_SERVER_REC *server, const char *data,
 	}
 	dcc->target = g_strdup(target);
 	dcc->port = atoi(params[2]);
+	dcc->secure = secure;
 
 	if (passive)
 		dcc->pasv_id = atoi(params[3]);
@@ -700,6 +749,20 @@ static void ctcp_msg_dcc_chat(IRC_SERVER_REC *server, const char *data,
 		}
 	}
 	g_strfreev(params);
+}
+
+static void ctcp_msg_dcc_chat(IRC_SERVER_REC *server, const char *data,
+			      const char *nick, const char *addr,
+			      const char *target, CHAT_DCC_REC *chat)
+{
+	dcc_chat_offer(server, data, nick, addr, target, chat, FALSE);
+}
+
+static void ctcp_msg_dcc_schat(IRC_SERVER_REC *server, const char *data,
+			       const char *nick, const char *addr,
+			       const char *target, CHAT_DCC_REC *chat)
+{
+	dcc_chat_offer(server, data, nick, addr, target, chat, TRUE);
 }
 
 /* DCC CHAT: text received */
@@ -779,6 +842,9 @@ static void ctcp_reply_dcc_reject(IRC_SERVER_REC *server, const char *data,
 
 	/* default REJECT handler checks args too -
 	   we don't care about it in DCC chats. */
+	if (g_ascii_strncasecmp(data, "SCHAT", 5) == 0 &&
+	    (data[5] == '\0' || data[5] == ' '))
+		data++;
 	if (g_ascii_strncasecmp(data, "CHAT", 4) == 0 &&
 	    (data[4] == '\0' || data[4] == ' ')) {
 		dcc = dcc_find_request(DCC_CHAT_TYPE, nick, NULL);
@@ -840,11 +906,14 @@ void dcc_chat_init(void)
 	command_bind("ctcp", NULL, (SIGNAL_FUNC) cmd_ctcp);
 	command_bind("dcc chat", NULL, (SIGNAL_FUNC) cmd_dcc_chat);
 	command_set_options("dcc chat", "passive");
+	command_bind("dcc schat", NULL, (SIGNAL_FUNC) cmd_dcc_schat);
+	command_set_options("dcc schat", "passive");
 	command_bind("mircdcc", NULL, (SIGNAL_FUNC) cmd_mircdcc);
 	command_bind("dcc close", NULL, (SIGNAL_FUNC) cmd_dcc_close);
 	command_bind("whois", NULL, (SIGNAL_FUNC) cmd_whois);
 	signal_add("dcc destroyed", (SIGNAL_FUNC) sig_dcc_destroyed);
 	signal_add("ctcp msg dcc chat", (SIGNAL_FUNC) ctcp_msg_dcc_chat);
+	signal_add("ctcp msg dcc schat", (SIGNAL_FUNC) ctcp_msg_dcc_schat);
 	signal_add_first("dcc chat message", (SIGNAL_FUNC) dcc_chat_msg);
 	signal_add("dcc ctcp dcc", (SIGNAL_FUNC) dcc_ctcp_redirect);
 	signal_add("dcc reply dcc", (SIGNAL_FUNC) dcc_ctcp_reply_redirect);
@@ -860,11 +929,13 @@ void dcc_chat_deinit(void)
 	command_unbind("action", (SIGNAL_FUNC) cmd_action);
 	command_unbind("ctcp", (SIGNAL_FUNC) cmd_ctcp);
 	command_unbind("dcc chat", (SIGNAL_FUNC) cmd_dcc_chat);
+	command_unbind("dcc schat", (SIGNAL_FUNC) cmd_dcc_schat);
 	command_unbind("mircdcc", (SIGNAL_FUNC) cmd_mircdcc);
 	command_unbind("dcc close", (SIGNAL_FUNC) cmd_dcc_close);
 	command_unbind("whois", (SIGNAL_FUNC) cmd_whois);
 	signal_remove("dcc destroyed", (SIGNAL_FUNC) sig_dcc_destroyed);
 	signal_remove("ctcp msg dcc chat", (SIGNAL_FUNC) ctcp_msg_dcc_chat);
+	signal_remove("ctcp msg dcc schat", (SIGNAL_FUNC) ctcp_msg_dcc_schat);
 	signal_remove("dcc chat message", (SIGNAL_FUNC) dcc_chat_msg);
 	signal_remove("dcc ctcp dcc", (SIGNAL_FUNC) dcc_ctcp_redirect);
 	signal_remove("dcc reply dcc", (SIGNAL_FUNC) dcc_ctcp_reply_redirect);

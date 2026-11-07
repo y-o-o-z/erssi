@@ -176,7 +176,10 @@ static void sig_dccget_receive(GET_DCC_REC *dcc)
                         return;
 		}
 		dcc->transfd += ret;
-		break;
+		/* TLS may hold a decrypted record that no new data on the
+		   socket would wake us up for */
+		if (net_tls_pending(dcc->handle) <= 0)
+			break;
 	}
 
 	/* send number of total bytes received */
@@ -193,7 +196,7 @@ void sig_dccget_connected(GET_DCC_REC *dcc)
 	char *fname, *tempfname, *str;
         int ret, ret_errno, temphandle, old_umask;
 
-	if (!dcc->from_dccserver) {
+	if (!dcc->from_dccserver && !dcc->tls_done) {
 		if (net_geterror(dcc->handle) != 0) {
 			/* error connecting */
 			signal_emit("dcc error connect", 1, dcc);
@@ -203,6 +206,14 @@ void sig_dccget_connected(GET_DCC_REC *dcc)
 
 		g_source_remove(dcc->tagconn);
 		dcc->tagconn = -1;
+	}
+
+	if (dcc->secure && !dcc->tls_done) {
+		/* SDCC: TLS first; we are its server when we listened
+		   (passive DCC) */
+		dcc_tls_start(DCC(dcc), dcc_is_passive(dcc),
+			      (DCC_TLS_READY) sig_dccget_connected);
+		return;
 	}
 
 	g_free_not_null(dcc->file);
@@ -362,8 +373,9 @@ void dcc_get_passive(GET_DCC_REC *dcc)
 	/* Let's send the reply to the other client! */
 	dcc_ip2str(&own_ip, host);
 	irc_send_cmdv(dcc->server,
-		      "PRIVMSG %s :\001DCC SEND %s %s %d %"PRIuUOFF_T" %d\001",
-		      dcc->nick, dcc->arg, host, port, dcc->size, dcc->pasv_id);
+		      "PRIVMSG %s :\001DCC %s %s %s %d %"PRIuUOFF_T" %d\001",
+		      dcc->nick, dcc->secure ? "SSEND" : "SEND",
+		      dcc->arg, host, port, dcc->size, dcc->pasv_id);
 }
 
 #define get_params_match(params, pos) \
@@ -419,10 +431,10 @@ char *get_file_name(char **params, int fileparams)
 	return ret;
 }
 
-/* CTCP: DCC SEND */
-static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
-			      const char *nick, const char *addr,
-			      const char *target, CHAT_DCC_REC *chat)
+/* CTCP: DCC SEND, DCC SSEND (secure: TLS on the connection) */
+static void dcc_send_offer(IRC_SERVER_REC *server, const char *data,
+			   const char *nick, const char *addr,
+			   const char *target, CHAT_DCC_REC *chat, int secure)
 {
 	GET_DCC_REC *dcc;
 	SEND_DCC_REC *temp_dcc;
@@ -445,7 +457,7 @@ static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
 	paramcount = g_strv_length(params);
 
 	if (paramcount < 4) {
-		signal_emit("dcc error ctcp", 5, "SEND", data,
+		signal_emit("dcc error ctcp", 5, secure ? "SSEND" : "SEND", data,
 			    nick, addr, target);
 		g_strfreev(params);
                 return;
@@ -481,6 +493,14 @@ static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
 		   the remote host. */
 
 		temp_dcc = DCC_SEND(dcc_find_request(DCC_SEND_TYPE, nick, fname));
+		if (temp_dcc != NULL && temp_dcc->secure != secure) {
+			/* a plain answer to a secure offer, or the other
+			   way: never connect without the TLS asked for */
+			dcc_destroy(DCC(temp_dcc));
+			g_free(address);
+			g_free(fname);
+			return;
+		}
 		if (temp_dcc != NULL && p_id == temp_dcc->pasv_id) {
 			temp_dcc->target = g_strdup(target);
 			temp_dcc->port = port;
@@ -524,6 +544,7 @@ static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
 		return;
 	}
 	dcc->target = g_strdup(target);
+	dcc->secure = secure;
 
 	if (passive && port == 0)
 		dcc->pasv_id = p_id; /* Assign the ID to the DCC */
@@ -543,6 +564,20 @@ static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
 
 	g_free(address);
 	g_free(fname);
+}
+
+static void ctcp_msg_dcc_send(IRC_SERVER_REC *server, const char *data,
+			      const char *nick, const char *addr,
+			      const char *target, CHAT_DCC_REC *chat)
+{
+	dcc_send_offer(server, data, nick, addr, target, chat, FALSE);
+}
+
+static void ctcp_msg_dcc_ssend(IRC_SERVER_REC *server, const char *data,
+			       const char *nick, const char *addr,
+			       const char *target, CHAT_DCC_REC *chat)
+{
+	dcc_send_offer(server, data, nick, addr, target, chat, TRUE);
 }
 
 /* handle receiving DCC - GET/RESUME. */
@@ -612,6 +647,7 @@ void dcc_get_init(void)
 
 	signal_add("dcc destroyed", (SIGNAL_FUNC) sig_dcc_destroyed);
 	signal_add("ctcp msg dcc send", (SIGNAL_FUNC) ctcp_msg_dcc_send);
+	signal_add("ctcp msg dcc ssend", (SIGNAL_FUNC) ctcp_msg_dcc_ssend);
 	command_bind("dcc get", NULL, (SIGNAL_FUNC) cmd_dcc_get);
 }
 
@@ -620,6 +656,7 @@ void dcc_get_deinit(void)
         dcc_unregister_type("GET");
 	signal_remove("dcc destroyed", (SIGNAL_FUNC) sig_dcc_destroyed);
 	signal_remove("ctcp msg dcc send", (SIGNAL_FUNC) ctcp_msg_dcc_send);
+	signal_remove("ctcp msg dcc ssend", (SIGNAL_FUNC) ctcp_msg_dcc_ssend);
 	command_unbind("dcc get", (SIGNAL_FUNC) cmd_dcc_get);
 	g_free_and_null(dcc_get_recv_buffer);
 }

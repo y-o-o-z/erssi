@@ -56,6 +56,14 @@ GIOChannel *dcc_listen(GIOChannel *iface, IPADDR *ip, int *port);
 /* Connect to specified IP address using the correct own_ip. */
 GIOChannel *dcc_connect_ip(IPADDR *ip, int port);
 
+/* SDCC: the TCP connection of `dcc' is up. Start TLS on it (as the TLS
+   server when we accepted the connection), then call ready(dcc). On a
+   failure "dcc error tls" is sent and the DCC is destroyed. */
+typedef void (*DCC_TLS_READY) (void *dcc);
+void dcc_tls_start(DCC_REC *dcc, int accept_side, DCC_TLS_READY ready);
+/* The PEM file with our DCC key and certificate (made on first use) */
+char *dcc_tls_cert_path(void);
+
 /* Close DCC - sends "dcc closed" signal and calls dcc_destroy() */
 void dcc_close(DCC_REC *dcc);
 /* Reject a DCC request */

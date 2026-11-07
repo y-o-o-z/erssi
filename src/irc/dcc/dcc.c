@@ -117,6 +117,8 @@ void dcc_destroy(DCC_REC *dcc)
         MODULE_DATA_DEINIT(dcc);
 	g_free_not_null(dcc->servertag);
 	g_free_not_null(dcc->target);
+	g_free(dcc->tls_info);
+	g_free(dcc->tls_fingerprint);
 	g_free(dcc->mynick);
 	g_free(dcc->nick);
 	g_free(dcc->arg);
@@ -416,6 +418,95 @@ static void ctcp_reply_dcc_reject(IRC_SERVER_REC *server, const char *data,
         g_free(type);
 }
 
+char *dcc_tls_cert_path(void)
+{
+	const char *path = settings_get_str("dcc_tls_cert");
+
+	if (path == NULL || *path == '\0')
+		return g_strconcat(get_irssi_dir(), "/dcc-tls.pem", NULL);
+	return convert_home(path);
+}
+
+static void dcc_tls_failed(DCC_REC *dcc, const char *error)
+{
+	signal_emit("dcc error tls", 2, dcc, error);
+	dcc_destroy(dcc);
+}
+
+static void dcc_tls_step(DCC_REC *dcc);
+
+static void dcc_tls_wait(DCC_REC *dcc, int condition)
+{
+	if (dcc->tagconn != -1)
+		g_source_remove(dcc->tagconn);
+	dcc->tagconn = i_input_add(dcc->handle, condition,
+				   (GInputFunction) dcc_tls_step, dcc);
+}
+
+static void dcc_tls_step(DCC_REC *dcc)
+{
+	DCC_TLS_READY ready;
+	char *error;
+	int ret;
+
+	ret = net_tls_dcc_handshake(dcc->handle, &error);
+	if (ret == 1 || ret == 3) {
+		dcc_tls_wait(dcc, ret == 1 ? I_INPUT_READ : I_INPUT_WRITE);
+		return;
+	}
+
+	if (dcc->tagconn != -1) {
+		g_source_remove(dcc->tagconn);
+		dcc->tagconn = -1;
+	}
+	if (ret < 0) {
+		dcc_tls_failed(dcc, error);
+		g_free(error);
+		return;
+	}
+
+	dcc->tls_done = TRUE;
+	dcc->tls_info = net_tls_dcc_info(dcc->handle);
+	dcc->tls_fingerprint = net_tls_dcc_peer_fingerprint(dcc->handle);
+	ready = dcc->tls_ready;
+	dcc->tls_ready = NULL;
+	ready(dcc);
+}
+
+void dcc_tls_start(DCC_REC *dcc, int accept_side, DCC_TLS_READY ready)
+{
+	GIOChannel *tls;
+	char *cert, *error = NULL;
+
+	g_return_if_fail(dcc != NULL);
+	g_return_if_fail(dcc->handle != NULL);
+	g_return_if_fail(ready != NULL);
+
+	if (dcc->tagconn != -1) {
+		g_source_remove(dcc->tagconn);
+		dcc->tagconn = -1;
+	}
+
+	cert = dcc_tls_cert_path();
+	tls = NULL;
+	if (net_tls_dcc_make_cert(cert, &error)) {
+		tls = net_tls_dcc_wrap(dcc->handle, accept_side, cert,
+				       settings_get_choice("dcc_tls_min_version") == 0 ?
+				       12 : 13,
+				       &error);
+	}
+	g_free(cert);
+	if (tls == NULL) {
+		dcc_tls_failed(dcc, error != NULL ? error : "TLS could not start");
+		g_free(error);
+		return;
+	}
+
+	dcc->handle = tls;
+	dcc->tls_ready = ready;
+	dcc_tls_step(dcc);
+}
+
 void dcc_close(DCC_REC *dcc)
 {
 	signal_emit("dcc closed", 1, dcc);
@@ -546,6 +637,8 @@ void irc_dcc_init(void)
 	settings_add_str("dcc", "dcc_port", "0");
 	settings_add_time("dcc", "dcc_timeout", "5min");
 	settings_add_str("dcc", "dcc_own_ip", "");
+	settings_add_str("dcc", "dcc_tls_cert", "");
+	settings_add_choice("dcc", "dcc_tls_min_version", 1, "1.2;1.3");
 
 	signal_add("event connected", (SIGNAL_FUNC) sig_connected);
 	signal_add("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
