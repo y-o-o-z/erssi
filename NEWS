@@ -1,3 +1,41 @@
+shellter-v2026.11.4 2026-11-11  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.4
+
+	A security fix leads this release: an off-by-one in OTR message
+	reassembly could write one byte past a heap buffer, and a peer in
+	an OTR session could trigger it. With it come two smaller
+	correctness fixes and a dead-code cleanup, and the secure DCC
+	(SDCC) added since 2026.11.3 - DCC chat and file transfer over
+	TLS 1.3 - has its certificate handling hardened.
+
+	+ Security
+	  - OTR: reassembling a fragmented message could write one byte
+	    past the heap buffer made for it when a later fragment was
+	    exactly one byte longer than the first; a peer in an OTR
+	    session could trigger it. The buffer now has room for the
+	    terminating byte as well
+	+ Secure DCC (SDCC)
+	  - /dcc schat <nick> and /dcc ssend <nick> <file> open a DCC chat
+	    or send a file over TLS 1.3 (dcc_tls_min_version sets the floor,
+	    1.2 or 1.3); a self-signed P-256 certificate is made once in
+	    ~/.erssi/dcc-tls.pem
+	  - on connect both certificate SHA-256 fingerprints are shown:
+	    SDCC does not verify them, you compare them with the other
+	    person some other way
+	  - the certificate file is now checked before use and remade if it
+	    is empty, truncated or otherwise unusable, instead of failing
+	    every DCC with an opaque TLS error; temporaries left by a kill
+	    mid-write (each holds a private key) are cleared, and our own
+	    fingerprint is computed once rather than on every connection
+	+ Other fixes
+	  - image preview: the maximum file size is computed in 64-bit, so
+	    a setting above 2047 MB no longer overflows to a negative limit
+	  - OTR: two error messages that logged a string with an integer
+	    format now use %s
+	  - about 260 lines of unreachable code (an orphaned E2E helper, a
+	    retired image-preview popup and unused terminal-capability
+	    state) are removed
+
 shellter-v2026.11.3 2026-11-06  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.3
 
