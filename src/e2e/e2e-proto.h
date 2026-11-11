@@ -112,10 +112,6 @@ char *e2e_build_keyrsp_for_req(E2E_JSON *kr, const E2E_IDENTITY *id, const char 
                                const unsigned char req_eph[32]);
 char *e2e_build_rekey(const E2E_IDENTITY *id, const char *ctx,
                       const unsigned char peer_pk[32], const unsigned char new_key[32]);
-/* the KEYREQ we send back after accepting one (NULL if not needed) */
-char *e2e_build_reciprocal_keyreq_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id,
-                                            const char *ctx, const char *sender_handle,
-                                            const char *own_handle);
 
 /* An incoming KEYREQ: *rsp (KEYRSP to send) and *reciprocal (our own
    KEYREQ back) when they are due; both NULL when it is ignored or waits

@@ -308,7 +308,7 @@ void key_write_fingerprints(struct otr_user_state *ustate)
 	if (err == GPG_ERR_NO_ERROR) {
 		IRSSI_OTR_DEBUG("Fingerprints saved to %9%s%9", filename);
 	} else {
-		IRSSI_OTR_DEBUG("Error writing fingerprints: %d (%d)",
+		IRSSI_OTR_DEBUG("Error writing fingerprints: %s (%s)",
 				gcry_strerror(err), gcry_strsource(err));
 	}
 
@@ -397,7 +397,7 @@ void key_load_fingerprints(struct otr_user_state *ustate)
 	if (err == GPG_ERR_NO_ERROR) {
 		IRSSI_OTR_DEBUG("Fingerprints loaded from %9%s%9", filename);
 	} else {
-		IRSSI_OTR_DEBUG("Error loading fingerprints: %d (%d)",
+		IRSSI_OTR_DEBUG("Error loading fingerprints: %s (%s)",
 				gcry_strerror(err), gcry_strsource(err));
 	}
 

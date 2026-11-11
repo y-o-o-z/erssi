@@ -50,7 +50,6 @@ static gboolean popup_preview_showing = FALSE;
 static GString *popup_content = NULL;
 static int popup_x = 0, popup_y = 0;
 static int popup_width = 0, popup_height = 0;
-static LINE_REC *popup_current_line = NULL;  /* Line whose image is currently displayed */
 
 /* Forward declarations */
 static void popup_preview_show_for_line(const char *image_path, LINE_REC *line);
@@ -322,41 +321,6 @@ ImageUrlType image_preview_classify_url(const char *url)
 	return URL_TYPE_DIRECT_IMAGE;
 }
 
-/* Register URL for a line without starting fetch */
-gboolean image_preview_register_url(const char *url, LINE_REC *line, WINDOW_REC *window)
-{
-	IMAGE_PREVIEW_REC *rec;
-	char *cache_path;
-
-	debug_print("register_url: url=%s", url);
-
-	if (!image_preview_enabled()) {
-		debug_print("register_url: preview disabled");
-		return FALSE;
-	}
-
-	if (url == NULL || line == NULL) {
-		debug_print("register_url: NULL params");
-		return FALSE;
-	}
-
-	rec = image_preview_get_url(line, url);
-	if (rec != NULL) {
-		debug_print("register_url: already registered");
-		return FALSE;
-	}
-
-	cache_path = image_cache_get(url);
-	rec = image_preview_rec_add(line, window, url);
-	if (cache_path != NULL) {
-		debug_print("register_url: CACHED at %s", cache_path);
-		rec->cache_path = cache_path;
-	} else {
-		debug_print("register_url: not cached, will fetch on click");
-	}
-	return TRUE;
-}
-
 /* Queue an image fetch - starts download immediately */
 gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *window)
 {
@@ -470,14 +434,6 @@ void image_preview_clear_all(void)
 	image_preview_records_remove_all();
 }
 
-/* Render visible image previews for a view - stub for now */
-void image_preview_render_view(TEXT_BUFFER_VIEW_REC *view, WINDOW_REC *window)
-{
-	/* TODO: Implement inline thumbnails if needed */
-	(void)view;
-	(void)window;
-}
-
 /* NOTE: sig_gui_print_text_finished was removed.
  * We no longer scan lines on display - URL detection happens only on click
  * in sig_mouse_button_clicked() -> find_url_in_line().
@@ -573,7 +529,6 @@ static void popup_preview_dismiss(void)
 	popup_preview_showing = FALSE;
 	popup_x = popup_y = 0;
 	popup_width = popup_height = 0;
-	popup_current_line = NULL;
 
 	if (popup_content != NULL) {
 		g_string_free(popup_content, TRUE);
@@ -781,7 +736,6 @@ static void popup_preview_show_for_line(const char *image_path, LINE_REC *line)
 	popup_x = mw_left + (mw_width - max_width) / 2;
 	popup_width = max_width;
 	popup_height = rows;
-	popup_current_line = line;
 
 	debug_print("POPUP: position y=%d x=%d size %dx%d", popup_y, popup_x, popup_width, popup_height);
 

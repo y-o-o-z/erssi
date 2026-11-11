@@ -27,8 +27,6 @@ typedef struct {
 	char *url;                   /* Original image URL */
 	char *cache_path;            /* Local cached file path */
 	GString *rendered;           /* Rendered escape sequences (from Chafa) */
-	int height_rows;             /* Height in terminal rows */
-	int y_position;              /* Y position when rendered */
 	gboolean fetch_pending;      /* Fetch in progress */
 	gboolean fetch_failed;       /* Fetch/render failed */
 	gboolean show_on_complete;   /* Show popup when fetch completes (user clicked) */
@@ -69,9 +67,6 @@ void image_preview_debug_print(const char *fmt, ...);
 /* Find image URLs in text, returns GSList of newly allocated strings */
 GSList *image_preview_find_urls(const char *text);
 
-/* Register an image URL for a line (no fetch, just tracking) */
-gboolean image_preview_register_url(const char *url, LINE_REC *line, WINDOW_REC *window);
-
 /* Queue an image fetch for the given URL (starts download immediately) */
 gboolean image_preview_queue_fetch(const char *url, LINE_REC *line, WINDOW_REC *window);
 
@@ -103,9 +98,6 @@ gboolean image_preview_forget_line(LINE_REC *line);
 guint image_preview_forget_buffer(void *buffer);
 guint image_preview_records_count(void);
 void image_preview_records_remove_all(void);
-
-/* Render visible image previews for a view */
-void image_preview_render_view(TEXT_BUFFER_VIEW_REC *view, WINDOW_REC *window);
 
 /* Cache management */
 void image_cache_init(void);
@@ -146,8 +138,6 @@ GString *image_render_chafa(const char *image_path,
                             int max_rows,
                             int *out_rows);
 GString *image_render_error_icon(int max_cols, int max_rows, int *out_rows);
-void image_render_popup(const char *image_path, int x, int y);
-void image_render_popup_close(void);
 void image_render_clear_graphics(void);
 
 /* Show error popup (when fetch fails after retry) */

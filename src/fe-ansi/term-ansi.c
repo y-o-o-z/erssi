@@ -56,7 +56,6 @@
 /* SGR (colors/attributes) */
 #define SGR_RESET         CSI "0m"
 #define SGR_BOLD          CSI "1m"
-#define SGR_DIM           CSI "2m"
 #define SGR_ITALIC        CSI "3m"
 #define SGR_UNDERLINE     CSI "4m"
 #define SGR_BLINK         CSI "5m"
@@ -83,10 +82,6 @@
 /* Application keypad mode */
 #define APPKEY_ON         CSI "?1h"
 #define APPKEY_OFF        CSI "?1l"
-
-/* DCS passthrough for tmux */
-#define TMUX_WRAP_START   "\033Ptmux;\033"
-#define TMUX_WRAP_END     "\033\\"
 
 /* ========================================================================
  * INPUT HANDLING
@@ -224,12 +219,6 @@ void ansi_move(ANSI_TERM *term, int x, int y)
 	fprintf(term->out, CSI "%d;%dH", y + 1, x + 1);
 }
 
-void ansi_move_relative(ANSI_TERM *term, int oldx, int oldy, int x, int y)
-{
-	/* For simplicity, use absolute positioning */
-	ansi_move(term, x, y);
-}
-
 void ansi_set_cursor_visible(ANSI_TERM *term, int visible)
 {
 	fputs(visible ? CURSOR_SHOW : CURSOR_HIDE, term->out);
@@ -350,11 +339,6 @@ void ansi_set_bold(ANSI_TERM *term)
 	fputs(SGR_BOLD, term->out);
 }
 
-void ansi_set_dim(ANSI_TERM *term)
-{
-	fputs(SGR_DIM, term->out);
-}
-
 void ansi_set_italic(ANSI_TERM *term, int set)
 {
 	fputs(set ? SGR_ITALIC : SGR_NO_ITALIC, term->out);
@@ -411,39 +395,8 @@ void ansi_appkey_mode(ANSI_TERM *term, int enable)
 }
 
 /* ========================================================================
- * DCS PASSTHROUGH FOR MULTIPLEXERS
- * ======================================================================== */
-
-void ansi_wrap_dcs_start(ANSI_TERM *term)
-{
-	if (term->caps.in_tmux) {
-		fputs(TMUX_WRAP_START, term->out);
-	}
-	/* screen passthrough not implemented yet */
-}
-
-void ansi_wrap_dcs_end(ANSI_TERM *term)
-{
-	if (term->caps.in_tmux) {
-		fputs(TMUX_WRAP_END, term->out);
-	}
-}
-
-/* ========================================================================
  * TERMINAL CAPABILITIES DETECTION
  * ======================================================================== */
-
-const char *ansi_graphics_protocol_name(GraphicsProtocol proto)
-{
-	switch (proto) {
-	case GFX_NONE:    return "none";
-	case GFX_SYMBOLS: return "symbols";
-	case GFX_SIXEL:   return "sixel";
-	case GFX_KITTY:   return "kitty";
-	case GFX_ITERM2:  return "iterm2";
-	default:          return "unknown";
-	}
-}
 
 static int ansi_term_lacks_truecolor(const char *term, const char *program)
 {
@@ -463,7 +416,7 @@ static int ansi_term_lacks_truecolor(const char *term, const char *program)
 void ansi_detect_capabilities(ANSI_TERM *term)
 {
 	const char *env_term, *env_colorterm, *env_term_program;
-	const char *env_tmux, *env_sty;
+	const char *env_sty;
 	const char *env_kitty_pid, *env_ghostty;
 	TermLinkEnv link_env;
 
@@ -474,22 +427,15 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 
 	/* Default to 256 colors for modern terminals */
 	term->caps.max_colors = 256;
-	term->caps.has_bracketed_paste = TRUE;
-	term->caps.has_mouse_sgr = TRUE;
-	term->caps.has_alt_screen = TRUE;
 
 	env_term = g_getenv("TERM");
 	env_colorterm = g_getenv("COLORTERM");
 	env_term_program = g_getenv("TERM_PROGRAM");
-	env_tmux = g_getenv("TMUX");
 	env_sty = g_getenv("STY");
 	env_kitty_pid = g_getenv("KITTY_PID");
 	env_ghostty = g_getenv("GHOSTTY_RESOURCES_DIR");
 
 	/* Check for multiplexers */
-	if (env_tmux && *env_tmux) {
-		term->caps.in_tmux = TRUE;
-	}
 	if (env_sty && *env_sty) {
 		term->caps.in_screen = TRUE;
 	}
@@ -501,35 +447,12 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 		term->caps.max_colors = 16777216;
 	}
 
-	/* Detect graphics protocol */
-	term->caps.protocol = GFX_SYMBOLS; /* Default fallback */
-
-	/* Kitty */
-	if (env_kitty_pid && *env_kitty_pid) {
-		term->caps.protocol = GFX_KITTY;
+	/* Terminals known to always support 24-bit color */
+	if ((env_kitty_pid && *env_kitty_pid) ||
+	    (env_ghostty && *env_ghostty) ||
+	    (env_term_program && (g_strcmp0(env_term_program, "WezTerm") == 0 ||
+	                          g_strcmp0(env_term_program, "iTerm.app") == 0))) {
 		term->caps.max_colors = 16777216;
-	}
-	/* Ghostty */
-	else if (env_ghostty && *env_ghostty) {
-		term->caps.protocol = GFX_KITTY;
-		term->caps.max_colors = 16777216;
-	}
-	/* WezTerm */
-	else if (env_term_program && g_strcmp0(env_term_program, "WezTerm") == 0) {
-		term->caps.protocol = GFX_KITTY;
-		term->caps.max_colors = 16777216;
-	}
-	/* iTerm2 */
-	else if (env_term_program && g_strcmp0(env_term_program, "iTerm.app") == 0) {
-		term->caps.protocol = GFX_ITERM2;
-		term->caps.max_colors = 16777216;
-	}
-	/* xterm with sixel (check TERM) */
-	else if (env_term && (g_str_has_prefix(env_term, "xterm") ||
-	                      g_str_has_prefix(env_term, "foot") ||
-	                      g_str_has_prefix(env_term, "mlterm"))) {
-		/* These terminals may support sixel, but we'd need DA1 query to confirm */
-		term->caps.protocol = GFX_SIXEL;
 	}
 
 	/* 24-bit color is assumed, as erssi always sent it: ssh does not
@@ -545,12 +468,6 @@ void ansi_detect_capabilities(ANSI_TERM *term)
 	}
 	if (term->caps.in_screen) {
 		term->caps.max_colors = 256;
-	}
-
-	/* If in tmux, we can still use graphics via passthrough */
-	if (term->caps.in_tmux && term->caps.protocol != GFX_NONE) {
-		/* Keep the detected protocol, but note we need passthrough */
-		/* TODO: detect outer terminal for tmux */
 	}
 }
 

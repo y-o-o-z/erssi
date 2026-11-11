@@ -17,25 +17,10 @@
 
 #include <irssi/src/fe-ansi/term-hyperlink.h>
 
-/* Graphics protocol types */
-typedef enum {
-	GFX_NONE = 0,        /* No graphics support - image preview OFF */
-	GFX_SYMBOLS,         /* Unicode blocks/braille (Chafa fallback) */
-	GFX_SIXEL,           /* Sixel protocol */
-	GFX_KITTY,           /* Kitty graphics protocol */
-	GFX_ITERM2,          /* iTerm2 inline images */
-} GraphicsProtocol;
-
 /* Terminal capabilities */
 typedef struct {
-	GraphicsProtocol protocol;
-	gboolean in_tmux;           /* Requires DCS passthrough */
-	gboolean in_screen;         /* Requires screen passthrough */
-	gboolean can_query_size;    /* Can query pixel size */
+	gboolean in_screen;         /* GNU Screen: forces the 256-color palette */
 	int max_colors;             /* 16, 256, or 16777216 (truecolor) */
-	gboolean has_bracketed_paste;
-	gboolean has_mouse_sgr;
-	gboolean has_alt_screen;
 	gboolean has_hyperlinks;    /* term_hyperlinks auto: OSC 8 is safe */
 } TerminalCaps;
 
@@ -91,15 +76,9 @@ extern ANSI_TERM *ansi_term;
 void ansi_detect_capabilities(ANSI_TERM *term);
 /* 24-bit colors reach the screen: term_truecolor auto (detected), on, off */
 int term_truecolor_capable(void);
-const char *ansi_graphics_protocol_name(GraphicsProtocol proto);
-
-/* DCS passthrough for multiplexers */
-void ansi_wrap_dcs_start(ANSI_TERM *term);
-void ansi_wrap_dcs_end(ANSI_TERM *term);
 
 /* Low-level ANSI output */
 void ansi_move(ANSI_TERM *term, int x, int y);
-void ansi_move_relative(ANSI_TERM *term, int oldx, int oldy, int x, int y);
 void ansi_set_cursor_visible(ANSI_TERM *term, int visible);
 void ansi_clear(ANSI_TERM *term);
 void ansi_clear_to_eol(ANSI_TERM *term);
@@ -113,7 +92,6 @@ void ansi_set_fg_rgb(ANSI_TERM *term, int r, int g, int b);
 void ansi_set_bg_rgb(ANSI_TERM *term, int r, int g, int b);
 void ansi_set_normal(ANSI_TERM *term);
 void ansi_set_bold(ANSI_TERM *term);
-void ansi_set_dim(ANSI_TERM *term);
 void ansi_set_italic(ANSI_TERM *term, int set);
 void ansi_set_underline(ANSI_TERM *term, int set);
 void ansi_set_blink(ANSI_TERM *term);

@@ -2145,13 +2145,6 @@ static char *reciprocal_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const ch
 	return out;
 }
 
-char *e2e_build_reciprocal_keyreq_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id,
-                                            const char *ctx, const char *sender_handle,
-                                            const char *own_handle)
-{
-	return reciprocal_on_accept(kr, id, ctx, NULL, sender_handle, own_handle);
-}
-
 void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoing_stamps,
                        const E2E_NET *net, const char *sender_handle, const char *nick,
                        const char *body, const char *own_handle, char **rsp, char **reciprocal)

@@ -33,12 +33,6 @@
 /* the decoder, with its formats and limits */
 #include <irssi/src/image-preview/image-decode.h>
 
-/* Popup state */
-static gboolean popup_showing = FALSE;
-static int popup_x = 0, popup_y = 0;
-static int popup_width = 0, popup_height = 0;
-static GString *popup_content = NULL;
-
 #ifdef HAVE_CHAFA
 
 /* Terminal type detected by query or environment */
@@ -619,46 +613,6 @@ GString *image_render_chafa(const char *image_path,
 }
 
 /*
- * Show popup preview at given position
- */
-void image_render_popup(const char *image_path, int x, int y)
-{
-	int rows = 0;
-	int max_width, max_height;
-
-	if (image_path == NULL)
-		return;
-
-	/* Get settings */
-	max_width = settings_get_int(IMAGE_PREVIEW_MAX_WIDTH);
-	max_height = settings_get_int(IMAGE_PREVIEW_MAX_HEIGHT);
-
-	if (max_width <= 0) max_width = IMAGE_PREVIEW_DEFAULT_MAX_WIDTH;
-	if (max_height <= 0) max_height = IMAGE_PREVIEW_DEFAULT_MAX_HEIGHT;
-
-	/* Close any existing popup */
-	image_render_popup_close();
-
-	/* Render the image */
-	popup_content = image_render_chafa(image_path, max_width, max_height, &rows);
-	if (popup_content == NULL) {
-		image_preview_debug_print("POPUP: Failed to render image");
-		return;
-	}
-
-	popup_showing = TRUE;
-	popup_x = x;
-	popup_y = y;
-	popup_width = max_width;
-	popup_height = rows;
-
-	image_preview_debug_print("POPUP: Showing at %d,%d size %dx%d",
-	                          x, y, max_width, rows);
-
-	/* Output will be written by the frontend's refresh cycle */
-}
-
-/*
  * Clear graphics from screen based on terminal protocol:
  *
  * Kitty (Ghostty, Kitty, WezTerm): Graphics are rendered in a separate layer
@@ -704,53 +658,6 @@ void image_render_clear_graphics(void)
 		mainwindows_redraw();
 	}
 #endif
-}
-
-/*
- * Close popup preview
- */
-void image_render_popup_close(void)
-{
-	if (!popup_showing)
-		return;
-
-	popup_showing = FALSE;
-	popup_x = popup_y = 0;
-	popup_width = popup_height = 0;
-
-	if (popup_content != NULL) {
-		g_string_free(popup_content, TRUE);
-		popup_content = NULL;
-	}
-
-	image_preview_debug_print("POPUP: Closed");
-}
-
-/*
- * Check if popup is currently showing
- */
-gboolean image_render_popup_is_showing(void)
-{
-	return popup_showing;
-}
-
-/*
- * Get popup content for rendering
- */
-GString *image_render_popup_get_content(void)
-{
-	return popup_content;
-}
-
-/*
- * Get popup position and size
- */
-void image_render_popup_get_geometry(int *x, int *y, int *width, int *height)
-{
-	if (x != NULL) *x = popup_x;
-	if (y != NULL) *y = popup_y;
-	if (width != NULL) *width = popup_width;
-	if (height != NULL) *height = popup_height;
 }
 
 /*

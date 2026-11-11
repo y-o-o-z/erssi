@@ -606,10 +606,14 @@ static enum otr_msg_status enqueue_otr_fragment(const char *msg, struct otr_peer
 	msg_len = strlen(msg);
 
 	if (opc->full_msg) {
-		if (msg_len > (opc->msg_size - opc->msg_len)) {
+		if (msg_len + 1 > (opc->msg_size - opc->msg_len)) {
 			char *tmp_ptr;
 
-			/* Realloc memory if there is not enough space. */
+			/* Realloc memory if there is not enough space. The `+ 1`
+			 * reserves room for the trailing nul written below, so a
+			 * fragment whose length exactly fills the remaining data
+			 * capacity still triggers a realloc instead of writing the
+			 * nul one byte past the buffer. */
 			tmp_ptr = realloc(opc->full_msg, opc->msg_size + msg_len + 1);
 			if (tmp_ptr == NULL) {
 				free(opc->full_msg);

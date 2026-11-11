@@ -406,7 +406,7 @@ static size_t header_callback(void *ptr, size_t size, size_t nmemb, void *userda
 		}
 
 		/* Check against max file size for image downloads */
-		max_size = settings_get_int(IMAGE_PREVIEW_MAX_FILE_SIZE) * 1024 * 1024;
+		max_size = (gint64)settings_get_int(IMAGE_PREVIEW_MAX_FILE_SIZE) * 1024 * 1024;
 		if (fetch->content_length > max_size) {
 			image_preview_debug_print("FETCH: Image too large (%lld > %lld), cancelling",
 			                          (long long)fetch->content_length, (long long)max_size);
