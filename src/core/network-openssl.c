@@ -41,6 +41,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 /* OpenSSL 1.1.0 introduced some backward-incompatible changes to the api */
 #if (OPENSSL_VERSION_NUMBER >= 0x10100000L) && \
@@ -1010,6 +1011,77 @@ char *net_tls_dcc_cert_fingerprint(const char *cert_file)
 	return ret;
 }
 
+/* TRUE when cert_file holds a private key and a certificate that load and
+   belong together, i.e. one the DCC TLS server can actually use. A file
+   that exists but is empty, truncated or otherwise broken (an interrupted
+   write by an older erssi, a bad copy, a hand-edit) returns FALSE so the
+   caller can make a fresh one instead of failing every DCC with an opaque
+   TLS error. */
+static int dcc_cert_pem_usable(const char *cert_file)
+{
+	FILE *fp;
+	EVP_PKEY *pkey;
+	X509 *cert;
+	int ok;
+
+	fp = fopen(cert_file, "r");
+	if (fp == NULL)
+		return FALSE;
+	pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+	cert = PEM_read_X509(fp, NULL, NULL, NULL);
+	fclose(fp);
+
+	ok = pkey != NULL && cert != NULL &&
+	     X509_check_private_key(cert, pkey) == 1;
+	if (!ok)
+		ERR_clear_error();
+
+	EVP_PKEY_free(pkey);
+	X509_free(cert);
+	return ok;
+}
+
+/* Remove "<cert_file>.XXXXXX" temporaries left behind when erssi was killed
+   between g_mkstemp_full() and the unlink() below (each holds a private
+   key, so they are worth clearing). Only files older than 30s are touched,
+   never the temporary another erssi may be writing this very moment. */
+static void dcc_cert_remove_stale_temps(const char *cert_file)
+{
+	char *dir, *base;
+	const char *name;
+	GDir *d;
+	size_t baselen;
+	time_t now;
+
+	dir = g_path_get_dirname(cert_file);
+	base = g_path_get_basename(cert_file);
+	baselen = strlen(base);
+
+	d = g_dir_open(dir, 0, NULL);
+	if (d != NULL) {
+		now = time(NULL);
+		while ((name = g_dir_read_name(d)) != NULL) {
+			struct stat st;
+			char *path;
+
+			/* our temporaries are exactly "<base>.<6 chars>" */
+			if (strncmp(name, base, baselen) != 0 ||
+			    name[baselen] != '.' ||
+			    strlen(name) != baselen + 1 + 6)
+				continue;
+
+			path = g_build_filename(dir, name, NULL);
+			if (stat(path, &st) == 0 && now - st.st_mtime > 30)
+				unlink(path);
+			g_free(path);
+		}
+		g_dir_close(d);
+	}
+
+	g_free(dir);
+	g_free(base);
+}
+
 /* A self-signed P-256 key and certificate (ten years) for DCC: the TLS
    server of a DCC must have one. Written 0600 under a temporary name and
    linked into place, so that a second erssi that makes one at the same
@@ -1030,11 +1102,18 @@ int net_tls_dcc_make_cert(const char *cert_file, char **error)
 	g_return_val_if_fail(error != NULL, FALSE);
 	*error = NULL;
 
-	if (g_file_test(cert_file, G_FILE_TEST_EXISTS))
-		return TRUE;
+	dcc_cert_remove_stale_temps(cert_file);
+
 	if (!ssl_inited && !irssi_ssl_init()) {
 		*error = g_strdup("OpenSSL could not be initialised");
 		return FALSE;
+	}
+
+	if (g_file_test(cert_file, G_FILE_TEST_EXISTS)) {
+		if (dcc_cert_pem_usable(cert_file))
+			return TRUE;
+		/* exists but unusable: drop it and write a fresh one */
+		unlink(cert_file);
 	}
 
 	ERR_clear_error();

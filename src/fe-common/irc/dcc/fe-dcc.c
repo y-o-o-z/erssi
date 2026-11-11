@@ -115,19 +115,39 @@ static void dcc_request_send(DCC_REC *dcc)
 		    dcc_type_label(dcc), dcc->nick, dcc->arg);
 }
 
+/* SHA-256 of our own DCC certificate. Parsing the PEM and hashing it on
+   every connection is wasteful when it never changes under us, so it is
+   computed once and kept; the configured path changing is the only thing
+   that invalidates it. Owned here, freed in fe_irc_dcc_deinit(). */
+static char *own_cert_path;
+static char *own_cert_fingerprint;
+
+static const char *dcc_tls_own_fingerprint(void)
+{
+	char *cert = dcc_tls_cert_path();
+
+	if (own_cert_path == NULL || g_strcmp0(own_cert_path, cert) != 0) {
+		g_free(own_cert_path);
+		g_free(own_cert_fingerprint);
+		own_cert_path = cert; /* take ownership */
+		own_cert_fingerprint = net_tls_dcc_cert_fingerprint(cert);
+	} else {
+		g_free(cert);
+	}
+	return own_cert_fingerprint;
+}
+
 /* SDCC: how the connection is encrypted and both certificates, which
    only the two people can compare */
 static void dcc_tls_connected(DCC_REC *dcc)
 {
-	char *cert, *own;
+	const char *own;
 
 	g_return_if_fail(dcc != NULL);
 	if (!dcc->secure || !dcc->tls_done)
 		return;
 
-	cert = dcc_tls_cert_path();
-	own = net_tls_dcc_cert_fingerprint(cert);
-	g_free(cert);
+	own = dcc_tls_own_fingerprint();
 
 	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_TLS_CONNECTED,
 		    dcc_type_label(dcc), dcc->nick,
@@ -136,7 +156,6 @@ static void dcc_tls_connected(DCC_REC *dcc)
 		    dcc->nick,
 		    dcc->tls_fingerprint != NULL ? dcc->tls_fingerprint : "(none sent)",
 		    own != NULL ? own : "?");
-	g_free(own);
 }
 
 static void dcc_error_tls(DCC_REC *dcc, const char *error)
@@ -266,6 +285,9 @@ void fe_irc_dcc_deinit(void)
 	signal_remove("dcc error not secure", (SIGNAL_FUNC) dcc_error_not_secure);
 	command_unbind("dcc", (SIGNAL_FUNC) cmd_dcc);
 	command_unbind("dcc list", (SIGNAL_FUNC) cmd_dcc_list);
+
+	g_free_and_null(own_cert_path);
+	g_free_and_null(own_cert_fingerprint);
 }
 
 MODULE_ABICHECK(fe_irc_dcc)
