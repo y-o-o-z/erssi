@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.3.">
+<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.4.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.3">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.4">
 <meta property="og:description" content="Nowoczesne irssi, dostrojone do IRCnetu. Podpisane wydania, bez roota, jedna linia instalacji.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/pl/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.3</pre>
+    verify-tag shellter-v2026.11.4</pre>
         <p>Uruchom to w klonie repozytorium; gpg jest wyłączony, żeby liczył się tylko klucz SSH. Musi zgłosić poprawny podpis z odciskiem podanym obok. Porównaj go z takim, który masz z innego źródła, na przykład pytając na #shellter.</p>
         <p>Części, które rozmawiają z siecią, są przeglądane, fuzzowane i testowane pod sanitizerami. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Co jest chronione, a co nie</a> (po angielsku).</p>
       </div>
-      <div class="release" aria-label="Wydanie 2026.11.3">
-        <header><b>shellter-v2026.11.3</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
+      <div class="release" aria-label="Wydanie 2026.11.4">
+        <header><b>shellter-v2026.11.4</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>19662582b</dd></div>
+          <div><dt>Commit</dt><dd>0fc5623c0</dd></div>
           <div><dt>Klucz wydań</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>poprawny podpis, przestrzeń nazw erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="f82b018af86147c0fe6f4d37f1c2c740121dd8541c4e413aaadc13d5cb420a1e">sha256 f82b018a…5cb420a1e</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="39bcd236c3e963fa3aef734ef534c90a71c9c5d427951b56fb93b42214b36e9f">sha256 39bcd236…214b36e9f</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="e37c5dfd60dccb876b53ea13f909fb07996932d457f5f7cd040b9e1d4216181d">sha256 e37c5dfd…d4216181d</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="08226a31f33f6cd92b36784b2c98670974dc1f1c9eaf64febd474c8dfdff680b">sha256 08226a31…dfdff680b</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="8decb41990cfd90a4ce559dca2b6ef17f36dd029e0b1b00c05c6732b15c31f94">sha256 8decb419…b15c31f94</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="8ede4678625867201036e4097a9bae38a8b353300167964b431450fa0eb59a52">sha256 8ede4678…a0eb59a52</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="0a731790964bbbf2646df5f6955c77c128a5ef7490ae0b2a9cf327b3e0a4d0fe">sha256 0a731790…3e0a4d0fe</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="5fcd9ad955319734714ee046bbc23138db3dcded2550ab1f56fd50f6814cbe02">sha256 5fcd9ad9…6814cbe02</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="3c45687602c4da55d55dc4de49832f7506ebea88280d1609b85d9ad31aee071c">sha256 3c456876…31aee071c</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="9d3f3d43dc605680fb6edf6ad162cf7e87827636a3b4cf2b92b0664daf175e8b">sha256 9d3f3d43…daf175e8b</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 z 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,26 +241,18 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">Nowości w 2026.11.3</h2>
-        <p>Wydane 7 listopada 2026, poprawki z przeglądu bezpieczeństwa kodu, który erssi dodaje do irssi. Reszta tej listy przyszła z 2026.11.2, 2026.11.1 i 2026.11.0, od 1 do 3 listopada.</p>
+        <h2 id="h-new">Nowości w 2026.11.4</h2>
+        <p>Wydane 11 listopada 2026. Na czele jest poprawka bezpieczeństwa: błąd o jeden za daleko przy składaniu wiadomości OTR. Przychodzi z nim bezpieczne DCC — rozmowa i przesyłanie plików po TLS 1.3 — z utwardzoną obsługą certyfikatu, oraz kilka drobniejszych poprawek.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">e2e</span><p><b><code>/e2e decline</code> działa trwale.</b> Odrzucony rozmówca nie cofnie już tego sam: nowa prośba o klucz, jego kolejna wiadomość, automatyczna akceptacja czy reguła autotrust nie czynią go znów zaufanym. Robią to tylko <code>/e2e accept</code>, <code>/e2e unrevoke</code> albo <code>/e2e handshake</code>.</p></li>
-        <li><span class="tag">e2e</span><p><b>Dwa erssi na jednym keyringu.</b> erssi zapisuje keyring tylko na plik, który przeczytało. Gdy w międzyczasie zapisało go inne erssi, zapis jest odrzucany z komunikatem, a zmiana tamtego zostaje, więc odwołanie zaufania ani nowy klucz już nie giną.</p></li>
-        <li><span class="tag">web</span><p><b>Logowanie do interfejsu webowego.</b> Logowanie ze strony WWW jest spowalniane jak każde inne, także z Twojego własnego konta.</p></li>
-        <li><span class="tag">obrazy</span><p><b>Limity podglądu obrazów.</b> Dekodowane jest najwyżej 16 megapikseli, więc mały spreparowany PNG nie zajmie już pół gigabajta i nie zamrozi erssi.</p></li>
-        <li><span class="tag">upgrade</span><p><b><code>/upgrade</code> ze spacją w ścieżce.</b> Spacja w ścieżce erssi, jego katalogu domowego albo configu nie psuje już <code>/upgrade</code> po tym, jak połączenia zostały przekazane.</p></li>
-        <li><span class="tag">kopia</span><p><b>Kopie zapasowe jako root.</b> <code>--backup</code> i <code>--restore</code> uruchomione jako root nie startują już erssi z prefiksu, który może należeć do innego użytkownika.</p></li>
-        <li><span class="tag">dysk</span><p><b>Ostrzeżenie o miejscu w utwardzonej usłudze.</b> Pod filtrem seccomp, który zabrania odczytu quoty, jak <code>SystemCallFilter=@system-service</code> w systemd, 2026.11.1 ginęło przy pierwszym sprawdzeniu dysku. Teraz erssi sprawdza tam wolne miejsce, a quotę czyta tylko tam, gdzie może.</p></li>
-        <li><span class="tag">kopia</span><p><b>Szyfrowane kopie zapasowe.</b> <code>erssi --backup --encrypt</code> pyta o hasło i zapisuje kopię, którą otwiera tylko ono, więc może leżeć tam, gdzie inni mogą ją zobaczyć. <code>erssi --restore</code> ją rozpoznaje i pyta o hasło.</p></li>
-        <li><span class="tag">dysk</span><p><b>Ostrzeżenie, zanim skończy się miejsce.</b> erssi mówi, gdy zostaje mało miejsca na dysku albo w Twojej quocie, zanim logi, klucze i kopie przestaną się zapisywać (<code>/set disk_warn</code>).</p></li>
-        <li><span class="tag">mysz</span><p><b>Mysz na słabym łączu.</b> Ucięty po drodze raport myszy nie zjada już tego, co piszesz po nim, a przy podzielonym ekranie kółko przewija okno pod kursorem.</p></li>
-        <li><span class="tag">e2e</span><p><b>Bezpiecznie przy pełnej quocie.</b> Wiadomość, która potrzebuje nowego klucza, a ten nie da się zapisać, nie wychodzi, tylko jest oznaczona, a <code>erssi --setup</code> pyta o SASL tylko wtedy, gdy każdy serwer sieci ma sprawdzony TLS.</p></li>
-        <li><span class="tag">aktualizacje</span><p><b>Instalacja systemowa należy do administratora.</b> erssi zainstalowane dla całego systemu aktualizuje administrator: <code>erssi --update</code> i <code>/update</code> powiedzą to i nigdy nie uruchomią instalatora, który nie jest Twój.</p></li>
-        <li><span class="tag">aktualizacje</span><p><b>Aktualizacja z wnętrza erssi.</b> <code>/update install</code> instaluje najnowsze podpisane wydanie w tle, gdy rozmawiasz, a potem mówi, żeby wczytać je przez <code>/upgrade</code>. Połączenia TLS łączą się raz na nowo.</p></li>
+        <li><span class="tag">bezpieczeństwo</span><p><b>Błąd o jeden za daleko w OTR.</b> Składanie pofragmentowanej wiadomości OTR mogło zapisać jeden bajt za buforem przygotowanym na nią, gdy kolejny fragment był dokładnie o bajt dłuższy niż pierwszy; mógł to wywołać rozmówca w sesji OTR. Bufor ma teraz miejsce także na bajt kończący.</p></li>
+        <li><span class="tag">sdcc</span><p><b>Rozmowa i przesyłanie plików DCC po TLS 1.3.</b> <code>/dcc schat &lt;nick&gt;</code> i <code>/dcc ssend &lt;nick&gt; &lt;plik&gt;</code> otwierają DCC po TLS 1.3 (<code>/set dcc_tls_min_version</code> ustawia próg, 1.2 albo 1.3). Samopodpisany certyfikat P-256 powstaje raz w <code>~/.erssi/dcc-tls.pem</code>; przy połączeniu pokazywane są oba odciski, żebyś porównał je z drugą osobą inną drogą — SDCC ich za Ciebie nie weryfikuje.</p></li>
+        <li><span class="tag">sdcc</span><p><b>Utwardzona obsługa certyfikatu.</b> Plik certyfikatu jest sprawdzany przed użyciem i tworzony na nowo, gdy jest pusty, ucięty albo z innego powodu nie nadaje się do użytku, zamiast psuć każde DCC niejasnym błędem TLS; pliki tymczasowe zostawione przez zabicie w trakcie zapisu są sprzątane, a Twój własny odcisk liczony jest raz, a nie przy każdym połączeniu.</p></li>
+        <li><span class="tag">obrazy</span><p><b>Limit rozmiaru podglądu obrazów.</b> Maksymalny rozmiar pliku liczony jest w 64 bitach, więc ustawienie powyżej 2047 MB nie przekręca się już na ujemny limit.</p></li>
+        <li><span class="tag">porządki</span><p><b>Usunięty martwy kod.</b> Około 260 linii nieosiągalnego kodu — osierocony pomocnik E2E, wycofany dymek podglądu obrazów i nieużywany stan możliwości terminala — znika, razem z dwoma komunikatami błędów OTR, które teraz poprawnie formatują swój tekst.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.3">Informacje o wydaniu</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.4">Informacje o wydaniu</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Wszystkie zmiany od 2026.10.0</a>
       </div>
     </div>
@@ -325,7 +317,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.3 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.4 · GPL-2.0-or-later</span>
       <span><a href="../" hreflang="en" lang="en">English</a> · <a href="./" aria-current="page">Polski</a></span>
     </div>
   </div>
