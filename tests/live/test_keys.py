@@ -125,8 +125,11 @@ def main():
         # active one
         alice = st["alice"]
         off = log_size()
-        alice.type('/script exec Irssi::print("wheel-$_") for 1..120')
-        assert wait_log_since(off, "wheel-120"), "script exec printed nothing:\n" + log_since(off)
+        # fill the window with 120 lines using only client commands, so this
+        # works in a build without Perl too: one input line of ";"-separated
+        # /echo commands (not a paste - there is no newline until the end)
+        alice.type("/echo " + ";/echo ".join("wheel-%d" % i for i in range(1, 121)))
+        assert wait_log_since(off, "wheel-120"), "the 120 lines were not printed:\n" + log_since(off)
         alice.type_and_wait("/window new split")
         rows, ok = alice.wait_screen(lambda r: any("wheel-120" in row for row in r), WAIT)
         assert ok, "wheel-120 not on the screen:\n" + "\n".join(rows)
