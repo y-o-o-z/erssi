@@ -42,12 +42,18 @@
     verified: SDCC keeps the connection from being read on the way, not
     from someone who sits in the middle. Once it is up, erssi shows the
     SHA-256 of both certificates: compare them with the other person some
-    other way (an E2E query, say) to know you talk to each other. Your
-    key and certificate are made on the first secure DCC, in dcc-tls.pem
-    in the erssi directory, or /SET dcc_tls_cert names your own PEM file
-    (key and certificate). A secure offer stays secure however it is
-    accepted (/DCC CHAT, /DCC GET); /DCC SCHAT never accepts a plain offer,
-    and a plain answer to a secure offer never connects.
+    other way (an E2E query, say) to know you talk to each other; the one
+    shown as "yours" is the certificate this side presents on that very
+    connection. Your key and certificate are made on the first secure DCC,
+    in dcc-tls.pem in the erssi directory (mode 0600); erssi renews it if
+    it goes missing, breaks or turns world-readable. /SET dcc_tls_cert
+    instead names your own PEM file (key and certificate, in either order):
+    erssi only reads it, never creating, deleting or changing it, and must
+    be able to - it has to be a regular file you own and that others cannot
+    read (mode 0600), or the secure DCC is refused with the reason. A
+    secure offer stays secure however it is accepted (/DCC CHAT, /DCC GET);
+    /DCC SCHAT never accepts a plain offer, and a plain answer to a secure
+    offer never connects.
 
 %9Examples:%9
 
