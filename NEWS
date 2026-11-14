@@ -1,3 +1,48 @@
+shellter-v2026.11.5 2026-11-14  y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.5
+
+	A security fix leads this release: after an unfinished OTR
+	fragment a peer could send an empty message and make OTR
+	reassembly read one byte before its heap buffer; the same path
+	now also bounds how large one peer can grow the reassembly
+	queue. The secure DCC (SDCC) certificate handling is reworked so
+	a certificate of your own is only ever read, never written, and
+	the fingerprint shown as yours is the one presented on the
+	connection.
+
+	+ Security
+	  - OTR: reassembling a fragmented message read one byte before
+	    the heap buffer when a fragment was empty - an empty message
+	    after an unfinished "?OTR:" one; a peer in an OTR session
+	    could trigger it. An empty fragment is now handled before
+	    the buffer is indexed
+	  - OTR: the per-peer reassembly queue is bounded at 512 KiB, so
+	    a peer that never ends a fragmented message can no longer
+	    grow it without limit
+	+ Secure DCC (SDCC)
+	  - a certificate set with /SET dcc_tls_cert is now only read,
+	    never created, deleted or changed; the secure DCC is refused
+	    with the reason when the file cannot be used safely, instead
+	    of the file being replaced. It must be a regular file you
+	    own and that others cannot read (mode 0600), with the key
+	    and certificate in either order
+	  - the certificate is opened through the safe-file path, so a
+	    FIFO or other non-regular file at the configured path no
+	    longer hangs the client's main loop
+	  - clearing the temporaries left by an interrupted write now
+	    removes only erssi's own fresh ones, never a neighbouring
+	    file such as dcc-tls.pem.backup
+	  - the fingerprint shown as "yours" is taken from the
+	    certificate this side presented on the connection, so it
+	    can no longer disagree with the live certificate after the
+	    file changed under erssi
+	+ Other fixes
+	  - OTR: find_server_by_network matched a server with an
+	    inverted comparison and could pick the wrong server or none;
+	    it now compares the network tag exactly
+	  - OTR: a debug line that logged two strings with an integer
+	    format now uses %s
+
 shellter-v2026.11.4 2026-11-11  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.4
 
