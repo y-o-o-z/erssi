@@ -26,6 +26,7 @@
 #include <irssi/src/core/servers.h>
 #include <irssi/src/core/signals.h>
 #include <irssi/src/core/tls.h>
+#include <irssi/src/core/safe-file.h>
 
 #include <openssl/crypto.h>
 #include <openssl/objects.h>
@@ -813,6 +814,79 @@ static gboolean is_ssl_channel(GIOChannel *handle)
 	return handle != NULL && handle->funcs == &irssi_ssl_channel_funcs;
 }
 
+/* Load the key and certificate in cert_file into ctx. The PEM is read once,
+   through safe-file (a regular file of the user's own, opened non-blocking
+   so a FIFO cannot hang the main loop, not through a symbolic link), and
+   parsed from that buffer: the path is not opened again under us the way
+   SSL_CTX_use_certificate_chain_file() would. The first certificate is the
+   leaf, any that follow are the chain, and the key may come in any order.
+   FALSE with *error set on failure. */
+static int dcc_ctx_use_cert(SSL_CTX *ctx, const char *cert_file, char **error)
+{
+	char *data = NULL;
+	gsize len = 0;
+	BIO *bio = NULL;
+	X509 *cert = NULL, *ca;
+	EVP_PKEY *pkey = NULL;
+	int ok = FALSE;
+
+	if (!safe_file_read(cert_file, SAFE_FILE_OWN, 1024 * 1024, &data, &len)) {
+		*error = g_strdup_printf("the certificate %s: %s", cert_file,
+					 safe_file_strerror(errno));
+		return FALSE;
+	}
+
+	ERR_clear_error();
+	bio = BIO_new_mem_buf(data, len);
+	if (bio == NULL) {
+		*error = tls_error_text("no memory for the certificate");
+		goto out;
+	}
+	cert = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
+	if (cert == NULL || SSL_CTX_use_certificate(ctx, cert) != 1) {
+		*error = tls_error_text("the certificate could not be loaded");
+		goto out;
+	}
+	/* further certificates in the file are the chain */
+	SSL_CTX_clear_chain_certs(ctx);
+	while ((ca = PEM_read_bio_X509(bio, NULL, NULL, NULL)) != NULL) {
+		if (SSL_CTX_add0_chain_cert(ctx, ca) != 1) {
+			X509_free(ca);
+			*error = tls_error_text("a chain certificate could not be added");
+			goto out;
+		}
+	}
+	ERR_clear_error(); /* the loop ends on a benign "no more objects" */
+
+	BIO_free(bio);
+	bio = BIO_new_mem_buf(data, len);
+	if (bio == NULL) {
+		*error = tls_error_text("no memory for the private key");
+		goto out;
+	}
+	pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+	if (pkey == NULL || SSL_CTX_use_PrivateKey(ctx, pkey) != 1 ||
+	    SSL_CTX_check_private_key(ctx) != 1) {
+		*error = g_strdup_printf("the certificate %s: the key and certificate do not match",
+					 cert_file);
+		goto out;
+	}
+	ok = TRUE;
+
+out:
+	if (!ok)
+		ERR_clear_error();
+	if (bio != NULL)
+		BIO_free(bio);
+	X509_free(cert);
+	EVP_PKEY_free(pkey);
+	if (data != NULL) {
+		OPENSSL_cleanse(data, len); /* the buffer held the private key */
+		g_free(data);
+	}
+	return ok;
+}
+
 GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
 			     const char *cert_file, int min_version,
 			     char **error)
@@ -865,13 +939,7 @@ GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 
 	if (cert_file != NULL && *cert_file != '\0') {
-		if (SSL_CTX_use_certificate_chain_file(ctx, cert_file) != 1 ||
-		    SSL_CTX_use_PrivateKey_file(ctx, cert_file, SSL_FILETYPE_PEM) != 1 ||
-		    SSL_CTX_check_private_key(ctx) != 1) {
-			char *why = tls_error_text("unreadable");
-
-			*error = g_strdup_printf("the certificate %s: %s", cert_file, why);
-			g_free(why);
+		if (!dcc_ctx_use_cert(ctx, cert_file, error)) {
 			SSL_CTX_free(ctx);
 			return NULL;
 		}
@@ -991,43 +1059,75 @@ char *net_tls_dcc_peer_fingerprint(GIOChannel *handle)
 	return ret;
 }
 
-char *net_tls_dcc_cert_fingerprint(const char *cert_file)
+char *net_tls_dcc_own_fingerprint(GIOChannel *handle)
 {
 	X509 *cert;
-	FILE *fp;
-	char *ret;
 
-	fp = fopen(cert_file, "r");
-	if (fp == NULL)
+	if (!is_ssl_channel(handle))
 		return NULL;
-	cert = PEM_read_X509(fp, NULL, NULL, NULL);
-	fclose(fp);
-	if (cert == NULL) {
-		ERR_clear_error();
+	/* the certificate this side actually loaded for this connection, not
+	   whatever is on disk now: a regenerated or swapped PEM under the same
+	   path must not make us show an old fingerprint. SSL_get_certificate
+	   returns a certificate owned by the SSL, so it is not freed here. */
+	cert = SSL_get_certificate(((GIOSSLChannel *)handle)->ssl);
+	if (cert == NULL)
 		return NULL;
-	}
-	ret = cert_sha256(cert);
-	X509_free(cert);
-	return ret;
+	return cert_sha256(cert);
 }
 
-/* TRUE when cert_file holds a private key and a certificate that load and
-   belong together, i.e. one the DCC TLS server can actually use. A file
-   that exists but is empty, truncated or otherwise broken (an interrupted
-   write by an older erssi, a bad copy, a hand-edit) returns FALSE so the
-   caller can make a fresh one instead of failing every DCC with an opaque
-   TLS error. */
-static int dcc_cert_pem_usable(const char *cert_file)
+/* How cert_file looks to us before a DCC: whether it is a key and
+   certificate we can use, and when not, why. */
+enum dcc_cert_state {
+	DCC_CERT_USABLE,  /* a regular file of ours, mode 0600, holding a key
+			     and a certificate that load and match */
+	DCC_CERT_MISSING, /* nothing at that path */
+	DCC_CERT_UNSAFE,  /* a FIFO, device, directory, symlink, a file another
+			     user owns, or one others may read (*why set) */
+	DCC_CERT_BROKEN,  /* a regular file of ours we could read, but not an
+			     empty/truncated/mismatched/hand-edited PEM */
+};
+
+/* Inspect cert_file. The file is opened once through safe-file: with
+   O_NONBLOCK so a FIFO put in its place cannot hang the main loop, checked
+   on the descriptor with fstat() (anything but a regular file of the user's
+   own is refused), and never through a symbolic link. The private key is
+   read, then - rewound - the certificate, so a valid PEM is accepted
+   whatever the order of its key and certificate. */
+static enum dcc_cert_state dcc_cert_inspect(const char *cert_file, char **why)
 {
+	struct stat st;
 	FILE *fp;
+	int fd;
 	EVP_PKEY *pkey;
 	X509 *cert;
 	int ok;
 
-	fp = fopen(cert_file, "r");
-	if (fp == NULL)
-		return FALSE;
+	if (why != NULL)
+		*why = NULL;
+
+	fd = safe_file_open_read(cert_file, SAFE_FILE_OWN, &st);
+	if (fd == -1) {
+		if (errno == ENOENT)
+			return DCC_CERT_MISSING;
+		if (why != NULL)
+			*why = g_strdup(safe_file_strerror(errno));
+		return DCC_CERT_UNSAFE;
+	}
+	/* a private key readable by other users is unsafe whatever it holds */
+	if (st.st_mode & (S_IRWXG | S_IRWXO)) {
+		close(fd);
+		if (why != NULL)
+			*why = g_strdup("readable by other users, needs mode 0600");
+		return DCC_CERT_UNSAFE;
+	}
+
+	fp = fdopen(fd, "r");
+	if (fp == NULL) {
+		close(fd);
+		return DCC_CERT_BROKEN;
+	}
 	pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+	rewind(fp);
 	cert = PEM_read_X509(fp, NULL, NULL, NULL);
 	fclose(fp);
 
@@ -1038,24 +1138,30 @@ static int dcc_cert_pem_usable(const char *cert_file)
 
 	EVP_PKEY_free(pkey);
 	X509_free(cert);
-	return ok;
+	return ok ? DCC_CERT_USABLE : DCC_CERT_BROKEN;
 }
 
-/* Remove "<cert_file>.XXXXXX" temporaries left behind when erssi was killed
-   between g_mkstemp_full() and the unlink() below (each holds a private
-   key, so they are worth clearing). Only files older than 30s are touched,
-   never the temporary another erssi may be writing this very moment. */
+/* Remove "<cert_file>.tmp-XXXXXX" temporaries left behind when erssi was
+   killed between g_mkstemp_full() and the link() below (each holds a
+   private key, so they are worth clearing). The ".tmp-" marker is a name
+   the user is very unlikely to pick, so an unrelated neighbour such as
+   "<cert_file>.backup" is not matched; on top of that only a regular file
+   of ours, no symlink, with no other hard link, mode 0600 and older than
+   30s is removed - never a file another erssi is still writing, never one
+   we do not own. Called only for the managed certificate and only when a
+   fresh one is about to be made. */
 static void dcc_cert_remove_stale_temps(const char *cert_file)
 {
-	char *dir, *base;
+	char *dir, *base, *prefix;
 	const char *name;
 	GDir *d;
-	size_t baselen;
+	size_t prefixlen;
 	time_t now;
 
-	dir = g_path_get_dirname(cert_file);
 	base = g_path_get_basename(cert_file);
-	baselen = strlen(base);
+	prefix = g_strconcat(base, ".tmp-", NULL);
+	prefixlen = strlen(prefix);
+	dir = g_path_get_dirname(cert_file);
 
 	d = g_dir_open(dir, 0, NULL);
 	if (d != NULL) {
@@ -1064,14 +1170,15 @@ static void dcc_cert_remove_stale_temps(const char *cert_file)
 			struct stat st;
 			char *path;
 
-			/* our temporaries are exactly "<base>.<6 chars>" */
-			if (strncmp(name, base, baselen) != 0 ||
-			    name[baselen] != '.' ||
-			    strlen(name) != baselen + 1 + 6)
+			if (strncmp(name, prefix, prefixlen) != 0 ||
+			    strlen(name) != prefixlen + 6)
 				continue;
 
 			path = g_build_filename(dir, name, NULL);
-			if (stat(path, &st) == 0 && now - st.st_mtime > 30)
+			if (lstat(path, &st) == 0 && S_ISREG(st.st_mode) &&
+			    st.st_uid == geteuid() && st.st_nlink == 1 &&
+			    (st.st_mode & 07777) == 0600 &&
+			    now - st.st_mtime > 30)
 				unlink(path);
 			g_free(path);
 		}
@@ -1080,13 +1187,27 @@ static void dcc_cert_remove_stale_temps(const char *cert_file)
 
 	g_free(dir);
 	g_free(base);
+	g_free(prefix);
 }
 
-/* A self-signed P-256 key and certificate (ten years) for DCC: the TLS
-   server of a DCC must have one. Written 0600 under a temporary name and
-   linked into place, so that a second erssi that makes one at the same
-   moment never replaces the first. */
-int net_tls_dcc_make_cert(const char *cert_file, char **error)
+/* Make sure cert_file is a key and certificate the DCC TLS server can use.
+
+   managed is the certificate erssi keeps for the user (the default
+   ~/.erssi/dcc-tls.pem, when dcc_tls_cert is unset): a missing, broken or
+   unsafe one is replaced with a fresh self-signed P-256 key and
+   certificate (ten years). A world-readable managed key may already have
+   leaked, and a chmod would not undo that, so it too is renewed rather
+   than kept. The new pair is written 0600 under a temporary name and
+   linked into place, so a second erssi making one at the same moment
+   never replaces the first, and an interrupted write never removes the
+   last good copy.
+
+   When managed is false cert_file is the certificate the user configured
+   with dcc_tls_cert: it is only ever validated, never created, deleted,
+   regenerated or chmod'd. If it is missing, unsafe or not a usable PEM the
+   DCC is refused with a message that says why, and the file is left exactly
+   as it is. */
+int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error)
 {
 	EVP_PKEY_CTX *pctx = NULL;
 	EVP_PKEY *pkey = NULL;
@@ -1097,24 +1218,47 @@ int net_tls_dcc_make_cert(const char *cert_file, char **error)
 	char *tmp = NULL;
 	FILE *fp = NULL;
 	int fd = -1, ok = FALSE;
+	enum dcc_cert_state state;
+	char *why = NULL;
 
 	g_return_val_if_fail(cert_file != NULL, FALSE);
 	g_return_val_if_fail(error != NULL, FALSE);
 	*error = NULL;
-
-	dcc_cert_remove_stale_temps(cert_file);
 
 	if (!ssl_inited && !irssi_ssl_init()) {
 		*error = g_strdup("OpenSSL could not be initialised");
 		return FALSE;
 	}
 
-	if (g_file_test(cert_file, G_FILE_TEST_EXISTS)) {
-		if (dcc_cert_pem_usable(cert_file))
-			return TRUE;
-		/* exists but unusable: drop it and write a fresh one */
-		unlink(cert_file);
+	state = dcc_cert_inspect(cert_file, &why);
+	if (state == DCC_CERT_USABLE) {
+		g_free(why);
+		return TRUE;
 	}
+	if (!managed) {
+		/* the user's own certificate: say what is wrong and stop,
+		   touching nothing */
+		switch (state) {
+		case DCC_CERT_MISSING:
+			*error = g_strdup_printf("the certificate %s does not exist", cert_file);
+			break;
+		case DCC_CERT_UNSAFE:
+			*error = g_strdup_printf("the certificate %s is %s", cert_file,
+						 why != NULL ? why : "unsafe to use");
+			break;
+		default: /* DCC_CERT_BROKEN */
+			*error = g_strdup_printf("the certificate %s is not a usable key and certificate",
+						 cert_file);
+			break;
+		}
+		g_free(why);
+		return FALSE;
+	}
+	g_free(why);
+
+	/* the managed certificate: clear our own leftover temporaries and make
+	   a fresh pair */
+	dcc_cert_remove_stale_temps(cert_file);
 
 	ERR_clear_error();
 	pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
@@ -1143,7 +1287,7 @@ int net_tls_dcc_make_cert(const char *cert_file, char **error)
 	    !X509_sign(cert, pkey, EVP_sha256()))
 		goto fail;
 
-	tmp = g_strconcat(cert_file, ".XXXXXX", NULL);
+	tmp = g_strconcat(cert_file, ".tmp-XXXXXX", NULL);
 	fd = g_mkstemp_full(tmp, O_WRONLY, 0600);
 	if (fd == -1) {
 		*error = g_strdup_printf("%s: %s", tmp, g_strerror(errno));
@@ -1164,9 +1308,18 @@ int net_tls_dcc_make_cert(const char *cert_file, char **error)
 	}
 	fclose(fp);
 	fp = NULL;
-	if (link(tmp, cert_file) != 0 && errno != EEXIST) {
-		/* no hard links here (FAT, some FUSE): rename, which can
-		   only lose a race against another erssi, not a key */
+	if (link(tmp, cert_file) != 0) {
+		/* Something is already at the path, or the filesystem has no
+		   hard links (FAT, some FUSE). If another erssi won the race
+		   and wrote a good certificate, keep it; otherwise what is
+		   there is the unusable or unsafe file we set out to replace
+		   (we only reach here when the existing one is not usable), so
+		   rename over it atomically. */
+		if (errno == EEXIST &&
+		    dcc_cert_inspect(cert_file, NULL) == DCC_CERT_USABLE) {
+			ok = TRUE;
+			goto out;
+		}
 		if (rename(tmp, cert_file) != 0) {
 			*error = g_strdup_printf("%s: %s", cert_file, g_strerror(errno));
 			goto out;

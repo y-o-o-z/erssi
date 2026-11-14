@@ -29,6 +29,7 @@ unsigned int secure:1;
 unsigned int tls_done:1; /* the TLS handshake is over */
 char *tls_info; /* version and cipher, after the handshake */
 char *tls_fingerprint; /* SHA-256 of the other side's certificate or NULL */
+char *tls_own_fingerprint; /* SHA-256 of our certificate on this connection */
 void (*tls_ready)(void *dcc); /* what goes on after the handshake */
 
 GHashTable *module_data;

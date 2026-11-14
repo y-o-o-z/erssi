@@ -115,30 +115,11 @@ static void dcc_request_send(DCC_REC *dcc)
 		    dcc_type_label(dcc), dcc->nick, dcc->arg);
 }
 
-/* SHA-256 of our own DCC certificate. Parsing the PEM and hashing it on
-   every connection is wasteful when it never changes under us, so it is
-   computed once and kept; the configured path changing is the only thing
-   that invalidates it. Owned here, freed in fe_irc_dcc_deinit(). */
-static char *own_cert_path;
-static char *own_cert_fingerprint;
-
-static const char *dcc_tls_own_fingerprint(void)
-{
-	char *cert = dcc_tls_cert_path();
-
-	if (own_cert_path == NULL || g_strcmp0(own_cert_path, cert) != 0) {
-		g_free(own_cert_path);
-		g_free(own_cert_fingerprint);
-		own_cert_path = cert; /* take ownership */
-		own_cert_fingerprint = net_tls_dcc_cert_fingerprint(cert);
-	} else {
-		g_free(cert);
-	}
-	return own_cert_fingerprint;
-}
-
 /* SDCC: how the connection is encrypted and both certificates, which
-   only the two people can compare */
+   only the two people can compare. The fingerprint shown as "yours" is the
+   certificate this side actually presented on this connection (taken from
+   the live TLS object when the handshake finished), so a regenerated or
+   swapped PEM under the same path can never show a stale fingerprint. */
 static void dcc_tls_connected(DCC_REC *dcc)
 {
 	const char *own;
@@ -147,7 +128,7 @@ static void dcc_tls_connected(DCC_REC *dcc)
 	if (!dcc->secure || !dcc->tls_done)
 		return;
 
-	own = dcc_tls_own_fingerprint();
+	own = dcc->tls_own_fingerprint;
 
 	printformat(dcc->server, NULL, MSGLEVEL_DCC, IRCTXT_DCC_TLS_CONNECTED,
 		    dcc_type_label(dcc), dcc->nick,
@@ -285,9 +266,6 @@ void fe_irc_dcc_deinit(void)
 	signal_remove("dcc error not secure", (SIGNAL_FUNC) dcc_error_not_secure);
 	command_unbind("dcc", (SIGNAL_FUNC) cmd_dcc);
 	command_unbind("dcc list", (SIGNAL_FUNC) cmd_dcc_list);
-
-	g_free_and_null(own_cert_path);
-	g_free_and_null(own_cert_fingerprint);
 }
 
 MODULE_ABICHECK(fe_irc_dcc)

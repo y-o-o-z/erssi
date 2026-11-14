@@ -452,6 +452,169 @@ def main():
         assert wait_log_re(r"alice SCHAT", offc, name="carol"), log("carol")[offc:]
         a.type_and_wait("/dcc close chat carol")
 
+    def combined_pem(name, order, mode=0o600):
+        """a single PEM with a key and a matching certificate the two ways
+        round (OpenSSL writes them key-then-cert; a real one may be either),
+        and its SHA-256; written under <work> with the given mode"""
+        crt, key, fp = make_cert(name)
+        crt_text, key_text = Path(crt).read_text(), Path(key).read_text()
+        body = crt_text + key_text if order == "cert-key" else key_text + crt_text
+        p = work / f"custom-{name}-{order}.pem"
+        p.write_text(body)
+        os.chmod(p, mode)
+        return p, fp
+
+    def schat_to_peer(nick):
+        """alice offers SCHAT and listens as the TLS server; the peer
+        connects as the TLS client, so (client side) it sees the very
+        certificate alice presents on this connection. The handshake is all
+        these cases need, so the peer just finishes once it is done. Returns
+        the Peer (peer.peer_der is alice's certificate) and the log offset."""
+        off = log_size()
+        st["alice"].type_and_wait(f"/dcc schat {nick}")
+        args = ctcp("SCHAT")
+        assert args[0].upper() == "CHAT" and args[1] == str(LOCAL), args
+        peer = Peer(lambda sock: None, listen=False, ctx=client_ctx())
+        peer.connect_to(int(args[2]))
+        return peer, off
+
+    def t_custom_cert_both_orders():
+        """a valid user certificate (dcc_tls_cert) is used whatever the
+        order of its key and certificate, is shown as "yours", and is left
+        byte-for-byte unchanged - it is never regenerated the way the
+        managed one is (the 2026.11 data-loss bug deleted it)"""
+        a = st["alice"]
+        for order in ("cert-key", "key-cert"):
+            path, fp = combined_pem(f"custom-{order}", order)
+            before = path.read_bytes()
+            a.type_and_wait(f"/set dcc_tls_cert {path}")
+            _, nick = fresh_bob()
+            peer, off = schat_to_peer(nick)
+            assert wait_log("encrypted: TLSv1.3", off), f"{order}:\n" + log()[off:]
+            assert wait_log(f"yours: {fp}", off), f"{order}:\n" + log()[off:]
+            peer.finish()
+            assert colons(hashlib.sha256(peer.peer_der).hexdigest()) == fp, order
+            assert path.read_bytes() == before, f"the user's certificate was changed ({order})"
+            a.type_and_wait(f"/dcc close chat {nick}", "/set -clear dcc_tls_cert")
+
+    def refused_schat(nick, expect):
+        """alice offers SCHAT and listens; a plain TCP connection to her
+        port makes her build the certificate (as the TLS server) - which is
+        where a bad user certificate is refused. Returns the log offset and
+        asserts EXPECT is logged; the plain socket never does TLS."""
+        off = log_size()
+        st["alice"].type_and_wait(f"/dcc schat {nick}")
+        args = ctcp("SCHAT")
+        s = socket.create_connection(("127.0.0.1", int(args[2])), WAIT)
+        try:
+            assert wait_log(expect, off), log()[off:]
+        finally:
+            s.close()
+            st["alice"].type_and_wait(f"/dcc close chat {nick}")
+        return off
+
+    def t_custom_cert_broken_kept():
+        """a broken user certificate is refused with a message and left
+        exactly as it is: not deleted, not replaced by a generated one"""
+        a = st["alice"]
+        path = work / "custom-broken.pem"
+        path.write_text("-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n")
+        os.chmod(path, 0o600)
+        before = path.read_bytes()
+        a.type_and_wait(f"/set dcc_tls_cert {path}")
+        _, nick = fresh_bob()
+        refused_schat(nick, "not a usable key and certificate")
+        assert path.read_bytes() == before, "the broken user certificate was changed"
+        a.type_and_wait("/set -clear dcc_tls_cert")
+
+    def t_custom_cert_world_readable_refused():
+        """a user certificate others can read is refused, not silently
+        chmod'd or replaced"""
+        a = st["alice"]
+        path, _ = combined_pem("custom-644", "key-cert", mode=0o644)
+        before = path.read_bytes()
+        a.type_and_wait(f"/set dcc_tls_cert {path}")
+        _, nick = fresh_bob()
+        refused_schat(nick, "readable by other users")
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644, "the mode was changed"
+        assert path.read_bytes() == before, "the user certificate was changed"
+        a.type_and_wait("/set -clear dcc_tls_cert")
+
+    def t_backup_not_deleted():
+        """an unrelated neighbour of the managed certificate, such as
+        dcc-tls.pem.backup, is not swept as a stale temporary"""
+        a = st["alice"]
+        backup = a.home / "dcc-tls.pem.backup"
+        backup.write_text("not ours\n")
+        os.utime(backup, (time.time() - 600, time.time() - 600))
+        _, nick = fresh_bob()
+        peer, off = schat_to_peer(nick)
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        peer.finish()
+        assert backup.exists(), "dcc-tls.pem.backup was deleted"
+        a.type_and_wait(f"/dcc close chat {nick}")
+
+    def t_managed_world_readable_renewed():
+        """the managed key loosened to 0644 is renewed (a leaked key is not
+        made safe by a chmod) and the connection still works"""
+        a = st["alice"]
+        pem = a.home / "dcc-tls.pem"
+        assert pem.exists(), "the managed certificate should exist by now"
+        before_fp = own_fingerprint()
+        os.chmod(pem, 0o644)
+        _, nick = fresh_bob()
+        peer, off = schat_to_peer(nick)
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        peer.finish()
+        assert stat.S_IMODE(pem.stat().st_mode) == 0o600, oct(pem.stat().st_mode)
+        assert own_fingerprint() != before_fp, "the world-readable managed key was kept"
+        a.type_and_wait(f"/dcc close chat {nick}")
+
+    def t_fifo_does_not_hang():
+        """a FIFO in the managed certificate's place does not hang the main
+        loop: erssi keeps answering and replaces it with a real key"""
+        a = st["alice"]
+        pem = a.home / "dcc-tls.pem"
+        if pem.exists() or pem.is_symlink():
+            pem.unlink()
+        os.mkfifo(pem)
+        _, nick = fresh_bob()
+        peer = Peer(lambda sock: None, ctx=server_ctx())
+        peer.start()
+        off = log_size()
+        st["bob"].send(f"PRIVMSG alice :\x01DCC SCHAT chat {LOCAL} {peer.port}\x01")
+        assert wait_log("a secure DCC (SCHAT)", off), log()[off:]
+        a.type_and_wait(f"/dcc chat {nick}")
+        a.sync_output()  # fails if the event loop is stuck in open()
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        peer.finish()
+        assert stat.S_ISREG(pem.stat().st_mode), "the FIFO was not replaced"
+        a.type_and_wait(f"/dcc close chat {nick}")
+
+    def t_fingerprint_follows_live_cert():
+        """"yours" is the certificate on this connection, not a cached one:
+        after the managed PEM is regenerated the next connection shows the
+        new fingerprint, matching what the peer sees"""
+        a = st["alice"]
+        _, nick = fresh_bob()
+        peer1, off = schat_to_peer(nick)
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        peer1.finish()
+        fp1 = colons(hashlib.sha256(peer1.peer_der).hexdigest())
+        assert wait_log(f"yours: {fp1}", off), log()[off:]
+        a.type_and_wait(f"/dcc close chat {nick}")
+        # force a fresh managed certificate under the same path
+        (a.home / "dcc-tls.pem").write_text("broken\n")
+        os.chmod(a.home / "dcc-tls.pem", 0o600)
+        _, nick = fresh_bob()
+        peer2, off = schat_to_peer(nick)
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        peer2.finish()
+        fp2 = colons(hashlib.sha256(peer2.peer_der).hexdigest())
+        assert fp2 != fp1, "the certificate was not regenerated"
+        assert wait_log(f"yours: {fp2}", off), "a stale fingerprint was shown:\n" + log()[off:]
+        a.type_and_wait(f"/dcc close chat {nick}")
+
     def t_quit():
         for name in ("alice", "carol"):
             st[name].quit()
@@ -460,7 +623,11 @@ def main():
     try:
         harness.main([t_install, t_start, t_schat_peer_listens, t_schat_alice_listens,
                       t_tls12_refused, t_no_downgrade, t_ssend_to_peer, t_ssend_from_peer,
-                      t_passive_ssend, t_plain_send, t_erssi_to_erssi, t_quit])
+                      t_passive_ssend, t_plain_send, t_erssi_to_erssi,
+                      t_custom_cert_both_orders, t_custom_cert_broken_kept,
+                      t_custom_cert_world_readable_refused, t_backup_not_deleted,
+                      t_managed_world_readable_renewed, t_fifo_does_not_hang,
+                      t_fingerprint_follows_live_cert, t_quit])
     finally:
         for name in ("alice", "carol"):
             if name in st:

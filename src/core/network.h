@@ -76,11 +76,16 @@ int net_tls_dcc_handshake(GIOChannel *handle, char **error);
 char *net_tls_dcc_info(GIOChannel *handle);
 /* SHA-256 (hex) of the peer's certificate, NULL when it sent none */
 char *net_tls_dcc_peer_fingerprint(GIOChannel *handle);
-/* SHA-256 (hex) of the certificate in cert_file, NULL if unreadable */
-char *net_tls_dcc_cert_fingerprint(const char *cert_file);
-/* make a self-signed key and certificate in cert_file (0600) unless the
-   file exists */
-int net_tls_dcc_make_cert(const char *cert_file, char **error);
+/* SHA-256 (hex) of the certificate this side loaded for this connection
+   (not whatever is on disk now), NULL when there is none */
+char *net_tls_dcc_own_fingerprint(GIOChannel *handle);
+/* Make sure cert_file is a key and certificate the DCC TLS server can use.
+   managed (dcc_tls_cert unset, the default ~/.erssi/dcc-tls.pem): a
+   missing, broken or unsafe one is replaced with a fresh self-signed pair
+   (0600). Not managed (the user's own dcc_tls_cert): only validated, never
+   created, deleted or changed; FALSE with *error set when it cannot be
+   used safely. */
+int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error);
 /* bytes TLS decrypted that a read has not taken yet (0 for plain) */
 int net_tls_pending(GIOChannel *handle);
 /* Connect to socket with ip address */

@@ -119,6 +119,7 @@ void dcc_destroy(DCC_REC *dcc)
 	g_free_not_null(dcc->target);
 	g_free(dcc->tls_info);
 	g_free(dcc->tls_fingerprint);
+	g_free(dcc->tls_own_fingerprint);
 	g_free(dcc->mynick);
 	g_free(dcc->nick);
 	g_free(dcc->arg);
@@ -427,6 +428,16 @@ char *dcc_tls_cert_path(void)
 	return convert_home(path);
 }
 
+/* TRUE when the certificate is the one erssi keeps for the user (the
+   default, dcc_tls_cert unset): erssi may make and renew it. FALSE when
+   the user configured a path of their own: erssi only validates it. */
+static int dcc_tls_cert_is_managed(void)
+{
+	const char *path = settings_get_str("dcc_tls_cert");
+
+	return path == NULL || *path == '\0';
+}
+
 static void dcc_tls_failed(DCC_REC *dcc, const char *error)
 {
 	signal_emit("dcc error tls", 2, dcc, error);
@@ -468,6 +479,7 @@ static void dcc_tls_step(DCC_REC *dcc)
 	dcc->tls_done = TRUE;
 	dcc->tls_info = net_tls_dcc_info(dcc->handle);
 	dcc->tls_fingerprint = net_tls_dcc_peer_fingerprint(dcc->handle);
+	dcc->tls_own_fingerprint = net_tls_dcc_own_fingerprint(dcc->handle);
 	ready = dcc->tls_ready;
 	dcc->tls_ready = NULL;
 	ready(dcc);
@@ -489,7 +501,7 @@ void dcc_tls_start(DCC_REC *dcc, int accept_side, DCC_TLS_READY ready)
 
 	cert = dcc_tls_cert_path();
 	tls = NULL;
-	if (net_tls_dcc_make_cert(cert, &error)) {
+	if (net_tls_dcc_make_cert(cert, dcc_tls_cert_is_managed(), &error)) {
 		tls = net_tls_dcc_wrap(dcc->handle, accept_side, cert,
 				       settings_get_choice("dcc_tls_min_version") == 0 ?
 				       12 : 13,
