@@ -54,6 +54,13 @@
 #define OTR_MSG_BEGIN_TAG             "?OTR:"
 #define OTR_MSG_END_TAG               '.'
 
+/* Upper bound on a message reassembled from OTR fragments. A peer sends
+ * fragments until one ends with OTR_MSG_END_TAG; without a ceiling it
+ * could grow the per-peer queue without end. 512 KiB is far above any
+ * real OTR message (base64 of an AKE or data message) yet bounds the
+ * memory a single peer can make us hold. */
+#define OTR_MSG_MAX_SIZE              (512 * 1024)
+
 /* IRC /me command marker and len. */
 #define OTR_IRC_MARKER_ME             "/me "
 #define OTR_IRC_MARKER_ME_LEN         sizeof(OTR_IRC_MARKER_ME) - 1

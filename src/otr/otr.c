@@ -83,7 +83,7 @@ static void instag_load(struct otr_user_state *ustate)
 	if (err == GPG_ERR_NO_ERROR)
 		IRSSI_OTR_DEBUG("Instance tags loaded from %9%s%9", filename);
 	else
-		IRSSI_OTR_DEBUG("Error loading instance tags: %d (%d)", gcry_strerror(err), gcry_strsource(err));
+		IRSSI_OTR_DEBUG("Error loading instance tags: %s (%s)", gcry_strerror(err), gcry_strsource(err));
 
 	g_free(filename);
 }
@@ -129,7 +129,7 @@ static SERVER_REC *find_server_by_network(const char *network)
 	for (tmp = servers; tmp; tmp = tmp->next) {
 		server = tmp->data;
 
-		if (g_ascii_strncasecmp(server->tag, network, strlen(server->tag)))
+		if (g_ascii_strcasecmp(server->tag, network) == 0)
 			return server;
 	}
 
@@ -606,6 +606,16 @@ static enum otr_msg_status enqueue_otr_fragment(const char *msg, struct otr_peer
 	msg_len = strlen(msg);
 
 	if (opc->full_msg) {
+		/* Bound the reassembly buffer: a peer must not grow the queue
+		 * without ever ending it with OTR_MSG_END_TAG. On overflow drop
+		 * everything collected so far and report an error. */
+		if (msg_len + 1 > OTR_MSG_MAX_SIZE - opc->msg_len) {
+			free(opc->full_msg);
+			opc->full_msg = NULL;
+			opc->msg_size = opc->msg_len = 0;
+			return OTR_MSG_ERROR;
+		}
+
 		if (msg_len + 1 > (opc->msg_size - opc->msg_len)) {
 			char *tmp_ptr;
 
@@ -636,9 +646,12 @@ static enum otr_msg_status enqueue_otr_fragment(const char *msg, struct otr_peer
 
 		/*
 		 * Are we waiting for more? If the message ends with a ".", the
-		 * transmission has ended else we have to wait for more.
+		 * transmission has ended else we have to wait for more. An empty
+		 * fragment (msg_len == 0) has no last byte to look at and never
+		 * ends the message, so it is handled before indexing msg: reading
+		 * msg[(size_t) -1] would be a heap buffer over-read.
 		 */
-		if (msg[msg_len - 1] != OTR_MSG_END_TAG) {
+		if (msg_len == 0 || msg[msg_len - 1] != OTR_MSG_END_TAG) {
 			ret = OTR_MSG_WAIT_MORE;
 			return ret;
 		}
