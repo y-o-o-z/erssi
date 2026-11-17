@@ -1,3 +1,36 @@
+shellter-v2026.11.6 2026-11-17	y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.6
+
+	A maintenance release from a full code review of the erssi
+	sources. It fixes a terminal input glitch, removes dead code -
+	including a leftover routine that could write secrets in the
+	clear - and adds no new features.
+
+	+ Fixed
+	  - Terminal: Shift+Arrow, Ctrl+Shift+Arrow and Alt+Shift+Arrow
+	    were not bound, so their escape sequence leaked into the
+	    input line as stray characters (for example "1;2D"). They
+	    are now bound: Shift+Arrow moves the cursor like a plain
+	    arrow, Ctrl+Shift+Arrow by word, Alt+Shift+Arrow between
+	    windows
+	  - OTR: key generation no longer calls g_source_remove() on the
+	    fork-failure path, where the source was never registered
+	  - /FLOODNET HELP now lists the anti_floodnet_notices and
+	    anti_floodnet_notice_interval settings
+
+	+ Removed (dead code)
+	  - credential: three unused routines left over from the
+	    disabled external/encrypt storage modes were removed; one of
+	    them (credential_decrypt_config) could write a plaintext
+	    "config.decrypted" file and had no caller
+	  - internal: unused debug and gesture helpers, a write-only
+	    redraw flag, a duplicate window-created handler, a redundant
+	    free in the E2E path and two dead prototypes were removed
+
+	A full reproducible-build review (compiler, linker section GC
+	and a five-way subsystem audit) found no dead functions and no
+	memory-safety defects in the security-critical paths.
+
 shellter-v2026.11.5 2026-11-14  y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.5
 
