@@ -261,7 +261,8 @@ void key_gen_run(struct otr_user_state *ustate, const char *account_name)
 		/* error */
 		g_warning("Key generation failed: %s", g_strerror(errno));
 
-		g_source_remove(worker->tag);
+		if (worker->tag)
+			g_source_remove(worker->tag);
 
 		g_io_channel_shutdown(worker->pipes[0], TRUE, NULL);
 		g_io_channel_unref(worker->pipes[0]);

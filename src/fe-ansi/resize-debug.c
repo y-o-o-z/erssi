@@ -235,11 +235,6 @@ void resize_debug_deinit(void)
 	debug_log_stop();
 }
 
-gboolean resize_debug_enabled(void)
-{
-	return debug_enabled && debug_log != NULL;
-}
-
 void resize_debug_log(const char *stage, const char *fmt, ...)
 {
 	char timestamp[32];
@@ -321,11 +316,4 @@ void resize_debug_end_sequence(void)
 	fprintf(debug_log, "<<< RESIZE SEQUENCE #%d END (total: %.3f ms) <<<\n\n",
 	        sequence_count, elapsed);
 	fflush(debug_log);
-}
-
-void resize_debug_flush(void)
-{
-	if (debug_log) {
-		fflush(debug_log);
-	}
 }

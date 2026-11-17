@@ -72,10 +72,7 @@ gboolean credential_is_sensitive_field(const char *key, const char *value);
 gboolean credential_is_autosendcmd_sensitive(const char *cmd);
 
 /* Migration between modes */
-gboolean credential_migrate_to_external(void);
 gboolean credential_migrate_to_config(void);
-gboolean credential_encrypt_config(void);
-gboolean credential_decrypt_config(void);
 
 /* File operations */
 /* a larger credentials file is not read */

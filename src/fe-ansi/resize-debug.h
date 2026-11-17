@@ -48,10 +48,4 @@ void resize_debug_start_sequence(void);
 /* Mark end of resize sequence and log total time */
 void resize_debug_end_sequence(void);
 
-/* Check if debug logging is enabled */
-gboolean resize_debug_enabled(void);
-
-/* Force flush log to disk */
-void resize_debug_flush(void);
-
 #endif /* RESIZE_DEBUG_H */

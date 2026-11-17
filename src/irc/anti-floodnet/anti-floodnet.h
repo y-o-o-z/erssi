@@ -94,8 +94,6 @@ void check_message_flood(IRC_SERVER_REC *server, const char *nick,
                          const char *address, const char *text);
 void check_ctcp_flood(IRC_SERVER_REC *server, const char *nick,
                       const char *address, const char *cmd, const char *data);
-void check_nick_flood(IRC_SERVER_REC *server, const char *channel,
-                      const char *old_nick, const char *new_nick);
 
 /* Blocking functions */
 void block_duplicate_message(const char *text, int duration);
@@ -106,7 +104,6 @@ gboolean is_nick_channel_blocked(const char *channel);
 /* Cleanup functions */
 void cleanup_old_messages(time_t now);
 void cleanup_expired_blocks(void);
-void reset_daily_stats(void);
 
 /* Protection mode management */
 void enter_protection_mode(void);

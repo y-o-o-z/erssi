@@ -294,6 +294,10 @@ void cmd_floodnet_status(const char *data)
                  "  anti_floodnet_time_window");
         printtext(NULL, NULL, MSGLEVEL_CRAP,
                  "  anti_floodnet_nickchange_window");
+        printtext(NULL, NULL, MSGLEVEL_CRAP,
+                 "  anti_floodnet_notices");
+        printtext(NULL, NULL, MSGLEVEL_CRAP,
+                 "  anti_floodnet_notice_interval");
 
     } else {
         printtext(NULL, NULL, MSGLEVEL_CRAP,

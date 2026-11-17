@@ -1522,10 +1522,30 @@ void gui_readline_init(void)
 	key_bind("key", NULL, "meta2-1;5A", "cup", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta2-1;5B", "cdown", (SIGNAL_FUNC) key_combo);
 
+	/* Shift+arrows (CSI 1;2x): plain cursor movement, like unmodified arrows.
+	   Without these the unmatched escape tail leaks into the input line. */
+	key_bind("key", NULL, "meta2-1;2D", "left", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;2C", "right", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;2A", "up", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;2B", "down", (SIGNAL_FUNC) key_combo);
+
 	key_bind("key", NULL, "meta2-1;3A", "mup", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta2-1;3B", "mdown", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta2-1;3D", "mleft", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta2-1;3C", "mright", (SIGNAL_FUNC) key_combo);
+
+	/* Ctrl+Shift+arrows (CSI 1;6x): word movement, like Ctrl+arrows */
+	key_bind("key", NULL, "meta2-1;6D", "cleft", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;6C", "cright", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;6A", "cup", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;6B", "cdown", (SIGNAL_FUNC) key_combo);
+
+	/* Alt+Shift+arrows (CSI 1;4x): window movement, like Alt+arrows */
+	key_bind("key", NULL, "meta2-1;4A", "mup", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;4B", "mdown", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;4D", "mleft", (SIGNAL_FUNC) key_combo);
+	key_bind("key", NULL, "meta2-1;4C", "mright", (SIGNAL_FUNC) key_combo);
+
 	key_bind("key", NULL, "meta-up", "mup", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta-down", "mdown", (SIGNAL_FUNC) key_combo);
 	key_bind("key", NULL, "meta-left", "mleft", (SIGNAL_FUNC) key_combo);

@@ -77,12 +77,6 @@ void apply_reservations_all(void)
 	}
 }
 
-void sig_mainwindow_created(MAIN_WINDOW_REC *mw)
-{
-	/* the panels are laid out for the screen in sp_layout_panels() */
-	(void) mw;
-}
-
 /* The rows the panels cover: from the first text row of the highest main
  * window to the last text row of the lowest one. FALSE when there are
  * none (no main window, or a screen too low for any text). */

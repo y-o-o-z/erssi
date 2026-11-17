@@ -2661,7 +2661,6 @@ static void sig_ctcp_reply(SERVER_REC *server, const char *args, const char *nic
 	}
 	g_free(rsp);
 	g_free(recip);
-	g_free(sctx);
 	e2e_net_clear(&net);
 	if (have_id)
 		e2e_identity_wipe(&id);

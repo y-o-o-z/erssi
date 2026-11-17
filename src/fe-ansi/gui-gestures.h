@@ -32,6 +32,5 @@ gboolean gui_gestures_handle_mouse_event(const GuiMouseEvent *event, gpointer us
 
 /* Utility functions for gesture configuration */
 const char* gui_gestures_get_command(GuiGestureType gesture);
-void gui_gestures_execute_command(GuiGestureType gesture);
 
 #endif

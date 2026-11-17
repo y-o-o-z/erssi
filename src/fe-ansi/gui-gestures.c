@@ -134,22 +134,11 @@ const char* gui_gestures_get_command(GuiGestureType gesture)
 }
 
 /* Execute command for detected gesture */
-void gui_gestures_execute_command(GuiGestureType gesture)
-{
-	const char *command = gui_gestures_get_command(gesture);
-	
-	if (command && *command) {
-		signal_emit("send command", 3, command, active_win->active_server, active_win->active);
-	}
-}
-
-/* Execute command for detected gesture (internal version with logging) */
 static void execute_gesture_command(GuiGestureType gesture)
 {
 	const char *command = gui_gestures_get_command(gesture);
-	
+
 	if (command && *command) {
-		/* Note: sp_logf would need to be provided by caller or made available */
 		signal_emit("send command", 3, command, active_win->active_server, active_win->active);
 	}
 }

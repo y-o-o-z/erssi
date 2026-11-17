@@ -33,7 +33,6 @@
 extern gboolean redraw_pending;
 extern int redraw_timer_tag;
 extern int redraw_batch_timeout;
-extern gboolean batch_mode_active;
 
 /* Core rendering functions */
 void clear_window_full(TERM_WINDOW *tw, int width, int height);

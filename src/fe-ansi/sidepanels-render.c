@@ -52,7 +52,6 @@
 gboolean redraw_pending = FALSE;
 int redraw_timer_tag = -1;
 int redraw_batch_timeout = 5; /* ms - WeeChat uses 1ms, we use 5ms for safety */
-gboolean batch_mode_active = FALSE;
 
 /* The window whose theme the left panel is drawn with: the active one of
    the active main window. (Each band of the right panel is drawn with the
@@ -1207,7 +1206,6 @@ static gboolean batched_redraw_timeout(gpointer data)
 	redraw_both_panels_only(event_name);
 	redraw_pending = FALSE;
 	redraw_timer_tag = -1;
-	batch_mode_active = FALSE;
 	return FALSE; /* Don't repeat */
 }
 
@@ -1219,7 +1217,6 @@ void schedule_batched_redraw(const char *event_name)
 	}
 
 	redraw_pending = TRUE;
-	batch_mode_active = TRUE;
 	redraw_timer_tag = g_timeout_add(redraw_batch_timeout, batched_redraw_timeout, (gpointer) event_name);
 }
 
@@ -1227,7 +1224,6 @@ void sidepanels_render_init(void)
 {
 	redraw_pending = FALSE;
 	redraw_timer_tag = -1;
-	batch_mode_active = FALSE;
 }
 
 void sidepanels_render_deinit(void)
@@ -1237,5 +1233,4 @@ void sidepanels_render_deinit(void)
 		redraw_timer_tag = -1;
 	}
 	redraw_pending = FALSE;
-	batch_mode_active = FALSE;
 }
