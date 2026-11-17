@@ -101,6 +101,7 @@ shellter-v2026.11.2 13c458bed968ef299fc896ec15cd489e2f3613af signed
 shellter-v2026.11.3 19662582b3553140f7c50ba8217ca209e7b21542 signed
 shellter-v2026.11.4 0fc5623c083af70f3344ecccb4f36f3e28e3d445 signed
 shellter-v2026.11.5 6f72329297467ac65537737814439db7d5503339 signed
+shellter-v2026.11.6 ec2e67355b0ccc6492e5cfaaa81dd63645a170f1 signed
 "
 # who signs the releases (git allowed_signers format; utils/allowed_signers)
 # and the fingerprint of that key (ssh-keygen -lf), which every signature
