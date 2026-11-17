@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.5.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.6.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.5">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.6">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.5</pre>
+    verify-tag shellter-v2026.11.6</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.11.5">
-        <header><b>shellter-v2026.11.5</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.11.6">
+        <header><b>shellter-v2026.11.6</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>6f7232929</dd></div>
+          <div><dt>Commit</dt><dd>ec2e67355</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="37e9b8b95e3a9d4d20eb893dc017b88d76badcba0bab5578fc225d89fe3a73a5">sha256 37e9b8b9…9fe3a73a5</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="026699b62a5d42e11986b621f75cedf90a291682b88b25f4f18a3358a95abfa4">sha256 026699b6…8a95abfa4</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="b3eeb3f2b0ec9a24fa1e98d4fd187f7d0b3aa1263710d944776421b3413a7a80">sha256 b3eeb3f2…3413a7a80</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="e65115b41f7ce7713762ab789cef78dfee42ab0cc15fafe1e980e46273f1f137">sha256 e65115b4…273f1f137</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="3a461ff173990d8c4526ef8498e20423c3923da195e0d2a7a45e3915aa94295c">sha256 3a461ff1…5aa94295c</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="69cac40174c36698d074f6e8c88f36f1f7d481dd2c6f2e84b3b12ff38d908ceb">sha256 69cac401…38d908ceb</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="a6d1c39344878e8766a8a254174267d2ec4423453b745705b6408d9f41248e3e">sha256 a6d1c393…f41248e3e</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="05c69927143ee79de90c0b554d0f708060f3a43f46373eb9aa8b46360e7efe49">sha256 05c69927…60e7efe49</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="bb2440181ce8fec61023d4d691e081936889fae51a116d2ed24d70952970d3e6">sha256 bb244018…52970d3e6</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="43afd6ca8c353a5bc2002331df3e1458a1ed5d80ac8df8d2e611ceb7b88747e1">sha256 43afd6ca…7b88747e1</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,17 +241,17 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.11.5</h2>
-        <p>Released on 14 November 2026. A security fix leads it: an OTR peer could make message reassembly read one byte before its heap buffer by sending an empty fragment. It also hardens secure DCC (SDCC): a certificate of your own is only ever read, a special file at its path no longer hangs erssi, and the fingerprint shown as yours is the one on the live connection.</p>
+        <h2 id="h-new">New in 2026.11.6</h2>
+        <p>Released on 17 November 2026. A maintenance release from a full code review of the erssi sources. It fixes a terminal input glitch, removes dead code — including a leftover routine that could have written secrets in the clear — and adds no new features.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">security</span><p><b>OTR reassembly over-read.</b> Reassembling a fragmented OTR message read one byte before the heap buffer made for it when a fragment was empty — an empty message after an unfinished <code>?OTR:</code> one; a peer in an OTR session could trigger it. Empty fragments are now handled before the buffer is indexed, and the per-peer reassembly queue is bounded so a peer can no longer grow it without end.</p></li>
-        <li><span class="tag">sdcc</span><p><b>Your own certificate is only ever read.</b> A certificate you set with <code>/set dcc_tls_cert</code> is never created, deleted or changed; the secure DCC is refused with the reason when the file cannot be used safely — it must be a regular file you own that others cannot read (mode 0600), with the key and certificate in either order.</p></li>
-        <li><span class="tag">sdcc</span><p><b>No hang, no collateral delete.</b> A FIFO or other non-regular file at the certificate path no longer hangs erssi’s main loop, and clearing the temporaries from an interrupted write no longer removes a neighbouring file such as <code>dcc-tls.pem.backup</code>.</p></li>
-        <li><span class="tag">sdcc</span><p><b>The fingerprint shown as yours is the live one.</b> It is taken from the certificate this side presented on the connection, so a regenerated or swapped PEM under the same path can no longer show a stale fingerprint. Two smaller OTR fixes come with it: a server lookup that compared the network tag the wrong way, and a debug line that logged its strings with an integer format.</p></li>
+        <li><span class="tag">fixed</span><p><b>Shift, Ctrl+Shift and Alt+Shift arrows.</b> These were never bound, so their escape sequence leaked into the input line as stray characters such as <code>1;2D</code>. They are bound now: Shift+Arrow moves the cursor like a plain arrow, Ctrl+Shift+Arrow a word at a time, Alt+Shift+Arrow between windows.</p></li>
+        <li><span class="tag">fixed</span><p><b>Two smaller fixes.</b> OTR key generation no longer calls <code>g_source_remove()</code> on the fork-failure path, where no source was ever registered; and <code>/FLOODNET HELP</code> now lists the <code>anti_floodnet_notices</code> and <code>anti_floodnet_notice_interval</code> settings.</p></li>
+        <li><span class="tag">removed</span><p><b>Dead credential routines.</b> Three unused routines left over from the disabled external and encrypted storage modes were removed; one of them had no caller and could have written a plaintext <code>config.decrypted</code> file.</p></li>
+        <li><span class="tag">review</span><p><b>Nothing else came loose.</b> A reproducible-build review — compiler and linker section garbage collection with a five-way subsystem audit — found no dead functions and no memory-safety defects in the security-critical paths. Also removed: unused debug and gesture helpers, a write-only redraw flag, a duplicate window-created handler, a redundant free in the E2E path and two dead prototypes.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.5">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.6">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -316,7 +316,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.5 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.6 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>
