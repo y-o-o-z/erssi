@@ -1,5 +1,5 @@
 project('erssi', 'c',
-  version : '2026.11.6',
+  version : '2026.11.7',
   meson_version : '>=0.53',
   default_options : ['warning_level=1', 'b_pie=true', 'buildtype=debugoptimized'])
 

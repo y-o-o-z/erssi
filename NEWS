@@ -1,3 +1,23 @@
+shellter-v2026.11.7 2026-11-18	y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.7
+
+	A hardening release from the 2026.11 code-review follow-ups. It
+	refuses an E2E key exchange that would offer your own identity
+	key back to you, and lets a secure DCC use a certificate whose
+	private key is encrypted. No new features.
+
+	+ Changed
+	  - E2E: /e2e accept refuses an offer whose key is your own
+	    identity key - a key of yours reflected back to you - and
+	    makes no session with yourself; /e2e decline still clears
+	    such an offer and says what it carried. Auto-accept is
+	    covered as well
+	  - SDCC: a dcc_tls_cert whose private key is encrypted is now
+	    usable - set dcc_tls_pass to its passphrase. A missing or
+	    wrong passphrase is reported as such, erssi never prompts
+	    the terminal for it, and dcc_tls_pass is kept secret like
+	    tls_pass
+
 shellter-v2026.11.6 2026-11-17	y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.6
 
