@@ -1269,6 +1269,11 @@ static const char *accept_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *
 		               name, shown_text(handle), shown(ctx));
 		refused = "not_peer";
 		break;
+	case E2E_ACCEPT_SELF:
+		e2e_print_warning(item, "refused to accept %s (%s) on %s: the offered key is your own identity key, reflected back — no session is made with yourself and nothing was sent; /e2e decline %s removes the request",
+		                  name, shown_text(handle), shown(ctx), shown_text(handle));
+		refused = "own_identity";
+		break;
 	}
 	e2e_identity_wipe(&id);
 	g_free(own);
@@ -1370,6 +1375,20 @@ static void decline_handle(E2E_JSON *kr, SERVER_REC *server, WI_ITEM_REC *item, 
 		const char *afp = e2e_json_get_string(e2e_json_get(e2e_json_get(kr, "accepted"), k), "fp");
 
 		fp = g_strdup(afp);
+	}
+	/* the offer carried our own identity key back to us: the decline still
+	   clears it, but say what it was */
+	if (fp != NULL) {
+		E2E_IDENTITY id;
+		gboolean created;
+		char *err = NULL;
+
+		if (e2e_identity_get(kr, &id, FALSE, &created, &err) && id.fp_hex[0] != '\0' &&
+		    strcmp(fp, id.fp_hex) == 0)
+			e2e_print_warning(item, "the pending offer from %s on %s carried your own identity key, reflected back to you — it is being removed",
+			                  shown_text(nick != NULL ? nick : handle), shown(ctx));
+		g_free(err);
+		e2e_identity_wipe(&id);
 	}
 	e2e_json_remove(e2e_json_get(kr, "pending_inbound"), k);
 	g_free(k);

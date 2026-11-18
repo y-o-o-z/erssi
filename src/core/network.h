@@ -65,11 +65,14 @@ int irssi_ssl_handshake(GIOChannel *handle);
 
 /* TLS on a DCC connection (SDCC). accept_side: we accepted the TCP
    connection and are the TLS server. cert_file: a PEM file with the key
-   and the certificate (a TLS server needs one). min_version: 12 for
-   TLS 1.2, 13 for TLS 1.3. The peer's certificate is not verified. */
+   and the certificate (a TLS server needs one). pass: the passphrase of an
+   encrypted private key, NULL or "" when the key is not encrypted (never
+   prompts the terminal - a wrong or missing passphrase fails cleanly).
+   min_version: 12 for TLS 1.2, 13 for TLS 1.3. The peer's certificate is
+   not verified. */
 GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
-			     const char *cert_file, int min_version,
-			     char **error);
+			     const char *cert_file, const char *pass,
+			     int min_version, char **error);
 /* 0 done, 1 wants to read, 3 wants to write, -1 failed (*error set) */
 int net_tls_dcc_handshake(GIOChannel *handle, char **error);
 /* "TLSv1.3 TLS_AES_256_GCM_SHA384" of an established DCC TLS channel */
@@ -80,12 +83,15 @@ char *net_tls_dcc_peer_fingerprint(GIOChannel *handle);
    (not whatever is on disk now), NULL when there is none */
 char *net_tls_dcc_own_fingerprint(GIOChannel *handle);
 /* Make sure cert_file is a key and certificate the DCC TLS server can use.
-   managed (dcc_tls_cert unset, the default ~/.erssi/dcc-tls.pem): a
-   missing, broken or unsafe one is replaced with a fresh self-signed pair
-   (0600). Not managed (the user's own dcc_tls_cert): only validated, never
-   created, deleted or changed; FALSE with *error set when it cannot be
-   used safely. */
-int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error);
+   pass: the passphrase of an encrypted private key, NULL or "" when it is
+   not encrypted. managed (dcc_tls_cert unset, the default
+   ~/.erssi/dcc-tls.pem): a missing, broken or unsafe one is replaced with a
+   fresh self-signed pair (0600). Not managed (the user's own dcc_tls_cert):
+   only validated, never created, deleted or changed; FALSE with *error set
+   when it cannot be used safely - an encrypted key whose passphrase is
+   missing or wrong is reported as such, naming dcc_tls_pass. */
+int net_tls_dcc_make_cert(const char *cert_file, const char *pass, int managed,
+			  char **error);
 /* bytes TLS decrypted that a read has not taken yet (0 for plain) */
 int net_tls_pending(GIOChannel *handle);
 /* Connect to socket with ip address */

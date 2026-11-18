@@ -2536,6 +2536,15 @@ gboolean e2e_handshake_sender_allow(GHashTable *budgets, E2E_HS_TYPE type, const
 
 /* ---- trust decisions of the user ---- */
 
+/* the long-term key offered as a peer's has our own identity's fingerprint:
+   a key of ours reflected back, which must never open a session with
+   ourselves. id may be NULL (no identity) - then nothing is ours. */
+static gboolean fp_is_own(const E2E_IDENTITY *id, const char *fp_hex)
+{
+	return id != NULL && fp_hex != NULL && id->fp_hex[0] != '\0' &&
+	       strcmp(fp_hex, id->fp_hex) == 0;
+}
+
 E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *handle,
                              const char *ctx, const char *own_ctx, const char *own_handle,
                              char **rsp, char **reciprocal)
@@ -2560,6 +2569,18 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 		    !b64_member(pending, "eph_x25519", eph, 32)) {
 			g_free(k);
 			return E2E_ACCEPT_DAMAGED;
+		}
+		/* the request carries our own identity key back to us: a
+		   reflection, never a real peer - nothing is sent */
+		{
+			char *peer_fp = e2e_fingerprint_hex(pub);
+			gboolean self = fp_is_own(id, peer_fp);
+
+			g_free(peer_fp);
+			if (self) {
+				g_free(k);
+				return E2E_ACCEPT_SELF;
+			}
 		}
 		*rsp = e2e_build_keyrsp_for_req(kr, id, ctx, handle, pub, eph);
 		if (*rsp == NULL) {
@@ -2619,6 +2640,13 @@ E2E_ACCEPT_RESULT e2e_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const char *h
 	   placeholder as genuine (rpe2e.pl did that) */
 	if (keyed == 0)
 		return E2E_ACCEPT_NO_KEY;
+	/* a keyed session whose key is our own identity's: a reflection,
+	   never trusted as a peer */
+	for (i = 0; i < 2; i++) {
+		if (e2e_session_has_key(rows[i]) &&
+		    fp_is_own(id, e2e_json_get_string(rows[i], "fp")))
+			return E2E_ACCEPT_SELF;
+	}
 	for (i = 0; i < 2; i++) {
 		const char *fp = e2e_json_get_string(rows[i], "fp");
 

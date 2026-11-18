@@ -424,6 +424,31 @@ static int get_pem_password_callback(char *buffer, int max_length, int rwflag, v
 	return length;
 }
 
+/* The passphrase for an encrypted DCC private key, with a flag OpenSSL sets
+   by calling the callback - it only asks when the key is in fact encrypted,
+   which tells an encrypted key apart from one that is merely damaged. A
+   NULL or empty passphrase returns 0 (no password), so an encrypted key
+   fails to decrypt cleanly instead of OpenSSL prompting the terminal. */
+struct dcc_pem_pw {
+	const char *pass;
+	gboolean asked;
+};
+
+static int dcc_pem_password_cb(char *buf, int size, int rwflag, void *u)
+{
+	struct dcc_pem_pw *pw = u;
+	size_t len;
+
+	pw->asked = TRUE;
+	if (pw->pass == NULL || pw->pass[0] == '\0')
+		return 0;
+	len = strlen(pw->pass);
+	if (size < 0 || len > (size_t) size)
+		return 0;
+	memcpy(buf, pw->pass, len);
+	return (int) len;
+}
+
 static GIOChannel *irssi_ssl_get_iochannel(GIOChannel *handle, int port, SERVER_REC *server)
 {
 	GIOSSLChannel *chan;
@@ -821,13 +846,15 @@ static gboolean is_ssl_channel(GIOChannel *handle)
    SSL_CTX_use_certificate_chain_file() would. The first certificate is the
    leaf, any that follow are the chain, and the key may come in any order.
    FALSE with *error set on failure. */
-static int dcc_ctx_use_cert(SSL_CTX *ctx, const char *cert_file, char **error)
+static int dcc_ctx_use_cert(SSL_CTX *ctx, const char *cert_file, const char *pass,
+			    char **error)
 {
 	char *data = NULL;
 	gsize len = 0;
 	BIO *bio = NULL;
 	X509 *cert = NULL, *ca;
 	EVP_PKEY *pkey = NULL;
+	struct dcc_pem_pw pw = { pass, FALSE };
 	int ok = FALSE;
 
 	if (!safe_file_read(cert_file, SAFE_FILE_OWN, 1024 * 1024, &data, &len)) {
@@ -864,9 +891,17 @@ static int dcc_ctx_use_cert(SSL_CTX *ctx, const char *cert_file, char **error)
 		*error = tls_error_text("no memory for the private key");
 		goto out;
 	}
-	pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-	if (pkey == NULL || SSL_CTX_use_PrivateKey(ctx, pkey) != 1 ||
-	    SSL_CTX_check_private_key(ctx) != 1) {
+	pkey = PEM_read_bio_PrivateKey(bio, NULL, dcc_pem_password_cb, &pw);
+	if (pkey == NULL) {
+		if (pw.asked)
+			*error = g_strdup_printf("the certificate %s: the private key is encrypted and dcc_tls_pass is unset or wrong",
+						 cert_file);
+		else
+			*error = g_strdup_printf("the certificate %s: the key and certificate do not match",
+						 cert_file);
+		goto out;
+	}
+	if (SSL_CTX_use_PrivateKey(ctx, pkey) != 1 || SSL_CTX_check_private_key(ctx) != 1) {
 		*error = g_strdup_printf("the certificate %s: the key and certificate do not match",
 					 cert_file);
 		goto out;
@@ -888,8 +923,8 @@ out:
 }
 
 GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
-			     const char *cert_file, int min_version,
-			     char **error)
+			     const char *cert_file, const char *pass,
+			     int min_version, char **error)
 {
 	GIOSSLChannel *chan;
 	GIOChannel *gchan;
@@ -939,7 +974,7 @@ GIOChannel *net_tls_dcc_wrap(GIOChannel *handle, int accept_side,
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
 
 	if (cert_file != NULL && *cert_file != '\0') {
-		if (!dcc_ctx_use_cert(ctx, cert_file, error)) {
+		if (!dcc_ctx_use_cert(ctx, cert_file, pass, error)) {
 			SSL_CTX_free(ctx);
 			return NULL;
 		}
@@ -1085,6 +1120,9 @@ enum dcc_cert_state {
 			     user owns, or one others may read (*why set) */
 	DCC_CERT_BROKEN,  /* a regular file of ours we could read, but not an
 			     empty/truncated/mismatched/hand-edited PEM */
+	DCC_CERT_ENCRYPTED, /* a regular file of ours whose private key is
+			       encrypted and dcc_tls_pass is unset or wrong
+			       (*why set) */
 };
 
 /* Inspect cert_file. The file is opened once through safe-file: with
@@ -1093,13 +1131,15 @@ enum dcc_cert_state {
    own is refused), and never through a symbolic link. The private key is
    read, then - rewound - the certificate, so a valid PEM is accepted
    whatever the order of its key and certificate. */
-static enum dcc_cert_state dcc_cert_inspect(const char *cert_file, char **why)
+static enum dcc_cert_state dcc_cert_inspect(const char *cert_file, const char *pass,
+					    char **why)
 {
 	struct stat st;
 	FILE *fp;
 	int fd;
 	EVP_PKEY *pkey;
 	X509 *cert;
+	struct dcc_pem_pw pw = { pass, FALSE };
 	int ok;
 
 	if (why != NULL)
@@ -1126,7 +1166,7 @@ static enum dcc_cert_state dcc_cert_inspect(const char *cert_file, char **why)
 		close(fd);
 		return DCC_CERT_BROKEN;
 	}
-	pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
+	pkey = PEM_read_PrivateKey(fp, NULL, dcc_pem_password_cb, &pw);
 	rewind(fp);
 	cert = PEM_read_X509(fp, NULL, NULL, NULL);
 	fclose(fp);
@@ -1138,7 +1178,19 @@ static enum dcc_cert_state dcc_cert_inspect(const char *cert_file, char **why)
 
 	EVP_PKEY_free(pkey);
 	X509_free(cert);
-	return ok ? DCC_CERT_USABLE : DCC_CERT_BROKEN;
+	if (ok)
+		return DCC_CERT_USABLE;
+	/* OpenSSL asked for a passphrase only if the key is encrypted: when it
+	   did and the key still did not load, it is the passphrase that is
+	   missing or wrong, not the PEM that is damaged */
+	if (pkey == NULL && pw.asked) {
+		if (why != NULL)
+			*why = g_strdup(pass == NULL || *pass == '\0' ?
+					"the private key is encrypted — set dcc_tls_pass to its passphrase" :
+					"the private key did not decrypt — dcc_tls_pass is wrong");
+		return DCC_CERT_ENCRYPTED;
+	}
+	return DCC_CERT_BROKEN;
 }
 
 /* Remove "<cert_file>.tmp-XXXXXX" temporaries left behind when erssi was
@@ -1207,7 +1259,8 @@ static void dcc_cert_remove_stale_temps(const char *cert_file)
    regenerated or chmod'd. If it is missing, unsafe or not a usable PEM the
    DCC is refused with a message that says why, and the file is left exactly
    as it is. */
-int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error)
+int net_tls_dcc_make_cert(const char *cert_file, const char *pass, int managed,
+			  char **error)
 {
 	EVP_PKEY_CTX *pctx = NULL;
 	EVP_PKEY *pkey = NULL;
@@ -1230,7 +1283,7 @@ int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error)
 		return FALSE;
 	}
 
-	state = dcc_cert_inspect(cert_file, &why);
+	state = dcc_cert_inspect(cert_file, pass, &why);
 	if (state == DCC_CERT_USABLE) {
 		g_free(why);
 		return TRUE;
@@ -1245,6 +1298,11 @@ int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error)
 		case DCC_CERT_UNSAFE:
 			*error = g_strdup_printf("the certificate %s is %s", cert_file,
 						 why != NULL ? why : "unsafe to use");
+			break;
+		case DCC_CERT_ENCRYPTED:
+			*error = g_strdup_printf("the certificate %s: %s", cert_file,
+						 why != NULL ? why :
+						 "the private key is encrypted — set dcc_tls_pass to its passphrase");
 			break;
 		default: /* DCC_CERT_BROKEN */
 			*error = g_strdup_printf("the certificate %s is not a usable key and certificate",
@@ -1316,7 +1374,7 @@ int net_tls_dcc_make_cert(const char *cert_file, int managed, char **error)
 		   (we only reach here when the existing one is not usable), so
 		   rename over it atomically. */
 		if (errno == EEXIST &&
-		    dcc_cert_inspect(cert_file, NULL) == DCC_CERT_USABLE) {
+		    dcc_cert_inspect(cert_file, NULL, NULL) == DCC_CERT_USABLE) {
 			ok = TRUE;
 			goto out;
 		}

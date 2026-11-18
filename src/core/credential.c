@@ -87,6 +87,7 @@ static const char *sensitive_fields[] = {
 	"irssiproxy_password",
 	"oper_password",
 	"tls_pass",
+	"dcc_tls_pass",
 	"autosendcmd",
 	"fe_web_password",
 	NULL

@@ -2001,6 +2001,43 @@ static void test_query_off_this_address(void)
 	e2e_json_free(kr);
 }
 
+/* a request that carries our own identity key back to us (a reflection):
+   accept makes no session with ourselves, sends nothing, and leaves the
+   request in place; decline is the way to clear it */
+static void test_accept_refuses_own_key(void)
+{
+	PEER a, evil;
+	char *req, *rsp = NULL, *recip = NULL, *error = NULL;
+
+	/* evil shares alice's identity key (same seed): its keyreq offers
+	   alice her own public key back */
+	peer_init(&a, "alice", ALICE, 0x42);
+	peer_init(&evil, "evil", "evil@127.0.0.1", 0x42);
+	g_assert_cmpstr(a.id.fp_hex, ==, evil.id.fp_hex);
+	enable(&a, "#refl", "normal");
+	enable(&evil, "#refl", "normal");
+
+	req = e2e_build_keyreq(evil.kr, &evil.id, "#refl", ALICE, &error);
+	g_assert_nonnull(req);
+	deliver_keyreq(&a, &evil, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_null(recip);
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "evil@127.0.0.1|#refl", NULL));
+	g_free(req);
+
+	/* accept refuses: our own key reflected, nothing sent, request kept */
+	rsp = recip = NULL;
+	g_assert_cmpint(e2e_accept(a.kr, &a.id, "evil@127.0.0.1", "#refl", NULL, ALICE, &rsp,
+	                           &recip), ==, E2E_ACCEPT_SELF);
+	g_assert_null(rsp);
+	g_assert_null(recip);
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "evil@127.0.0.1|#refl", NULL));
+	g_assert_false(e2e_peer_accepted(a.kr, "evil@127.0.0.1", "#refl", a.id.fp_hex));
+
+	peer_free(&a);
+	peer_free(&evil);
+}
+
 /* ---- network scope (keyring entries per network, the wire bare) ---- */
 
 static E2E_NET net_a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
@@ -8341,6 +8378,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/rekey-to-accepted-only", test_rekey_to_accepted_only);
 	add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
 	add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
+	add_func("/e2e/proto/accept-refuses-own-key", test_accept_refuses_own_key);
 	add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
 	add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
 	add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);

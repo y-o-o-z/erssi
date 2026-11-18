@@ -464,6 +464,21 @@ def main():
         os.chmod(p, mode)
         return p, fp
 
+    def encrypted_pem(name, passphrase):
+        """a single PEM with a certificate and its matching private key
+        encrypted under PASSPHRASE (AES-256), 0600, and its SHA-256; the key
+        cannot be read without the passphrase"""
+        crt, key, fp = make_cert(name)
+        enc = work / f"custom-enc-{name}.key"
+        r = subprocess.run(["openssl", "pkey", "-in", key, "-aes-256-cbc",
+                            "-passout", f"pass:{passphrase}", "-out", str(enc)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        p = work / f"custom-enc-{name}.pem"
+        p.write_text(Path(crt).read_text() + enc.read_text())
+        os.chmod(p, 0o600)
+        return p, fp
+
     def schat_to_peer(nick):
         """alice offers SCHAT and listens as the TLS server; the peer
         connects as the TLS client, so (client side) it sees the very
@@ -526,6 +541,36 @@ def main():
         refused_schat(nick, "not a usable key and certificate")
         assert path.read_bytes() == before, "the broken user certificate was changed"
         a.type_and_wait("/set -clear dcc_tls_cert")
+
+    def t_custom_cert_encrypted():
+        """an encrypted user key is refused with a message naming dcc_tls_pass
+        until the passphrase is set (a wrong one is told apart from a missing
+        one), then used and shown as yours - never rewritten, and OpenSSL is
+        never let prompt the terminal"""
+        a = st["alice"]
+        path, fp = encrypted_pem("enc", "s3cret")
+        before = path.read_bytes()
+        a.type_and_wait(f"/set dcc_tls_cert {path}")
+        # no passphrase yet: refused, pointing at dcc_tls_pass
+        _, nick = fresh_bob()
+        refused_schat(nick, "set dcc_tls_pass")
+        assert path.read_bytes() == before, "the encrypted user certificate was changed"
+        # the wrong passphrase: refused, told apart from a missing one
+        a.type_and_wait("/set dcc_tls_pass wrong")
+        _, nick = fresh_bob()
+        refused_schat(nick, "dcc_tls_pass is wrong")
+        assert path.read_bytes() == before, "the encrypted user certificate was changed"
+        # the right passphrase: it works, is shown as yours, left unchanged
+        a.type_and_wait("/set dcc_tls_pass s3cret")
+        _, nick = fresh_bob()
+        peer, off = schat_to_peer(nick)
+        assert wait_log("encrypted: TLSv1.3", off), log()[off:]
+        assert wait_log(f"yours: {fp}", off), log()[off:]
+        peer.finish()
+        assert colons(hashlib.sha256(peer.peer_der).hexdigest()) == fp
+        assert path.read_bytes() == before, "the encrypted user certificate was changed"
+        a.type_and_wait(f"/dcc close chat {nick}", "/set -clear dcc_tls_cert",
+                        "/set -clear dcc_tls_pass")
 
     def t_custom_cert_world_readable_refused():
         """a user certificate others can read is refused, not silently
@@ -625,6 +670,7 @@ def main():
                       t_tls12_refused, t_no_downgrade, t_ssend_to_peer, t_ssend_from_peer,
                       t_passive_ssend, t_plain_send, t_erssi_to_erssi,
                       t_custom_cert_both_orders, t_custom_cert_broken_kept,
+                      t_custom_cert_encrypted,
                       t_custom_cert_world_readable_refused, t_backup_not_deleted,
                       t_managed_world_readable_renewed, t_fifo_does_not_hang,
                       t_fingerprint_follows_live_cert, t_quit])

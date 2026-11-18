@@ -501,11 +501,15 @@ void dcc_tls_start(DCC_REC *dcc, int accept_side, DCC_TLS_READY ready)
 
 	cert = dcc_tls_cert_path();
 	tls = NULL;
-	if (net_tls_dcc_make_cert(cert, dcc_tls_cert_is_managed(), &error)) {
-		tls = net_tls_dcc_wrap(dcc->handle, accept_side, cert,
-				       settings_get_choice("dcc_tls_min_version") == 0 ?
-				       12 : 13,
-				       &error);
+	{
+		const char *pass = settings_get_str("dcc_tls_pass");
+
+		if (net_tls_dcc_make_cert(cert, pass, dcc_tls_cert_is_managed(), &error)) {
+			tls = net_tls_dcc_wrap(dcc->handle, accept_side, cert, pass,
+					       settings_get_choice("dcc_tls_min_version") == 0 ?
+					       12 : 13,
+					       &error);
+		}
 	}
 	g_free(cert);
 	if (tls == NULL) {
@@ -650,6 +654,7 @@ void irc_dcc_init(void)
 	settings_add_time("dcc", "dcc_timeout", "5min");
 	settings_add_str("dcc", "dcc_own_ip", "");
 	settings_add_str("dcc", "dcc_tls_cert", "");
+	settings_add_str("dcc", "dcc_tls_pass", "");
 	settings_add_choice("dcc", "dcc_tls_min_version", 1, "1.2;1.3");
 
 	signal_add("event connected", (SIGNAL_FUNC) sig_connected);
