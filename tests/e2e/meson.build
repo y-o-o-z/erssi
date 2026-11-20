@@ -27,6 +27,25 @@ foreach name : ['crypto', 'wire', 'keyring', 'proto', 'scope', 'outq', 'state']
   endforeach
 endforeach
 
+# A randomised differential of the native OpenSSL crypto against libsodium
+# (the reference the protocol is defined over). Built only where libsodium
+# is available; otherwise it is simply not run.
+libsodium_dep = dependency('libsodium', required : false)
+if libsodium_dep.found()
+  exe = executable('test-e2e-crypto-sodium',
+    files('test-e2e-crypto-sodium.c'),
+    link_with : libe2e_proto_a,
+    include_directories : rootinc,
+    implicit_include_directories : false,
+    dependencies : dep + [libsodium_dep],
+  )
+  test('test-e2e-crypto-sodium test', exe,
+    env : test_env,
+    args : ['--tap'],
+    protocol : 'tap',
+    timeout : 60)
+endif
+
 # native module <-> rpe2e.pl on a local fake IRC server, in a private tmux
 # server; skipped without tmux, Perl support or rpe2e.pl's Perl modules.
 # It installs this build (meson install), so it depends on what it runs:
