@@ -1,3 +1,39 @@
+shellter-v2026.11.8 2026-11-20	y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.8
+
+	A hardening release from the 2026.11 code-review follow-ups,
+	with a Codex review of the fork. It closes the automatic side
+	of the 2026.11.7 reflected-own-key refusal, tightens the
+	image-preview address filter, protects the E2E replay cache
+	when a home is shared, clears secrets from memory before they
+	are freed, and stops a one-byte overwrite in the TLS key
+	password callback. No new features.
+
+	+ Fixed
+	  - E2E: a key of your own reflected back is now refused on the
+	    automatic paths too. Auto-accept and an autotrust rule no
+	    longer answer a key request that carries your own identity
+	    key, and a key response or rekey that carries it is never
+	    installed as a session - 2026.11.7 covered only /e2e accept
+	  - Image preview: the filter that keeps a preview to public
+	    web servers now also refuses IPv6 Teredo (2001::/32) and
+	    documentation (2001:db8::/32) addresses and the IPv4
+	    documentation ranges 192.0.2.0/24, 198.51.100.0/24 and
+	    203.0.113.0/24
+	  - E2E: two erssi that share a home no longer overwrite each
+	    other's replay cache - it is merged under a lock - so a
+	    message the server delivers again stays dropped across a
+	    restart
+	  - TLS: an encrypted client key whose passphrase is exactly as
+	    long as the password buffer no longer writes one byte past
+	    it (inherited from irssi, reported upstream; the DCC key
+	    callback added in 2026.11.7 was already correct)
+
+	+ Changed
+	  - Stored credentials and the fe-web key are cleared from
+	    memory before they are freed, so a later memory disclosure
+	    cannot read what was there
+
 shellter-v2026.11.7 2026-11-18	y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.7
 
