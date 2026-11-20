@@ -2145,6 +2145,17 @@ static char *reciprocal_on_accept(E2E_JSON *kr, const E2E_IDENTITY *id, const ch
 	return out;
 }
 
+/* our own identity key reflected back as a peer's must never open a session
+   with ourselves - the automatic paths below enforce it as e2e_accept does
+   (fp_is_own, defined with the trust decisions). id-less callers read the
+   fingerprint the keyring stores. */
+static gboolean fp_is_own(const E2E_IDENTITY *id, const char *fp_hex);
+
+static const char *own_fp_hex(E2E_JSON *kr)
+{
+	return e2e_json_get_string(e2e_json_get(kr, "identity"), "fp");
+}
+
 void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoing_stamps,
                        const E2E_NET *net, const char *sender_handle, const char *nick,
                        const char *body, const char *own_handle, char **rsp, char **reciprocal)
@@ -2153,7 +2164,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	E2E_JSON *cfg, *sess, *row;
 	PEER_CHANGE change;
 	const char *mode;
-	gboolean autotrust, trusted, confirmed, answer;
+	gboolean autotrust, trusted, confirmed, answer, self;
 	char *fp_hex = NULL, *k = NULL, *dm, *ctx = NULL;
 
 	*rsp = NULL;
@@ -2188,6 +2199,11 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	fp_hex = e2e_fingerprint_hex(req->pub);
 	if (!check_peer(kr, fp_hex, req->pub, sender_handle, nick, ctx, &change))
 		goto out;
+	/* a request that carries our own identity key back to us (a reflection):
+	   it is never answered on its own - no auto-accept, no autotrust - it
+	   only waits like a normal request, for the user to see and /e2e decline
+	   (where e2e_accept refuses it) */
+	self = fp_is_own(id, fp_hex);
 
 	autotrust = e2e_autotrust_matches(kr, sender_handle, ctx);
 	mode = e2e_json_get_string(cfg, "mode");
@@ -2213,7 +2229,7 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   and NOTICEs, and never stops the others), and a KEYRSP needs room
 	   under the ceiling of everyone's */
 	confirmed = change == CHANGE_KNOWN && user_confirmed(kr, sender_handle, fp_hex);
-	answer = strcmp(mode, "auto-accept") == 0 || accepted_here(kr, net, sender_handle, ctx, fp_hex, sess);
+	answer = !self && (strcmp(mode, "auto-accept") == 0 || accepted_here(kr, net, sender_handle, ctx, fp_hex, sess));
 	if ((!confirmed && !inbound_budget(outgoing_stamps, TRUE)) ||
 	    (answer && !ceiling(outgoing_stamps, TRUE)))
 		goto out;
@@ -2227,8 +2243,9 @@ void e2e_handle_keyreq(E2E_JSON *kr, const E2E_IDENTITY *id, GHashTable *outgoin
 	   is not that: we got it because we asked, e.g. by the automatic
 	   KEYREQ to anyone who sends a wire (rpe2e.pl and repartee answer
 	   then, see the header). */
-	if (strcmp(mode, "auto-accept") != 0 &&
-	    !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess)) {
+	if (self ||
+	    (strcmp(mode, "auto-accept") != 0 &&
+	     !accepted_here(kr, net, sender_handle, ctx, fp_hex, sess))) {
 		/* waits for /e2e accept; a session with their key is kept,
 		   and so is a revoked one: a pending placeholder there would
 		   let the next wire ask them for their key, and their answer
@@ -2350,6 +2367,11 @@ gboolean e2e_handle_keyrsp(E2E_JSON *kr, const E2E_NET *net, const char *sender_
 	if (!user_started && is_revoked(row_or_twin(kr, net, "incoming", sender_handle, ctx, TRUE, NULL)))
 		goto out;
 	fp_hex = e2e_fingerprint_hex(rsp->pub);
+	/* an answer that carries our own identity key (a reflection of our own
+	   key, replayed to us): it must never install a trusted session with
+	   ourselves - the auto counterpart of e2e_accept's own-key refusal */
+	if (g_strcmp0(fp_hex, own_fp_hex(kr)) == 0)
+		goto out;
 	if (!check_peer(kr, fp_hex, rsp->pub, sender_handle, nick, ctx, &change)) {
 		/* the session their key signed, kept with the record: accepted
 		   by /e2e reverify, it is used at once - a new exchange could be
@@ -2418,6 +2440,11 @@ gboolean e2e_handle_rekey(E2E_JSON *kr, const E2E_IDENTITY *id, const E2E_NET *n
 	if (!e2e_handshake_verify(rk))
 		goto out;
 	fp_hex = e2e_fingerprint_hex(rk->pub);
+	/* a rekey under our own identity key is a reflection, never a peer's
+	   (defence in depth: it also needs an existing trusted session below,
+	   which the keyrsp own-key refusal already prevents) */
+	if (fp_is_own(id, fp_hex))
+		goto out;
 	ctx = e2e_ctx_find(kr, net, rk->channel);
 	if (ctx == NULL)
 		goto out;

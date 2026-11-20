@@ -2038,6 +2038,89 @@ static void test_accept_refuses_own_key(void)
 	peer_free(&evil);
 }
 
+/* the automatic exchange paths must refuse a reflected own key exactly as
+   /e2e accept does: auto-accept mode and an autotrust rule never answer a
+   KEYREQ carrying our own identity key (it only waits like a normal one,
+   for the user), and an own-key KEYRSP never installs a trusted session.
+   Without this, a reflected key opens a session with ourselves behind the
+   user's back - the mirror of test_accept_refuses_own_key for the auto
+   paths. */
+static void test_auto_refuses_own_key(void)
+{
+	PEER a, evil, mal;
+	char *req = NULL, *rsp = NULL, *recip = NULL, *error = NULL, *s;
+	unsigned char eph_sk[32], eph_pk[32];
+	E2E_JSON *row;
+
+	/* evil shares alice's identity key (same seed): its KEYREQ offers
+	   alice her own public key back */
+	peer_init(&a, "alice", ALICE, 0x42);
+	peer_init(&evil, "evil", "evil@127.0.0.1", 0x42);
+	peer_init(&mal, "mallory", "mallory@127.0.0.1", 0x11);
+	g_assert_cmpstr(a.id.fp_hex, ==, evil.id.fp_hex);
+
+	/* (1) auto-accept mode must not answer the reflected KEYREQ; it waits
+	   as a normal request would, and nothing is accepted */
+	enable(&a, "#refl", "auto-accept");
+	enable(&evil, "#refl", "auto-accept");
+	req = e2e_build_keyreq(evil.kr, &evil.id, "#refl", ALICE, &error);
+	g_assert_nonnull(req);
+	deliver_keyreq(&a, &evil, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_null(recip);
+	g_assert_false(e2e_peer_accepted(a.kr, "evil@127.0.0.1", "#refl", a.id.fp_hex));
+	g_assert_nonnull(path_get(a.kr, "pending_inbound", "evil@127.0.0.1|#refl", NULL));
+	g_free(req);
+	req = NULL;
+
+	/* (2) an autotrust rule is the other automatic answer: same refusal */
+	enable(&a, "#reflt", "normal");
+	enable(&evil, "#reflt", "normal");
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	e2e_json_set_string(row, "scope", "global");
+	e2e_json_set_string(row, "handle_pattern", "evil@127.0.0.*");
+	e2e_json_array_add(e2e_json_get(a.kr, "autotrust"), row);
+	req = e2e_build_keyreq(evil.kr, &evil.id, "#reflt", ALICE, &error);
+	g_assert_nonnull(req);
+	rsp = recip = NULL;
+	deliver_keyreq(&a, &evil, req, ALICE, &rsp, &recip);
+	g_assert_null(rsp);
+	g_assert_false(e2e_peer_accepted(a.kr, "evil@127.0.0.1", "#reflt", a.id.fp_hex));
+	g_free(req);
+	req = NULL;
+
+	/* (3) an own-key KEYRSP, answering a request of ours, must not install
+	   a trusted session with ourselves. We seed a pending request to
+	   "mallory" with an ephemeral we hold, then build the KEYRSP an
+	   attacker would reflect: it carries our own identity key and wraps a
+	   key to our ephemeral, so it decrypts - the only thing that must stop
+	   it is the own-key check, not a failed unwrap. */
+	enable(&a, "#reflr", "auto-accept");
+	g_assert_true(e2e_x25519_keypair(eph_sk, eph_pk));
+	row = e2e_json_new(E2E_JSON_OBJECT);
+	s = e2e_b64_encode(eph_sk, 32);
+	e2e_json_set_string(row, "eph_sk", s);
+	g_free(s);
+	e2e_json_set_string(row, "handle", "mallory@127.0.0.1");
+	e2e_json_set_string(row, "channel", "#reflr");
+	e2e_json_set_int(row, "created_at", 1);
+	e2e_json_set(e2e_json_get(a.kr, "pending"), "#reflr|mallory@127.0.0.1", row);
+	rsp = e2e_build_keyrsp_for_req(a.kr, &a.id, "#reflr", "mallory@127.0.0.1", a.id.pk, eph_pk);
+	g_assert_nonnull(rsp);
+	g_assert_false(deliver_keyrsp(&a, &mal, rsp));
+	g_assert_false(e2e_peer_accepted(a.kr, "mallory@127.0.0.1", "#reflr", a.id.fp_hex));
+	g_assert_cmpstr(e2e_json_get_string(
+	                        path_get(a.kr, "incoming", "mallory@127.0.0.1|#reflr", NULL),
+	                        "status"),
+	                !=, "trusted");
+	g_free(rsp);
+	g_free(recip);
+
+	peer_free(&a);
+	peer_free(&evil);
+	peer_free(&mal);
+}
+
 /* ---- network scope (keyring entries per network, the wire bare) ---- */
 
 static E2E_NET net_a = { (char *) "E2E", E2E_CASEMAP_RFC1459, FALSE };
@@ -8379,6 +8462,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/queued-buffer-privmsg", test_queued_buffer_privmsg);
 	add_func("/e2e/proto/query-off-this-address", test_query_off_this_address);
 	add_func("/e2e/proto/accept-refuses-own-key", test_accept_refuses_own_key);
+	add_func("/e2e/proto/auto-refuses-own-key", test_auto_refuses_own_key);
 	add_func("/e2e/scope/two-networks-separate", test_scope_two_networks);
 	add_func("/e2e/scope/wire-fields-bare", test_scope_wire_bare);
 	add_func("/e2e/scope/rpe2e-vector-scoped", test_scope_rpe2e_vector);
