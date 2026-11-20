@@ -267,11 +267,28 @@ int credential_file_write(CONFIG_REC *config, const char *path, char **error)
 	return ret;
 }
 
+/* zero a secret in place before it is freed; volatile so the compiler may
+ * not drop the store as dead (the buffer is about to be released). For a
+ * disabled encryption subsystem rec->encrypted_value holds plaintext, and
+ * credential_get() hands back a plaintext copy the caller frees - neither
+ * should linger in freed heap for a later disclosure to read. */
+static void credential_wipe_str(char *s)
+{
+	if (s != NULL) {
+		volatile char *p = (volatile char *) s;
+		size_t n = strlen(s);
+
+		while (n-- > 0)
+			*p++ = 0;
+	}
+}
+
 static void credential_free(CREDENTIAL_REC *rec)
 {
 	if (rec == NULL) return;
-	
+
 	g_free(rec->network);
+	credential_wipe_str(rec->encrypted_value);
 	g_free(rec->encrypted_value);
 	g_free(rec->salt);
 	g_free(rec);
@@ -2015,6 +2032,7 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		credential_value = credential_get(network_name, CREDENTIAL_CONTEXT_SASL_USERNAME);
 		if (credential_value != NULL) {
 			iconfig_node_set_str(config_node, "sasl_username", credential_value);
+			credential_wipe_str(credential_value);
 			g_free(credential_value);
 			changed = filled_username = TRUE;
 		}
@@ -2025,6 +2043,7 @@ static void sig_chatnet_read_credential_fill(void *chatnet_rec, void *node)
 		credential_value = credential_get(network_name, CREDENTIAL_CONTEXT_SASL_PASSWORD);
 		if (credential_value != NULL) {
 			iconfig_node_set_str(config_node, "sasl_password", credential_value);
+			credential_wipe_str(credential_value);
 			g_free(credential_value);
 			changed = filled_password = TRUE;
 		}

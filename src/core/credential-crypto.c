@@ -163,7 +163,7 @@ static char *encrypt_aes256_gcm_openssl(const char *plaintext, const unsigned ch
 
 out:
 	EVP_CIPHER_CTX_free(ctx);
-	memset(out, 0, plaintext_len + CREDENTIAL_TAG_SIZE);
+	OPENSSL_cleanse(out, plaintext_len + CREDENTIAL_TAG_SIZE);
 	g_free(out);
 	return result;
 }
@@ -215,7 +215,7 @@ static char *decrypt_aes256_gcm_openssl(const char *data_b64, const unsigned cha
 
 out:
 	EVP_CIPHER_CTX_free(ctx);
-	memset(plaintext, 0, ciphertext_len + 1);
+	OPENSSL_cleanse(plaintext, ciphertext_len + 1);
 	g_free(plaintext);
 	g_free(data);
 	return result;
@@ -279,7 +279,7 @@ static char *decrypt_aes256_cbc_openssl(const char *ciphertext_b64, const unsign
 	/* a NUL inside is no password but what a wrong key gives now and
 	 * then: the padding check alone passes about once in 256 */
 	if (memchr(plaintext, '\0', plaintext_len) != NULL) {
-		memset(plaintext, 0, ciphertext_len + 16);
+		OPENSSL_cleanse(plaintext, ciphertext_len + 16);
 		g_free(plaintext);
 		return NULL;
 	}
@@ -288,6 +288,7 @@ static char *decrypt_aes256_cbc_openssl(const char *ciphertext_b64, const unsign
 	result = g_malloc(plaintext_len + 1);
 	memcpy(result, plaintext, plaintext_len);
 	result[plaintext_len] = '\0';
+	OPENSSL_cleanse(plaintext, ciphertext_len + 16);
 	g_free(plaintext);
 
 	return result;
@@ -365,7 +366,7 @@ char *credential_encrypt(const char *plaintext, const char *password)
 
 	/* Derive key from password */
 	if (!derive_key_openssl(password, salt, sizeof(salt), key, sizeof(key))) {
-		memset(key, 0, sizeof(key));
+		OPENSSL_cleanse(key, sizeof(key));
 		return NULL;
 	}
 
@@ -377,7 +378,7 @@ char *credential_encrypt(const char *plaintext, const char *password)
 	result = encrypted == NULL ? NULL : g_strdup_printf("%s:%s", header, encrypted);
 
 	/* Secure cleanup */
-	memset(key, 0, sizeof(key));
+	OPENSSL_cleanse(key, sizeof(key));
 	g_free(salt_hex);
 	g_free(nonce_hex);
 	g_free(header);
@@ -415,7 +416,7 @@ static char *decrypt_current(const char *encrypted_data, const char *password)
 	    derive_key_openssl(password, salt, salt_len, key, sizeof(key)))
 		result = decrypt_aes256_gcm_openssl(data_b64, key, nonce, header);
 
-	memset(key, 0, sizeof(key));
+	OPENSSL_cleanse(key, sizeof(key));
 	g_free(header);
 	g_free(salt);
 	g_free(nonce);
@@ -455,7 +456,7 @@ static char *decrypt_legacy(const char *encrypted_data, const char *password)
 
 	/* Derive key from password */
 	if (!derive_key_openssl(password, salt, salt_len, key, sizeof(key))) {
-		memset(key, 0, sizeof(key));
+		OPENSSL_cleanse(key, sizeof(key));
 		g_strfreev(parts);
 		g_free(salt);
 		g_free(iv);
@@ -466,7 +467,7 @@ static char *decrypt_legacy(const char *encrypted_data, const char *password)
 	result = decrypt_aes256_cbc_openssl(parts[2], key, iv);
 
 	/* Secure cleanup */
-	memset(key, 0, sizeof(key));
+	OPENSSL_cleanse(key, sizeof(key));
 	g_strfreev(parts);
 	g_free(salt);
 	g_free(iv);

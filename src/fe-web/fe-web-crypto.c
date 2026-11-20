@@ -16,6 +16,7 @@
 #include <irssi/src/fe-common/core/printtext.h>
 #include <irssi/src/core/levels.h>
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -63,8 +64,8 @@ void fe_web_crypto_init(void)
 /* Cleanup crypto subsystem */
 void fe_web_crypto_deinit(void)
 {
-	/* Clear key from memory */
-	memset(global_key, 0, sizeof(global_key));
+	/* Clear key from memory (cleanse, so the store is not optimised away) */
+	OPENSSL_cleanse(global_key, sizeof(global_key));
 	key_initialized = 0;
 
 	/* Cleanup OpenSSL */
