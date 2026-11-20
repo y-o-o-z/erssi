@@ -417,10 +417,14 @@ static int get_pem_password_callback(char *buffer, int max_length, int rwflag, v
 	password = (char *)pass;
 	length = strlen(pass);
 
-	if (length > max_length)
+	/* OpenSSL takes the returned length; the buffer need not be NUL
+	   terminated. Copy exactly length bytes - never length + 1 - so a
+	   passphrase whose length equals max_length cannot write one byte past
+	   the buffer (as dcc_pem_password_cb already does for its key). */
+	if (max_length < 0 || length > (size_t) max_length)
 		return 0;
 
-	memcpy(buffer, password, length + 1);
+	memcpy(buffer, password, length);
 	return length;
 }
 
