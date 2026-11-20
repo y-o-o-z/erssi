@@ -216,6 +216,9 @@ static gboolean address_is_public(const struct sockaddr *sa)
 		         (a >> 16) == 0xC0A8 ||            /* 192.168/16 */
 		         (a >> 22) == (0x64400000 >> 22) || /* 100.64/10 CGNAT */
 		         (a >> 8) == 0xC00000 ||           /* 192.0.0/24 IETF */
+		         (a >> 8) == 0xC00002 ||           /* 192.0.2/24 TEST-NET-1 (doc) */
+		         (a >> 8) == 0xC63364 ||           /* 198.51.100/24 TEST-NET-2 (doc) */
+		         (a >> 8) == 0xCB0071 ||           /* 203.0.113/24 TEST-NET-3 (doc) */
 		         (a >> 17) == (0xC6120000 >> 17) || /* 198.18/15 benchmarking */
 		         (a >> 28) >= 0xE);                /* multicast, reserved */
 	}
@@ -249,6 +252,10 @@ static gboolean address_is_public(const struct sockaddr *sa)
 		         (b[0] & 0xFE) == 0xFC ||                   /* fc00::/7 ULA */
 		         (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) || /* fe80::/10 */
 		         (b[0] == 0xFE && (b[1] & 0xC0) == 0xC0) || /* fec0::/10 site-local */
+		         (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00) ||
+		                                                    /* 2001::/32 Teredo: may embed any v4 */
+		         (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0d && b[3] == 0xb8) ||
+		                                                    /* 2001:db8::/32 documentation */
 		         b[0] == 0xFF);                             /* multicast */
 	}
 	return FALSE;

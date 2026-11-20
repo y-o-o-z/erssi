@@ -14,6 +14,7 @@
 #define IMAGE_FETCH_RETRY_DELAY_MS 200
 #include <irssi/src/image-preview/image-preview-fetch.c>
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <sys/stat.h>
@@ -144,8 +145,8 @@ static void test_socket_cloexec(void)
 	address.addrlen = sizeof(*sin);
 	sin->sin_family = AF_INET;
 	sin->sin_port = htons(80);
-	/* TEST-NET-1: public to the filter, never connected to here */
-	sin->sin_addr.s_addr = htonl(0xC0000201);
+	/* a public address to the filter, never connected to here (8.8.8.8) */
+	sin->sin_addr.s_addr = htonl(0x08080808);
 
 	fd = open_public_socket(NULL, CURLSOCKTYPE_IPCXN, &address);
 	g_assert_cmpint(fd, >=, 0);
@@ -160,6 +161,76 @@ static void test_socket_cloexec(void)
 		g_assert_cmpint(child_has_fd(fd), ==, 0);
 	}
 	close(fd);
+}
+
+/* address_is_public() decides, for a resolved address a clicked link leads
+ * to, whether a socket may be opened to it: a public web server only, never
+ * this host, the LAN, a transition address that embeds one, or a reserved
+ * range. */
+static gboolean v4_public(guint32 host_order)
+{
+	struct sockaddr_in s;
+
+	memset(&s, 0, sizeof(s));
+	s.sin_family = AF_INET;
+	s.sin_addr.s_addr = htonl(host_order);
+	return address_is_public((struct sockaddr *) &s);
+}
+
+static gboolean v6_public(const char *txt)
+{
+	struct sockaddr_in6 s;
+
+	memset(&s, 0, sizeof(s));
+	s.sin6_family = AF_INET6;
+	g_assert_cmpint(inet_pton(AF_INET6, txt, &s.sin6_addr), ==, 1);
+	return address_is_public((struct sockaddr *) &s);
+}
+
+static void test_address_filter(void)
+{
+	/* denied IPv4 ranges */
+	g_assert_false(v4_public(0x00000001)); /* 0.0.0.1       this-network */
+	g_assert_false(v4_public(0x0A000001)); /* 10.0.0.1      private */
+	g_assert_false(v4_public(0x7F000001)); /* 127.0.0.1     loopback */
+	g_assert_false(v4_public(0xA9FE0001)); /* 169.254.0.1   link-local */
+	g_assert_false(v4_public(0xAC100001)); /* 172.16.0.1    private */
+	g_assert_false(v4_public(0xC0A80001)); /* 192.168.0.1   private */
+	g_assert_false(v4_public(0x64400001)); /* 100.64.0.1    CGNAT */
+	g_assert_false(v4_public(0xC0000001)); /* 192.0.0.1     IETF */
+	g_assert_false(v4_public(0xC0000201)); /* 192.0.2.1     TEST-NET-1 (doc) */
+	g_assert_false(v4_public(0xC6336401)); /* 198.51.100.1  TEST-NET-2 (doc) */
+	g_assert_false(v4_public(0xCB007101)); /* 203.0.113.1   TEST-NET-3 (doc) */
+	g_assert_false(v4_public(0xC6120001)); /* 198.18.0.1    benchmarking */
+	g_assert_false(v4_public(0xE0000001)); /* 224.0.0.1     multicast */
+	g_assert_false(v4_public(0xFFFFFFFF)); /* 255.255.255.255 broadcast */
+	/* allowed IPv4, including the edges just outside a denied block */
+	g_assert_true(v4_public(0x08080808));  /* 8.8.8.8 */
+	g_assert_true(v4_public(0x5DB8D822));  /* 93.184.216.34 */
+	g_assert_true(v4_public(0xAC020001));  /* 172.2.0.1   below 172.16/12 */
+	g_assert_true(v4_public(0x64000001));  /* 100.0.0.1   below 100.64/10 */
+
+	/* denied IPv6 ranges */
+	g_assert_false(v6_public("::1"));        /* loopback */
+	g_assert_false(v6_public("::"));         /* unspecified */
+	g_assert_false(v6_public("fc00::1"));    /* ULA */
+	g_assert_false(v6_public("fd00::1"));    /* ULA */
+	g_assert_false(v6_public("fe80::1"));    /* link-local */
+	g_assert_false(v6_public("fec0::1"));    /* site-local */
+	g_assert_false(v6_public("ff02::1"));    /* multicast */
+	g_assert_false(v6_public("2001::1"));    /* Teredo */
+	g_assert_false(v6_public("2001:db8::1")); /* documentation */
+	/* IPv6 that carries an IPv4 one takes that one's verdict */
+	g_assert_false(v6_public("::ffff:127.0.0.1")); /* v4-mapped loopback */
+	g_assert_false(v6_public("::ffff:10.0.0.1"));  /* v4-mapped private */
+	g_assert_false(v6_public("64:ff9b::7f00:1"));  /* NAT64 loopback */
+	g_assert_false(v6_public("2002:7f00:1::1"));   /* 6to4 loopback */
+	g_assert_false(v6_public("64:ff9b:1::1"));     /* local-use NAT64 */
+	/* allowed IPv6, including 2001::/16 that is neither Teredo nor doc */
+	g_assert_true(v6_public("2606:4700:4700::1111"));
+	g_assert_true(v6_public("2001:4860:4860::8888"));
+	g_assert_true(v6_public("::ffff:8.8.8.8"));    /* v4-mapped public */
+	g_assert_true(v6_public("2002:0808:0808::1")); /* 6to4 of 8.8.8.8 */
 }
 
 static gboolean quit_loop(gpointer loop)
@@ -341,6 +412,7 @@ int main(int argc, char **argv)
 	/* a refused cache file is reported with g_warning(): no failure here */
 	g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
 
+	g_test_add_func("/image-fetch/address_filter", test_address_filter);
 	g_test_add_func("/image-fetch/socket_cloexec", test_socket_cloexec);
 	g_test_add_func("/image-fetch/deinit_removes_retry", test_deinit_removes_retry);
 	g_test_add_func("/image-fetch/fired_retry", test_fired_retry);
