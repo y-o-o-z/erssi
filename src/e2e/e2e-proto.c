@@ -4178,6 +4178,9 @@ struct _E2E_REPLAY {
 	guint top;		/* the largest n with a partition (0: none) */
 	guint max, per_sender;
 	gboolean changed;	/* since the last save */
+	struct stat file_st;	/* the cache file as we last read or wrote it */
+	gboolean have_st;	/* file_st is set (a shared home: detect another
+				   erssi's write and merge it, not clobber) */
 };
 
 /* SHA-256 digests: their first bytes are hash enough */
@@ -4369,6 +4372,28 @@ gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error)
 	gint64 now = e2e_now();
 	gboolean ok;
 	char *hex;
+	int lock;
+	struct stat now_st;
+
+	/* a shared home may have another erssi writing this same cache. Under
+	   the exclusive lock, if the file on disk is not the one we last read
+	   or wrote, another erssi changed it: fold its entries in first so the
+	   write is the union of both, not a clobber that would drop them and
+	   let a replayed message pass after a restart. replay_add() is keyed by
+	   digest, so the merge is idempotent, the loader caps each entry's life
+	   as if read now, and a damaged file adds nothing and is overwritten.
+	   When the file is still ours (the common single-erssi case) nothing is
+	   merged and the write is exactly our set. Only a baseline we actually
+	   read (have_st, set at load - and in erssi the cache is loaded at
+	   start before any save) lets us tell another erssi's write apart from
+	   our own, so without one we write our set as before. */
+	lock = e2e_keyring_write_lock(path);
+	if (r->have_st && lstat(path, &now_st) == 0 && !e2e_same_file(&r->file_st, &now_st)) {
+		char *merr = NULL;
+
+		e2e_replay_load(r, path, &merr);
+		g_free(merr);
+	}
 
 	replay_expire(r, now);
 	out = g_string_sized_new(strlen(REPLAY_HEADER) + r->all.length * REPLAY_LINE_MAX);
@@ -4388,10 +4413,13 @@ gboolean e2e_replay_save(E2E_REPLAY *r, const char *path, char **error)
 		g_free(hex);
 		g_string_append_printf(out, " %" G_GINT64_FORMAT "\n", e->until);
 	}
-	ok = e2e_write_file_atomic(path, out->str, out->len, "replay cache", error);
+	ok = e2e_write_file_atomic_stat(path, out->str, out->len, "replay cache", &r->file_st, error);
+	e2e_keyring_read_unlock(lock);
 	g_string_free(out, TRUE);
-	if (ok)
+	if (ok) {
+		r->have_st = TRUE;
 		r->changed = FALSE;
+	}
 	return ok;
 }
 
@@ -4443,6 +4471,7 @@ gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error)
 		/* none yet: nothing to say */
 		if (errno == ENOENT) {
 			g_free(err);
+			r->have_st = FALSE;
 			return TRUE;
 		}
 		*error = err;
@@ -4476,6 +4505,9 @@ gboolean e2e_replay_load(E2E_REPLAY *r, const char *path, char **error)
 	}
 	g_array_free(rows, TRUE);
 	g_free(data);
+	/* remember which file this was, so a later save can tell our own write
+	   from another erssi's and merge only when it must */
+	r->have_st = lstat(path, &r->file_st) == 0;
 	return TRUE;
 fail:
 	g_array_free(rows, TRUE);

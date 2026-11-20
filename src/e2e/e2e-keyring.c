@@ -635,6 +635,18 @@ void e2e_keyring_read_unlock(int fd)
 	keyring_unlock(fd);
 }
 
+int e2e_keyring_write_lock(const char *path)
+{
+	char *error = NULL;
+	/* -1 (no lock on this file system) and -2 (an unsafe lock file) both
+	   mean "no lock held": the caller writes anyway, as it did before any
+	   lock existed - the lock only serialises writers where it can */
+	int fd = keyring_lock(path, LOCK_EX, &error);
+
+	g_free(error);
+	return fd;
+}
+
 gboolean e2e_keyring_save_based(const char *path, const E2E_JSON *kr, const struct stat *base,
                                 struct stat *written, char **error)
 {

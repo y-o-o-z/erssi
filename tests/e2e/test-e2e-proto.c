@@ -7107,6 +7107,64 @@ static void assert_replay_unread(const char *path, const char *reason)
    a directory reads as empty with the reason, at once; the next save
    replaces it (never writing through the symlink). The alarm ends a
    test that would hang. */
+/* a shared home may run two erssi that both write the one replay cache.
+   Each saves its whole set; without a read-modify-write under the lock the
+   later save would clobber the entries the other added, and a replayed
+   message could pass after a restart. The save now folds in what is on
+   disk first, so the file is the union. */
+static void test_replay_merge(void)
+{
+	E2E_REPLAY *r1, *r2, *r3;
+	E2E_WIRE w1, w2, w3;
+	unsigned char c1[17], c2[17], c3[17];
+	char *dir, *path, *lockp, *error = NULL;
+
+	alarm(60);
+	dir = g_dir_make_tmp("e2e-replaym-XXXXXX", NULL);
+	g_assert_nonnull(dir);
+	path = g_build_filename(dir, E2E_REPLAY_FILE, NULL);
+	lockp = g_strconcat(path, ".lock", NULL);
+	synthetic_wire(&w1, c1, sizeof(c1), 1);
+	synthetic_wire(&w2, c2, sizeof(c2), 2);
+	synthetic_wire(&w3, c3, sizeof(c3), 3);
+
+	/* process A records w1 and saves it */
+	r1 = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_false(e2e_replay_check(r1, "#test", ALICE, &w1));
+	g_assert_true(e2e_replay_save(r1, path, &error));
+	g_assert_null(error);
+
+	/* process B starts from that file and records w2, not yet saved */
+	r2 = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(r2, path, &error));
+	g_assert_false(e2e_replay_check(r2, "#test", ALICE, &w2));
+
+	/* meanwhile A records w3 and saves: the file now holds w1 and w3 */
+	g_assert_false(e2e_replay_check(r1, "#test", ALICE, &w3));
+	g_assert_true(e2e_replay_save(r1, path, &error));
+
+	/* B saves: a clobbering writer would drop w3; the merge keeps it */
+	g_assert_true(e2e_replay_save(r2, path, &error));
+
+	/* a fresh reader sees all three */
+	r3 = e2e_replay_new(E2E_REPLAY_MAX, E2E_REPLAY_PER_SENDER);
+	g_assert_true(e2e_replay_load(r3, path, &error));
+	g_assert_cmpuint(e2e_replay_size(r3), ==, 3);
+	g_assert_true(e2e_replay_check(r3, "#test", ALICE, &w1));
+	g_assert_true(e2e_replay_check(r3, "#test", ALICE, &w2));
+	g_assert_true(e2e_replay_check(r3, "#test", ALICE, &w3));
+
+	e2e_replay_free(r1);
+	e2e_replay_free(r2);
+	e2e_replay_free(r3);
+	g_unlink(path);
+	g_unlink(lockp);
+	g_rmdir(dir);
+	g_free(lockp);
+	g_free(path);
+	g_free(dir);
+}
+
 static void test_replay_file(void)
 {
 	PEER a, b;
@@ -8418,6 +8476,7 @@ int main(int argc, char **argv)
 	add_func("/e2e/proto/replay", test_replay);
 	add_func("/e2e/proto/replay-flood", test_replay_flood);
 	add_func("/e2e/proto/replay-partitions", test_replay_partitions);
+	add_func("/e2e/proto/replay-merge", test_replay_merge);
 	add_func("/e2e/proto/replay-file", test_replay_file);
 	add_func("/e2e/proto/dm-view", test_dm_view);
 	add_func("/e2e/proto/unrevoke-peer", test_unrevoke_peer);

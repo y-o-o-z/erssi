@@ -101,6 +101,11 @@ gboolean e2e_keyring_save_based(const char *path, const E2E_JSON *kr, const stru
    of what was read: a descriptor, or < 0 without one */
 int e2e_keyring_read_lock(const char *path);
 void e2e_keyring_read_unlock(int fd);
+/* the exclusive lock of "<path>.lock" for a read-modify-write of a cache a
+   shared home may have two erssi writing at once (the replay cache): a
+   descriptor, or < 0 where the file system has no lock or the lock file is
+   unsafe - the caller then goes on unlocked. Released by read_unlock. */
+int e2e_keyring_write_lock(const char *path);
 /* /e2e reset: kr becomes the keyring while there is none (E2E_LOAD_LOST) */
 gboolean e2e_keyring_start_fresh(const char *path, const E2E_JSON *kr, char **error);
 /* canonical text, to compare before / after */
