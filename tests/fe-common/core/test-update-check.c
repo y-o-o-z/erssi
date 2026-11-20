@@ -598,7 +598,12 @@ static void assert_gone(const char *file)
 	pid = atoi(text);
 	g_free(text);
 	g_assert_cmpint(pid, >, 1);
-	for (i = 0; i < 100 && running(pid); i++)
+	/* the child is reparented to init, which reaps it when it gets to run:
+	   on a loaded machine (a release build runs the suite under full load)
+	   that can take well over a second, so wait on the condition with a
+	   long deadline rather than a fixed short one (~30 s, left as soon as
+	   it is gone) */
+	for (i = 0; i < 1500 && running(pid); i++)
 		g_usleep(20000);
 	g_assert_false(running(pid));
 }
