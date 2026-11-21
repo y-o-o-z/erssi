@@ -460,8 +460,9 @@ throwaway repository holding this tree, tagged with a throwaway key:
 
 `package`, `tests-fail` and `reproduce` build the tree from scratch with
 every feature, a few minutes each (`reproduce` twice). They run only with
-`ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's build job (`erssi-ci/build`) set
-it, and so must the release host before it builds packages:
+`ERSSI_TEST_PACKAGER=1`: `utils/pre-push` and the CI's build job for a release
+tag (`erssi-ci/build`) set it, and so must the release host before it builds
+packages:
 
 ```sh
 ERSSI_TEST_PACKAGER=1 meson test -C Build

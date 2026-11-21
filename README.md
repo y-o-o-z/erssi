@@ -266,16 +266,18 @@ ERSSI_TEST_PERF=1 meson test -C Build --suite perf # log search speed (2 x 1 GiB
 Every commit on `main`, every release tag and the branches of the
 pull requests to erssi-org are built and tested by erssi-ci, the CI on the
 Shellter team's own server. Each job is a commit status (the check mark
-next to a commit) with a one-line result:
+next to a commit) with a one-line result. Every commit gets the fast gate —
+build, shellcheck, installer, e2e-live and sanitizers; a release tag
+additionally runs fuzz and has the build reproduce a package:
 
 | Status | What it runs |
 |---|---|
-| `erssi-ci/build` | the hardened build and the full `meson test`, the package builds of the packager included |
+| `erssi-ci/build` | the hardened build and the full `meson test`; on a release tag it also builds a package and reproduces it |
 | `erssi-ci/sanitizers` | the same tests in an ASan/UBSan build |
 | `erssi-ci/shellcheck` | shellcheck on the shell scripts |
 | `erssi-ci/installer` | the installer's tests, and that every release it records points to its commit and is signed |
 | `erssi-ci/e2e-live` | live E2E interop with `rpe2e.pl` |
-| `erssi-ci/fuzz` | libFuzzer runs on what fe-web and the E2E module read from the network, irssi's own parsers and the image decoder |
+| `erssi-ci/fuzz` | on a release tag, libFuzzer runs on what fe-web and the E2E module read from the network, irssi's own parsers and the image decoder |
 
 A status shows "pending" until its job has run, which after a history
 rewrite, when every release tag is tested again, can take hours. Pull
