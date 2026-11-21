@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.7.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.8.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.7">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.8">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.7</pre>
+    verify-tag shellter-v2026.11.8</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.11.7">
-        <header><b>shellter-v2026.11.7</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.11.8">
+        <header><b>shellter-v2026.11.8</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>eab8f4a19</dd></div>
+          <div><dt>Commit</dt><dd>9c79cf2d7</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="225a1f654c080826f6d662f0a9265ba066ed41890076c5196f68cabc048c2df2">sha256 225a1f65…c048c2df2</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="8679e4030fb84a3296123f644a73a1145df1d587f73b54141a957077aa3ad645">sha256 8679e403…7aa3ad645</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="c43fd42930454e4093774c24e0e4a541b5d760634a115c40ab2dc960b46b44ea">sha256 c43fd429…0b46b44ea</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="246758fe9aae1ef6a673b6f7aad625f5dbd1b603c47e71c32d056cb7ffdc88af">sha256 246758fe…7ffdc88af</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="720c6aa841901e9520d96b382b3b895fec48efdd7504d6c2c4953848c7e13b37">sha256 720c6aa8…8c7e13b37</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="e24b17dd976e72695a93e45567f15fc11fb515a764b8b4456af8ebe214922645">sha256 e24b17dd…214922645</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="46d01d29aef98703b6799e09bc5db49eed8afa6d5646f7037f070ad33a773197">sha256 46d01d29…33a773197</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="c7cbb9185ae363523f91716810924bb89adc46f8bece22b963f3ece7fd205db3">sha256 c7cbb918…7fd205db3</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="e6c277733ed48bb0f23617bd357908e3443401ad0dba7827bbcd0636ec8b5dd3">sha256 e6c27773…6ec8b5dd3</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="74c5c1449cccdb297f75abea221c4b915fbad31537bebe6b711f4d8bf8e789ce">sha256 74c5c144…bf8e789ce</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,15 +241,18 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.11.7</h2>
-        <p>Released on 18 November 2026. A hardening release from the 2026.11 code-review follow-ups. It refuses an end-to-end key exchange that would hand your own identity key back to you, and lets a secure DCC use a certificate whose private key is encrypted. No new features.</p>
+        <h2 id="h-new">New in 2026.11.8</h2>
+        <p>Released on 20 November 2026. A hardening release from the 2026.11 code-review follow-ups, with a Codex review of the fork. It closes the automatic side of the 2026.11.7 reflected-own-key refusal, tightens the image-preview address filter, protects the E2E replay cache when a home is shared, clears secrets from memory before they are freed, and stops a one-byte overwrite in the TLS key password callback. No new features.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">changed</span><p><b>E2E rejects your own key reflected back.</b> <code>/e2e accept</code> now refuses an offer whose key is your own identity key — a key of yours bounced back at you — and makes no session with yourself. <code>/e2e decline</code> still clears such an offer and says what it carried, and auto-accept is covered the same way.</p></li>
-        <li><span class="tag">changed</span><p><b>Secure DCC with an encrypted certificate key.</b> A <code>dcc_tls_cert</code> whose private key is encrypted is now usable — set <code>dcc_tls_pass</code> to its passphrase. A missing or wrong passphrase is reported as such, erssi never prompts the terminal for it, and <code>dcc_tls_pass</code> is kept secret like <code>tls_pass</code>.</p></li>
+        <li><span class="tag">fixed</span><p><b>Own key reflected back, on the automatic paths too.</b> Auto-accept and an autotrust rule no longer answer an end-to-end key request that carries your own identity key, and a key response or rekey that carries it is never installed as a session. 2026.11.7 covered only <code>/e2e accept</code>.</p></li>
+        <li><span class="tag">fixed</span><p><b>Image-preview address filter.</b> The filter that keeps a preview to public web servers now also refuses IPv6 Teredo (<code>2001::/32</code>) and documentation (<code>2001:db8::/32</code>) addresses and the IPv4 documentation ranges <code>192.0.2.0/24</code>, <code>198.51.100.0/24</code> and <code>203.0.113.0/24</code>.</p></li>
+        <li><span class="tag">fixed</span><p><b>Shared-home replay cache.</b> Two erssi that share a home no longer overwrite each other's E2E replay cache — it is merged under a lock — so a message the server delivers again stays dropped across a restart.</p></li>
+        <li><span class="tag">fixed</span><p><b>One byte past the TLS key password.</b> An encrypted client key whose passphrase is exactly as long as the password buffer no longer writes one byte past it. Inherited from irssi and reported upstream; the DCC key callback added in 2026.11.7 was already correct.</p></li>
+        <li><span class="tag">changed</span><p><b>Secrets cleansed before they are freed.</b> Stored credentials and the fe-web key are cleared from memory before they are freed, so a later memory disclosure cannot read what was there.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.7">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.8">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -314,7 +317,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.7 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.8 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>

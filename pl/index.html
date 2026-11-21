@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.7.">
+<meta name="description" content="Nowoczesne irssi, dostrojone do IRCnetu. Instalacja bez roota z podpisanego wydania: gotowe binarki dla Debiana 12 i 13, Ubuntu 24.04 oraz FreeBSD 14 i 15, gdzie indziej budowa ze źródeł. Wydanie 2026.11.8.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.7">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.8">
 <meta property="og:description" content="Nowoczesne irssi, dostrojone do IRCnetu. Podpisane wydania, bez roota, jedna linia instalacji.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/pl/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.7</pre>
+    verify-tag shellter-v2026.11.8</pre>
         <p>Uruchom to w klonie repozytorium; gpg jest wyłączony, żeby liczył się tylko klucz SSH. Musi zgłosić poprawny podpis z odciskiem podanym obok. Porównaj go z takim, który masz z innego źródła, na przykład pytając na #shellter.</p>
         <p>Części, które rozmawiają z siecią, są przeglądane, fuzzowane i testowane pod sanitizerami. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">Co jest chronione, a co nie</a> (po angielsku).</p>
       </div>
-      <div class="release" aria-label="Wydanie 2026.11.7">
-        <header><b>shellter-v2026.11.7</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
+      <div class="release" aria-label="Wydanie 2026.11.8">
+        <header><b>shellter-v2026.11.8</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>podpisany</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>eab8f4a19</dd></div>
+          <div><dt>Commit</dt><dd>9c79cf2d7</dd></div>
           <div><dt>Klucz wydań</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>poprawny podpis, przestrzeń nazw erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="225a1f654c080826f6d662f0a9265ba066ed41890076c5196f68cabc048c2df2">sha256 225a1f65…c048c2df2</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="8679e4030fb84a3296123f644a73a1145df1d587f73b54141a957077aa3ad645">sha256 8679e403…7aa3ad645</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="c43fd42930454e4093774c24e0e4a541b5d760634a115c40ab2dc960b46b44ea">sha256 c43fd429…0b46b44ea</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="246758fe9aae1ef6a673b6f7aad625f5dbd1b603c47e71c32d056cb7ffdc88af">sha256 246758fe…7ffdc88af</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="720c6aa841901e9520d96b382b3b895fec48efdd7504d6c2c4953848c7e13b37">sha256 720c6aa8…8c7e13b37</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="e24b17dd976e72695a93e45567f15fc11fb515a764b8b4456af8ebe214922645">sha256 e24b17dd…214922645</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="46d01d29aef98703b6799e09bc5db49eed8afa6d5646f7037f070ad33a773197">sha256 46d01d29…33a773197</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="c7cbb9185ae363523f91716810924bb89adc46f8bece22b963f3ece7fd205db3">sha256 c7cbb918…7fd205db3</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="e6c277733ed48bb0f23617bd357908e3443401ad0dba7827bbcd0636ec8b5dd3">sha256 e6c27773…6ec8b5dd3</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="74c5c1449cccdb297f75abea221c4b915fbad31537bebe6b711f4d8bf8e789ce">sha256 74c5c144…bf8e789ce</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 z 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,15 +241,18 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">Nowości w 2026.11.7</h2>
-        <p>Wydane 18 listopada 2026. Wydanie utwardzające, z prac po przeglądzie kodu 2026.11. Odrzuca wymianę kluczy end-to-end, która oddałaby ci z powrotem twój własny klucz tożsamości, i pozwala bezpiecznemu DCC użyć certyfikatu z zaszyfrowanym kluczem prywatnym. Bez nowych funkcji.</p>
+        <h2 id="h-new">Nowości w 2026.11.8</h2>
+        <p>Wydane 20 listopada 2026. Wydanie utwardzające, z prac po przeglądzie kodu 2026.11, z przeglądem forka przez Codex. Domyka automatyczną stronę odrzucania własnego odbitego klucza z 2026.11.7, zaostrza filtr adresów podglądu obrazków, chroni pamięć podręczną powtórek E2E przy współdzielonym katalogu domowym, czyści sekrety z pamięci przed ich zwolnieniem i zatrzymuje zapis jednego bajtu poza buforem w wywołaniu zwrotnym hasła klucza TLS. Bez nowych funkcji.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">zmiana</span><p><b>E2E odrzuca twój własny klucz odbity z powrotem.</b> <code>/e2e accept</code> odrzuca teraz ofertę, której kluczem jest twój własny klucz tożsamości — twój klucz odbity do ciebie — i nie tworzy sesji z samym sobą. <code>/e2e decline</code> dalej usuwa taką ofertę i mówi, co niosła, a auto-akceptacja jest objęta tak samo.</p></li>
-        <li><span class="tag">zmiana</span><p><b>Bezpieczne DCC z zaszyfrowanym kluczem certyfikatu.</b> <code>dcc_tls_cert</code> z zaszyfrowanym kluczem prywatnym jest teraz użyteczny — ustaw <code>dcc_tls_pass</code> na jego hasło. Brak lub błędne hasło jest zgłaszane jako takie, erssi nigdy nie pyta o nie w terminalu, a <code>dcc_tls_pass</code> jest trzymane w tajemnicy jak <code>tls_pass</code>.</p></li>
+        <li><span class="tag">poprawka</span><p><b>Własny klucz odbity z powrotem, także na ścieżkach automatycznych.</b> Auto-akceptacja ani reguła autozaufania nie odpowiadają już na żądanie klucza end-to-end, które niesie twój własny klucz tożsamości, a odpowiedź na klucz lub rekey z takim kluczem nigdy nie jest instalowana jako sesja. 2026.11.7 obejmowało tylko <code>/e2e accept</code>.</p></li>
+        <li><span class="tag">poprawka</span><p><b>Filtr adresów podglądu obrazków.</b> Filtr, który ogranicza podgląd do publicznych serwerów WWW, odrzuca teraz także adresy IPv6 Teredo (<code>2001::/32</code>) i dokumentacyjne (<code>2001:db8::/32</code>) oraz dokumentacyjne zakresy IPv4 <code>192.0.2.0/24</code>, <code>198.51.100.0/24</code> i <code>203.0.113.0/24</code>.</p></li>
+        <li><span class="tag">poprawka</span><p><b>Pamięć powtórek przy współdzielonym katalogu domowym.</b> Dwa erssi dzielące katalog domowy nie nadpisują już wzajemnie swojej pamięci podręcznej powtórek E2E — jest scalana pod blokadą — więc wiadomość, którą serwer dostarcza ponownie, pozostaje odrzucona także po restarcie.</p></li>
+        <li><span class="tag">poprawka</span><p><b>Jeden bajt poza hasłem klucza TLS.</b> Zaszyfrowany klucz klienta, którego hasło jest dokładnie tak długie jak bufor, nie zapisuje już jednego bajtu poza nim. Odziedziczone po irssi i zgłoszone upstream; wywołanie zwrotne klucza DCC dodane w 2026.11.7 było już poprawne.</p></li>
+        <li><span class="tag">zmiana</span><p><b>Sekrety czyszczone przed zwolnieniem.</b> Przechowywane poświadczenia i klucz fe-web są czyszczone z pamięci przed zwolnieniem, więc późniejszy wyciek pamięci nie odczyta tego, co tam było.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.7">Informacje o wydaniu</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.8">Informacje o wydaniu</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Wszystkie zmiany od 2026.10.0</a>
       </div>
     </div>
@@ -314,7 +317,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.7 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.8 · GPL-2.0-or-later</span>
       <span><a href="../" hreflang="en" lang="en">English</a> · <a href="./" aria-current="page">Polski</a></span>
     </div>
   </div>
