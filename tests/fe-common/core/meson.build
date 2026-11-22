@@ -303,6 +303,30 @@ test('test-credential-set test', test_test_credential_set,
   args : ['--tap'],
   protocol : 'tap')
 
+# core/credential.c compiled in, for the refusal path of the disabled
+# encryption / external-file features
+test_test_credential_disabled = executable('test-credential-disabled',
+  files(
+    'test-credential-disabled.c',
+  ),
+  link_with : [
+    libconfig_a,
+    libcore_a,
+    libfe_common_core_a,
+  ],
+  c_args : [
+    '-D' + 'PACKAGE_STRING' + '="' + 'fe-common/core' + '"',
+  ],
+  include_directories : rootinc,
+  implicit_include_directories : false,
+  dependencies : dep
+)
+test('test-credential-disabled test', test_test_credential_disabled,
+  env : test_env,
+  args : ['--tap'],
+  protocol : 'tap',
+  timeout : 30)
+
 # core/network-openssl.c compiled in, for its certificate host name check
 test_test_tls_hostname = executable('test-tls-hostname',
   files(
