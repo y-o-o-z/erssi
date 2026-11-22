@@ -364,11 +364,11 @@ static void test_statusbar_shipped_list(void)
 
 	c = cfg_parse(SHIPPED_INFO);
 	g_assert_true(shellter_statusbar_migrate(c));
-	assert_bar(c, "info", "time user window e2e lag act more");
+	assert_bar(c, "info", "time user window e2e lag update act more");
 	g_assert_cmpstr(config_get_str(c, "statusbar/default/info/items/more", "alignment", NULL),
 	                ==, "right");
 	g_assert_cmpstr(config_get_str(c, "statusbar/default/info", "position", NULL), ==, "0");
-	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	/* the marker does not touch the settings' one */
 	g_assert_cmpint(config_get_int(c, "erssi", "defaults_version", 0), ==, 0);
 	config_close(c);
@@ -406,7 +406,7 @@ static void test_statusbar_custom_untouched(void)
 		after = bar_items(c, "info");
 		g_assert_cmpstr(after, ==, before);
 		g_assert_null(strstr(after, "e2e"));
-		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 		g_free(before);
 		g_free(after);
 		config_close(c);
@@ -433,6 +433,7 @@ static void test_statusbar_runs_once(void)
 	items = config_node_traverse(c, "statusbar/default/info/items", FALSE);
 	g_assert_nonnull(items);
 	config_node_remove(c, items, config_node_find(items, "e2e"));
+	config_node_remove(c, items, config_node_find(items, "update"));
 	assert_bar(c, "info", "time user window lag act more");
 	counter = c->modifycounter;
 	g_assert_false(shellter_statusbar_migrate(c));
@@ -441,7 +442,7 @@ static void test_statusbar_runs_once(void)
 	config_close(c);
 
 	/* a newer marker */
-	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = \"2\"; };");
+	c = cfg_parse(SHIPPED_INFO "erssi = { statusbar_version = \"3\"; };");
 	g_assert_false(shellter_statusbar_migrate(c));
 	assert_bar(c, "info", "time user window lag act more");
 	config_close(c);
@@ -462,7 +463,26 @@ static void test_statusbar_since_marker(void)
 
 	c = cfg_parse(SHIPPED_INFO);
 	g_assert_true(shellter_statusbar_migrate_to(c, 2));
-	assert_bar(c, "info", "time user window e2e lag act more");
+	assert_bar(c, "info", "time user window e2e lag update act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
+	config_close(c);
+}
+
+/* the update item belongs to statusbar version 2: a config already at
+   version 1 with the e2e item (a 2026.10.x home) gets the update item after
+   lag on the next upgrade, and nothing else moves */
+static void test_statusbar_update_after_e2e(void)
+{
+	CONFIG_REC *c;
+
+	c = cfg_parse("statusbar = { default = { info = { items = { time = { }; "
+	              "user = { }; window = { }; e2e = { }; lag = { }; act = { }; "
+	              "more = { alignment = \"right\"; }; }; }; }; }; "
+	              "erssi = { statusbar_version = \"1\"; };");
+	g_assert_true(shellter_statusbar_migrate(c));
+	assert_bar(c, "info", "time user window e2e lag update act more");
+	g_assert_cmpstr(config_get_str(c, "statusbar/default/info/items/more", "alignment", NULL),
+	                ==, "right");
 	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	config_close(c);
 }
@@ -484,18 +504,18 @@ static void test_statusbar_no_section(void)
 	c = cfg_parse("settings = { core = { nick = \"alice\"; }; };");
 	g_assert_false(shellter_statusbar_migrate(c));
 	g_assert_null(config_node_find(c->mainnode, "statusbar"));
-	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	config_close(c);
 
 	c = config_open(NULL, -1);
 	g_assert_false(shellter_statusbar_migrate(c));
-	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	config_close(c);
 
 	for (i = 0; i < (int) G_N_ELEMENTS(odd); i++) {
 		c = cfg_parse(odd[i]);
 		g_assert_false(shellter_statusbar_migrate(c));
-		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+		g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 		config_close(c);
 	}
 
@@ -519,8 +539,8 @@ static void test_statusbar_builtin_config(void)
 	int counter;
 
 	c = cfg_parse(default_config);
-	assert_bar(c, "info", "time user window e2e lag act more");
-	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	assert_bar(c, "info", "time user window e2e lag update act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	counter = c->modifycounter;
 	g_assert_false(shellter_statusbar_migrate(c));
 	g_assert_cmpint(c->modifycounter, ==, counter);
@@ -869,8 +889,8 @@ static void test_upgraded_home_statusbar(void)
 	c = config_open(fname, -1);
 	g_assert_nonnull(c);
 	g_assert_cmpint(config_parse(c), ==, 0);
-	assert_bar(c, "info", "time user window e2e lag act more");
-	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 1);
+	assert_bar(c, "info", "time user window e2e lag update act more");
+	g_assert_cmpint(config_get_int(c, "erssi", "statusbar_version", 0), ==, 2);
 	/* the settings had their marker: no note about them */
 	g_assert_null(shellter_defaults_note());
 	config_close(c);
@@ -1115,6 +1135,8 @@ int main(int argc, char **argv)
 	g_test_add_func("/shellter_defaults/statusbar_custom_untouched",
 	                test_statusbar_custom_untouched);
 	g_test_add_func("/shellter_defaults/statusbar_runs_once", test_statusbar_runs_once);
+	g_test_add_func("/shellter_defaults/statusbar_update_after_e2e",
+	                test_statusbar_update_after_e2e);
 	g_test_add_func("/shellter_defaults/statusbar_since_marker",
 	                test_statusbar_since_marker);
 	g_test_add_func("/shellter_defaults/statusbar_no_section", test_statusbar_no_section);

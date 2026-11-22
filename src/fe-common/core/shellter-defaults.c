@@ -123,15 +123,24 @@ int shellter_defaults_migrate(CONFIG_REC *config)
 	                                      SHELLTER_DEFAULTS_VERSION);
 }
 
-/* the statusbar version that added the e2e item to the info bar */
+/* the statusbar version that added the e2e item to the info bar, and the
+   one that added the update item after it */
 #define STATUSBAR_E2E_SINCE 1
+#define STATUSBAR_UPDATE_SINCE 2
 
 /* statusbar.default.info.items of every irssi.conf erssi shipped since the
    info bar became the default (53b2a8b1) up to the one with the e2e item
    (2026.10.0): its items in order, each "<name>[ <key>=<value>...]". All
    of them shipped the same list. */
-static const char *const shipped_info_items[][7] = {
+static const char *const shipped_info_items[][8] = {
 	{ "time", "user", "window", "lag", "act", "more alignment=right", NULL },
+};
+
+/* the lists erssi shipped from the e2e item up to the update item: the one
+   the e2e migration also produces. A config with exactly this list gets the
+   update item after lag. */
+static const char *const shipped_info_items_v2[][8] = {
+	{ "time", "user", "window", "e2e", "lag", "act", "more alignment=right", NULL },
 };
 
 /* "<name>[ <key>=<value>...]" of an item of a bar, NULL when it is no
@@ -156,19 +165,20 @@ static char *item_text(CONFIG_NODE *item)
 	return g_string_free(str, FALSE);
 }
 
-/* items holds exactly the items of one list erssi shipped */
-static int shipped_info_list(CONFIG_NODE *items)
+/* items holds exactly the items of one of the `n_lists' lists in `lists' */
+static int shipped_info_list(CONFIG_NODE *items, const char *const (*lists)[8],
+                             int n_lists)
 {
 	int i, j;
 
-	for (i = 0; i < (int) G_N_ELEMENTS(shipped_info_items); i++) {
+	for (i = 0; i < n_lists; i++) {
 		GSList *tmp = config_node_first(items->value);
 		int same = TRUE;
 
-		for (j = 0; same && shipped_info_items[i][j] != NULL; j++) {
+		for (j = 0; same && lists[i][j] != NULL; j++) {
 			char *text = tmp == NULL ? NULL : item_text(tmp->data);
 
-			same = g_strcmp0(text, shipped_info_items[i][j]) == 0;
+			same = g_strcmp0(text, lists[i][j]) == 0;
 			g_free(text);
 			if (tmp != NULL)
 				tmp = config_node_next(tmp);
@@ -197,7 +207,7 @@ static CONFIG_NODE *info_items(CONFIG_REC *config)
 
 int shellter_statusbar_migrate_to(CONFIG_REC *config, int version)
 {
-	CONFIG_NODE *marker, *node, *items, *window;
+	CONFIG_NODE *marker, *node, *items, *window, *lag;
 	int added = FALSE, stored;
 
 	g_return_val_if_fail(config != NULL, FALSE);
@@ -219,12 +229,28 @@ int shellter_statusbar_migrate_to(CONFIG_REC *config, int version)
 	   config already at version 1 alone (the user may have removed it).
 	   shipped_info_items are the lists before version 1. */
 	items = info_items(config);
-	if (stored < STATUSBAR_E2E_SINCE && items != NULL && shipped_info_list(items) &&
+	if (stored < STATUSBAR_E2E_SINCE && items != NULL &&
+	    shipped_info_list(items, shipped_info_items, G_N_ELEMENTS(shipped_info_items)) &&
 	    config_node_find(items, "e2e") == NULL) {
 		window = config_node_find(items, "window");
 		/* every shipped list has window, as a block */
 		config_node_section_index(config, items, "e2e",
 		                          g_slist_index(items->value, window) + 1,
+		                          NODE_TYPE_BLOCK);
+		added = TRUE;
+	}
+
+	/* version 2: the update item after lag. Matches the e2e list, which is
+	   what the block above also produces, so an older config gets both the
+	   e2e item and the update item in one run. */
+	if (stored < STATUSBAR_UPDATE_SINCE && items != NULL &&
+	    shipped_info_list(items, shipped_info_items_v2,
+	                      G_N_ELEMENTS(shipped_info_items_v2)) &&
+	    config_node_find(items, "update") == NULL) {
+		lag = config_node_find(items, "lag");
+		/* every list matched here has lag, as a block */
+		config_node_section_index(config, items, "update",
+		                          g_slist_index(items->value, lag) + 1,
 		                          NODE_TYPE_BLOCK);
 		added = TRUE;
 	}

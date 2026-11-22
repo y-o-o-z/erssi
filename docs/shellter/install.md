@@ -723,6 +723,10 @@ start erssi adds what changed, once:
 - **E2E statusbar item.** If your info bar is still the one erssi shipped,
   it gets the `e2e` item after `window`. A bar you changed keeps its items:
   `/statusbar additem -after window e2e info`.
+- **Update statusbar item.** The same way, an info bar still matching the
+  one erssi shipped gets the `update` item after `lag` (it shows a newer
+  release while there is one and takes no space otherwise). A bar you
+  changed keeps its items: `/statusbar additem -after lag update info`.
 - **mentions.pl is built in now.** Its settings (`mentions_window`,
   `mentions_log`, `mentions_log_file`) move to the built-in Mentions
   window, and if the script was in `scripts/autorun` the log stays on.

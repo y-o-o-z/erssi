@@ -110,7 +110,7 @@ installed from another `--repo`):
 /update check                            # check now
 /update install                          # install the newest release, in the background
 /update install -upgrade                 # ... and /upgrade once it is installed
-/statusbar additem -after lag update info   # show [update 2026.11.2] while there is one
+/statusbar info remove update            # the info bar shows [update 2026.11.2] by default; this hides it
 ```
 
 - **What runs** — the installer that was installed with erssi
@@ -139,8 +139,8 @@ installed from another `--repo`):
   again. The shipped config marks no activity for
   client messages, so the line is easy to miss from another window: the
   `update` statusbar item shows the new version while there is one and
-  takes no space otherwise. It is not in the shipped statusbars; the
-  command above adds it. A failed
+  takes no space otherwise. The shipped info bar carries it after `lag`, so
+  it is there by default; the command above hides it. A failed
   check (no network, GitHub down) is not shown; after three in a row, one
   line says so, and `/update` shows why the last one failed. A release tag that moved to another commit is shown at
   once: report it.

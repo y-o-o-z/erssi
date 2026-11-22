@@ -29,7 +29,7 @@ int shellter_defaults_migrate_rows(CONFIG_REC *config, const SHELLTER_DEFAULT_RE
 /* erssi/statusbar_version of a config whose info bar got the items added
    to the shipped one since 2026.10.0 (the e2e item), when it was the
    shipped one */
-#define SHELLTER_STATUSBAR_VERSION 1
+#define SHELLTER_STATUSBAR_VERSION 2
 
 /* Adds the item e2e after window to statusbar.default.info.items when that
    list is exactly one erssi shipped in irssi.conf (a copy of the default
