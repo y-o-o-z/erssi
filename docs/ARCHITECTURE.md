@@ -1,1027 +1,374 @@
-# Erssi IRC Client - Architecture Overview & Anti-Flood Module Guide
+# erssi — Architecture Overview
 
-## Executive Summary
+A map of the codebase for people who want to read, extend or audit it. This
+is the Shellter Edition tree, but the architecture below is erssi's and, under
+that, irssi's: the layering, the signal system and the module pattern are the
+same ones you will find upstream. For what this edition adds on top, see
+[`../README.md`](../README.md); for how it tracks upstream, see
+[`UPSTREAM.md`](UPSTREAM.md).
 
-Erssi is a modernized IRC client built on irssi's foundation with a clean three-layer architecture:
-- **Core Layer**: IRC protocol handling (`src/core/`, `src/irc/`)
-- **Frontend-Agnostic Layer**: Common UI logic (`src/fe-common/`)
-- **Frontend Layers**: ANSI TUI (`src/fe-ansi/`), Web (`src/fe-web/`), Headless (`src/fe-none/`)
-
-This document provides everything needed to understand and create an anti-flood module by examining existing patterns, particularly the `src/irc/flood/` module as a reference.
+All paths are relative to the repository root.
 
 ---
 
-## 1. Overall Directory Structure
+## 1. The layers
+
+erssi is organised as a stack. Each layer depends only on the ones below it,
+and the frontends at the top are interchangeable — the same core drives a
+terminal, a web browser or a headless process.
 
 ```
-erssi/
-├── src/
-│   ├── core/                 # Core IRC client logic
-│   │   ├── servers.c, nicklist.c, channels.c, queries.c
-│   │   ├── settings.c        # Settings/configuration system
-│   │   ├── signals.c         # Signal/hook system
-│   │   ├── commands.c        # Command processing
-│   │   ├── rawlog.c          # Raw IRC logging
-│   │   ├── credential.c      # Credential encryption system
+┌───────────────────────────────────────────────────────────────┐
+│  Frontends          fe-ansi (terminal)   fe-web (browser)       │
+│                     fe-none (headless)   fe-fuzz (fuzz harness)  │
+├───────────────────────────────────────────────────────────────┤
+│  Frontend-agnostic  fe-common/core, fe-common/irc               │
+│  UI logic           (windows, printtext, themes, hilight, …)    │
+├───────────────────────────────────────────────────────────────┤
+│  IRC protocol       irc/core  (+ dcc, flood, anti-floodnet,     │
+│                     notifylist, proxy)                          │
+├───────────────────────────────────────────────────────────────┤
+│  Core               servers, channels, queries, nicklist,       │
+│                     settings, signals, commands, modules, …     │
+└───────────────────────────────────────────────────────────────┘
+
+   Cross-cutting subsystems used from several layers:
+     e2e/            native end-to-end encryption (RPE2E)
+     otr/            Off-the-Record messaging
+     image-preview/  inline image rendering in the terminal
+     perl/           Perl scripting bridge
+     lib-config/     config-file parser
+```
+
+**Core** (`src/core/`) has no UI at all. It owns the IRC-independent model —
+servers, channels, queries, the nick list, settings, the command parser, the
+module loader and, above all, the **signal system** that every other layer
+talks through. Security-sensitive core code lives here too, e.g.
+`src/core/credential.c` (see the note in §6).
+
+**IRC protocol** (`src/irc/core/`) turns bytes on the wire into classified
+events and back. Around it sit the IRC feature modules: `dcc/` (file
+transfer), `flood/` and `anti-floodnet/` (flood protection), `notifylist/`
+(watch list) and `proxy/` (the irssi-proxy server).
+
+**Frontend-agnostic UI** (`src/fe-common/`) is everything a frontend needs
+that is *not* tied to one display: window and window-item management,
+`printtext` formatting, themes, highlighting, the status bar model. Both the
+terminal and the web frontend build on it.
+
+**Frontends** (`src/fe-*`) are the only layer that knows about a screen, a
+socket to a browser, or nothing at all:
+
+| Frontend | Entry point | Purpose |
+|----------|-------------|---------|
+| `fe-ansi` | `src/fe-ansi/irssi.c` (`main`) | The terminal client: pure ANSI/VT100 rendering, sidepanels, mouse, gestures, 24-bit colour. |
+| `fe-web` | — (loaded as a module) | A WebSocket server that mirrors the session to a browser. |
+| `fe-none` | `src/fe-none/irssi.c` (`main`) | Headless: a core with a main loop and no display, used for scripting/bots. |
+| `fe-fuzz` | `src/fe-fuzz/` | A libFuzzer harness that drives the parsers of each subsystem. Built only with `-Dwith-fuzzer=yes`. |
+
+---
+
+## 2. Directory map
+
+```
+src/
+├── core/              IRC-independent model + the signal system
+│   ├── servers.c, channels.c, queries.c, nicklist.c
+│   ├── settings.c            settings/configuration
+│   ├── signals.c             signal/hook system (the backbone)
+│   ├── commands.c            /command parsing and dispatch
+│   ├── modules.c, modules.h  module loader; MODULE_DATA macros
+│   ├── credential.c          credential handling (see §6)
+│   └── ...
+├── irc/
+│   ├── core/          IRC protocol: parsing, events, modes, CTCP
+│   │   ├── irc.c             raw-line parsing and event classification
+│   │   ├── irc-servers.c     IRC server records
+│   │   ├── channel-events.c, modes.c, ctcp.c
 │   │   └── ...
-│   ├── irc/                  # IRC-specific modules
-│   │   ├── core/             # IRC protocol handling
-│   │   │   ├── irc.c         # Lowest-level IRC parsing (signal emission point)
-│   │   │   ├── irc-servers.c # Server management
-│   │   │   ├── channel-events.c
-│   │   │   ├── modes.c, ctcp.c
-│   │   │   └── ...
-│   │   ├── flood/            # Flood protection module (REFERENCE)
-│   │   │   ├── flood.c
-│   │   │   ├── autoignore.c
-│   │   │   └── flood.h
-│   │   ├── dcc/              # File transfer
-│   │   ├── proxy/            # IRC proxy
-│   │   └── notifylist/       # Notify list
-│   ├── fe-common/            # Frontend-agnostic UI logic
-│   │   ├── core/
-│   │   │   ├── printtext.c   # Message display
-│   │   │   ├── fe-windows.c  # Window management
-│   │   │   ├── themes.c      # Theme system
-│   │   │   ├── hilight-text.c # Highlighting
-│   │   │   └── ...
-│   │   └── irc/              # IRC-specific UI helpers
-│   ├── fe-ansi/              # ANSI Terminal UI (pure ANSI/VT100)
-│   │   ├── irssi.c           # Main entry point & init order
-│   │   ├── mainwindows.c     # Window management
-│   │   ├── gui-printtext.c   # Text rendering
-│   │   ├── gui-readline.c    # Input handling
-│   │   ├── sidepanels-*.c    # Advanced sidepanel system
-│   │   ├── gui-gestures.c    # Mouse gesture navigation
-│   │   ├── gui-mouse.c       # Mouse protocol handling
-│   │   ├── term-ansi.c       # Pure ANSI terminal abstraction
-│   │   └── ...
-│   ├── fe-web/               # WebSocket web interface
-│   │   ├── fe-web.c          # Coordinator
-│   │   ├── fe-web-server.c   # TCP/WebSocket server
-│   │   ├── fe-web-client.c   # Per-client state
-│   │   ├── fe-web-signals.c  # IRC event forwarding (55KB)
-│   │   ├── fe-web-crypto.c   # Message encryption
-│   │   ├── fe-web-json.c     # JSON serialization
-│   │   ├── fe-web-websocket.c # RFC 6455 protocol
-│   │   ├── fe-web-ssl.c      # TLS/SSL support
-│   │   └── fe-web.h          # Public API
-│   ├── lib-config/           # Config file parsing
-│   ├── perl/                 # Perl scripting
-│   ├── otr/                  # Off-The-Record encryption
-│   └── fe-none/              # Headless mode
-├── tests/                    # Test suite
-│   ├── irc/core/
-│   ├── fe-ansi/
-│   └── fe-common/core/
-├── themes/                   # Color themes
-├── docs/                     # Documentation
-└── README.md, meson.build, CLAUDE.md
+│   ├── dcc/           file transfer
+│   ├── flood/         simple per-nick flood detection (small reference module)
+│   ├── anti-floodnet/ netsplit/CTCP/nick-change flood protection (multi-file module)
+│   ├── notifylist/    watch list
+│   └── proxy/         irssi-proxy server
+├── fe-common/
+│   ├── core/          windows, printtext, themes, hilight, statusbar model
+│   └── irc/           IRC-specific display helpers
+├── fe-ansi/           terminal frontend
+│   ├── irssi.c              main(); textui_init()/textui_finish_init()
+│   ├── mainwindows.c        split-window layout
+│   ├── gui-printtext.c      text rendering
+│   ├── gui-readline.c       input handling
+│   ├── gui-entry.c          input line editing
+│   ├── gui-mouse.c          mouse protocol (SGR)
+│   ├── gui-gestures.c       mouse-gesture navigation
+│   ├── sidepanels-*.c       window-list / nick-list side panels
+│   └── term-ansi.c          ANSI/VT100 terminal abstraction
+├── fe-web/            WebSocket web frontend
+│   ├── fe-web.c             coordinator
+│   ├── fe-web-server.c      TCP/WebSocket listener
+│   ├── fe-web-client.c      per-client state
+│   ├── fe-web-signals.c     forwards IRC events to clients (a large file)
+│   ├── fe-web-websocket.c   RFC 6455 framing
+│   ├── fe-web-json.c        JSON serialisation
+│   ├── fe-web-crypto.c      transport encryption
+│   └── fe-web-ssl.c         TLS
+├── fe-none/           headless frontend
+├── fe-fuzz/           libFuzzer harness + corpus (per-subsystem targets)
+├── e2e/               native end-to-end encryption (RPE2E) — see §7
+├── otr/               Off-the-Record messaging — see §7
+├── image-preview/     inline image preview (libcurl + chafa) — see §7
+├── lib-config/        config-file parser
+└── perl/              Perl scripting bridge
 
+tests/                 unit tests, run via `meson test` (see §8)
+themes/                colour themes (incl. the shellter theme)
+docs/                  this file, QUICK_REFERENCE.md, docs/shellter/, help/
+meson.build, meson_options.txt
 ```
 
 ---
 
-## 2. Message Flow: From Server to Module
+## 3. The signal system — the backbone
 
-Understanding this flow is **critical** for implementing anti-flood:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        IRC SERVER                                │
-│                    (sends raw IRC line)                          │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-                 /Users/k/dev/erssi/src/irc/core/irc.c
-                    Line 543: irc_parse_incoming()
-                    (reads socket via net_sendbuffer)
-                              ↓
-                   signal_emit_id(signal_server_incoming, ...)
-                   (signals that raw IRC line received)
-                              ↓
-                    Line 528: irc_parse_incoming_line()
-                 (parses IRC prefix: @tags :nick!user@host)
-                              ↓
-              signal_emit_id(signal_server_event_tags, ...)
-                  (signals with parsed components)
-                              ↓
-           Line 365: irc_server_event()
-         (determines event type: "event privmsg", "event notice", etc.)
-                              ↓
-          Line 389: signal_emit(signal, 4, server, args, nick, address)
-     (emits event-specific signal like "event privmsg", "event notice")
-                              ↓
-      ┌──────────────────────┬───────────────────────┬──────────────────┐
-      ↓                      ↓                       ↓                  ↓
- flood module         CTCP handlers          fe-common/irc        fe-web signals
- (monitors)           (processes)          (processes display)   (web clients)
-```
-
-**Key Points**:
-1. **Raw IRC parsing**: `src/irc/core/irc.c::irc_parse_incoming()` at line 543
-2. **Signal emission point**: `signal_emit_id(signal_server_incoming, ...)` at line 560
-3. **Event classification**: `irc_server_event()` at line 365 converts raw IRC to `event PRIVMSG`, etc.
-4. **Module interception**: Modules register signal handlers to intercept at appropriate levels
-
----
-
-## 3. Signal/Hook System - The Backbone
-
-### How Signals Work
-
-The signal system is **gtk-like** and central to all communication:
+Nearly all communication between layers goes through a gtk-like signal bus
+(`src/core/signals.c`). A layer **emits** a named signal; any number of
+handlers, registered by other layers or by Perl scripts, run in turn and may
+stop propagation. This is why the frontends can be swapped out: core and the
+IRC layer only ever emit signals, they never call a frontend directly.
 
 ```c
-// 1. Register a handler (usually in module init)
+/* register a handler (usually in a module's *_init) */
 signal_add("event privmsg", (SIGNAL_FUNC) my_privmsg_handler);
 
-// 2. Handler receives signal with parameters
 static void my_privmsg_handler(IRC_SERVER_REC *server, const char *data,
                                const char *nick, const char *addr) {
-    // Process message
+    /* ... */
 }
 
-// 3. Signal is emitted from event source
+/* emit from the event source */
 signal_emit("event privmsg", 4, server, args, nick, address);
 
-// 4. Remove handler when done
+/* remove when the module unloads */
 signal_remove("event privmsg", (SIGNAL_FUNC) my_privmsg_handler);
 ```
 
-### Key Signals for Anti-Flood Modules
+Ordering matters. Use `signal_add_first()` for a handler that must run
+**before** the default one (e.g. a filter that may stop the event), and
+`signal_add_last()` for one that must run **after** (e.g. a frontend that
+displays the final result). `signal_stop()` halts propagation to later
+handlers.
 
-**Lowest-Level IRC Signals** (closest to raw):
-```c
-// Fired for every line from server (most raw)
-signal_emit_id(signal_server_incoming, 2, server, raw_line);
+Signals come in levels of abstraction:
 
-// Fired after basic parsing (prefix extracted)
-signal_emit_id(signal_server_event_tags, 5, server, command, nick, addr, tags);
+- **Rawest** — `"server incoming"` (every line from the server),
+  `"server event"` (after prefix/tag parsing).
+- **IRC protocol events** — `"event privmsg"`, `"event notice"`,
+  `"event join"`, `"ctcp msg"`, numeric replies `"event 311"` … `"event 999"`.
+- **Message events** (frontend-agnostic, higher level) — `"message public"`,
+  `"message private"`, `"message join"`, `"message kick"`, `"message topic"`, …
+- **Lifecycle / config** — `"server connected"`, `"server disconnected"`,
+  `"server destroyed"`, `"setup changed"`, `"module loaded"`.
 
-// Fired for event-specific handlers
-signal_emit("event privmsg", 4, server, args, nick, address);
-signal_emit("event notice", 4, server, args, nick, address);
-signal_emit("ctcp msg", 5, server, data, nick, addr, target);
-```
-
-**Message-Level Signals** (higher abstraction):
-```c
-signal_emit("message public", 6, server, msg, nick, addr, target, ...);
-signal_emit("message private", 6, server, msg, nick, addr, ...);
-signal_emit("message join", ...);
-signal_emit("message part", ...);
-signal_emit("message quit", ...);
-signal_emit("message kick", ...);
-signal_emit("message topic", ...);
-```
-
-**Server Lifecycle Signals**:
-```c
-signal_emit("server connected", 1, server);
-signal_emit("server disconnected", 1, server);
-signal_emit("server destroyed", 1, server);
-```
-
-**Configuration Signals**:
-```c
-signal_emit("setup changed", 0);  // Any setting changed
-```
-
-**Module Loading Signals**:
-```c
-signal_emit("module loaded", 2, module_name, module_rec);
-signal_emit("module unloaded", 2, module_name, module_rec);
-```
-
-### Signal Registration Order (Critical!)
-
-From `src/fe-ansi/irssi.c::textui_finish_init()`:
-
-```c
-gui_printtext_init();
-gui_readline_init();
-gui_entry_init();
-mainwindows_init();
-mainwindow_activity_init();
-gui_windows_init();
-gui_mouse_init();
-gui_gestures_init();       // BEFORE sidepanels!
-sidepanels_init();         // Depends on mouse system
-// ... later, in module loading
-irc_flood_init();          // Flood module registers signals
-```
-
-**Important**: Use `signal_add_first()` for handlers that must run BEFORE default handlers, `signal_add_last()` for those that run AFTER.
+The handler signature must match the emit exactly (argument count and types);
+a mismatch is the most common cause of a crash in a new module.
+`docs/QUICK_REFERENCE.md` lists the signal names and signatures you will reach
+for most often, and `docs/signals.txt` is the full upstream reference.
 
 ---
 
-## 4. Existing Flood Module - Reference Implementation
+## 4. Message flow: wire → display
 
-### File Structure
+Tracing one inbound PRIVMSG shows how the layers chain through signals. All
+of these functions live in `src/irc/core/irc.c` unless noted.
 
 ```
-src/irc/flood/
-├── flood.c          # Main flood detection logic (350 lines)
-├── flood.h          # Public interface (7 lines)
-├── autoignore.c     # Auto-ignore integration
-├── autoignore.h
-├── module.h         # Generated module metadata
-└── meson.build      # Build configuration
+IRC server sends a raw line
+        ↓
+irc_parse_incoming()                    reads the socket
+        ↓   emit "server incoming" (server, raw_line)
+irc_parse_incoming_line()               splits @tags :prefix command args
+        ↓   emit "server event" (parsed components)
+irc_server_event()                      classifies: PRIVMSG, NOTICE, …
+        ↓   emit "event privmsg" (server, args, nick, address)
+   ┌────────────────┬─────────────────────┬──────────────────────┐
+   ↓                ↓                     ↓                      ↓
+flood/            ctcp handlers       fe-common/irc          fe-web
+anti-floodnet     (irc/core)          builds the display      (if loaded)
+(may ignore)                          "message public" →      mirrors to
+                                      fe-ansi renders         browser clients
 ```
 
-### Core Data Structures (flood.c)
+The split at the bottom is the whole point of the architecture: a flood
+module, the terminal renderer and the web frontend all see the *same* event,
+each at the level it cares about, without knowing the others exist.
 
-```c
-typedef struct {
-    char *nick;
-    GSList *items;              // List of FLOOD_ITEM_REC
-} FLOOD_REC;
+---
 
-typedef struct {
-    char *target;               // Channel or query target
-    int level;                  // MSGLEVEL_PUBLIC, MSGLEVEL_MSGS, etc.
-    GSList *msgtimes;           // List of time_t pointers (timestamps)
-} FLOOD_ITEM_REC;
+## 5. Module pattern and per-server state
 
-// Per-server tracking (in MODULE_DATA(server)->floodlist)
-// GHashTable: nick -> FLOOD_REC*
-```
-
-### Module Initialization Pattern (Critical)
+An IRC feature module is a small unit with an `_init`/`_deinit` pair that
+registers its signals and settings on load and unregisters them on unload:
 
 ```c
 void irc_flood_init(void) {
-    // 1. Register settings with defaults
-    settings_add_int("flood", "flood_timecheck", 8);      // seconds
-    settings_add_int("flood", "flood_max_msgs", 4);       // max messages
+    settings_add_int("flood", "flood_timecheck", 8);
+    settings_add_int("flood", "flood_max_msgs", 4);
 
-    // 2. Initialize module state
-    flood_tag = -1;             // Timer tag
-    read_settings();            // Load current settings
-
-    // 3. Register for configuration changes
-    signal_add("setup changed", (SIGNAL_FUNC) read_settings);
-
-    // 4. Register for server lifecycle (with signal_add_first!)
-    signal_add_first("server connected", (SIGNAL_FUNC) flood_init_server);
+    read_settings();
+    signal_add("setup changed",    (SIGNAL_FUNC) read_settings);
+    signal_add_first("server connected",  (SIGNAL_FUNC) flood_init_server);
     signal_add("server destroyed", (SIGNAL_FUNC) flood_deinit_server);
 
-    // 5. Register for message events (add AFTER setup)
-    // These are added dynamically in read_settings() when enabled
-
-    // 6. Call submodule initialization
-    autoignore_init();
-
-    // 7. Validate settings exist
-    settings_check();
-
-    // 8. Register module itself
     module_register("flood", "irc");
 }
 
 void irc_flood_deinit(void) {
-    autoignore_deinit();
-
-    if (flood_tag != -1) {
-        g_source_remove(flood_tag);
-        // Remove signal handlers
-    }
-
-    // Unregister all signals in reverse of registration
-    signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
-    signal_remove("server connected", (SIGNAL_FUNC) flood_init_server);
-    signal_remove("server destroyed", (SIGNAL_FUNC) flood_deinit_server);
+    /* remove everything _init added, in reverse */
 }
 ```
 
-### Event Handlers
+Because core creates and destroys server records, a module cannot keep its
+per-server state in a global. Instead it hangs its own opaque record off each
+`SERVER_REC` with the `MODULE_DATA` macros (`src/core/modules.h`):
 
 ```c
-// Per-server initialization (called on "server connected" signal)
-static void flood_init_server(IRC_SERVER_REC *server) {
-    MODULE_SERVER_REC *rec;
-    g_return_if_fail(server != NULL);
-    if (!IS_IRC_SERVER(server)) return;
+typedef struct { GHashTable *floodlist; } MODULE_SERVER_REC;
 
-    rec = g_new0(MODULE_SERVER_REC, 1);
-    rec->floodlist = g_hash_table_new(
-        (GHashFunc) i_istr_hash,
-        (GCompareFunc) i_istr_equal
-    );
-    MODULE_DATA_SET(server, rec);  // Attach to server
-}
-
-// Called on every PRIVMSG (via signal_add in read_settings)
-static void flood_privmsg(IRC_SERVER_REC *server, const char *data,
-                          const char *nick, const char *addr) {
-    char *params, *target, *text;
-
-    // Parse IRC parameters
-    params = event_get_params(data, 2, &target, &text);
-
-    // Check ignore list first
-    level = server_ischannel(SERVER(server), target) ? 
-        MSGLEVEL_PUBLIC : MSGLEVEL_MSGS;
-    if (addr != NULL && !ignore_check(SERVER(server), nick, addr, target, text, level)) {
-        flood_newmsg(server, level, nick, addr, target);  // Track message
-    }
-
-    g_free(params);
-}
-
-// Core flood detection logic
-static void flood_newmsg(IRC_SERVER_REC *server, int level, const char *nick,
-                         const char *host, const char *target) {
-    MODULE_SERVER_REC *mserver = MODULE_DATA(server);
-    FLOOD_REC *flood = g_hash_table_lookup(mserver->floodlist, nick);
-
-    // Find or create tracking record for (nick, level, target)
-    FLOOD_ITEM_REC *rec = flood == NULL ? NULL : 
-        flood_find(flood, level, target);
-
-    if (rec != NULL) {
-        // Remove timestamps older than flood_timecheck
-        for (times = rec->msgtimes; times != NULL; times = tnext) {
-            if (*now - *((time_t *) times->data) >= flood_timecheck) {
-                rec->msgtimes = g_slist_remove(rec->msgtimes, data);
-                g_free(data);
-            }
-        }
-
-        // Add current timestamp
-        ttime = g_new(time_t, 1);
-        *ttime = now;
-        rec->msgtimes = g_slist_append(rec->msgtimes, ttime);
-
-        // Check if exceeded limit
-        if (g_slist_length(rec->msgtimes) > flood_max_msgs) {
-            // FLOOD DETECTED! Emit signal
-            signal_emit("flood", 5, server, nick, host,
-                        GINT_TO_POINTER(rec->level), target);
-        }
-        return;
-    }
-
-    // First message from this nick/level/target - create tracking
-    // (initialization code...)
-}
-
-// Dynamic handler registration
-static void read_settings(void) {
-    flood_timecheck = settings_get_int("flood_timecheck");
-    flood_max_msgs = settings_get_int("flood_max_msgs");
-
-    if (flood_timecheck > 0 && flood_max_msgs > 0) {
-        if (flood_tag == -1) {
-            // Enable flood checking
-            flood_tag = g_timeout_add(5000, (GSourceFunc) flood_timeout, NULL);
-
-            signal_add("event privmsg", (SIGNAL_FUNC) flood_privmsg);
-            signal_add("event notice", (SIGNAL_FUNC) flood_notice);
-            signal_add("ctcp msg", (SIGNAL_FUNC) flood_ctcp);
-        }
-    } else if (flood_tag != -1) {
-        // Disable flood checking
-        g_source_remove(flood_tag);
-        flood_tag = -1;
-
-        signal_remove("event privmsg", (SIGNAL_FUNC) flood_privmsg);
-        signal_remove("event notice", (SIGNAL_FUNC) flood_notice);
-        signal_remove("ctcp msg", (SIGNAL_FUNC) flood_ctcp);
-    }
-}
-
-// Periodic cleanup (removes old entries every 5 seconds)
-static int flood_timeout(void) {
-    time_t now = time(NULL);
-    for (tmp = servers; tmp != NULL; tmp = tmp->next) {
-        IRC_SERVER_REC *rec = tmp->data;
-        if (!IS_IRC_SERVER(rec)) continue;
-
-        mserver = MODULE_DATA(rec);
-        g_hash_table_foreach_remove(mserver->floodlist,
-                                    (GHRFunc) flood_hash_check_remove,
-                                    &now);
-    }
-    return 1;  // Keep timer running
-}
-```
-
-### Emit Signal on Flood Detection
-
-When flood detected at line 215:
-```c
-signal_emit("flood", 5, server, nick, host,
-            GINT_TO_POINTER(rec->level), target);
-```
-
-This signal is caught by `autoignore` module which automatically ignores the flooder.
-
----
-
-## 5. Configuration System
-
-### How Settings Work
-
-**Definition** (usually in module init):
-```c
-settings_add_int("flood", "flood_timecheck", 8);
-settings_add_int("flood", "flood_max_msgs", 4);
-settings_add_bool("fe-text", "mouse_gestures", TRUE);
-settings_add_str("fe-text", "gesture_left_short", "/window prev");
-settings_add_time("flood", "autoignore_time", "5min");
-settings_add_level("flood", "autoignore_level", "");
-```
-
-**Reading**:
-```c
-int timecheck = settings_get_int("flood_timecheck");
-int max_msgs = settings_get_int("flood_max_msgs");
-const char *str = settings_get_str("some_setting");
-gboolean enabled = settings_get_bool("some_bool");
-int time_ms = settings_get_time("some_time");
-int level_bits = settings_get_level("some_level");
-```
-
-**User Configuration** (in `~/.erssi/config`):
-```
-settings = {
-  flood = {
-    flood_timecheck = "10";
-    flood_max_msgs = "5";
-  };
-  fe-text = {
-    mouse_gestures = "on";
-  };
-};
-```
-
-**Listen for Changes**:
-```c
-signal_add("setup changed", (SIGNAL_FUNC) on_settings_changed);
-signal_add("setting_changed", (SIGNAL_FUNC) on_single_setting_changed);
-```
-
-**Key Insight**: Settings are **file-backed** (loaded from config), but modules can listen for changes via signals.
-
----
-
-## 6. Per-Server Module Data
-
-### Module Data Pattern
-
-Most modules need to store per-server state:
-
-```c
-// Define per-server structure
-typedef struct {
-    GHashTable *floodlist;      // Nick -> FLOOD_REC*
-    // ... other per-server state
-} MODULE_SERVER_REC;
-
-// Attach to server on "server connected"
 static void flood_init_server(IRC_SERVER_REC *server) {
     MODULE_SERVER_REC *rec = g_new0(MODULE_SERVER_REC, 1);
-    rec->floodlist = g_hash_table_new(...);
-    MODULE_DATA_SET(server, rec);   // Macro that attaches to server->module_data
+    rec->floodlist = g_hash_table_new((GHashFunc) i_istr_hash,
+                                      (GCompareFunc) i_istr_equal);
+    MODULE_DATA_SET(server, rec);          /* attach */
 }
 
-// Access anywhere
-MODULE_SERVER_REC *mserver = MODULE_DATA(server);  // Macro that retrieves
+MODULE_SERVER_REC *rec = MODULE_DATA(server);   /* retrieve, anywhere */
 
-// Clean up on "server destroyed"
 static void flood_deinit_server(IRC_SERVER_REC *server) {
-    MODULE_SERVER_REC *mserver = MODULE_DATA(server);
-    if (mserver != NULL) {
-        g_hash_table_destroy(mserver->floodlist);
-        g_free(mserver);
-    }
-    MODULE_DATA_UNSET(server);
+    MODULE_SERVER_REC *rec = MODULE_DATA(server);
+    if (rec) { g_hash_table_destroy(rec->floodlist); g_free(rec); }
+    MODULE_DATA_UNSET(server);             /* detach on "server destroyed" */
 }
 ```
 
-The `MODULE_DATA()` macro system allows each module to attach opaque data to server records without conflicting with other modules.
+Two reference modules are worth reading before writing a new one:
+
+- **`src/irc/flood/`** — the smallest complete example: detect rapid messages
+  from one nick, emit a `"flood"` signal that `autoignore.c` acts on.
+- **`src/irc/anti-floodnet/`** — a multi-file module split by concern
+  (`floodnet-ctcp.c`, `floodnet-nick.c`, `floodnet-stats.c`) with its own
+  status commands. Read this for how a larger module is organised.
+
+A module's build entry is a `meson.build` in its directory, pulled in by a
+`subdir(...)` line in the parent `meson.build`.
 
 ---
 
-## 7. Memory Management Patterns
+## 6. A note on `src/core/credential.c`
 
-Erssi uses **GLib memory management**:
-
-```c
-// Allocation
-char *str = g_strdup("hello");
-char *new = g_strdup_printf("format: %s", str);
-STRUCT *rec = g_new0(STRUCT, 1);
-GSList *list = g_slist_append(list, item);
-GHashTable *hash = g_hash_table_new(...);
-
-// Freeing
-g_free(str);
-g_free(new);
-g_free(rec);
-g_slist_free(list);
-g_slist_foreach(list, (GFunc) g_free, NULL);
-g_slist_free_full(list, g_free);  // Free list and all items
-g_hash_table_destroy(hash);        // Includes destroy callbacks
-g_hash_table_remove(hash, key);    // Calls destroy callback
-```
-
-**Critical**: Always use `g_free()` for allocations made with `g_malloc()/g_strdup()/g_new()`. Mismatches cause crashes.
+The credential-encryption subsystem is present in the tree but **disabled**:
+interactive attempts to enable it are refused (`CREDENTIAL_DISABLED_MSG`).
+Do not treat it as a live feature or re-enable it without a decision to do so;
+it is kept for config-compatibility, not as a supported path. Code that
+touches plaintext there wipes it before freeing (`credential_wipe_str` /
+`OPENSSL_cleanse`).
 
 ---
 
-## 8. How Fe-Web Differs (Advanced Pattern)
+## 7. Shellter subsystems
 
-Fe-web shows an alternative pattern for more complex modules with multiple frontends:
+These are the parts this edition leans on most. Each is optional at build time
+(`meson_options.txt`) and `auto`-detected by default.
 
-### Modular Signal Handling
-
-```c
-// fe-web-signals.c: 55KB file with 50+ signal handlers
-
-void fe_web_signals_init(void) {
-    // Message signals
-    signal_add("message public", (SIGNAL_FUNC) sig_message_public);
-    signal_add("message private", (SIGNAL_FUNC) sig_message_private);
-    signal_add("message join", (SIGNAL_FUNC) sig_message_join);
-    signal_add("message part", (SIGNAL_FUNC) sig_message_part);
-    // ... many more
-
-    // WHOIS events (multi-line)
-    signal_add_last("event 311", (SIGNAL_FUNC) event_whois);
-    signal_add_last("event 312", (SIGNAL_FUNC) event_whois_server);
-    signal_add_last("event 318", (SIGNAL_FUNC) event_end_of_whois);
-
-    // Server events
-    signal_add("server connected", (SIGNAL_FUNC) sig_server_connected);
-    signal_add("server disconnected", (SIGNAL_FUNC) sig_server_disconnected);
-
-    // Activity tracking
-    signal_add("window hilight", (SIGNAL_FUNC) sig_window_hilight);
-    signal_add("window activity", (SIGNAL_FUNC) sig_window_activity);
-}
-```
-
-### Multi-Line Event Assembly
-
-Fe-web uses a hash table to assemble multi-line IRC responses (like WHOIS):
-
-```c
-// Hash table to track in-progress WHOIS requests
-static GHashTable *active_whois = NULL;  // Key: "servername:nick"
-
-// Called on "event 311" (start of WHOIS reply)
-static void event_whois(IRC_SERVER_REC *server, const char *data) {
-    char *nick = event_get_param(&data);
-    WHOIS_REC *whois = whois_get_or_create(server, nick);
-    // Extract fields from data
-    whois->user = g_strdup(user);
-    whois->host = g_strdup(host);
-    // ... etc
-}
-
-// Called on "event 312" (WHOIS server info)
-static void event_whois_server(IRC_SERVER_REC *server, const char *data) {
-    char *nick = event_get_param(&data);
-    WHOIS_REC *whois = whois_get_or_create(server, nick);  // Get existing
-    whois->server = g_strdup(server_name);
-}
-
-// Called on "event 318" (end of WHOIS)
-static void event_end_of_whois(IRC_SERVER_REC *server, const char *data) {
-    char *nick = event_get_param(&data);
-    WHOIS_REC *whois = g_hash_table_lookup(active_whois, key);
-    
-    // Now send complete WHOIS message to web clients
-    WEB_MESSAGE_REC *msg = fe_web_message_new(WEB_MSG_WHOIS);
-    // ... populate msg with complete WHOIS data ...
-    fe_web_send_to_server_clients(server, msg);
-    
-    // Clean up
-    g_hash_table_remove(active_whois, key);
-}
-```
+- **E2E — native end-to-end encryption** (`src/e2e/`, `-Dwith-e2e`). The RPE2E
+  protocol implemented directly against OpenSSL (no extra crypto library).
+  Split into protocol (`e2e-proto.c`), crypto primitives (`e2e-crypto.c`),
+  the keyring (`e2e-keyring.c`), wire framing (`e2e-wire.c`), the outbound
+  queue (`e2e-outq.c`), scope/state, the status bar, the JSON view and
+  `e2e-web.c` for E2E over the web frontend (see `docs/fe-web-e2e.md`).
+  `e2e_core_init()` registers the subsystem. Its parsers have dedicated fuzz
+  targets under `src/fe-fuzz/e2e/`.
+- **OTR — Off-the-Record** (`src/otr/`, `-Dwith-otr`). The classic OTR messaging
+  support (libotr), with its own frontend formats and commands.
+- **Image preview** (`src/image-preview/`, `-Dwith-image-preview`). Fetches an
+  image over libcurl (`image-preview-fetch.c`), decodes it (`image-decode.c` /
+  `stb_image.h`), caches it (`image-preview-cache.c`) and renders it to the
+  terminal with chafa (`image-preview-chafa.c`). The fetch path is
+  network-facing; its SSRF address checks are the kind of thing an audit
+  should look at first.
+- **fe-web** (`src/fe-web/`, `-Dwith-fe-web`). The WebSocket frontend; see §1/§2.
+- **Perl** (`src/perl/`, `-Dwith-perl`). The scripting bridge; irssi Perl
+  scripts load unmodified.
 
 ---
 
-## 9. Building and Testing
+## 8. Building and testing
 
-### Build Commands
+```sh
+# configure (options are -D<name>, see meson_options.txt)
+meson setup Build -Dwith-perl=yes -Dwith-otr=yes -Dwith-e2e=yes \
+                  -Dwith-fe-web=yes -Dwith-image-preview=yes
 
-```bash
-# Initial configuration
-meson setup Build --prefix=/opt/erssi -Dwith-perl=yes -Dwith-otr=yes
-
-# Compile
+# compile
 ninja -C Build
 
-# Run tests
-ninja -C Build test
-
-# Run specific test
-./Build/tests/irc/core/test-irc
+# run the test suite
+meson test -C Build
 ```
 
-### Adding Tests
+Run the suite through **`meson test`**, not by launching the test binaries by
+hand. The tests instantiate a real client, which reads and writes a real
+`~/.erssi`; `meson test` runs each one with an isolated, throwaway `HOME` so it
+cannot touch your own configuration. Setting `ERSSI_TEST_PACKAGER=1` additionally
+exercises the packaging/reproducibility path (this is what a release tag runs
+in CI; a per-commit build skips it — see `docs/shellter/releasing.md`).
 
-Tests go in `tests/irc/flood/` (create if needed):
+Tests live under `tests/`, mirroring the source layout (e.g.
+`tests/irc/core/`). Fuzz targets live under `src/fe-fuzz/` and are built with
+`-Dwith-fuzzer=yes`.
+
+---
+
+## 9. Memory management
+
+erssi uses GLib allocation throughout. The rule is simple and absolute:
+**anything allocated with a `g_*` allocator is freed with `g_free()`** (or the
+matching `g_*_free`/`g_*_destroy`). Mixing `malloc()` with `g_free()`, or the
+reverse, crashes.
 
 ```c
-// test-flood.c
-#include <glib.h>
-#include "tests.h"
-#include "src/irc/flood/flood.h"
+char   *s    = g_strdup("hello");
+char   *fmt  = g_strdup_printf("x=%d", n);
+STRUCT *rec  = g_new0(STRUCT, 1);
+GSList *list = g_slist_append(list, item);
 
-static void test_flood_detection(void) {
-    // Setup IRC server mock
-    IRC_SERVER_REC *server = create_test_server();
-    
-    // Initialize flood module
-    irc_flood_init();
-    
-    // Simulate flood
-    for (int i = 0; i < 5; i++) {
-        flood_privmsg(server, "test", "attacker", "attacker@host.com");
-    }
-    
-    // Verify flood signal was emitted
-    g_assert(flood_signal_emitted);
-    
-    // Cleanup
-    irc_flood_deinit();
-    server_destroy(server);
-}
+g_free(s); g_free(fmt); g_free(rec);
+g_slist_free_full(list, g_free);     /* frees the list and every item */
+g_hash_table_destroy(hash);          /* runs the destroy callbacks */
 ```
+
+For buffers that held secrets (keys, passwords), wipe before freeing — see §6.
 
 ---
 
-## 10. Architecture Diagram - Complete Flow
+## 10. Where to look
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Application Startup                          │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓
-                      src/fe-ansi/irssi.c
-                      irssi_main() → main_loop
-                              ↓
-         core_preinit() → modules loaded → core_init()
-                              ↓
-       ┌──────────────────────┬──────────────────────┐
-       ↓                      ↓                      ↓
-   IRC Core Module        fe-common Module      fe-web Module
-   (irc_irc_init)         (fe_common_init)      (fe_web_init)
-       ↓                      ↓                      ↓
-   Flood Module          Sidepanels Module      Web Signals
-   (irc_flood_init)      (sidepanels_init)      (fe_web_signals_init)
-       ↓                      ↓                      ↓
-   Register signals:     Register signals:      Register signals:
-   - event privmsg       - window changed       - message public
-   - event notice        - channel joined       - message private
-   - ctcp msg            - activity changed     - server connected
-   - setup changed       - hilight              - whois events
-   - server connected    - window destroyed     - ... 50+ more
-   - server destroyed
-       ↓                      ↓                      ↓
-       └──────────────────────┬──────────────────────┘
-                              ↓
-                    signal_emit("module loaded", ...)
-                              ↓
-                    Main Event Loop Starts
-                    (GMainLoop with event-driven)
-                              ↓
-   ┌──────────────────────────┼──────────────────────────┐
-   ↓                          ↓                         ↓
-Server Input             User Input              Timers/Idle
-(net_sendbuffer)         (stdin)                 (GSource)
-   ↓                          ↓                         ↓
-IRC Line from            /command or                 Timeout
-Server                   text input                  events
-   ↓                          ↓                         ↓
-rawlog_input()           process_command()      flood_timeout()
-   ↓                          ↓                         ↓
-signal_server_incoming   signal_command()       Cleanup old
-   ↓                          ↓                    entries
-Parse & Extract          Execute handler
-Prefix/Tags                    ↓
-   ↓                      Display output
-signal_server_event_tags
-   ↓
-Determine Event Type
-(PRIVMSG, NOTICE, etc.)
-   ↓
-signal_emit("event PRIVMSG", ...)
-   ↓
-   ├→ FLOOD MODULE catches it
-   │  ├→ flood_privmsg() called
-   │  ├→ Track message timestamps
-   │  ├→ Detect flooding
-   │  └→ signal_emit("flood", ...)
-   │
-   ├→ FE-COMMON processes message
-   │  ├→ Printtext module renders
-   │  ├→ signal_emit("message public", ...)
-   │  └→ Display in window
-   │
-   └→ FE-WEB signals module catches
-      ├→ sig_message_public() called
-      ├→ Create WEB_MESSAGE_REC
-      ├→ Send to web clients via WebSocket
-      └→ Update activity tracking
-```
+| You want to… | Start at |
+|---|---|
+| Follow an inbound IRC line | `src/irc/core/irc.c` (`irc_parse_incoming` → `irc_server_event`) |
+| See how events become signals | `src/core/signals.c`; signal names in `docs/signals.txt` |
+| Read a small reference module | `src/irc/flood/flood.c` |
+| Read a larger reference module | `src/irc/anti-floodnet/` |
+| Understand settings | `src/core/settings.c` |
+| Understand the terminal init order | `src/fe-ansi/irssi.c` (`textui_finish_init`) |
+| Work on the web frontend | `src/fe-web/fe-web-signals.c`, `fe-web-server.c` |
+| Work on encryption | `src/e2e/` (and `docs/fe-web-e2e.md`), `src/otr/` |
+| Audit the network-facing fetch | `src/image-preview/image-preview-fetch.c` |
+| Add or run tests | `tests/`, run with `meson test -C Build` (see §8) |
+| A terser developer cheatsheet | `docs/QUICK_REFERENCE.md` |
 
 ---
 
-## 11. Creating a New Anti-Flood Module
-
-### Step 1: Module Structure
-
-```
-src/irc/anti-flood/
-├── anti-flood.c         # Main module (similar to flood.c)
-├── anti-flood.h         # Public interface (minimal)
-├── throttle.c           # Optional: message rate limiter
-├── throttle.h
-├── module.h             # Generated by meson
-├── meson.build          # Build config
-└── README               # Documentation
-```
-
-### Step 2: Header File (anti-flood.h)
-
-```c
-#ifndef IRSSI_IRC_ANTI_FLOOD_ANTI_FLOOD_H
-#define IRSSI_IRC_ANTI_FLOOD_ANTI_FLOOD_H
-
-void irc_anti_flood_init(void);
-void irc_anti_flood_deinit(void);
-
-#endif
-```
-
-### Step 3: Module Implementation (anti-flood.c)
-
-```c
-#include "module.h"
-#include <erssi/src/core/modules.h>
-#include <erssi/src/core/signals.h>
-#include <erssi/src/core/levels.h>
-#include <erssi/src/core/settings.h>
-#include <erssi/src/core/misc.h>
-#include <erssi/src/irc/core/irc.h>
-#include <erssi/src/irc/core/irc-servers.h>
-#include <erssi/src/core/ignore.h>
-
-// Per-server state
-typedef struct {
-    GHashTable *users;          // nick -> USER_STATS_REC*
-    // Additional per-server data
-} MODULE_SERVER_REC;
-
-// Per-user statistics
-typedef struct {
-    char *nick;
-    time_t first_message;       // First message timestamp
-    int message_count;          // Messages in time window
-    int kick_count;             // Times kicked
-    int channels;               // Number of channels joined
-    // Additional stats
-} USER_STATS_REC;
-
-static int anti_flood_enabled;
-static int rate_limit;          // messages per second
-static int burst_limit;         // max messages in burst
-
-// CRITICAL: Use signal_add_first to run BEFORE default handlers
-static void anti_flood_privmsg(IRC_SERVER_REC *server, const char *data,
-                                const char *nick, const char *addr) {
-    MODULE_SERVER_REC *mserver = MODULE_DATA(server);
-    USER_STATS_REC *stats;
-    char *params, *target, *text;
-    time_t now = time(NULL);
-
-    g_return_if_fail(server != NULL);
-    g_return_if_fail(nick != NULL);
-
-    if (!anti_flood_enabled || mserver == NULL)
-        return;
-
-    // Parse message
-    params = event_get_params(data, 2, &target, &text);
-
-    // Skip if ignored
-    if (addr != NULL && ignore_check(SERVER(server), nick, addr, target, text, MSGLEVEL_PUBLIC)) {
-        g_free(params);
-        return;
-    }
-
-    // Get or create user stats
-    stats = g_hash_table_lookup(mserver->users, nick);
-    if (stats == NULL) {
-        stats = g_new0(USER_STATS_REC, 1);
-        stats->nick = g_strdup(nick);
-        stats->first_message = now;
-        g_hash_table_insert(mserver->users, stats->nick, stats);
-    }
-
-    // Update statistics
-    if (now - stats->first_message > RATE_WINDOW) {
-        // Reset window
-        stats->first_message = now;
-        stats->message_count = 1;
-    } else {
-        stats->message_count++;
-        
-        // Check rate limit
-        if (stats->message_count > rate_limit) {
-            // ACTION: Log, block, or ignore
-            signal_emit("anti-flood", 5, server, nick, addr, 
-                        GINT_TO_POINTER(MSGLEVEL_PUBLIC), target);
-        }
-    }
-
-    g_free(params);
-}
-
-static void anti_flood_init_server(IRC_SERVER_REC *server) {
-    MODULE_SERVER_REC *rec;
-
-    g_return_if_fail(server != NULL);
-    if (!IS_IRC_SERVER(server)) return;
-
-    rec = g_new0(MODULE_SERVER_REC, 1);
-    rec->users = g_hash_table_new((GHashFunc) i_istr_hash,
-                                   (GCompareFunc) i_istr_equal);
-    MODULE_DATA_SET(server, rec);
-}
-
-static void anti_flood_deinit_server(IRC_SERVER_REC *server) {
-    MODULE_SERVER_REC *mserver;
-
-    g_return_if_fail(server != NULL);
-    if (!IS_IRC_SERVER(server)) return;
-
-    mserver = MODULE_DATA(server);
-    if (mserver != NULL && mserver->users != NULL) {
-        // Clean up user stats
-        g_hash_table_destroy(mserver->users);
-        g_free(mserver);
-    }
-    MODULE_DATA_UNSET(server);
-}
-
-static void read_settings(void) {
-    anti_flood_enabled = settings_get_bool("anti_flood_enabled");
-    rate_limit = settings_get_int("anti_flood_rate");
-    burst_limit = settings_get_int("anti_flood_burst");
-
-    if (anti_flood_enabled) {
-        // Enable monitoring
-    } else {
-        // Disable monitoring
-    }
-}
-
-void irc_anti_flood_init(void) {
-    settings_add_bool("anti-flood", "anti_flood_enabled", FALSE);
-    settings_add_int("anti-flood", "anti_flood_rate", 5);        // msg/sec
-    settings_add_int("anti-flood", "anti_flood_burst", 10);      // burst msgs
-
-    anti_flood_enabled = FALSE;
-    read_settings();
-
-    signal_add("setup changed", (SIGNAL_FUNC) read_settings);
-    signal_add_first("server connected", (SIGNAL_FUNC) anti_flood_init_server);
-    signal_add("server destroyed", (SIGNAL_FUNC) anti_flood_deinit_server);
-    
-    // Add message handlers dynamically when enabled
-    if (anti_flood_enabled) {
-        signal_add_first("event privmsg", (SIGNAL_FUNC) anti_flood_privmsg);
-    }
-
-    settings_check();
-    module_register("anti-flood", "irc");
-}
-
-void irc_anti_flood_deinit(void) {
-    signal_remove("event privmsg", (SIGNAL_FUNC) anti_flood_privmsg);
-    signal_remove("setup changed", (SIGNAL_FUNC) read_settings);
-    signal_remove("server connected", (SIGNAL_FUNC) anti_flood_init_server);
-    signal_remove("server destroyed", (SIGNAL_FUNC) anti_flood_deinit_server);
-}
-
-MODULE_ABICHECK(irc_anti_flood)
-```
-
-### Step 4: Register in Build System
-
-Add to `src/irc/meson.build`:
-```python
-subdir('anti-flood')
-```
-
-Create `src/irc/anti-flood/meson.build`:
-```python
-sources = files(
-  'anti-flood.c',
-)
-
-fuzz_sources = files()
-
-shared_module(
-  'irc_anti_flood',
-  sources,
-  dependencies: irc_deps,
-  name_prefix: '',
-  install: true,
-  install_dir: irc_module_dir,
-)
-```
-
-### Step 5: Configuration
-
-Users enable in `~/.erssi/config`:
-```
-settings = {
-  "anti-flood" = {
-    anti_flood_enabled = "on";
-    anti_flood_rate = "5";
-    anti_flood_burst = "10";
-  };
-};
-```
-
-Or via command:
-```
-/set anti_flood_enabled on
-/set anti_flood_rate 5
-```
-
----
-
-## 12. Key Takeaways for Anti-Flood Development
-
-1. **Early Interception**: Use `signal_add_first()` for anti-flood to catch events BEFORE normal processing
-2. **Per-Server State**: Attach MODULE_DATA to each server for independent tracking
-3. **Settings Integration**: Define all parameters as settings for user control
-4. **Signal Patterns**: Register for setup changes to enable/disable dynamically
-5. **Cleanup**: Ensure all server data freed in "server destroyed" handler
-6. **Timers**: Use `g_timeout_add()` for periodic cleanup/timeout operations
-7. **Memory**: Always use GLib allocation functions and match with g_free
-8. **Testing**: Write tests in `tests/irc/anti-flood/` for validation
-9. **Documentation**: Update CLAUDE.md with new module patterns
-
----
-
-## Useful Files to Reference
-
-| Task | File |
-|------|------|
-| Understand signal flow | `/Users/k/dev/erssi/src/irc/core/irc.c` (lines 365-393) |
-| Learn flood module | `/Users/k/dev/erssi/src/irc/flood/flood.c` |
-| See settings system | `/Users/k/dev/erssi/src/core/settings.c` (lines 52-150) |
-| Check fe-web pattern | `/Users/k/dev/erssi/src/fe-web/fe-web.h` (types) |
-| Web signal handlers | `/Users/k/dev/erssi/src/fe-web/fe-web-signals.c` (1519+) |
-| Module init order | `/Users/k/dev/erssi/src/fe-ansi/irssi.c` (lines 240+) |
-| IRC event names | `/Users/k/dev/erssi/src/core/module.h` (event list) |
-
----
-
-## Common Issues & Debugging
-
-### Issue: Signals not firing
-**Cause**: Wrong signal name, handler not registered, or registration timing
-**Solution**: Check signal names in `src/core/module.h`, ensure `signal_add()` called during init
-
-### Issue: Module data lost on server switch
-**Cause**: Not using MODULE_DATA() macro pattern
-**Solution**: Always attach per-server state via MODULE_DATA_SET in "server connected" handler
-
-### Issue: Memory leaks
-**Cause**: Using wrong allocator (malloc vs g_malloc) or forgetting g_free
-**Solution**: Always match g_malloc/g_strdup/g_new with g_free, use g_hash_table_destroy
-
-### Issue: Settings changes not reflected
-**Cause**: Not listening to "setup changed" signal
-**Solution**: Register `signal_add("setup changed", callback)` to handle dynamic settings
-
-### Issue: Handlers run in wrong order
-**Cause**: Using `signal_add()` instead of `signal_add_first()` or `signal_add_last()`
-**Solution**: Use appropriate registration order for your module's position in chain
-
----
-
-## Performance Considerations
-
-1. **Avoid full screen redraws**: Use granular redraws (sidepanels example)
-2. **Batch updates**: For multi-line events, collect then emit once
-3. **Hash tables for lookups**: O(1) average vs O(n) with lists
-4. **Timeout cleanup**: Don't let data structures grow unbounded
-5. **Early exit**: Check conditions early to avoid unnecessary processing
-
----
-
-**Document Last Updated**: January 13, 2026
-**Erssi Version**: 1.2.6 (based on irssi 1.5)
-**Build System**: Meson + Ninja
+*erssi is the modern irssi by Jerzy “kofany” Dąbrowski and the erssi-org team;
+the Shellter Edition is maintained by the Shellter team. This document
+describes the tree as of the 2026.11.x series.*

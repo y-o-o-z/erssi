@@ -193,37 +193,41 @@ Signal "setup changed" fires automatically.
 
 ## 6. Existing Reference Modules
 
-### Flood Module (src/irc/flood/)
-- 350 lines of production code
-- Detects rapid messages from single user
-- Emits "flood" signal (caught by autoignore.c)
-- Reference: `/Users/k/dev/erssi/src/irc/flood/flood.c`
+### Flood Module (`src/irc/flood/`)
+- Smallest complete module: detects rapid messages from one nick
+- Emits the `"flood"` signal (caught by `autoignore.c`)
 
-### Fe-Web Signals (src/fe-web/fe-web-signals.c)
-- 55KB file
-- 50+ signal handlers
-- Multi-line event assembly (WHOIS example)
-- Real-world pattern for complex modules
+### Anti-floodnet (`src/irc/anti-floodnet/`)
+- Larger module, split by concern: `floodnet-ctcp.c`, `floodnet-nick.c`, `floodnet-stats.c`
+- Netsplit/CTCP/nick-change flood protection with its own status commands
 
-### Sidepanels (src/fe-ansi/sidepanels-*.c)
-- 5 separate files
-- Modular architecture example
-- Optimization patterns (batched updates)
+### Fe-Web Signals (`src/fe-web/fe-web-signals.c`)
+- A large file; forwards 50+ IRC events to browser clients
+- Multi-line event assembly (WHOIS example); real-world pattern for complex code
+
+### E2E / OTR / image-preview (`src/e2e/`, `src/otr/`, `src/image-preview/`)
+- The Shellter subsystems; each optional at build time, `auto` by default
+- See `ARCHITECTURE.md` §7
+
+### Sidepanels (`src/fe-ansi/sidepanels-*.c`)
+- Modular architecture example with batched-update optimisation
 
 ---
 
 ## 7. Testing Pattern
 
-### Minimal Test
+### Run the suite
 ```bash
 # Build
 ninja -C Build
 
-# Run test
-./Build/tests/irc/core/test-irc
+# Run all tests — ALWAYS via meson test, never the binaries directly:
+# the tests instantiate a real client that reads/writes ~/.erssi, and
+# meson test runs each one under an isolated throwaway HOME.
+meson test -C Build
 
-# Or run all tests
-ninja -C Build test
+# One test (or a subset)
+meson test -C Build irc-core
 ```
 
 ### Add Test
@@ -439,7 +443,6 @@ gdb ./Build/src/fe-ansi/erssi
 
 ---
 
-**Last Updated**: January 13, 2026
-**Version**: Erssi 1.2.6 (irssi 1.5 base)
+**Applies to:** the 2026.11.x series (erssi 1.3.x / irssi 1.4.x base).
 
-See `/Users/k/dev/erssi/docs/ARCHITECTURE.md` for complete details.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full architecture overview.
