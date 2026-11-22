@@ -108,6 +108,10 @@ FORMAT_REC gui_text_formats[] = {
 	{ "firstrun_irc_header", "%_For IRC connection, erssi will use these safe defaults:%_", 0 },
 	{ "firstrun_irc_setting", "  %W$[20]0%n $1", 2, { 0, 0 } },
 	{ "firstrun_howto", "%yTo use your own identity, run:%n /SET nick <yournick> && /SET user_name <yourusername> && /SET real_name <yourname>", 0 },
+	{ "welcome_commands",
+	  "%_Getting around erssi:%_ %c/HELP%n lists every command, "
+	  "%c/E2E%n starts an end-to-end encrypted conversation, and "
+	  "%c/MENTIONS%n opens the window that collects messages naming you.", 0 },
 
 	/* ---- */
 	{ NULL, "Sidepanels", 0 },

@@ -321,6 +321,12 @@ static void textui_finish_init(void)
 		            TXT_FIRSTRUN_HOWTO);
 	}
 
+	/* first run (fresh home or first-run defaults): point at erssi's own
+	 * commands, printed once however the first run was detected */
+	if (display_firsttimer || (user_settings_changed & USER_SETTINGS_FIRST_RUN))
+		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT,
+		            TXT_WELCOME_COMMANDS);
+
 	/* a later start that kept the nick of the built-in default config */
 	if (!firstrun_ran && config_existed) {
 		char *shipped = settings_get_builtin_str("core", "nick");
@@ -569,7 +575,8 @@ static void firstrun_run_tty(void)
 	if (!settings_save(NULL, FALSE))
 		printf("Could not save %s: erssi --setup asks again.\n", mainconfig->fname);
 	else if (result == FIRSTRUN_DONE)
-		printf("Saved to %s. Later: /NETWORK, /SET nick, /SET theme, or erssi --setup.\n",
+		printf("Saved to %s. Later: /NETWORK, /SET nick, /SET theme, or erssi --setup.\n"
+		       "In erssi: /HELP, /E2E (encrypted chats), /MENTIONS (messages naming you).\n",
 		       mainconfig->fname);
 	else
 		printf("Skipped. erssi --setup asks again.\n");
