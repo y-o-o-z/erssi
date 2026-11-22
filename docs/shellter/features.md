@@ -94,6 +94,10 @@ New in 2026.10.0.
   layout in light colours with every text colour at 4.5:1 or more on white
   ([screenshot](../images/erssi-shellter-light.png)): `/set theme shellter-light`,
   with the matching nick colours listed at the top of `themes/shellter-light.theme`.
+- **A screen-reader-friendly setup** — the `colorless` theme, the side
+  panels off and the mouse left to the terminal turn erssi into one plain,
+  linear window; the recipe is in
+  [configuration.md](configuration.md#a-screen-reader-friendly-setup).
 - **Rank colours** — `$nickmode` and `nick_mode_color_*` draw `@`, `+`, `%`
   and `~`/`&` in their own colours in messages and in the nick list;
   `nick_hash_colors` accepts 24-bit colours.

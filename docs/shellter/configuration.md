@@ -56,6 +56,30 @@ window, the join count line, 24-bit colours) comes from the default config
 (`irssi.conf`) of a new `~/.erssi`. `/set -default <name>` (and `/reset`)
 gives erssi's built-in value.
 
+## A screen-reader-friendly setup
+
+The default Shellter look leans on colour, two side panels and Unicode
+glyphs in a fixed column: easy to read on a graphical terminal, but a lot
+for a screen reader, which reads the screen top to bottom and cannot follow
+the panels' absolute positioning. A plainer, linear setup:
+
+```
+/set theme colorless      # plain ASCII, no colours or glyphs
+/set sidepanel_left off   # one linear window, no side columns
+/set sidepanel_right off
+/set mouse_gestures off   # leave the mouse to the terminal
+/set mouse_scroll_chat off
+/set colors off           # drop colour output entirely
+/set hide_colors on       # strip colour codes from incoming messages
+/save
+```
+
+`colorless` is the stock irssi theme with no styling at all; `default` is
+almost as plain but keeps a little structure. With the panels off every line
+is an ordinary line of text in one window, read top to bottom. Turn any of
+these back on one at a time to find the balance you want; `/set -default
+<name>` restores the Shellter value.
+
 ## tmux
 
 In tmux, enable RGB colour with `set -as terminal-features ',*:RGB'`, for
