@@ -323,9 +323,15 @@ static void textui_finish_init(void)
 
 	/* first run (fresh home or first-run defaults): point at erssi's own
 	 * commands, printed once however the first run was detected */
-	if (display_firsttimer || (user_settings_changed & USER_SETTINGS_FIRST_RUN))
+	if (display_firsttimer || (user_settings_changed & USER_SETTINGS_FIRST_RUN)) {
 		printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT,
 		            TXT_WELCOME_COMMANDS);
+		/* the panels grab the mouse by default; say how to select text
+		 * (D2), but only while the mouse is actually being tracked */
+		if (gui_mouse_is_tracking_enabled())
+			printformat(NULL, NULL, MSGLEVEL_CLIENTNOTICE | MSGLEVEL_NO_ACT,
+			            TXT_WELCOME_MOUSE);
+	}
 
 	/* a later start that kept the nick of the built-in default config */
 	if (!firstrun_ran && config_existed) {

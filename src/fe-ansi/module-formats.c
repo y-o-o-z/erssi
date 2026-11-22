@@ -112,6 +112,11 @@ FORMAT_REC gui_text_formats[] = {
 	  "%_Getting around erssi:%_ %c/HELP%n lists every command, "
 	  "%c/E2E%n starts an end-to-end encrypted conversation, and "
 	  "%c/MENTIONS%n opens the window that collects messages naming you.", 0 },
+	{ "welcome_mouse",
+	  "%_Selecting text:%_ erssi uses the mouse, so hold %_Shift%_ while "
+	  "dragging to select and copy the way your terminal normally does; or "
+	  "turn the mouse off with %c/SET mouse_gestures off%n and "
+	  "%c/SET mouse_scroll_chat off%n.", 0 },
 
 	/* ---- */
 	{ NULL, "Sidepanels", 0 },

@@ -126,6 +126,11 @@ New in 2026.10.0.
   a link with Ctrl, Ctrl+Shift or Cmd held while clicking. Addresses without
   a scheme (`www.example.org`) and the side panels, statusbar and input line
   get no links. `/help term_hyperlinks`.
+- **Selecting text** — because erssi uses the mouse itself (side panels and
+  gestures are on by default), a plain click-and-drag no longer selects text.
+  Hold **Shift** while dragging and almost every terminal bypasses erssi and
+  selects and copies the way it normally does. To get the mouse out of the
+  way entirely, `/set mouse_gestures off` and `/set mouse_scroll_chat off`.
 
 ## Help for every command
 
