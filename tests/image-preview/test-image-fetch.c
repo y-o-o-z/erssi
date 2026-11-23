@@ -13,6 +13,8 @@
 /* 3 seconds in erssi */
 #define IMAGE_FETCH_RETRY_DELAY_MS 200
 #include <irssi/src/image-preview/image-preview-fetch.c>
+/* the og:image parsing it calls lives in its own unit (also fuzzed) */
+#include <irssi/src/image-preview/image-preview-parse.c>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -396,7 +398,7 @@ static void test_og_image_url(void)
 
 		html = g_strdup_printf("<html><head><meta property=\"og:image\" content=\"%s\">"
 		                       "</head></html>", rows[i].content);
-		url = og_image_url(html, "https://www.example.org/gallery/page?id=7");
+		url = image_preview_og_image_url(html, "https://www.example.org/gallery/page?id=7");
 		if (g_strcmp0(url, rows[i].expected) != 0)
 			g_error("og:image \"%s\": got %s, expected %s", rows[i].content,
 				url != NULL ? url : "NULL",

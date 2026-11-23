@@ -11,6 +11,7 @@
 
 #include "module.h"
 #include "image-preview.h"
+#include "image-preview-parse.h"
 
 #include <irssi/src/core/settings.h>
 #include <irssi/src/core/signals.h>
@@ -90,7 +91,6 @@ static GSList *pending_retries = NULL;
 static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char *error);
 static void fetch_rec_free(IMAGE_FETCH_REC *fetch);
 static void image_fetch_start_stage2(IMAGE_FETCH_REC *fetch, const char *og_image_url);
-static char *extract_og_image(const char *html);
 static gboolean retry_fetch_callback(gpointer user_data);
 
 /* Remove a stuck fetch from active_fetches (cleanup when detected stuck) */
@@ -458,190 +458,6 @@ static size_t write_callback_html(void *ptr, size_t size, size_t nmemb, void *us
 	return total;
 }
 
-/* Extract og:image URL from HTML content */
-static char *extract_og_image(const char *html)
-{
-	GRegex *regex;
-	GMatchInfo *match_info;
-	char *og_image = NULL;
-	GError *error = NULL;
-
-	if (html == NULL || *html == '\0') {
-		image_preview_debug_print("FETCH: extract_og_image - HTML is NULL or empty");
-		return NULL;
-	}
-
-	image_preview_debug_print("FETCH: extract_og_image - parsing %zu bytes of HTML", strlen(html));
-
-	/* Log first 500 chars of HTML for debugging */
-	if (strlen(html) > 0) {
-		char preview[501];
-		strncpy(preview, html, 500);
-		preview[500] = '\0';
-		/* Replace newlines with spaces for logging */
-		for (char *p = preview; *p; p++) {
-			if (*p == '\n' || *p == '\r') *p = ' ';
-		}
-		image_preview_debug_print("FETCH: HTML preview: %.200s...", preview);
-	}
-
-	/* Pattern matches both attribute orders:
-	 * <meta property="og:image" content="URL">
-	 * <meta content="URL" property="og:image"> */
-	regex = g_regex_new(
-		"<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)[\"']"
-		"|<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+property=[\"']og:image[\"']",
-		G_REGEX_CASELESS | G_REGEX_DOTALL, 0, &error);
-
-	if (error != NULL) {
-		image_preview_debug_print("FETCH: og:image regex compile failed: %s", error->message);
-		g_error_free(error);
-		return NULL;
-	}
-
-	if (g_regex_match(regex, html, 0, &match_info)) {
-		image_preview_debug_print("FETCH: regex matched!");
-		/* Try first capture group */
-		og_image = g_match_info_fetch(match_info, 1);
-		image_preview_debug_print("FETCH: group 1 = '%s'", og_image ? og_image : "(null)");
-		if (og_image == NULL || *og_image == '\0') {
-			g_free(og_image);
-			/* Try second capture group */
-			og_image = g_match_info_fetch(match_info, 2);
-			image_preview_debug_print("FETCH: group 2 = '%s'", og_image ? og_image : "(null)");
-		}
-	} else {
-		image_preview_debug_print("FETCH: regex did NOT match - no og:image meta tag found");
-		/* Try to find any og:image text in HTML for debugging */
-		if (strstr(html, "og:image") != NULL) {
-			image_preview_debug_print("FETCH: 'og:image' string exists but regex didn't match pattern");
-		} else {
-			image_preview_debug_print("FETCH: 'og:image' string NOT found in HTML at all");
-		}
-	}
-
-	g_match_info_free(match_info);
-	g_regex_unref(regex);
-
-	if (og_image != NULL && *og_image != '\0') {
-		image_preview_debug_print("FETCH: SUCCESS extracted og:image: %s", og_image);
-	} else {
-		g_free(og_image);
-		og_image = NULL;
-		image_preview_debug_print("FETCH: FAILED to extract og:image");
-	}
-
-	return og_image;
-}
-
-/* The og:image value is HTML attribute text: "&amp;" in it is "&". Only
- * the entities a URL needs are decoded (the five basic ones and numeric
- * references to printable ASCII), anything else is kept as it is. */
-static char *html_attr_decode(const char *value)
-{
-	static const struct {
-		const char *name;
-		char chr;
-	} entities[] = {
-		{ "amp;", '&' }, { "lt;", '<' }, { "gt;", '>' }, { "quot;", '"' }, { "apos;", '\'' },
-	};
-	GString *out;
-	const char *p;
-
-	out = g_string_sized_new(strlen(value));
-	for (p = value; *p != '\0'; p++) {
-		gboolean done = FALSE;
-		guint i;
-
-		if (*p != '&') {
-			g_string_append_c(out, *p);
-			continue;
-		}
-		for (i = 0; i < G_N_ELEMENTS(entities) && !done; i++) {
-			size_t len = strlen(entities[i].name);
-
-			if (strncmp(p + 1, entities[i].name, len) == 0) {
-				g_string_append_c(out, entities[i].chr);
-				p += len;
-				done = TRUE;
-			}
-		}
-		if (!done && p[1] == '#') {
-			const char *num = p + 2;
-			char *end;
-			gulong chr;
-
-			if (*num == 'x' || *num == 'X')
-				chr = strtoul(num + 1, &end, 16);
-			else
-				chr = strtoul(num, &end, 10);
-			if (end != num && end != num + 1 && *end == ';' && chr >= 0x20 && chr < 0x7f) {
-				g_string_append_c(out, (char) chr);
-				p = end;
-				done = TRUE;
-			}
-		}
-		if (!done)
-			g_string_append_c(out, '&');
-	}
-	return g_string_free(out, FALSE);
-}
-
-/* The URL of the picture: og:image decoded and, when it is relative
- * ("/img.png", "//cdn/x.png"), resolved against the page it was found on.
- * NULL unless the result is an http or https URL - the download is limited
- * to those anyway, and to public addresses (open_public_socket()). */
-static char *og_image_resolve(const char *page_url, const char *value)
-{
-	char *decoded, *result = NULL;
-
-	decoded = html_attr_decode(value);
-	g_strstrip(decoded);
-	if (*decoded == '\0') {
-		g_free(decoded);
-		return NULL;
-	}
-#if LIBCURL_VERSION_NUM >= 0x073e00
-	{
-		CURLU *url = curl_url();
-		char *scheme = NULL, *full = NULL;
-
-		if (url != NULL && page_url != NULL &&
-		    curl_url_set(url, CURLUPART_URL, page_url, 0) == CURLUE_OK &&
-		    curl_url_set(url, CURLUPART_URL, decoded, 0) == CURLUE_OK &&
-		    curl_url_get(url, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
-		    (g_ascii_strcasecmp(scheme, "http") == 0 ||
-		     g_ascii_strcasecmp(scheme, "https") == 0) &&
-		    curl_url_get(url, CURLUPART_URL, &full, 0) == CURLUE_OK)
-			result = g_strdup(full);
-		curl_free(scheme);
-		curl_free(full);
-		curl_url_cleanup(url);
-	}
-#else
-	/* no URL parser in this libcurl: absolute URLs only */
-	if (g_ascii_strncasecmp(decoded, "http://", 7) == 0 ||
-	    g_ascii_strncasecmp(decoded, "https://", 8) == 0)
-		result = g_strdup(decoded);
-#endif
-	g_free(decoded);
-	return result;
-}
-
-/* The picture of a downloaded page, NULL when it names none */
-static char *og_image_url(const char *html, const char *page_url)
-{
-	char *value, *url;
-
-	value = extract_og_image(html);
-	if (value == NULL)
-		return NULL;
-	url = og_image_resolve(page_url, value);
-	image_preview_debug_print("FETCH: og:image %s -> %s", value, url != NULL ? url : "(refused)");
-	g_free(value);
-	return url;
-}
-
 /* Hands every finished transfer to fetch_complete() */
 static void check_multi_info(void)
 {
@@ -874,7 +690,7 @@ static void fetch_complete(IMAGE_FETCH_REC *fetch, gboolean success, const char 
 			                      &page_url) != CURLE_OK || page_url == NULL)
 				page_url = fetch->original_url != NULL ? fetch->original_url : fetch->url;
 			/* Parse HTML for og:image */
-			og_image = og_image_url(fetch->html_buffer->str, page_url);
+			og_image = image_preview_og_image_url(fetch->html_buffer->str, page_url);
 		} else {
 			image_preview_debug_print("FETCH: HTML stage failed - success=%d buffer=%p len=%zu",
 			                          success,

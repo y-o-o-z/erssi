@@ -12,6 +12,8 @@
 /* the test server is on this host */
 #define IMAGE_FETCH_ADDRESS_ALLOWED(sa) (address_is_public(sa) || TRUE)
 #include <irssi/src/image-preview/image-preview-fetch.c>
+/* the og:image parsing it calls lives in its own unit (also fuzzed) */
+#include <irssi/src/image-preview/image-preview-parse.c>
 
 #include <arpa/inet.h>
 #include <fcntl.h>

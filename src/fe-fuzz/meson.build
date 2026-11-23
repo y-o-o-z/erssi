@@ -27,6 +27,8 @@ if have_image_preview
   fuzz_targets += [
     ['image-decode', files('image-preview/decode.c', '../image-preview/image-decode.c'),
      [], [dep, math_dep]],
+    ['image-preview-parse', files('image-preview/parse.c', '../image-preview/image-preview-parse.c'),
+     [], [dep, curl_dep]],
   ]
 endif
 
