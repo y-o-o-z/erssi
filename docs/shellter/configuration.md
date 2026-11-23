@@ -297,6 +297,15 @@ module is built in and loaded at start (`-Dwith-e2e=no` leaves it out).
   told so in the window, and `/e2e reverify <ident@host>` accepts it.
 - Keys are kept per network, so `#test` on two networks has two keys.
 - The `e2e` statusbar item shows the state of the active channel or query.
+- Encryption ends at your screen: once a line is read it is plain text on
+  your machine, and the logs write it so. `autolog` (on in a new home)
+  keeps the channel's and query's lines, `mentions_log` the Mentions
+  window's; both are files only you can read, but anyone who reads your
+  disk reads an encrypted conversation there in clear. To keep one off the
+  disk, name its channel or nick in `autolog_ignore_targets` (a
+  space-separated list) and leave the network out of the Mentions log with
+  `mentions_exclude_networks`, or turn the logs off (`/set autolog off`,
+  `/set mentions_log off`).
 - `/help e2e` has the commands.
 
 ### Moving from rpe2e.pl

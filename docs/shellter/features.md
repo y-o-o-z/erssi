@@ -34,6 +34,11 @@ and `/help e2e`.
   nothing out; plain text in an encrypted channel shows `[plain]`.
 - **Floods** — key requests are limited per person and overall; replies
   to strangers wait in their own queue and never delay your lines.
+- **On disk it is clear text** — once a line is decrypted the logs write
+  it in the clear: `autolog` keeps the conversation, `mentions_log` the
+  Mentions window. Keep an encrypted talk off the disk with
+  `autolog_ignore_targets` and `mentions_exclude_networks`, or turn the
+  logs off ([configuration](configuration.md#end-to-end-encryption)).
 
 ## Nicks, networks and windows
 
