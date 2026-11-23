@@ -30,6 +30,7 @@
 
 #include <irssi/src/common.h>
 #include <irssi/src/core/servers.h>
+#include <irssi/src/otr/otr-reassembly.h>
 
 /* irssi module name */
 #define MODULE_NAME                   "otr/core"
@@ -47,19 +48,8 @@
 #define OTR_FINGERPRINTS_FILE         OTR_DIR "/otr.fp"
 #define OTR_INSTAG_FILE               OTR_DIR "/otr.instag"
 
-/*
- * Specified in OTR protocol version 3. See:
- * http://www.cypherpunks.ca/otr/Protocol-v3-4.0.0.html
- */
-#define OTR_MSG_BEGIN_TAG             "?OTR:"
-#define OTR_MSG_END_TAG               '.'
-
-/* Upper bound on a message reassembled from OTR fragments. A peer sends
- * fragments until one ends with OTR_MSG_END_TAG; without a ceiling it
- * could grow the per-peer queue without end. 512 KiB is far above any
- * real OTR message (base64 of an AKE or data message) yet bounds the
- * memory a single peer can make us hold. */
-#define OTR_MSG_MAX_SIZE              (512 * 1024)
+/* OTR_MSG_BEGIN_TAG, OTR_MSG_END_TAG and OTR_MSG_MAX_SIZE live in
+ * otr-reassembly.h, included above, with the reassembly code itself. */
 
 /* IRC /me command marker and len. */
 #define OTR_IRC_MARKER_ME             "/me "
@@ -89,11 +79,7 @@ struct otr_peer_context {
 	 * Bitlbee for instance does that where we receive a *long* OTR message
 	 * split in multiple PRIVMSG so we need to reconstruct it.
 	 */
-	char *full_msg;
-	/* Size of full_msg. Note this is the allocated memory size. */
-	size_t msg_size;
-	/* Len of the actual string in full_msg NOT counting the NULL byte. */
-	size_t msg_len;
+	OTR_FRAGMENT_QUEUE frag;
 };
 
 /* given to otr_status_change */
@@ -115,12 +101,7 @@ enum otr_status_event {
 	OTR_STATUS_CTX_UPDATE
 };
 
-enum otr_msg_status {
-	OTR_MSG_ORIGINAL		= 1,
-	OTR_MSG_WAIT_MORE		= 2,
-	OTR_MSG_USE_QUEUE		= 3,
-	OTR_MSG_ERROR			= 4,
-};
+/* enum otr_msg_status lives in otr-reassembly.h, included above. */
 
 /* there can be only one */
 extern struct otr_user_state *user_state_global;

@@ -35,6 +35,10 @@ if have_e2e
   # the same for the RPE2E wire, handshake and keyring parsers
   subdir('fe-fuzz/e2e')
 endif
+if have_otr
+  # the same for the OTR fragment reassembly
+  subdir('fe-fuzz/otr')
+endif
 
 install_headers(
   files(

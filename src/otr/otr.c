@@ -93,7 +93,16 @@ static void instag_load(struct otr_user_state *ustate)
  */
 static void free_peer_context_cb(void *data)
 {
-	g_free_not_null(data);
+	struct otr_peer_context *opc = data;
+
+	if (opc == NULL)
+		return;
+
+	/* A context can be torn down mid-reassembly (fragments pending, never
+	 * ended with OTR_MSG_END_TAG); free the pending buffer, not just the
+	 * context, or it leaks. */
+	otr_fragment_queue_clear(&opc->frag);
+	g_free(opc);
 }
 
 /*
@@ -578,128 +587,6 @@ void otr_auth(SERVER_REC *server, const char *nick, const char *question,
 }
 
 /*
- * For the given message we received through irssi, check if we need to queue
- * it for the case where that message is part of a bigger OTR full message.
- * This can happen with bitlbee for instance where OTR message are split in
- * different PRIVMSG.
- *
- * This uses a "queue" in the peer context so it's it very important to have
- * the peer context associated with the message (nickname + irssi object).
- *
- * Return an otr_msg_status code indicating the caller what to do with the msg.
- * OTR_MSG_ERROR indicates an error probably memory related. OTR_MSG_WAIT_MORE
- * tells the caller to NOT send out the message since we are waiting for more
- * to complete the OTR original message. OTR_MSG_ORIGINAL tell the caller to
- * simply use the original message. OTR_MSG_USE_QUEUE indicates that full_msg
- * can be used containing the reconstructed message. The caller SHOULD free(3)
- * this pointer after use.
- */
-static enum otr_msg_status enqueue_otr_fragment(const char *msg, struct otr_peer_context *opc, char **full_msg)
-{
-	enum otr_msg_status ret;
-	size_t msg_len;
-
-	g_return_val_if_fail(msg != NULL, OTR_MSG_ERROR);
-	g_return_val_if_fail(opc != NULL, OTR_MSG_ERROR);
-
-	/* We are going to use it quite a bit so ease our life a bit. */
-	msg_len = strlen(msg);
-
-	if (opc->full_msg) {
-		/* Bound the reassembly buffer: a peer must not grow the queue
-		 * without ever ending it with OTR_MSG_END_TAG. On overflow drop
-		 * everything collected so far and report an error. */
-		if (msg_len + 1 > OTR_MSG_MAX_SIZE - opc->msg_len) {
-			free(opc->full_msg);
-			opc->full_msg = NULL;
-			opc->msg_size = opc->msg_len = 0;
-			return OTR_MSG_ERROR;
-		}
-
-		if (msg_len + 1 > (opc->msg_size - opc->msg_len)) {
-			char *tmp_ptr;
-
-			/* Realloc memory if there is not enough space. The `+ 1`
-			 * reserves room for the trailing nul written below, so a
-			 * fragment whose length exactly fills the remaining data
-			 * capacity still triggers a realloc instead of writing the
-			 * nul one byte past the buffer. */
-			tmp_ptr = realloc(opc->full_msg, opc->msg_size + msg_len + 1);
-			if (tmp_ptr == NULL) {
-				free(opc->full_msg);
-				opc->full_msg = NULL;
-				ret = OTR_MSG_ERROR;
-				return ret;
-			}
-			opc->full_msg = tmp_ptr;
-			opc->msg_size += msg_len + 1;
-		}
-
-		/* Copy msg to full message since we already have a part pending. Note
-		 * that we do not copy `msg`'s trailing nul byte because we explicit
-		 * set opc->full_msg[opc->msg_len] to nul afterwards. */
-		memcpy(opc->full_msg + opc->msg_len, msg, msg_len);
-		opc->msg_len += msg_len;
-		opc->full_msg[opc->msg_len] = '\0';
-
-		IRSSI_OTR_DEBUG("Partial OTR message added to queue: %s", msg);
-
-		/*
-		 * Are we waiting for more? If the message ends with a ".", the
-		 * transmission has ended else we have to wait for more. An empty
-		 * fragment (msg_len == 0) has no last byte to look at and never
-		 * ends the message, so it is handled before indexing msg: reading
-		 * msg[(size_t) -1] would be a heap buffer over-read.
-		 */
-		if (msg_len == 0 || msg[msg_len - 1] != OTR_MSG_END_TAG) {
-			ret = OTR_MSG_WAIT_MORE;
-			return ret;
-		}
-
-		/*
-		 * Dup the string with enough space for the NULL byte since we are
-		 * about to free it before passing it to the caller.
-		 */
-		*full_msg = g_strndup(opc->full_msg, opc->msg_len + 1);
-		/* Reset everything. */
-		free(opc->full_msg);
-		opc->full_msg = NULL;
-		opc->msg_size = opc->msg_len = 0;
-		ret = OTR_MSG_USE_QUEUE;
-		return ret;
-	} else {
-		char *pos;
-
-		/*
-		 * Try to find the OTR message tag at the _beginning_of the packet and
-		 * check if this packet is not the end with the end tag of OTR "."
-		 */
-		pos = strstr(msg, OTR_MSG_BEGIN_TAG);
-		if (pos && (pos == msg) && msg[msg_len - 1] != OTR_MSG_END_TAG) {
-			/* Allocate full message buffer with an extra for NULL byte. */
-			opc->full_msg = g_new0(char, (msg_len * 2) + 1);
-			if (!opc->full_msg) {
-				ret = OTR_MSG_ERROR;
-				return ret;
-			}
-			/* Copy full message with NULL terminated byte. */
-			memcpy(opc->full_msg, msg, msg_len);
-			opc->msg_len += msg_len;
-			opc->msg_size += ((msg_len * 2) + 1);
-			opc->full_msg[opc->msg_len] = '\0';
-			ret = OTR_MSG_WAIT_MORE;
-			IRSSI_OTR_DEBUG("Partial OTR message begins the queue: %s", msg);
-			return ret;
-		}
-
-		/* Use original message. */
-		ret = OTR_MSG_ORIGINAL;
-	}
-
-	return ret;
-}
-
-/*
  * Hand the given message to OTR.
  *
  * Returns 0 if its an OTR protocol message or else negative value.
@@ -731,7 +618,7 @@ int otr_receive(SERVER_REC *server, const char *msg, const char *from, char **ne
 	opc = ctx->app_data;
 	g_return_val_if_fail(opc != NULL, -1);
 
-	ret = enqueue_otr_fragment(msg, opc, &full_msg);
+	ret = otr_fragment_enqueue(msg, &opc->frag, &full_msg);
 	switch (ret) {
 		case OTR_MSG_ORIGINAL:
 			recv_msg = msg;
@@ -740,6 +627,7 @@ int otr_receive(SERVER_REC *server, const char *msg, const char *from, char **ne
 			recv_msg = full_msg;
 			break;
 		case OTR_MSG_WAIT_MORE:
+			IRSSI_OTR_DEBUG("Partial OTR message queued: %s", msg);
 			ret = 1;
 			g_free_not_null(full_msg);
 			return ret;
