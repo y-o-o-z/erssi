@@ -278,6 +278,41 @@ limits fe-web sets are in [security.md](security.md#web-frontend-fe-web).
 
 Keep fe-web on `127.0.0.1`; expose only the web client, behind TLS.
 
+## Image preview
+
+When erssi is built with image preview support (libcurl and chafa), a click
+with the left mouse button on a line with an image link draws the picture in
+a popup inside the terminal. It is on by default; `/image off` turns it off,
+`/image stats` shows the cache, `/image clear` empties it. A link is someone
+else's URL, so it is only followed to a public web server over http or
+https - never this host or a local network, also not after a redirect or
+through a page's `og:image` - and the download is bounded in size and speed.
+`/help image` has the full behaviour; the limits are in
+[security.md](security.md#image-preview).
+
+The preview is controlled by these settings (all `/set`):
+
+```
+/set image_preview on              # the default; off disables it
+/set image_preview_blitter auto    # how it draws: kitty, iterm2, sixel,
+                                    # symbols (text), or auto-detect
+/set image_preview_max_width 0     # popup size, columns; 0 = 80% of the window
+/set image_preview_max_height 0    # popup size, lines; 0 = 80% of the window
+/set image_preview_max_bytes 2000000   # largest drawn image data; bigger is scaled down
+/set image_preview_max_file_size 10     # largest image to download, in MB
+/set image_preview_timeout 60s     # time limit of one download
+/set image_preview_cache_size 100M # size the image cache is kept to (a soft
+                                    # limit; 0 keeps nothing for long)
+```
+
+The cache lives in `image_cache` inside the configuration directory; a shown
+image's file is removed 30 seconds after it is displayed, and the oldest
+files go once the cache passes `image_preview_cache_size` (above twice it, no
+new download starts until they can be removed). `image_preview_debug on`
+writes a debug log - every clicked URL among it - to
+`image-preview-debug.log` in the configuration directory; leave it off unless
+you are chasing a problem.
+
 ## End-to-end encryption
 
 erssi speaks RPE2E v1.0, the end-to-end encryption of

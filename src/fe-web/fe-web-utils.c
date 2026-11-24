@@ -292,7 +292,15 @@ char *fe_web_message_to_json(WEB_MESSAGE_REC *msg)
 	}
 
 	/* text (or "task" for nicklist_update, or raw JSON for network_list/server_list;
-	 * e2e_state has its object after the timestamp) */
+	 * e2e_state has its object after the timestamp).
+	 *
+	 * The network_list, server_list and command_result texts are spliced
+	 * into the frame as raw JSON, not escaped: they are built here in the
+	 * fork (fe-web-netserver.c and fe-web-e2e.c, serialised by
+	 * fe-web-json.c) out of the session's own state, never out of anything
+	 * a peer sends, so they are well-formed JSON by construction. The one
+	 * raw text that can carry outside content, e2e_state, is validated
+	 * (fe_web_e2e_json_valid() below) before it is embedded. */
 	if (msg->text != NULL && msg->type != WEB_MSG_E2E_STATE) {
 		if (msg->type == WEB_MSG_NICKLIST_UPDATE) {
 			/* For nicklist_update, serialize text field as "task" */
