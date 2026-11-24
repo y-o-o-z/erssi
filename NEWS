@@ -1,3 +1,44 @@
+shellter-v2026.11.9 2026-11-24	y-o-o-z <https://github.com/y-o-o-z/erssi>
+	erssi Shellter Edition 2026.11.9
+
+	A quality and first-run release from the 2026.11 code-review
+	follow-ups. New users get short hints that name erssi's own
+	commands and say how to select text, the default statusbar
+	gains an item for a new release, the docs grow a
+	screen-reader setup and cover the image preview, and OTR
+	fragment reassembly and the image-preview parser are now
+	fuzzed. No protocol or on-the-wire changes.
+
+	+ Added
+	  - First run now prints two short hints. One names erssi's
+	    own commands - /HELP lists them, /E2E starts an
+	    end-to-end encrypted talk, /MENTIONS opens the window
+	    that collects messages naming you - so a new user has a
+	    thread to pull on. The other shows only while the mouse
+	    is tracked and says to hold Shift while dragging to
+	    select text (the side panels and gestures are on by
+	    default), or how to turn the mouse off
+	  - The default statusbar shows an "update" item when a
+	    newer release is available. It takes no space until
+	    then, so an older config gains it after lag on the next
+	    run; a bar you changed is left alone
+
+	+ Changed
+	  - Documentation: a screen-reader-friendly setup, the image
+	    preview and its nine settings, the four mouse-gesture
+	    pages merged into one, rewritten architecture notes, and
+	    a warning that autolog and mentions_log write an E2E
+	    conversation to disk in clear text
+	  - OTR fragment reassembly and the image preview's og:image
+	    parser are each built as a standalone unit and fuzzed
+	    from a seed corpus; the credential-encryption refusal is
+	    locked by a test
+	  - A faster per-commit CI gate; the binary packages and the
+	    fuzz targets build and reproduce on release tags
+
+	+ Removed (dead code)
+	  - A 2008 irssi TODO relic
+
 shellter-v2026.11.8 2026-11-20	y-o-o-z <https://github.com/y-o-o-z/erssi>
 	erssi Shellter Edition 2026.11.8
 
