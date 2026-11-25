@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>erssi Shellter Edition</title>
-<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.8.">
+<meta name="description" content="The modern irssi, tuned for IRCnet. Install it without root from a signed release: ready-made for Debian 12 and 13, Ubuntu 24.04, FreeBSD 14 and 15, built from source elsewhere. Release 2026.11.9.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta property="og:title" content="erssi Shellter Edition 2026.11.8">
+<meta property="og:title" content="erssi Shellter Edition 2026.11.9">
 <meta property="og:description" content="The modern irssi, tuned for IRCnet. Signed releases, no root, one install line.">
 <meta property="og:image" content="https://erssi.shellter.me/images/shellter-dark-1400.png">
 <meta property="og:url" content="https://erssi.shellter.me/">
@@ -217,21 +217,21 @@ erssi --update</pre>
 <pre>git -c gpg.program=false -c gpg.openpgp.program=false \
     -c gpg.x509.program=false -c gpg.format=ssh \
     -c gpg.ssh.allowedSignersFile=utils/allowed_signers \
-    verify-tag shellter-v2026.11.8</pre>
+    verify-tag shellter-v2026.11.9</pre>
         <p>Run it in a clone of the repository; gpg is switched off so that only the SSH key counts. It must report a good signature with the fingerprint on the right. Compare it with one you got another way, for example by asking on #shellter.</p>
         <p>The network-facing parts are reviewed, fuzzed and tested under sanitizers. <a href="https://github.com/y-o-o-z/erssi/blob/main/docs/shellter/security.md">What is protected and what is not</a>.</p>
       </div>
-      <div class="release" aria-label="Release 2026.11.8">
-        <header><b>shellter-v2026.11.8</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
+      <div class="release" aria-label="Release 2026.11.9">
+        <header><b>shellter-v2026.11.9</b><span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>signed</span></header>
         <dl>
-          <div><dt>Commit</dt><dd>9c79cf2d7</dd></div>
+          <div><dt>Commit</dt><dd>370786133</dd></div>
           <div><dt>Release key</dt><dd>ED25519 SHA256:hF7dvX7vdTfqEsC9LHeujMoHf4NhWdqeBCvN6jXEDAw</dd></div>
           <div><dt>SHA256SUMS.sig</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>good signature, namespace erssi-release</dd></div>
-          <div><dt>debian12-amd64</dt><dd title="e24b17dd976e72695a93e45567f15fc11fb515a764b8b4456af8ebe214922645">sha256 e24b17dd…214922645</dd></div>
-          <div><dt>debian13-amd64</dt><dd title="46d01d29aef98703b6799e09bc5db49eed8afa6d5646f7037f070ad33a773197">sha256 46d01d29…33a773197</dd></div>
-          <div><dt>ubuntu24-amd64</dt><dd title="c7cbb9185ae363523f91716810924bb89adc46f8bece22b963f3ece7fd205db3">sha256 c7cbb918…7fd205db3</dd></div>
-          <div><dt>freebsd14-amd64</dt><dd title="e6c277733ed48bb0f23617bd357908e3443401ad0dba7827bbcd0636ec8b5dd3">sha256 e6c27773…6ec8b5dd3</dd></div>
-          <div><dt>freebsd15-amd64</dt><dd title="74c5c1449cccdb297f75abea221c4b915fbad31537bebe6b711f4d8bf8e789ce">sha256 74c5c144…bf8e789ce</dd></div>
+          <div><dt>debian12-amd64</dt><dd title="84f57d675809b7248c66a8689fa270159aa438a999f954bbbee9ee0b4ec51ef0">sha256 84f57d67…b4ec51ef0</dd></div>
+          <div><dt>debian13-amd64</dt><dd title="2e7fbe08f1f889aeac9f8448aa009103e10d0ec5b49ab38dace07ce609ec3f4c">sha256 2e7fbe08…609ec3f4c</dd></div>
+          <div><dt>ubuntu24-amd64</dt><dd title="ca36c834e207d3471f431fce75b507db196327e94e6dced56f72cc47789302c2">sha256 ca36c834…7789302c2</dd></div>
+          <div><dt>freebsd14-amd64</dt><dd title="e890fe822d10cdfaf0cd240176419a25e4cc5a323a19c7c379bfcfa86ad4a032">sha256 e890fe82…86ad4a032</dd></div>
+          <div><dt>freebsd15-amd64</dt><dd title="0ca38cb15b7c2a975abb7bd5d7dd8eff7410a7adaecf739280c8aaf5088d5330">sha256 0ca38cb1…5088d5330</dd></div>
           <div><dt>CI</dt><dd><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>6 of 6: build, shellcheck, installer, e2e-live, sanitizers, fuzz</dd></div>
         </dl>
       </div>
@@ -241,18 +241,19 @@ erssi --update</pre>
   <section class="section" id="new" aria-labelledby="h-new">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="h-new">New in 2026.11.8</h2>
-        <p>Released on 20 November 2026. A hardening release from the 2026.11 code-review follow-ups, with a Codex review of the fork. It closes the automatic side of the 2026.11.7 reflected-own-key refusal, tightens the image-preview address filter, protects the E2E replay cache when a home is shared, clears secrets from memory before they are freed, and stops a one-byte overwrite in the TLS key password callback. No new features.</p>
+        <h2 id="h-new">New in 2026.11.9</h2>
+        <p>Released on 24 November 2026. A quality and first-run release from the 2026.11 code-review follow-ups. New users get short hints that name erssi's own commands and say how to select text, the default statusbar gains an item for a new release, the docs grow a screen-reader setup and cover the image preview, and OTR fragment reassembly and the image-preview parser are now fuzzed. No protocol or on-the-wire changes.</p>
       </div>
       <ul class="changes">
-        <li><span class="tag">fixed</span><p><b>Own key reflected back, on the automatic paths too.</b> Auto-accept and an autotrust rule no longer answer an end-to-end key request that carries your own identity key, and a key response or rekey that carries it is never installed as a session. 2026.11.7 covered only <code>/e2e accept</code>.</p></li>
-        <li><span class="tag">fixed</span><p><b>Image-preview address filter.</b> The filter that keeps a preview to public web servers now also refuses IPv6 Teredo (<code>2001::/32</code>) and documentation (<code>2001:db8::/32</code>) addresses and the IPv4 documentation ranges <code>192.0.2.0/24</code>, <code>198.51.100.0/24</code> and <code>203.0.113.0/24</code>.</p></li>
-        <li><span class="tag">fixed</span><p><b>Shared-home replay cache.</b> Two erssi that share a home no longer overwrite each other's E2E replay cache — it is merged under a lock — so a message the server delivers again stays dropped across a restart.</p></li>
-        <li><span class="tag">fixed</span><p><b>One byte past the TLS key password.</b> An encrypted client key whose passphrase is exactly as long as the password buffer no longer writes one byte past it. Inherited from irssi and reported upstream; the DCC key callback added in 2026.11.7 was already correct.</p></li>
-        <li><span class="tag">changed</span><p><b>Secrets cleansed before they are freed.</b> Stored credentials and the fe-web key are cleared from memory before they are freed, so a later memory disclosure cannot read what was there.</p></li>
+        <li><span class="tag">added</span><p><b>First-run hints that name erssi's own commands.</b> A new home now prints a short line pointing at <code>/HELP</code> to list the commands, <code>/E2E</code> to start an end-to-end encrypted talk, and <code>/MENTIONS</code> for the window that collects messages naming you.</p></li>
+        <li><span class="tag">added</span><p><b>A hint on selecting text.</b> While the mouse is tracked — the side panels and gestures are on by default — a second line says to hold Shift while dragging to select text, or how to turn the mouse off.</p></li>
+        <li><span class="tag">added</span><p><b>An "update" item in the default statusbar.</b> It shows when a newer release is available and takes no space until then, so an older config gains it on the next run; a bar you changed is left alone.</p></li>
+        <li><span class="tag">changed</span><p><b>Documentation.</b> A screen-reader-friendly setup, the image preview and its nine settings, the four mouse-gesture pages merged into one, rewritten architecture notes, and a warning that autolog and mentions_log write an end-to-end conversation to disk in clear text.</p></li>
+        <li><span class="tag">changed</span><p><b>More of the attack surface is fuzzed.</b> OTR fragment reassembly and the image preview's og:image parser are each built as a standalone unit and fuzzed from a seed corpus, and the credential-encryption refusal is locked by a test.</p></li>
+        <li><span class="tag">removed</span><p><b>A 2008 irssi TODO relic.</b> Dead notes with no bearing on the fork are gone.</p></li>
       </ul>
       <div class="after-list">
-        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.8">Release notes</a>
+        <a class="btn" href="https://github.com/y-o-o-z/erssi/releases/tag/shellter-v2026.11.9">Release notes</a>
         <a class="btn" href="https://github.com/y-o-o-z/erssi/blob/main/NEWS">Every change since 2026.10.0</a>
       </div>
     </div>
@@ -317,7 +318,7 @@ erssi --update</pre>
       </div>
     </div>
     <div class="legal">
-      <span>erssi Shellter Edition 2026.11.8 · GPL-2.0-or-later</span>
+      <span>erssi Shellter Edition 2026.11.9 · GPL-2.0-or-later</span>
       <span><a href="./" aria-current="page">English</a> · <a href="pl/" hreflang="pl" lang="pl">Polski</a></span>
     </div>
   </div>
